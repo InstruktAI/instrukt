@@ -113,6 +113,16 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 
+<!-- planned:standing-sdlc-coordinator -->
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | Event-log append used when a record change places or removes a hold, or records a repeated attempt failure, in that change's own transaction |
+| work → runner | Customer / Supplier | A project's active todos with their holds, and whether work holds a todo waiting on a person, read when a raise is admitted and when a claimed session's input wait is observed |
+<!-- /planned:standing-sdlc-coordinator -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

@@ -172,6 +172,17 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
+<!-- planned:standing-sdlc-coordinator -->
+Fleet attention is the runner's: which facts of a project's active work are
+attention conditions, the `runner.attention.*` vocabulary, each condition's
+occurrence identity, and the raise through `instrukt events raise`
+(`project/instrukt/spec/feature/runner/fleet-attention`). Each underlying fact
+stays with its owner: work appends the hold and repeated-failure conditions in
+its own record transactions through the runner's event-log interface, and the
+runner appends the execution conditions with the observation that establishes
+them.
+
+<!-- /planned:standing-sdlc-coordinator -->
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
@@ -374,6 +385,28 @@ in data.
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 
+<!-- planned:standing-sdlc-coordinator -->
+Fleet attention's conditions are occurrences with a todo subject in their
+project origin; which facts count, and from what point, is
+`project/instrukt/spec/feature/runner/fleet-attention`'s.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.attention.execution_stalled` | The runner records that the session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or that no session could be started for the todo from the model order available | Project, todo, session when one existed, the workflow state observed, and whether the session stopped, failed, was gone or never started | Project, todo, session or the start's model order, workflow state | The procedure subscribed to fleet attention in the project |
+| `runner.attention.input_waiting` | The runner observes the session holding a todo's execution claim waiting for input while work does not hold the todo waiting on a person | Project, todo, session, workflow state | Project, todo, session and that session's count of waits observed | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_placed` | A record change places a dispatch hold on a todo, from any source | Project, todo, the hold's source, reason and time | Project, todo, the hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_released` | A record change removes a todo's dispatch hold, by release, replacement, group joining or label | Project, todo, the released hold's source and placement time | Project, todo, the released hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.attempts_failing` | Work records a role's failed attempt on a todo on which an earlier attempt of that role already failed | Project, todo, role, attempt, failure reason | Project, todo, role, attempt | The procedure subscribed to fleet attention in the project |
+| `runner.attention.raised` | An agent raises a condition about active todos of the project it works in | Project, the todos named, the obligation at stake; the raising session as the caller reference | One identity per raise | The procedure subscribed to fleet attention in the project |
+
+Work emits the two hold types and `runner.attention.attempts_failing` in the
+transaction of the record change itself; adopting a record pulled from GitHub
+emits none. The runner emits the two execution types in the transaction that
+records its observation, and `runner.attention.raised` when the raise is
+admitted.
+
+<!-- /planned:standing-sdlc-coordinator -->
+
 ### Event-platform facts emitted
 
 `instrukt.system.event.dead_lettered` ports
@@ -404,6 +437,12 @@ integrate candidate in their project origin. The event declarations define
 their typed subjects (`project/instrukt/spec/feature/runner/event-envelope`).
 `instrukt.system.event.dead_lettered` concerns the failing stream entry and
 has no origin, as declared in Canonical fields.
+
+<!-- planned:standing-sdlc-coordinator -->
+The `runner.attention.*` events concern a todo in its project origin; a
+condition between todos names the others, and a raise its raising session, as
+related references.
+<!-- /planned:standing-sdlc-coordinator -->
 
 ## Use cases
 
@@ -508,12 +547,23 @@ per-role session bindings. Work owns validation and persistence of those writes.
 
 ## Known caveats
 
+<!-- planned-change:standing-sdlc-coordinator -->
 - The target delivery contract requires durable acceptance, bounded batch
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
+<!-- change:standing-sdlc-coordinator -->
+- The target delivery contract requires durable acceptance, bounded batch
+  selection, procedure-first briefing and untrusted activation provenance. Its
+  realization uses the selected runtime's supported input boundary. Missing
+  steering degrades ASAP attention to queued input or idle entry without a
+  validation finding. Automation never settles a standing T3 thread; a standing
+  agent settles its own only at a rest its procedure names, and a settled one
+  stays reachable
+  (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- /planned-change:standing-sdlc-coordinator -->
 - A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
   harness, one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
@@ -525,8 +575,14 @@ per-role session bindings. Work owns validation and persistence of those writes.
 - Event reactions activate agents under their declared roles. Script-run
   event actions and event-bound maintenance are outside scope. Path-based
   post-commit follow-ups use git hooks, including existing sync hooks.
+<!-- planned-change:standing-sdlc-coordinator -->
 - A visible coordinator singleton is a standing-agent responsibility.
   Runtime lifecycle remains runtime-owned.
+<!-- change:standing-sdlc-coordinator -->
+- A project's fleet coordinator is the standing agent of its subscribed
+  procedure in that project, one per computer that works the project.
+  Runtime lifecycle remains runtime-owned.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 
 - UC-HR1 is retired: machine maintenance is outside instrukt; its id is not reused.

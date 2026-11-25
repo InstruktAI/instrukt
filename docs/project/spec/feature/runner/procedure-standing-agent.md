@@ -78,11 +78,13 @@ subject identity, attended and unattended alike. Settling neither retires a
 responsibility nor authorizes a successor. There is no closed T3 context to
 revive or non-resumability proof to obtain.
 <!-- change:standing-sdlc-coordinator -->
-Standing T3 threads are settled, never closed. A standing agent whose procedure
-names no rest condition is never settled by automation: it stays unsettled in
+Standing T3 threads are settled, never closed. Automation never settles a
+standing agent: one whose procedure names no rest condition stays unsettled in
 the sidebar by design. A standing agent whose procedure names a rest condition
-rests when that condition holds and its current work is recorded: its thread
-is settled out of the active list. A human may settle any standing thread.
+rests when that condition holds and its current work is recorded: it settles
+its own thread out of the active list through the configured settling action
+(`project/instrukt/spec/feature/configuration/layered-configuration`). A human
+may settle any standing thread.
 Settled by rest or by a human, the thread remains findable and reachable, wakes
 on a message or its next activation and can be unsettled. Later activations
 reuse the same keyed assignment for home and subject identity, attended and

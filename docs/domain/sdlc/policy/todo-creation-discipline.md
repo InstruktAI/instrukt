@@ -380,12 +380,23 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     from terminal orchestrator retirement, session ending and cleanup belong to
     the runtime.
 
+<!-- planned-change:standing-sdlc-coordinator -->
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —
   never silence or impatience — permits the observer to set `hold` with the
   grounded reason. That hold is only a brake against future dispatch while
   session recovery resolves the claimant; it neither stops the current agent nor
   proves that agent stopped. Route claimant recovery as a separate act.
+<!-- change:standing-sdlc-coordinator -->
+- **External hold is the unreachable-claimant fallback.** Only a proven delivery
+  failure or other authoritative evidence that the claimant cannot answer —
+  never silence or impatience — permits the observer to set `hold` with the
+  grounded reason. That hold is only a brake against future dispatch while
+  session recovery resolves the claimant; it neither stops the current agent nor
+  proves that agent stopped. Route claimant recovery as a separate act. The
+  project's coordinator pausing work for a settlement is a separate case,
+  governed by **Coordinator pauses and retirements** below.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - **The flagger does not select or negotiate the exit.** Except for the
   unreachable-claimant dispatch brake above, after the complete
   flag, it may send at most one source-grounded, address-only follow-up when a
@@ -422,11 +433,57 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   withdrawn todo's recorded phase orchestrator thread(s) through the configured
   `runtime.retire_thread` action under the retirement rule above.
 
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Only an agent-originated filing is the filer's to withdraw.** A filing that
   carries a human's request in their own words is withdrawn only by that human:
   abandoning an intended outcome is theirs (`general/policy/human-contract`). A
   human's acknowledgement of the agent's proposal to file does not make the
   filing theirs.
+<!-- change:standing-sdlc-coordinator -->
+- **Only an agent-originated filing is the filer's to withdraw.** A filing that
+  carries a human's request in their own words is withdrawn only by that human,
+  or on a settlement returned through an origin under **Coordinator pauses and
+  retirements** below: abandoning an intended outcome is theirs
+  (`general/policy/human-contract`). A human's acknowledgement of the agent's
+  proposal to file does not make the filing theirs.
+<!-- /planned-change:standing-sdlc-coordinator -->
+
+<!-- planned:standing-sdlc-coordinator -->
+### Coordinator pauses and retirements
+
+The project's standing coordinator (`sdlc/procedure/lifecycle/coordinate`)
+acts on todos it does not hold, within these bounds alone.
+
+- **A pause waits for a named settlement.** When work it returned to an origin
+  (`general/principle/origin-routing`) must not advance until that origin
+  answers, the coordinator sets `hold` on the affected todo with a reason that
+  names what releases it, and tells the live claimant, which stops building on
+  the challenged premise at its next safe point. The coordinator releases the
+  hold when the settlement is applied. It pauses only the work the settlement
+  concerns and never parks work without its release.
+- **A redundant agent filing is retired by the coordinator.** A todo that
+  agents filed and that duplicates another carries no person's request. The
+  coordinator writes into the surviving todo's `log` what the redundant filing
+  carried that the survivor lacks, with its source, and then withdraws it on
+  the path below.
+- **A settlement withdraws the superseded todo.** When an origin authorized
+  for the converging work returns the agreed outcome, the coordinator
+  withdraws each todo it supersedes, including one that carries a person's
+  request: that origin is where the people concerned decided it, and every
+  other affected origin receives a closure notice from which its person can
+  still steer.
+- **Withdrawal settles running work first.** The coordinator has the live
+  claimant settle its running work and release its claim, and confirms the
+  release; a claimant that cannot answer has its unreachability established
+  as above. Only then does it run `instrukt todo remove <slug>` and inspect
+  the outcome, and once removal and all record writes are confirmed, retire
+  the withdrawn todo's recorded phase orchestrator thread(s) through the
+  configured `runtime.retire_thread` action under the retirement rule above.
+  The withdrawn todo's pending markers live in its own `<slug>/work` branch
+  and leave with it; a marker naming it in another live todo's branch is
+  removed by that todo's claimant, to which the coordinator points it.
+
+<!-- /planned:standing-sdlc-coordinator -->
 
 ### Read authorship from the creation record
 
@@ -512,11 +569,32 @@ A failed candidate stays with the standing integrator, which owns the
 verification and recovery decision. The work record preserves its evidence;
 neither a check result nor an automated filing supplies a diagnosis.
 
+<!-- planned:standing-sdlc-coordinator -->
+Work that converges across separately commissioned todos is visible to no
+claimant; only the project's coordinator sees it. A pause it cannot place
+would let a todo keep building what its origin may yet retire, and a
+settlement only each claimant could apply would leave superseded work behind.
+The coordinator's acts stay bounded to what fleet attention needs: a pause
+names its release, the claimant still stops its own work, and withdrawal still
+settles running work before release and removal, so a claim never outlives
+the work it covers. A person's filing is withdrawn on a settlement because the
+people concerned decided it through an origin; the closure notice and the
+work record's recovery window keep that decision correctable by every other
+person it affected.
+<!-- /planned:standing-sdlc-coordinator -->
+
 ## Scope
 
+<!-- planned-change:standing-sdlc-coordinator -->
 All todo creation and preparation, every kind, every human or agent creator,
 every observer that flags a live claimant, and every filer that withdraws its
 own filing under this policy.
+<!-- change:standing-sdlc-coordinator -->
+All todo creation and preparation, every kind, every human or agent creator,
+every observer that flags a live claimant, every filer that withdraws its own
+filing, and the project's coordinator when it pauses or retires work under
+this policy.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ## Enforcement
 

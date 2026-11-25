@@ -326,8 +326,14 @@ gives.
   recovery can establish an identity; a copied or moved source is never adopted
   automatically. Retained answer pieces can still post while native work is
   blocked. No implementation diagnostics are sent to the member.
+<!-- planned-change:standing-sdlc-coordinator -->
 - A turn someone starts directly in the session's thread is not posted. The
   agent posts only as the answer to an addressed message.
+<!-- change:standing-sdlc-coordinator -->
+- A turn someone starts directly in the session's thread, a person or another
+  agent, posts no turn output. In such a turn the agent posts only an explicit
+  reply queued through `instrukt company reply`, under the admission above.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - From the admission of an addressed message until it is complete — its
   answer posted, or its turn completed successfully with a bare `NOOP` or blank
   output — the connector shows the message's state where the provider supports
@@ -687,9 +693,16 @@ And the connector posts the explicit reply to that conversation through the dura
   access and rate limits are its only limits.
 - A turn that failed may already have acted; its message is delivered again and
   the agent checks before acting again.
+<!-- planned-change:standing-sdlc-coordinator -->
 - The agent cannot start a conversation or post anything that is not the
   answer to an addressed message. The direct messages instrukt sends about a
   person's sign-ins are instrukt's own, not the agent's.
+<!-- change:standing-sdlc-coordinator -->
+- The agent cannot start a conversation. Outside the answer to an addressed
+  message it posts only an explicit reply, into a conversation its binding
+  already admits. The direct messages instrukt sends about a person's sign-ins
+  are instrukt's own, not the agent's.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either

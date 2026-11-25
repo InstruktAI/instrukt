@@ -20,6 +20,7 @@ visibility: 'public'
   executes on `main` — is inside the orchestrator's jurisdiction under that
   procedure's own review routing, and nothing beyond what it names is, except
   the ad-hoc process path below.
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Human-directed ad-hoc process changes follow process-change authority.**
   When the human explicitly directs an ad-hoc process change in any
   orchestrator session covered by this policy (`todo-orchestrator`,
@@ -27,6 +28,15 @@ visibility: 'public'
   outside its active slug or integration workspace under
   `sdlc/policy/process-change-authority`, leaving the active delivery or
   integration worktree untouched.
+<!-- change:standing-sdlc-coordinator -->
+- **Human-directed ad-hoc process changes follow process-change authority.**
+  When the human explicitly directs an ad-hoc process change in any
+  orchestrator session covered by this policy (`todo-orchestrator`,
+  `integrator`, `sdlc-coordinator`), that orchestrator is authorized to author
+  it outside its active slug or integration workspace under
+  `sdlc/policy/process-change-authority`, leaving the active delivery or
+  integration worktree untouched.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - **The active slug is the focus.** Changes elsewhere in the repository belong to
   their own owners and are taken as intended.
 
@@ -41,8 +51,13 @@ same chain of custody holds.
 
 ## Scope
 
+<!-- planned-change:standing-sdlc-coordinator -->
 - Every session holding an orchestrator role (`todo-orchestrator`, `integrator`,
   `coordinator`), in every project.
+<!-- change:standing-sdlc-coordinator -->
+- Every session holding an orchestrator role (`todo-orchestrator`, `integrator`,
+  `sdlc-coordinator`), in every project.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ## Enforcement
 

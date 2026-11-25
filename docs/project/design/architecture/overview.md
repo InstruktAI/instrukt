@@ -373,12 +373,33 @@ record carries its artifact and stamp, never when a session's reply says so.
 Whatever needs the human is a session asking in its thread; only anomalies are
 sent through `runner.notify`.
 
+<!-- planned-change:standing-sdlc-coordinator -->
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
 only-at-entry delivery waits for observed idleness. Standing T3 threads remain
 unsettled under automation; a human-settled thread stays reachable and wakes
 on its next message.
+<!-- change:standing-sdlc-coordinator -->
+Procedure activation is durably accepted before runtime execution. The adapter
+supplies procedure-first assignment and untrusted event data through bounded
+logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
+only-at-entry delivery waits for observed idleness. Automation never settles a
+standing T3 thread. A standing agent whose procedure names a rest condition
+settles its own thread there through the configured settling action
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by rest or by a human, stays reachable and wakes on its next
+activation or message.
+
+Fleet attention composes three owners without a watcher. Work appends a hold's
+placement or release and a role's repeated attempt failure through the
+runner's event-log interface in the record change's own transaction, as its
+finalize-ready stamp appends `workflow.finalized`. The runner appends a stalled
+or input-waiting execution in the transaction that records its observation,
+and an agent's raise through `instrukt events raise`. The project's subscribed
+coordinator answers them
+(`project/instrukt/spec/feature/runner/fleet-attention`).
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ### Conversation links
 

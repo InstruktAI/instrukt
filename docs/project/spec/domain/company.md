@@ -29,6 +29,7 @@ state database's file and migrations (work).
   assigned role and session scope; the session's runtime identity; accepted
   messages awaiting delivery with their senders; the speaker of the current
   turn; answers awaiting posting.
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Invariants:** Under `session_scope: conversation`, one conversation has one
   session and one session serves one conversation; under
   `session_scope: company`, one shared standing session serves all admitted
@@ -39,6 +40,19 @@ state database's file and migrations (work).
   addressed message is posted; under `reply_mode: explicit`, raw turn output is
   suppressed and only explicit replies queued through `instrukt company reply`
   are posted.
+<!-- change:standing-sdlc-coordinator -->
+- **Invariants:** Under `session_scope: conversation`, one conversation has one
+  session and one session serves one conversation; under
+  `session_scope: company`, one shared standing session serves all admitted
+  conversations of `(company, connector)` serially, tagging each incoming turn
+  with its conversation identity, place context, thread and speaker. Each
+  addressed message is one turn. A message activates no subscribed procedure
+  and emits no event. Under `reply_mode: turn_output`, turn output is posted only as
+  the answer to an addressed message, and an explicit reply queued through
+  `instrukt company reply` is posted from any turn; under
+  `reply_mode: explicit`, raw turn output is suppressed and only explicit
+  replies are posted. No reply starts a conversation.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - **Identifier:** Company, connector name and conversation identity (or shared
   company binding).
 - **Lifecycle:** The first addressed message from an admitted sender starts the

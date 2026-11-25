@@ -195,6 +195,7 @@ child endings to this parent; this parent owns the recovery decision.
 
 ### When Worker Needs Help
 
+<!-- planned-change:standing-sdlc-coordinator -->
 1. Classify the remaining decision under `general/policy/human-contract`.
    Technical recovery goes to its agent owner with evidence and governing
    addresses. Do not author the worker's code or tests.
@@ -207,6 +208,32 @@ child endings to this parent; this parent owns the recovery decision.
    re-derive the obligation from the updated record.
 4. An unattended failure is an anomaly. The runner decides notification;
    only a reference to the anomaly session or dispatch hold may be delivered.
+<!-- change:standing-sdlc-coordinator -->
+1. Classify the remaining decision under `general/policy/human-contract`.
+   Technical recovery goes to its agent owner with evidence and governing
+   addresses. Do not author the worker's code or tests.
+2. Record the next contribution and its owner. A plan defect returns through
+   the work kickback path; an unresolved technical question returns to evidence.
+3. The responsible session asks a human-owned question in its own thread.
+   A child's native input-wait result reaches its parent for assessment; read that
+   question and apply the existing mandate. A recorded approval or request-changes
+   decision reaches the live claim-holding orchestrator as direct attention;
+   re-derive the obligation from the updated record.
+4. Raise what no session of this todo can settle, instead of waiting on it or
+   asking it in a thread no person reads: a worker's question this
+   orchestrator cannot answer, work of another live todo that converges,
+   overlaps or conflicts with this one, a solution existing outside the
+   project that already provides what this todo builds, or a decision owned by
+   a person who is not reached in this todo's threads, its approval gates
+   aside. Run
+   `instrukt events raise <todo>... --obligation <text>` for the active todos
+   it concerns, naming the obligation at stake and no conversation content.
+   The project's coordinator returns it to the work's origin
+   (`general/principle/origin-routing`); keep working what the condition does
+   not touch, and follow the coordinator's pause when one arrives.
+5. An unattended failure is an anomaly. The runner decides notification;
+   only a reference to the anomaly session or dispatch hold may be delivered.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ### Agent Degradation Handling (Orchestrator-Owned)
 

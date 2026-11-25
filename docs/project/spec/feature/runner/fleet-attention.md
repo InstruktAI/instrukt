@@ -26,16 +26,24 @@ underlying fact is established by its owner; fleet attention reads it through
 that owner's contract and decides none of it again
 (`sdlc/policy/domain-ownership`).
 
-| Condition | Underlying facts and their owner |
-| --- | --- |
-| The session holding a todo's execution claim stopped or failed, or no session could be started for the todo, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). |
-| The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides (`project/instrukt/spec/feature/work/github-record`). |
-| A dispatch hold is placed on a todo, or released from it. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). |
-| A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). |
-| A worker waits for input its orchestrator cannot supply. | That orchestrator, by raising it. |
-| The work of two or more live todos of the project converges, overlaps or conflicts. | The agent that meets it, by raising it. |
-| An agent working a live todo finds that a solution existing outside the project already provides what the todo is building. | That agent, by raising it. |
-| An agent meets a decision owned by a person and has no conversation with that person to ask it in. | That agent, by raising it. |
+| Condition | Underlying facts and their owner | Event, and where it is appended |
+| --- | --- | --- |
+| The session holding a todo's execution claim stopped, failed or is gone, or no session could be started for the todo, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). | `runner.attention.execution_stalled`, by the runner, in the transaction that records the execution's unrecovered stop or the exhausted start. |
+| The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides (`project/instrukt/spec/feature/work/github-record`). | `runner.attention.input_waiting`, by the runner, in the transaction that records the observed wait. |
+| A dispatch hold is placed on a todo, or released from it. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). | `runner.attention.hold_placed` or `runner.attention.hold_released`, by work, in the record change's own transaction. |
+| A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). | `runner.attention.attempts_failing`, by work, in the transaction that records the failure. |
+| A worker waits for input its orchestrator cannot supply. | That orchestrator, by raising it. | `runner.attention.raised`, when the raise is admitted. |
+| The work of two or more live todos of the project converges, overlaps or conflicts. | The agent that meets it, by raising it. | `runner.attention.raised`. |
+| An agent working a live todo finds that a solution existing outside the project already provides what the todo is building. | That agent, by raising it. | `runner.attention.raised`. |
+| An agent meets a decision owned by a person and has no conversation with that person to ask it in. | That agent, by raising it. | `runner.attention.raised`. |
+
+Each event is appended together with the fact that establishes it, so a
+condition is never recorded without its event or published without its
+fact. The payloads and occurrence identities are declared in
+`project/instrukt/spec/domain/runner`, Domain events emitted. A hold placed or
+released counts whatever its source; a record adopted from GitHub carries
+another computer's change and appends nothing here. A release of a todo that
+holds nothing changes no hold and appends nothing.
 
 The runner observes the session holding a todo's execution claim and no worker
 that session delegated: a worker's failure, wait for input or absence reaches
@@ -48,8 +56,10 @@ raised condition above.
 ### Raised conditions
 
 A condition that only an agent's judgment can establish is raised by that agent
-through instrukt (`general/principle/intelligence-boundaries`). A raise names
-the todos it concerns and the obligation at stake. It is recorded with the
+through `instrukt events raise <todo>... --obligation <text>`
+(`general/principle/intelligence-boundaries`). A raise names the todos it
+concerns and the obligation at stake, in the raiser's own words; instrukt
+carries that text and grades none of it. It is recorded, as its event, with the
 session that raised it. Raising needs no knowledge of which session, if any,
 answers the project's fleet attention.
 

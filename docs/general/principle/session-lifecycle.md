@@ -70,6 +70,7 @@ conversation still has an open question.
 - **Standing roles persist under their mandate.** The standing integrator
   parks after current work settles and is woken by its subscribed events.
   Task recurrence is governed by its record and runner, not an improvised timer.
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Dormant settling and terminal retirement are distinct.** Active, held, and
   between-phase sessions stay wakeable, using dormant settling where the
   runtime supports it. Automation neither settles nor retires a standing agent.
@@ -78,6 +79,26 @@ conversation still has an open question.
   after all record writes and handoffs are confirmed, removing them from active
   and settled thread lists while retaining transcripts for audit and history
   extraction.
+<!-- change:standing-sdlc-coordinator -->
+- **Dormant settling and terminal retirement are distinct.** Active, held, and
+  between-phase sessions stay wakeable, using dormant settling where the
+  runtime supports it. Nothing retires a standing agent, and automation never
+  settles one. A standing agent whose procedure names a rest condition settles
+  its own thread through the configured settling action when that condition
+  holds and its current work is recorded; its next event or message wakes it
+  with its context. Once a todo reaches a terminal state (`delivered` or
+  `withdrawn`), its phase orchestrator threads retire through the configured
+  terminal retirement action after all record writes and handoffs are
+  confirmed, removing them from active and settled thread lists while
+  retaining transcripts for audit and history extraction.
+<!-- /planned-change:standing-sdlc-coordinator -->
+<!-- planned:standing-sdlc-coordinator -->
+- **What execution discovers returns through the work's origin.** A decision
+  that belongs to a person, met in work an agent carries out for someone else's
+  conversation, goes back to the agent holding that conversation
+  (`general/principle/origin-routing`); the human-question rule below governs
+  the origin's own thread.
+<!-- /planned:standing-sdlc-coordinator -->
 - **Human questions stay in their thread.** Ask for approval or missing intent
   there and leave it waiting as `needs-input`. Resolve agent-owned technical
   work with its owner; disagreement alone does not transfer it to the human.

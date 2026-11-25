@@ -129,12 +129,22 @@ runner owns dispatch, and the configured runtime owns conversations.
   with `--by human|peer [--session <runtime:id>]`; evidence read capabilities for workflow, and
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
   published eval provenance; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub supplies the required reflected store; the runner supplies the event-log
   append the finalize-ready stamp uses. Standing-agent event delivery
   is optional and is not the work record.
+<!-- change:standing-sdlc-coordinator -->
+- **Allowed dependencies:** configuration supplies project settings; publication supplies
+  published eval provenance; workflow and runner record evidence through
+  work’s mutation contract; the configured runtime supplies session and conversation references;
+  GitHub supplies the required reflected store; the runner supplies the event-log
+  append the finalize-ready stamp, hold changes and repeated attempt failures
+  use. Standing-agent event delivery
+  is optional and is not the work record.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - **Implementation roots:** the `instrukt-todos` crate.
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
@@ -243,6 +253,18 @@ The work finalize-ready stamp appends workflow’s `workflow.finalized`
 through the runner’s event-log interface. This atomic work mutation retains
 the reviewed head; workflow owns the lifecycle vocabulary.
 
+<!-- planned:standing-sdlc-coordinator -->
+A record change that places or removes a todo's dispatch hold, from any
+source, appends the runner's `runner.attention.hold_placed` or
+`runner.attention.hold_released`, and recording a role's failed attempt on a
+todo on which that role already failed appends
+`runner.attention.attempts_failing`, each through the same event-log interface
+in that change's own transaction. Work decides the hold and the failure; which
+of them is an attention condition is the runner's
+(`project/instrukt/spec/feature/runner/fleet-attention`). Adopting a record
+pulled from GitHub appends none.
+<!-- /planned:standing-sdlc-coordinator -->
+
 ### Domain events consumed
 
 Work consumes no events in the first build. GitHub changes reconcile into
@@ -250,9 +272,17 @@ local records and workflow results enter as evidence-bound mutations.
 
 ## Event subjects and origins
 
+<!-- planned-change:standing-sdlc-coordinator -->
 Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 `workflow.finalized`, concerning the todo in its project origin
 (`project/instrukt/spec/domain/workflow`).
+<!-- change:standing-sdlc-coordinator -->
+Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
+`workflow.finalized`, concerning the todo in its project origin
+(`project/instrukt/spec/domain/workflow`); its hold and failed-attempt changes
+append the runner's fleet-attention conditions about the todo in its project
+origin (`project/instrukt/spec/domain/runner`).
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ## Use cases
 
@@ -294,9 +324,16 @@ owning design snippet or decision record is declared.
   records claims and their reflection, flushes pending reflection, writes last-fired
   stamps and automatic holds, purges expired retained records, and updates
   per-role session bindings through work’s command contract.
+<!-- planned-change:standing-sdlc-coordinator -->
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
   `workflow.finalized` through the runner's event-log interface, in the
   stamp's own transaction.
+<!-- change:standing-sdlc-coordinator -->
+- **Runner → work** — customer-supplier. The finalize-ready stamp appends
+  `workflow.finalized`, and a hold's placement or removal and a repeated
+  attempt failure append the runner's fleet-attention conditions, through the
+  runner's event-log interface, each in its record change's own transaction.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - **Work → runner (state database)** — customer-supplier. The runner's
   operational tables live in work's state database, under its writer lock and
   migrations; the runner owns their meaning and is their only writer. The
