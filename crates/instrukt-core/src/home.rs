@@ -341,6 +341,21 @@ impl Home {
         self.state_dir().join("review-observation.db")
     }
 
+    /// `~/.instrukt/state/requested-review.lock` — the write-isolation unit
+    /// of the requested-review store, taken by `instrukt review start` alone
+    /// (`project/instrukt/spec/feature/runner/requested-review`, Requested
+    /// review records).
+    pub fn requested_review_lock_file(&self) -> PathBuf {
+        self.state_dir().join("requested-review.lock")
+    }
+
+    /// `~/.instrukt/state/requested-review.db` — every admitted requested
+    /// review: the requested reviewer's assignment and the record a dispute
+    /// of its head is routed by.
+    pub fn requested_review_db_file(&self) -> PathBuf {
+        self.state_dir().join("requested-review.db")
+    }
+
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
     pub fn eval_fingerprint_dir(&self) -> PathBuf {
         self.root.join("state").join("eval-fingerprint")
@@ -403,6 +418,8 @@ mod tests {
             home.withdrawal_lock_file(),
             home.delivered_release_lock_file(),
             home.runner_lock_file(),
+            home.requested_review_db_file(),
+            home.requested_review_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
             home.machine_id_file(),
