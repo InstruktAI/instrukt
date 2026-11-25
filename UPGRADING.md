@@ -634,3 +634,13 @@ whose installed instrukt predates this release, that key is an unknown key in
 this repository's layer: the layer does not validate there, which withholds
 history extraction for the project on that computer until instrukt is
 upgraded. Upgrade instrukt on each computer that serves this repository.
+
+### One thread-finishing action: `retire_thread` is removed
+
+The runtime action `retire_thread` is gone; `finish_thread` is now the only
+action that ends a thread, for a resting conversation and for the orchestrator
+of a delivered or withdrawn todo alike. An unknown runtime action key fails
+`instrukt config validate`, so before installing this build remove any
+`runtimes.<runtime>.retire_thread` override from the machine layer, such as a
+temporary `runtimes.t3.retire_thread` in `~/.instrukt/instrukt.yaml`. A
+machine layer without one needs nothing done.

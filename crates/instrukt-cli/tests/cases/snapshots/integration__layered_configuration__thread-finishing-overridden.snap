@@ -9,7 +9,7 @@ id: acme/procedure/conclude
 type: procedure
 domain: acme
 scope: global
-description: Settle a resting conversation or retire a finished one.
+description: Settle a resting conversation or a finished todo's orchestrator.
 source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
 ---
 # Conclude — Procedure
@@ -17,11 +17,7 @@ source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
 ## Goal
 
 ```
-Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling.
-```
-
-```
-Hide the finished conversation through the runtime's closest non-destructive operation.
+Settle the conversation through the runtime's closest non-destructive operation.
 ```
 
 ## Preconditions
