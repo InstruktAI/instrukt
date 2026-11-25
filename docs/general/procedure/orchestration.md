@@ -132,12 +132,8 @@ conversation needs the child, record the contribution and handoff. Close
 discussion through the configured runtime discussion instruction. Keep active,
 held, and between-phase orchestrators wakeable; once a todo reaches a terminal
 state (`delivered` or `withdrawn`), finish its recorded orchestrator threads
-(`todo-orchestrator`, plus any legacy phase-orchestrator bindings) through the
-configured thread-finishing instruction — leaving them quiet, readable, and
-wakeable rather than archiving them — completing all record writes first when
-self-finishing, converging idempotently on replay, preserving unfinished human
-or worker obligations, never gating finishing on unrelated resource cleanup,
-and never finishing standing agents:
+through the configured thread-finishing instruction under
+`sdlc/policy/todo-creation-discipline`:
 
 <!-- @config: runtime.finish_thread -->
 

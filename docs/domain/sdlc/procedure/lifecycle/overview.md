@@ -426,11 +426,9 @@ building, reviewing and fixing keeps its output.
    delivered.
 6. **Finish on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
-   finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm
-   the removal outcome first, preserve any unfinished human or worker
-   obligations, and then finish this orchestrator thread via the configured
-   `runtime.finish_thread` action (converging idempotently on replay and never
-   finishing standing agents).
+   confirm all record writes (`log`, `instrukt todo remove {slug}`) first and
+   then finish this orchestrator thread via `runtime.finish_thread` under
+   `sdlc/policy/todo-creation-discipline`.
 
 ## Outputs
 

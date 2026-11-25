@@ -60,7 +60,8 @@ Apply these configured action values to the identified assignment and session.
   phase-orchestrator bindings) through the configured `runtime.finish_thread`
   action so they stay quiet, readable, and wakeable rather than archived.
   Complete all record writes and handoffs first when self-finishing, converge
-  idempotently on already-finished threads, preserve unfinished human or worker
+  idempotently on already-finished threads (distinguishing an already-finished
+  thread from a failed observation), preserve unfinished human or worker
   obligations, never gate finishing on unrelated resource cleanup, and never
   finish standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is
@@ -376,11 +377,9 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     claiming it complete, and record the lane's handoff. Once removal, handoff,
     and all record writes are confirmed, finish the withdrawn todo's recorded
     orchestrator thread(s) through the configured `runtime.finish_thread`
-    action under the finishing rule above (converging idempotently on replay,
-    preserving unfinished human or worker obligations, never gating finishing
-    on unrelated resource cleanup, and never finishing standing agents). Apart
-    from finishing completed todo orchestrator threads, session ending and
-    cleanup belong to the runtime.
+    action under the terminal-finishing rule above. Apart from finishing
+    completed todo orchestrator threads, session ending and cleanup belong to
+    the runtime.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —
