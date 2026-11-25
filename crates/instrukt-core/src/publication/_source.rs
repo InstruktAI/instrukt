@@ -353,10 +353,14 @@ impl Committed {
             files.insert(path, bytes);
         }
         if let Some(places) = places {
-            for place in [places.folder, places.file] {
-                links.extend(links_at_or_above(root, place)?);
+            links.extend(links_at_or_above(root, places.file)?);
+            let above = links_at_or_above(root, places.folder)?;
+            // Behind a link nothing is looked at, so the folder is walked
+            // only when no link stands at or above it.
+            if above.is_empty() {
+                links.extend(links_inside(root, places.folder)?);
             }
-            links.extend(links_inside(root, places.folder)?);
+            links.extend(above);
         }
         Ok(Self { files, links })
     }
@@ -604,6 +608,28 @@ mod tests {
         let (second, rest) = next_blob(rest).unwrap();
         assert_eq!(second, b"");
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn a_link_above_the_folder_is_recorded_and_nothing_behind_it_is_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(outside.join("acme/inner")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("elsewhere"), outside.join("acme/inner/x"))
+            .unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("plugins")).unwrap();
+        let tree = Committed::working_tree_places(
+            &root,
+            Places {
+                folder: "plugins/acme",
+                file: ".claude-plugin/marketplace.json",
+            },
+        )
+        .unwrap();
+        let links: Vec<&str> = tree.links().collect();
+        assert_eq!(links, ["plugins"]);
     }
 
     #[test]
