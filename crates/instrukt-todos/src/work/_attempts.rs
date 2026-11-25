@@ -2189,6 +2189,78 @@ mod tests {
         );
     }
 
+    /// A clean shared worktree on branch `work`: the head an attempt
+    /// captured, and the head one further commit moved it to.
+    fn shared_worktree() -> (tempfile::TempDir, CommitSha, CommitSha) {
+        let repo = tempfile::tempdir().unwrap();
+        let dir = repo.path();
+        for args in [
+            &["init", "-q", "-b", "work"][..],
+            &["config", "user.name", "Test"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "commit.gpgsign", "false"],
+            &["commit", "-q", "--allow-empty", "-m", "captured"],
+        ] {
+            git::run(dir, args.iter().copied()).unwrap();
+        }
+        let captured = head(dir, "HEAD").unwrap();
+        git::run(dir, ["commit", "-q", "--allow-empty", "-m", "moved"]).unwrap();
+        let moved = head(dir, "HEAD").unwrap();
+        (repo, captured, moved)
+    }
+
+    fn shared_binding(
+        role: &str,
+        number: u64,
+        bound: &str,
+        tree: &Path,
+        base: &CommitSha,
+    ) -> Binding {
+        let mut binding = worker_binding(role, number, Some(session(bound)));
+        binding.worktree = Some(tree.to_path_buf());
+        binding.attempt.branch = Some("work".into());
+        binding.attempt.base_head = Some(base.clone());
+        binding
+    }
+
+    #[test]
+    fn a_read_only_completion_is_refused_once_the_shared_head_moved_past_its_capture() {
+        use crate::evidence::BuildVerdict;
+        use crate::work::StampRequest;
+        let (repo, captured, moved) = shared_worktree();
+        let tree = repo.path();
+        let record = |reviewer_base: &CommitSha| TodoRecord {
+            bindings: vec![
+                shared_binding("build-reviewer", 1, "reviewer-1", tree, reviewer_base),
+                shared_binding("builder", 2, "builder-1", tree, &captured),
+            ],
+            ..base_record()
+        };
+        let verdict = build_verdict(BuildVerdict::ChangesRequested);
+        let reviewer = session("reviewer-1");
+        assert_eq!(
+            completion_binding(&record(&moved), Some(&reviewer), tree, &verdict).unwrap(),
+            Some(0)
+        );
+        assert!(refused(completion_binding(
+            &record(&captured),
+            Some(&reviewer),
+            tree,
+            &verdict
+        )));
+        // A writer completes at the head its own commits moved to.
+        assert_eq!(
+            completion_binding(
+                &record(&captured),
+                Some(&session("builder-1")),
+                tree,
+                &StampRequest::BuildComplete
+            )
+            .unwrap(),
+            Some(1)
+        );
+    }
+
     #[test]
     fn diagnosis_and_drift_requests_complete_through_their_own_selection() {
         use crate::evidence::DriftClass;
