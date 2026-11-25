@@ -1,5 +1,5 @@
 ---
-description: Disk held by todo worktrees is reclaimed by instrukt itself — a project's declared regenerable output from worktrees nobody is working in and on a working session's request, and a delivered todo's worktree — with no agent running a deletion command.
+description: Disk held by todo worktrees is reclaimed by instrukt itself — a project's declared regenerable output from idle todo worktrees and on a working session's request, and a delivered todo's worktree — with no agent running a deletion command.
 delivered_by:
   - runner-owned-workspace-cleanup
 ---
@@ -9,9 +9,10 @@ delivered_by:
 
 Worktree reclamation returns the disk a todo's worktree holds once that disk
 no longer serves work. The runner removes a project's declared regenerable
-output from a todo worktree nobody is working in and removes a delivered
-todo's worktree; a session working a todo reclaims its own worktree's
-regenerable output through one instrukt command. Every removal is instrukt's
+output from an idle todo worktree and removes a delivered todo's worktree; a
+session working a todo reclaims its own worktree's regenerable output through
+one instrukt command, which is how disk is returned while the todo's work is
+still under way. Every removal is instrukt's
 own mechanical work: no agent issues a deletion command and no agent runtime
 is asked to approve one.
 
@@ -34,18 +35,20 @@ configuration enters, and removes nothing
 Reclaiming regenerable output leaves the rest of the worktree as it was: the
 same commit, the same branch, and a worktree that was clean stays clean.
 
-### Unattended worktrees
+### Idle worktrees
 
-A todo's worktree is unattended while no role attempt is open in it: after a
-role attempt is released, while the todo's candidate waits for integration,
-and while the todo is parked or held. Attempts and their release are facts of
-the work record (`project/instrukt/spec/feature/work/todos`).
+A todo's worktree is idle once the todo's rounds of building, reviewing and
+fixing have paused or ended: its candidate waits for integration, the todo is
+parked or held, its work has gone back to preparation, or the todo is
+delivered. Between the rounds of work still under way — after a build and
+before its review, after a review and before its fix — the worktree is not
+idle, and its output stays for the role that works there next. These states
+are facts of the work record (`project/instrukt/spec/domain/work`).
 
-The runner reclaims the regenerable output of the unattended todo worktrees
-on the computer it runs on. It reclaims nothing in a worktree where an attempt
-is open: an attempt that opens first keeps the worktree, and reclamation waits
-until the worktree is unattended again
-(`general/principle/trust-and-guardrails`).
+The runner reclaims the regenerable output of the idle todo worktrees on the
+computer it runs on. It reclaims nothing in a worktree where a role attempt is
+open: an attempt that opens first keeps the worktree, and reclamation waits
+until no attempt is open there (`general/principle/trust-and-guardrails`).
 
 ### Delivered worktrees
 
@@ -77,16 +80,17 @@ later runner invocation.
 
 ## Use cases
 
-### UC-WR1: Unattended todo worktrees stop holding build output
+### UC-WR1: Idle todo worktrees stop holding build output
 
 ```gherkin
 Given a developer's project declares its regenerable output
-And one of its todos has a worktree holding that output with no role attempt open
+And one of its todos has an idle worktree holding that output
 When the runner reclaims on that computer
 Then the declared output is gone from that worktree
 And the worktree is at the same commit on the same branch, as clean as before
 And no agent session took part in the removal
-But a worktree in which a role attempt is open keeps its output
+But a worktree whose todo is between its rounds of building, reviewing and fixing keeps its output
+And a worktree in which a role attempt is open keeps its output
 ```
 
 ### UC-WR2: Reclaim disk in one's own worktree during work
@@ -106,8 +110,11 @@ Then the request is refused and names the assignment that would bind it
 - Checkouts no todo assignment records — ad hoc worktrees, clones, review
   copies, temporary homes and scratch directories — are not reclaimed; their
   creator removes them (`general/policy/shared-machine-resources`).
-- Reclaimed output is rebuilt by the next build in that worktree, so a role
-  that builds after a reclamation pays a full build.
+- Reclaimed output is rebuilt by the next build in that worktree, so work that
+  returns to an idle worktree, or continues after a reclamation on request,
+  pays a full build.
+- A worktree whose todo's work is still under way holds its output for as long
+  as that work runs; reclaiming on request is the only reclamation it sees.
 
 ## See Also
 
