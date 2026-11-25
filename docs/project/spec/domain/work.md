@@ -44,10 +44,17 @@ runner owns dispatch, and the configured runtime owns conversations.
 : A group parent outside the todo lifecycle, retaining split evidence and
   grouping its children by durable identity.
 
+<!-- planned-change:github-human-agent-reflection -->
 **Execution claim**
 : The item-level claim recorded and reflected before work starts — by the
   runner on automatic dispatch, or by `instrukt todo work` on
   deliberate pickup — exposed as `claim.held`; distinct from per-todo, per-role session bindings.
+<!-- change:github-human-agent-reflection -->
+**Execution claim**
+: The item-level claim recorded in this computer's work record before work
+  starts — by the runner on automatic dispatch, or by `instrukt todo work` on
+  deliberate pickup — exposed as `claim.held`; distinct from per-todo, per-role session bindings.
+<!-- /planned-change:github-human-agent-reflection -->
 
 **Session binding**
 : The started session’s runtime and id, recorded per todo and role, distinct

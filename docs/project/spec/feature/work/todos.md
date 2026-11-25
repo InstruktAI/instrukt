@@ -295,7 +295,11 @@ attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
 for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
+<!-- planned-change:github-human-agent-reflection -->
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
+<!-- change:github-human-agent-reflection -->
+Prior slugs are retained with the immutable todo identity in the work record. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ## Use cases
 

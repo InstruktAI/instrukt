@@ -244,10 +244,15 @@ withdrawal whose working resources are being released. It starts empty.
 Version 39 ends the shared remote record. It drops `listing_copies` and the
 reflection columns that tracked a record copy on GitHub (`record_comment`,
 `conflicted`), and adds the issue read positions, the published work-branch
-head and the kept refusals to `reflections`. A todo marked conflicted keeps
-its local record and its pending reflection, which reflects it as recorded.
-Copies of other computers' todos are dropped; every local item and all its
-rows are kept.
+head and the kept refusals to `reflections`. It replaces the count of
+reflected build reviews with the reviewed verdicts themselves: the first
+`reviews_reflected` build-verdict stamps, in record order, are recorded as
+reviewed. It gives `inbound_commands` the command's time; a command recorded
+before it has none, and its reply, while still pending, is reconciled once
+against the whole conversation. A todo marked conflicted keeps its local
+record and its pending reflection, which reflects it as recorded. Copies of
+other computers' todos are dropped; every local item and all its rows are
+kept.
 <!-- /planned:github-human-agent-reflection -->
 
 ### Work tables
@@ -400,13 +405,14 @@ reflection. Key: `todo_id`.
 | `remote_revision` | The confirmed reflected revision: the latest record revision whose reflection GitHub accepted. |
 | `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. |
 | `failure` | The last failure that left reflection pending. |
-| `refusals` | Requests GitHub refused as invalid, as JSON: each with the identity of what it sent, and of the branch head it concerned, and GitHub's validation detail. A request with the same identity is not sent again; one whose identity changed is sent and its refusal dropped once GitHub accepts it. |
+| `refusals` | Requests GitHub refused as invalid, as JSON, at most one per reflected target: the issue, the pull request's creation, one build verdict's review (by its stamp's record order) or one artifact version (by its record order). Each holds the identity of the request sent — what it sent and the branch head it concerned — and GitHub's validation detail. A request to that target with the same identity is not sent again; one with another identity is sent, and the target's refusal is dropped once GitHub accepts it. A refused artifact version or verdict review never changes, so its refusal stays while the todo is kept. |
 | `pull_number` | The linked pull request. |
 | `published_head` | The work-branch commit the last publication left on the remote; `NULL` before the first. |
 | `etag` | The issue's `ETag` at its last read, for conditional reads. |
 | `comments_since` | The latest update time among the issue's comments read so far: the next read asks only for comments updated after it. `NULL` reads the conversation once in full. |
 | `events_page`, `events_last` | The page of the issue's events holding the last event read, and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
-| `issue_id`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
+| `reviews` | The build verdicts whose review is on the pull request, by their stamps' record order, as JSON. Each verdict is reflected on its own: one not yet reflected, or refused, holds back no other. |
+| `issue_id`, `pull_outstanding`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
 <!-- /planned-change:github-human-agent-reflection -->
 
 **`inbound_commands`** — processed `/instrukt` comment identities and their
@@ -417,9 +423,11 @@ confirmation. Their acceptance commits with any stamp and pending attention.
 Retries reconcile the source-comment reply marker before posting again.
 <!-- change:github-human-agent-reflection -->
 response and `reply_pending` distinguishes a committed decision from its remote
-confirmation. Their acceptance commits with any stamp and pending attention.
+confirmation; `commanded_at` is the command comment's creation time as GitHub
+gave it. Their acceptance commits with any stamp and pending attention.
 Retries reconcile the source-comment reply marker among the issue's comments
-posted since the command before posting again.
+updated since `commanded_at` before posting again; a row without it is
+reconciled against the whole conversation.
 <!-- /planned-change:github-human-agent-reflection -->
 
 **`github_label_actions`** — applied inbound hold-label actions. Key:
@@ -1254,7 +1262,8 @@ the task's next failed run. Validators, deferrals, watched-ref observations
 and listing copies are replaced in place. Key-lock rows are reused with
 <!-- change:github-human-agent-reflection -->
 the task's next failed run. Validators, deferrals and watched-ref
-observations are replaced in place. Key-lock rows are reused with
+observations are replaced in place. A kept refusal goes when GitHub accepts
+another request to its target, and otherwise with its todo's rows. Key-lock rows are reused with
 <!-- /planned-change:github-human-agent-reflection -->
 ownership cleared on release; they are not event history. Runtime bindings
 remain as identity caches, including completed occurrences and standalone runs.
@@ -1272,7 +1281,11 @@ connector's private message is kept as long as its conversation.
 
 ### Agent capacity
 
+<!-- planned-change:github-human-agent-reflection -->
 The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases travel in the reflected todo record. The internal `agent_availability` table holds profile/model subjects, typed
+<!-- change:github-human-agent-reflection -->
+The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases are kept with the todo in this computer's record. The internal `agent_availability` table holds profile/model subjects, typed
+<!-- /planned-change:github-human-agent-reflection -->
 available/unavailable/degraded status, optional absolute expiry and reason.
 Migration moves the prior todo preference column and its fast/med/slow values
 to tier light/standard/strong. Absence of capacity marks means available;
