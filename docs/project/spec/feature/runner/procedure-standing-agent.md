@@ -68,15 +68,12 @@ actor or repair lost identity. The opening loader directs
 retains its initialized role, home, subject, attendance and delivery facts.
 
 <!-- planned:standing-thread-actor-titles -->
-The thread title names the actor, not the procedure: the assignment's
-effective role alone for home identity, or `{role} · {subject}` with the
-complete typed subject for subject identity. An assignment without an
+The thread title names its actor (`sdlc/principle/domain-driven-design`): the
+assignment's effective role alone for home identity, or `{role} · {subject}`
+with the complete typed subject for subject identity. An assignment without an
 effective role is titled by the last segment of its procedure ID in the same
 shape. Automatic activation, manual entry reservation and successors title
-their generation this way; a successor takes the role of the current published
-assignment. The title is display only: the responsibility key and the runtime
-binding key never derive from it, so a changed role alters a successor's title
-and never its identity.
+their generation this way.
 <!-- /planned:standing-thread-actor-titles -->
 
 ### Continuation and successors
@@ -381,17 +378,6 @@ Given a developer's procedure has malformed entry metadata that cannot supply a 
 When automatic activation or manual entry reservation is requested for it
 Then entry refuses before creating a session and identifies the unusable effective role
 ```
-
-<!-- planned:standing-thread-actor-titles -->
-### UC-PSA31: Recognize a standing agent by its actor
-
-```gherkin
-Given a developer's subscribed procedure declares a role, or omits it and takes `event-handler`
-When automatic activation, manual entry reservation or a successor starts its standing thread
-Then the thread is titled with that role, followed by the typed subject under subject identity
-And the responsibility keeps the binding key it has regardless of its title
-```
-<!-- /planned:standing-thread-actor-titles -->
 
 ## Known caveats
 

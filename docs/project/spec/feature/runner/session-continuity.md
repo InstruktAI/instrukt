@@ -243,6 +243,7 @@ second launcher. Elapsed time never changes the generation.
 
 ### Human-facing thread titles
 
+<!-- planned-change:standing-thread-actor-titles -->
 Every start captures a readable label without an object-key suffix. Todo roles
 use `<role> · <todo-slug>`, standing procedures use their name and optional typed
 subject, tasks use `task · <task-slug>`, and runs use `run · <procedure-name>`.
@@ -252,6 +253,19 @@ Company owns conversation title formatting from optional connector display facts
 whitespace-separated words, capped at 80 Unicode characters with an ellipsis
 when shortened. Titles are presentation only, frozen with each launch request.
 Existing native titles are never rewritten by startup or migration.
+<!-- change:standing-thread-actor-titles -->
+Every start captures a readable label without an object-key suffix. Todo roles
+use `<role> · <todo-slug>`, standing procedures use their effective role and
+optional typed subject (`sdlc/principle/domain-driven-design`), or the last
+segment of their procedure ID without an effective role, tasks use
+`task · <task-slug>`, and runs use `run · <procedure-name>`.
+Company owns conversation title formatting from optional connector display facts:
+`<Company> · #<channel> · "<first words>"`, `<Company> · DM with <name>`, or
+`<Company> · Slack thread` without enrichment. The preview uses the first eight
+whitespace-separated words, capped at 80 Unicode characters with an ellipsis
+when shortened. Titles are presentation only, frozen with each launch request.
+Existing native titles are never rewritten by startup or migration.
+<!-- /planned-change:standing-thread-actor-titles -->
 
 ### Keyed dispatch and recovery
 
