@@ -192,6 +192,7 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         .query::<String>(&mut redis.connection())
         .unwrap();
     computer.tick();
+    // Each standing thread is titled by the role that answers it.
     let started: std::collections::BTreeMap<String, (String, String)> = runtime
         .threads()
         .iter()
@@ -215,10 +216,10 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         started,
         std::collections::BTreeMap::from([
             (
-                "own-choice".to_owned(),
+                "planner".to_owned(),
                 selected("planner", Some("antigravity"))
             ),
-            ("shipped-choice".to_owned(), selected("plan-reviewer", None)),
+            ("plan-reviewer".to_owned(), selected("plan-reviewer", None)),
         ])
     );
 }
