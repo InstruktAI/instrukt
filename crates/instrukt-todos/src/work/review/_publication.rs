@@ -57,8 +57,15 @@ pub(crate) fn body(
     let head = format!("{BODY_MARK} {}\n\n", description(name, moment));
     let closing =
         format!("\n\n(shortened; `instrukt review show {commit}` gives the report whole)\n");
+    shortened(&head, content, &closing)
+}
+
+/// `head` then `content`, within the body limit: when they do not fit,
+/// `content` is cut at a line end so that it and `closing`, the line saying
+/// where it is given whole, fit after `head`.
+pub(crate) fn shortened(head: &str, content: &str, closing: &str) -> String {
     let room = BODY_LIMIT.saturating_sub(head.chars().count() + closing.chars().count());
-    if content.chars().count() <= BODY_LIMIT - head.chars().count() {
+    if content.chars().count() <= BODY_LIMIT.saturating_sub(head.chars().count()) {
         return format!("{head}{content}");
     }
     let mut kept = String::new();
