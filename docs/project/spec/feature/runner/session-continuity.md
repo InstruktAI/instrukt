@@ -1,8 +1,6 @@
 ---
 description: Unattended runtime adapter operations, native agent delegation and record bindings, native keyed launch, automatic succession and settled-thread inspection.
 visibility: public
-binding_reservations:
-  UC-SS27: fix-false-recovery-on-released-executions
 ---
 # Session Continuity — Spec
 
@@ -766,8 +764,8 @@ And a lost acknowledgement replays that successor with the same IDs
 ### UC-SS27: A handed-off orchestrator's conversation stays settled
 
 ```gherkin
-Given a developer's orchestrator released its todo at the approved preparation handoff and settled its conversation
-And the todo still awaits integration of its preparation
+Given a developer's orchestrator released its todo and settled its conversation
+And another session has since taken that todo up
 When the runner next considers the project's work
 Then that conversation receives no recovery message and stays settled
 And no stopped execution is reported for it
