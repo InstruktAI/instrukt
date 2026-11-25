@@ -71,8 +71,7 @@ missing:
   leave the finding standing;
 - work's readiness for automatic review reports an unmet finding for the
   project identity or the reviewer identity on the repository
-  (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
-  review).
+  (`project/instrukt/spec/feature/work/github-apps`).
 
 `config patch` refuses a write that would switch it on with such a finding,
 under its revision check and whole-document validation
@@ -84,6 +83,35 @@ that computer; its other capabilities are unaffected
 (`project/instrukt/policy/checks-and-guards`). The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
+
+### Regenerable output declaration
+
+`regenerable` is a list of paths allowed in the project layer only; absent or
+empty, the project declares nothing. Each entry names one location inside a
+checkout of the project, relative to the checkout's root, that the project
+rebuilds from its committed sources. Worktree reclamation is its only reader
+and owns what a removal does
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). The key holds
+locations and never a command: a project layer decides nothing that runs on
+the machine.
+
+An entry is a finding at `regenerable`, naming the entry, when it is empty or
+absolute, steps to a parent directory, names the checkout's root itself, or
+names the repository's `.git` or a location under it. A global value is a
+finding.
+
+`config patch` refuses a write that would introduce such an entry, under its
+revision check and whole-document validation
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+`config validate` reports it without changing anything. A project layer that
+arrives with it through a commit is not admitted for reclaiming declared
+output on that computer; the project's other capabilities are unaffected
+(`project/instrukt/policy/checks-and-guards`). Installation inspection reports
+the withheld reclamation
+(`project/instrukt/spec/feature/runner/module-installation`), and no declared
+output is removed without an admitted declaration; the release of a delivered
+todo's worktree does not depend on it
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
 ### Layer rules
 
@@ -500,6 +528,17 @@ When an agent retrieves a procedure that renders the terminal retirement action 
 Then the retirement action resolves from the machine's T3 entry as native archiving while dormant settling remains native settling
 And a global override replaces the machine's retirement instruction while a project-layer override is refused
 And reading those directives starts or modifies no runtime session
+```
+
+### UC-CL9: A project's declared regenerable output cannot reach outside its checkout
+
+```gherkin
+Given a developer's project declares the output it rebuilds from its sources
+When the developer validates the project's configuration
+Then the declaration is accepted
+But when the declaration names a location outside the project's checkout
+Then validation reports that entry
+And the project is not admitted for reclaiming that output on the computer
 ```
 
 ## Known caveats

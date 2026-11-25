@@ -99,6 +99,11 @@ withhold a responsibility on this computer: event responses switched on without
 its secret values or its provider permissions
 (`project/instrukt/spec/feature/configuration/company-homes`).
 
+They report in the same way a project whose declaration of regenerable output
+is not admitted: reclaiming that output from its idle worktrees is withheld
+for that project on this computer, while a delivered todo's worktree is still
+released (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
 ### Graphify installation
 
 For blueprint demand, use the lifecycle and pin owned by

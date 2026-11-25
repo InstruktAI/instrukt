@@ -617,3 +617,20 @@ build, while the store is still in its earlier shape, with SQLite's online
 backup, which is safe while instrukt uses the store:
 
     sqlite3 ~/.instrukt/state/history.db ".backup '/path/to/history-before-upgrade.db'"
+
+### Worktree reclamation: declared regenerable output
+
+instrukt now reclaims the disk todo worktrees hold itself: the runner removes
+a project's declared regenerable output from idle todo worktrees and releases
+a delivered todo's worktree and work branch, and `instrukt repo reclaim`
+reclaims a working session's own worktree. What may be removed from a todo
+worktree that stays is only what a project declares under the project-layer
+key `regenerable`; a project that declares nothing loses no files from it. A
+delivered todo's clean worktree is removed whole, with everything git ignores
+in it, whatever the project declares.
+
+This repository declares `regenerable` in its `instrukt.yaml`. On a computer
+whose installed instrukt predates this release, that key is an unknown key in
+this repository's layer: the layer does not validate there, which withholds
+history extraction for the project on that computer until instrukt is
+upgraded. Upgrade instrukt on each computer that serves this repository.

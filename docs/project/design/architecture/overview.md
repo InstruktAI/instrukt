@@ -134,6 +134,7 @@ deleting the home is not a lossless reset.
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
 | `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
+| `state/delivered-release.lock` | the per-computer lock work holds while it releases a delivered todo's worktree and work branch; taken without waiting and by no command (`project/instrukt/spec/feature/work/todos`) | taken again by the next release |
 | `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, each source's extraction position and each TeleClaude import's progress; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
 | `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, one import batch, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
@@ -360,9 +361,14 @@ branch. Work on another computer creates its local `<slug>/work` branch from
 use that recorded workspace serially and commit directly on `<slug>/work`;
 completion stamps release attempts atomically. `kind: task` creates no git
 worktree. Pending docs fold at work delivery, and after confirmed delivery
-the integrator removes the clean `<slug>/work` worktree and deletes `<slug>/work`
-locally and on origin. Ad hoc work uses its own reviewed one-off worktree; main
-is integrator-only.
+the runner has work release the clean `<slug>/work` worktree and delete
+`<slug>/work` locally and on origin, on each computer that holds them. On each
+invocation the runner also removes a project's declared regenerable output
+from the todo worktrees workflow reports idle, and a session working a todo
+reclaims its own worktree with `instrukt repo reclaim`; no agent issues a
+deletion command for either
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). Ad hoc work
+uses its own reviewed one-off worktree; main is integrator-only.
 Before dispatch each tick, the runner fetches canonical remote main and
 fast-forwards a clean canonical checkout when it lags. Post-merge publication
 and blueprint maintenance run on each computer; dirty or diverged checkouts
@@ -488,7 +494,7 @@ sequenceDiagram
 
 A review is one judgment of one commit from the pinned base its request
 carries, which the runner selects
-(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests).
+(`project/instrukt/spec/feature/runner/pull-request-review`).
 A verdict covers the canonical branch only when that base lies on it, and
 earns candidate coverage only then. Requests are counted per commit: one is live
 at a time, and a request delivery selected for handover keeps the commit until

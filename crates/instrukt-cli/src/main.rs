@@ -68,7 +68,7 @@ enum Command {
     Init(repository::InitArgs),
     /// Install, remove, inspect and run instrukt's git hook sections.
     Hooks(repository::HooksArgs),
-    /// Attributed commits in an authoring worktree.
+    /// Attributed commits and reclaimed build output in the acting agent's authoring worktree.
     Repo(repository::RepoArgs),
     /// Use-case coverage, reservation and trace.
     Specs(specs::SpecsArgs),

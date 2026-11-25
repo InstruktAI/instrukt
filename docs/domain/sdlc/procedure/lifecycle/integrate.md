@@ -212,28 +212,22 @@ may deliver only a reference to the session, never its failure content.
 
 After work promotion, confirm the exact remote commit and record delivery evidence
 with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
-commit under the work-record contract. Remove the clean `<slug>/work` worktree and
-delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
+commit under the work-record contract. instrukt itself removes the delivered
+todo's clean `<slug>/work` worktree and deletes `<slug>/work` locally and on
+`origin`, on each computer that holds them; issue no removal command for them
+(`general/policy/shared-machine-resources`).
 
-After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json`:
-
-1. **Retire terminal orchestrator threads.** Read the delivered todo's recorded
-   orchestrator bindings (`todo-orchestrator`, plus any legacy
-   phase-orchestrator bindings) and retire each non-standing orchestrator thread
-   through the configured `runtime.retire_thread` action. Converge idempotently on already-retired threads (distinguishing an
-   already-retired thread from a failed observation), preserve any unfinished
-   human or worker obligations, and never retire standing agents (including this
-   integrator session). Unrelated worktree or branch cleanup failures do not
-   gate retiring the delivered todo's orchestrator threads, and vice versa.
-2. **Clean up the worktree and branch.** While the ledger's
-   `workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
-   (`git worktree remove <workspace.worktree_path>`). Select only the todo's one
-   shared worktree; retained role-attempt rows refer to that same path. A dirty or
-   in-use worktree or failed removal remains owed. Then delete `<slug>/work`
-   locally (`git branch -D <workspace.branch>`) and on `origin`
-   (`git push origin --delete <workspace.branch>`) until both refs are absent.
-   Preserve the runtime thread record and retained attempt evidence; todo cleanup
-   is separate from the persistent integration workspace.
+After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json` and
+retire the terminal orchestrator threads. Read the delivered todo's recorded
+orchestrator bindings (`todo-orchestrator`, plus any legacy phase-orchestrator
+bindings) and retire each non-standing orchestrator thread through the
+configured `runtime.retire_thread` action. Converge idempotently on
+already-retired threads (distinguishing an already-retired thread from a failed
+observation), preserve any unfinished human or worker obligations, and never
+retire standing agents (including this integrator session). A worktree or
+branch whose removal is still owed shows in that ledger; it does not gate
+retiring the delivered todo's orchestrator threads. Preserve the runtime thread
+record and retained attempt evidence.
 
 When all current work is settled, park as the standing integrator. The next
 `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
@@ -242,8 +236,7 @@ binding.
 ## Outputs
 
 - Exact verified candidates promoted and confirmed on remote main (with pending
-  docs folded at delivery and `<slug>/work` worktree and local/origin branch
-  cleanup); ready one-off work integrated through the same gate.
+  docs folded at delivery); ready one-off work integrated through the same gate.
 - Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 
@@ -257,10 +250,9 @@ binding.
   Only missing human intent or a human-owned exposure is asked in the thread.
 - A candidate already promoted needs delivery-record reconciliation, not
   another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
-  then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`,
-  retire the delivered todo's recorded non-standing phase orchestrator thread(s)
-  through `runtime.retire_thread`, and remove the clean `<slug>/work` worktree
-  and local/origin branch (neither gating the other). Release an owed claim with
+  then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`
+  and retire the delivered todo's recorded non-standing phase orchestrator
+  thread(s) through `runtime.retire_thread`. Release an owed claim with
   `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
-  the handoff and remaining cleanup; apart from terminal orchestrator retirement,
-  the runtime owns session ending. A failed cleanup remains unresolved.
+  the handoff; apart from terminal orchestrator retirement, the runtime owns
+  session ending.

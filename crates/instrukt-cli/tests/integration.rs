@@ -128,6 +128,8 @@ mod use_case_trace;
 mod work_dispatch;
 #[path = "cases/workflow-definition.rs"]
 mod workflow_definition;
+#[path = "cases/worktree-reclamation.rs"]
+mod worktree_reclamation;
 
 #[cfg(feature = "t3-contract")]
 #[path = "cases/t3-contract.rs"]

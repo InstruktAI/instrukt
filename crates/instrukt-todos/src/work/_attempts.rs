@@ -402,12 +402,7 @@ impl Work {
         orchestrator(&s, index)?;
         let runtime = s.config.runner_runtime()?;
         let record = &s.items[index].record;
-        if let Some(active) = record.bindings.iter().find(|b| {
-            matches!(
-                b.attempt.assignment,
-                AssignmentKind::Child | AssignmentKind::Workspace
-            ) && b.attempt.released_at.is_none()
-        }) {
+        if let Some(active) = record.bindings.iter().find(|b| b.is_open_role_attempt()) {
             let assignment = active.attempt.native_assignment.as_ref().ok_or_else(|| {
                 WorkError::refused("outstanding native assignment has no retained inputs")
             })?;
@@ -1087,12 +1082,7 @@ pub(super) fn readiness(
         )
     })?;
     // Invariant 1: no active unreleased workspace/child attempt.
-    if record.bindings.iter().any(|b| {
-        matches!(
-            b.attempt.assignment,
-            AssignmentKind::Workspace | AssignmentKind::Child
-        ) && b.attempt.released_at.is_none()
-    }) {
+    if record.bindings.iter().any(|b| b.is_open_role_attempt()) {
         return Err(WorkError::refused(
             "outstanding workspace attempt blocks readiness",
         ));
