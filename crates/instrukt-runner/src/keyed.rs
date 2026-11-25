@@ -3,6 +3,7 @@
 use instrukt_core::fsx::LockGuard;
 use instrukt_core::home::Home;
 use instrukt_core::ids::SessionRef;
+use instrukt_core::process::{Limit, Look};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
 use std::time::Duration;
@@ -433,11 +434,39 @@ fn start_with_work(
         recorded.replaced_session.as_ref(),
     )?;
     let session = adapter.create_thread(&input)?;
-    let thread = adapter.read_state(&session)?;
-    verify_recorded_project(&guard.state, &input.key, &thread)?;
-    adapter.verify_start(&input, &thread)?;
+    let thread = observe_launch(adapter, guard, &input, &session)?;
     accept_thread(guard, adapter, assignment, &input, &thread, &recorded, work)?;
     Ok(thread)
+}
+/// How long a launched thread is observed while its runtime still prepares
+/// its placement.
+const PLACEMENT_WINDOW: Duration = Duration::from_secs(10);
+/// The pause between two observations of a placement still being prepared.
+const PLACEMENT_PAUSE: Duration = Duration::from_millis(250);
+/// Reads and verifies the thread a launch created. While the runtime answers
+/// that its placement is still being prepared, it observes the thread again
+/// after a pause, until verification answers otherwise or the placement
+/// window has elapsed; the last answer is the start's.
+fn observe_launch(
+    adapter: &dyn RuntimeAdapter,
+    guard: &KeyGuard,
+    input: &RuntimeStart,
+    session: &SessionRef,
+) -> Result<Thread, SessionsError> {
+    let window = Limit::start(PLACEMENT_WINDOW);
+    loop {
+        let thread = adapter.read_state(session)?;
+        verify_recorded_project(&guard.state, &input.key, &thread)?;
+        match adapter.verify_start(input, &thread) {
+            Ok(()) => return Ok(thread),
+            Err(SessionsError::PlacementPreparing(_))
+                if window.judge(None::<()>) == Look::Running =>
+            {
+                std::thread::sleep(PLACEMENT_PAUSE);
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 fn accept_thread(
     guard: &KeyGuard,

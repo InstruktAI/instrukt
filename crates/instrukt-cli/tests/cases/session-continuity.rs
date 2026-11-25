@@ -1515,8 +1515,14 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
     let native = format!("t3:{}", fake.native_id("s1"));
-    let shown: serde_json::Value =
-        serde_json::from_str(&p.todo(["show", "parser", "--json"])).unwrap();
+    let shown: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.repo.path(), ["todo", "show", "parser", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
     let orchestrator = shown["ledger"]["active_attempts"]
         .as_array()
         .unwrap()
