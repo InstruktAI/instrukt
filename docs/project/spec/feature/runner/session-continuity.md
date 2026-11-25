@@ -863,6 +863,23 @@ And no failed start is reported for it
 And the orchestrator has received its opening brief once
 ```
 
+<!-- planned:fix-company-session-starts-outside-company-home -->
+### UC-SS29: Start and deliver only in the checkout's own runtime project
+
+```gherkin
+Given an execution checkout has no runtime project rooted at itself
+And an ancestor folder is registered as a runtime project
+When the runner attempts to start a session for that checkout
+Then the start stays pending naming the checkout and its add door
+And no session is started in the ancestor project
+When a runtime project is registered at the exact checkout
+Then the runner starts the session in that checkout's project
+But when a bound thread belongs to a project rooted elsewhere
+Then the runner neither adopts nor delivers input to it and reports the thread, checkout and archive door
+And once that thread is archived, its successor starts in the checkout's own project
+```
+<!-- /planned:fix-company-session-starts-outside-company-home -->
+
 ## Known caveats
 
 - A legacy native admission whose original startup request is unknown remains
