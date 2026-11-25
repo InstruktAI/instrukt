@@ -18,7 +18,8 @@ use crate::evidence::{
 
 use super::_provider::{
     ChangeSinceReview, CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations,
-    WorktreeObservation, current_build_verdict, dependency_change, is_independent_reviewer,
+    WorktreeObservation, current_build_verdict, dependency_change, handoff_disposition,
+    is_independent_reviewer,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -579,6 +580,18 @@ pub(crate) fn readiness_approved(
         .rev()
         .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
         .is_some_and(|s| independent(record, &s.actor, Some(caller)))
+}
+
+/// The handoff half of invariant 2 over the work record: a current
+/// verification disposition admitting handoff at `candidate`, as
+/// [`handoff_disposition`] judges it (the reason when not).
+pub(crate) fn handoff_admitted(
+    record: &crate::work::TodoRecord,
+    candidate: &CommitSha,
+    caller: &instrukt_core::ids::SessionRef,
+) -> Result<(), String> {
+    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
+    handoff_disposition(&evidence, candidate, Some(caller))
 }
 
 /// Whether `actor` is independent of the todo's claim holder, driver and

@@ -22,7 +22,9 @@ pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, Covering
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
 pub use _observe::ObservationError;
-pub(crate) use _observe::{VERIFIER_ROLE, readiness_approved, verification_admission};
+pub(crate) use _observe::{
+    VERIFIER_ROLE, handoff_admitted, readiness_approved, verification_admission,
+};
 pub use _provider::{
     ApprovalStatus, ArtifactFact, AttemptFact, BuildReviewBinding, BuildReviewFact, DriftStatus,
     GatesFact, IntegrateGateStatus, PrerequisiteFact, PrerequisiteStanding, ReviewFact, TodoLedger,

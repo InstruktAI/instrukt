@@ -17,7 +17,8 @@ use serde::Serialize;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactVersion, BuildVerdict, ContentDigest,
     DependencyDigest, DriftClass, PreparationReview, Prerequisite, ReviewVerdict, RoleBinding,
-    StampFact, TodoEvidence, TodoStatus, artifact_names, upstream_of,
+    StampFact, StampRecord, TodoEvidence, TodoStatus, VerificationDisposition, artifact_names,
+    upstream_of,
 };
 
 /// Each artifact with a drift classification.
@@ -826,6 +827,88 @@ pub(crate) fn current_build_verdict(
     })
 }
 
+/// The latest verification disposition recorded for the todo, with the
+/// commit and report it binds: the only one that can be current
+/// (`artifact-currency`, "Verification-disposition currency").
+fn latest_disposition(
+    evidence: &TodoEvidence,
+) -> Option<(
+    &StampRecord,
+    VerificationDisposition,
+    &CommitSha,
+    &ContentDigest,
+)> {
+    evidence.stamps.iter().rev().find_map(|s| match &s.fact {
+        StampFact::VerificationDisposition {
+            disposition,
+            commit,
+            report,
+            ..
+        } => Some((s, *disposition, commit, report)),
+        _ => None,
+    })
+}
+
+/// The handoff half of invariant 2 (`delivery-cycle`, "Live verification
+/// disposition"): the latest verification disposition names `candidate`,
+/// binds the current `verification-findings` report and admits handoff,
+/// and a pass was recorded by a session independent of the claim holder,
+/// driver and writers (and of `caller`, when given). One predicate for
+/// `--finalize-ready` and the ledger, so the ledger never advertises a
+/// readiness that refuses. The error names what is owed.
+pub(crate) fn handoff_disposition(
+    evidence: &TodoEvidence,
+    candidate: &CommitSha,
+    caller: Option<&SessionRef>,
+) -> Result<(), String> {
+    const OWED: &str = "a pass, tier_0_skip or hotfix_deferred is owed at this commit";
+    let Some((stamp, disposition, commit, report)) = latest_disposition(evidence) else {
+        return Err(format!("no verification disposition recorded; {OWED}"));
+    };
+    if commit != candidate {
+        return Err(format!(
+            "latest verification disposition ({disposition}) names another commit; {OWED}"
+        ));
+    }
+    let current_report = evidence
+        .artifacts
+        .iter()
+        .find(|a| a.name.as_str() == artifact_names::VERIFICATION_FINDINGS)
+        .and_then(|a| a.versions.last())
+        .map(|v| &v.digest);
+    if current_report != Some(report) {
+        return Err(format!(
+            "verification-findings changed since the latest disposition ({disposition}); one is owed for the current report"
+        ));
+    }
+    if !disposition.admits_handoff() {
+        return Err(format!(
+            "latest verification disposition is {disposition}; {OWED}"
+        ));
+    }
+    if disposition == VerificationDisposition::Pass {
+        let bindings: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = evidence
+            .bindings
+            .iter()
+            .map(|b| {
+                (
+                    b.role.clone(),
+                    b.attempt.assignment,
+                    Some(&b.binding.session),
+                )
+            })
+            .collect();
+        let claim = evidence.claim.as_ref().and_then(|c| c.session.as_ref());
+        if !is_independent_reviewer(claim, &bindings, &stamp.actor, caller) {
+            return Err(
+                "the verification pass was not recorded by an independent verifier; a new independent verifier attempt is owed"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The latest finalize-ready commit if it still stands (no later build
 /// completion or kickback).
 pub(crate) fn current_finalize_ready(evidence: &TodoEvidence) -> Option<&CommitSha> {
@@ -1384,6 +1467,136 @@ pub(crate) fn standings<E>(
 mod tests {
     use super::super::_testing::{digest, session, sha, todo};
     use super::*;
+
+    /// A claimed change with a `verification-findings` report `report`.
+    fn verified(report: &str) -> TodoEvidence {
+        todo(TodoKind::Change)
+            .artifact(artifact_names::VERIFICATION_FINDINGS, report)
+            .claimed()
+            .build()
+    }
+
+    /// `disposition` of `commit` against report `report`, by `who`.
+    fn disposed(
+        evidence: &mut TodoEvidence,
+        who: &str,
+        disposition: VerificationDisposition,
+        commit: &CommitSha,
+        report: &str,
+    ) {
+        let sequence = evidence.stamps.len() as u64 + 100;
+        evidence.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::VerificationDisposition {
+                disposition,
+                commit: commit.clone(),
+                report: digest(report),
+                follow_up: None,
+            },
+            at: jiff::Timestamp::from_second(1_800_000_100).unwrap(),
+            actor: Actor::Session(session(who)),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence,
+            model_provenance: Default::default(),
+        });
+    }
+
+    #[test]
+    fn a_disposition_admits_handoff_only_at_its_commit_and_report() {
+        let head = sha('a');
+        let mut evidence = verified("tier 0");
+        assert!(
+            handoff_disposition(&evidence, &head, None)
+                .unwrap_err()
+                .contains("no verification disposition recorded")
+        );
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Tier0Skip,
+            &head,
+            "tier 0",
+        );
+        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+        // A new candidate commit carries none until one is recorded for it.
+        assert!(
+            handoff_disposition(&evidence, &sha('b'), None)
+                .unwrap_err()
+                .contains("names another commit")
+        );
+        // A rewritten report leaves the disposition as history.
+        let mut rewritten = evidence.clone();
+        rewritten.artifacts[0].versions[0].digest = digest("tier 0, revised");
+        assert!(
+            handoff_disposition(&rewritten, &head, None)
+                .unwrap_err()
+                .contains("verification-findings changed")
+        );
+    }
+
+    #[test]
+    fn only_the_latest_disposition_counts() {
+        let head = sha('a');
+        let mut evidence = verified("live run");
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Tier0Skip,
+            &head,
+            "live run",
+        );
+        disposed(
+            &mut evidence,
+            "verifier",
+            VerificationDisposition::Fail,
+            &head,
+            "live run",
+        );
+        assert!(
+            handoff_disposition(&evidence, &head, None)
+                .unwrap_err()
+                .contains("latest verification disposition is fail")
+        );
+        disposed(
+            &mut evidence,
+            "verifier",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+    }
+
+    #[test]
+    fn a_pass_admits_only_when_its_recorder_is_independent() {
+        let head = sha('a');
+        let mut evidence = verified("live run");
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert!(
+            handoff_disposition(&evidence, &head, None)
+                .unwrap_err()
+                .contains("not recorded by an independent verifier")
+        );
+        let mut independent = verified("live run");
+        disposed(
+            &mut independent,
+            "verifier",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert_eq!(handoff_disposition(&independent, &head, None), Ok(()));
+        assert!(handoff_disposition(&independent, &head, Some(&session("verifier"))).is_err());
+    }
 
     #[test]
     fn fast_track_bug_needs_no_prd_or_plan_to_pass_integrate_gate() {

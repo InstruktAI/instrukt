@@ -1203,13 +1203,19 @@ pub(super) fn readiness(
             "readiness requires matching clean shared, local and published candidate",
         ));
     }
-    // Invariant 2: exact-SHA independent reviewer APPROVE stamp.
+    // Invariant 2, the independent exact-SHA handoff gate: an independent
+    // reviewer's APPROVE stamp and a current verification disposition that
+    // admits handoff, both bound to this exact commit SHA.
     if !crate::workflow::readiness_approved(record, root, &candidate, caller) {
         return Err(WorkError::refused(
             "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
         ));
     }
-    Ok(())
+    crate::workflow::handoff_admitted(record, &candidate, caller).map_err(|why| {
+        WorkError::refused(format!(
+            "readiness requires a current verification disposition admitting handoff at this exact commit SHA — an independent verifier's pass, or the claim-holding orchestrator's tier_0_skip or hotfix_deferred: {why}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
