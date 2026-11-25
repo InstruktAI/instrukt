@@ -41,7 +41,9 @@ pub(super) fn render(project: &ProjectSlug, coordinates: &Coordinates) -> Render
 mod tests {
     #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
-    use super::*;
+    use instrukt_core::ids::ProjectSlug;
+
+    use super::{Coordinates, render};
     use crate::requested_review::RawCoordinates;
 
     #[test]

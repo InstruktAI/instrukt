@@ -647,7 +647,11 @@ pub(super) fn request(head: &CommitSha, requests: &[Request]) -> Result<(), AskE
 mod tests {
     #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
-    use super::*;
+    use std::ffi::OsString;
+
+    use instrukt_core::ids::{CommitSha, SnippetId};
+
+    use super::{Coordinate, Coordinates, FormRefusal, Kind, RawCoordinates, SourcePointer};
 
     const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 
