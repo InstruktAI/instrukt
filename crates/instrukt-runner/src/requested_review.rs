@@ -9,6 +9,11 @@
     reason = "the checks are called by the ask, which arrives with the start"
 )]
 mod _admission;
+#[allow(
+    dead_code,
+    reason = "the ask renders its assignment with it, and arrives with the start"
+)]
+mod _rendering;
 #[expect(
     dead_code,
     reason = "the ask that writes and reads it arrives with the start"
