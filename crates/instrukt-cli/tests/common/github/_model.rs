@@ -198,6 +198,9 @@ pub(super) struct Repo {
     pub(super) comments: BTreeMap<u64, Comment>,
     pub(super) labels: BTreeMap<String, Label>,
     pub(super) branches: BTreeMap<String, String>,
+    /// A bare repository whose branches GitHub serves, as when pushes to it
+    /// reach GitHub; `branches` answers for the ones it does not hold.
+    pub(super) branch_source: Option<std::path::PathBuf>,
     statuses: BTreeMap<String, Vec<Status>>,
     pub(super) check_runs: BTreeMap<String, Vec<(String, u64, CheckRun)>>,
 }
@@ -324,6 +327,26 @@ pub(super) fn actor(login: &str) -> Value {
 }
 
 impl Repo {
+    /// The commit branch `name` is at: in the bare repository GitHub serves
+    /// branches from, else as set on the fake.
+    pub(super) fn branch_head(&self, name: &str) -> Option<String> {
+        let pushed = self.branch_source.as_ref().and_then(|source| {
+            let out = std::process::Command::new("git")
+                .arg("--git-dir")
+                .arg(source)
+                .args(["rev-parse", "--verify", "--quiet"])
+                .arg(format!("refs/heads/{name}"))
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        });
+        pushed.or_else(|| self.branches.get(name).cloned())
+    }
+}
+
+impl Repo {
     pub(super) fn new(id: u64, owner: &str, name: &str) -> Self {
         Self {
             id,
@@ -335,6 +358,7 @@ impl Repo {
             comments: BTreeMap::new(),
             labels: BTreeMap::new(),
             branches: BTreeMap::new(),
+            branch_source: None,
             statuses: BTreeMap::new(),
             check_runs: BTreeMap::new(),
         }

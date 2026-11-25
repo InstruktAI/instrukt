@@ -97,6 +97,138 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     );
 }
 
+/// A todo of `crew` prepared and approved, its build started on its work
+/// branch, with its workspace.
+fn worked_todo(crew: &workflow::Crew, slug: &str) -> std::path::PathBuf {
+    let project = &crew.project;
+    project.create(slug, "feature", INTENT);
+    project.ok(["artifacts", "write", slug, "prd", PRD]);
+    project.ok([
+        "artifacts",
+        "write",
+        slug,
+        "implementation-plan",
+        "1. Track depth in the parser.\n2. Render it.",
+    ]);
+    let workspace = crew.workspace(slug);
+    crew.write(
+        slug,
+        "prd-review-findings",
+        "The product requirement is approved.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(slug, &["--prd-approved", "--by", "human"]);
+    crew.write(
+        slug,
+        "plan-review-findings",
+        "The implementation plan is approved.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    crew.next("work", slug);
+    crew.todo_in(&workspace, ["stamp", slug, "--build-started"]);
+    workspace
+}
+
+/// Commits `file` with `content` on the workspace's branch; its head.
+fn land(crew: &workflow::Crew, workspace: &Path, file: &str, content: &str) -> String {
+    let env = &crew.project.env;
+    std::fs::write(workspace.join(file), content).unwrap();
+    env.git(workspace, ["add", file]);
+    env.git(workspace, ["commit", "--quiet", "-m", file]);
+    env.git(workspace, ["rev-parse", "HEAD"])
+}
+
+/// The commit branch `branch` names in the bare repository `origin`.
+fn remote_head(crew: &workflow::Crew, branch: &str) -> String {
+    crew.project.env.git(
+        crew.root(),
+        [
+            "--git-dir",
+            crew.origin.to_str().unwrap(),
+            "rev-parse",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR16
+#[test]
+fn commits_landed_on_a_todos_branch_reach_its_pull_request_on_github() {
+    let mut crew = workflow::Crew::new();
+    crew.project
+        .github
+        .serve_branches_from(REPOSITORY, &crew.origin.clone());
+    // The runner ticks for the published project.
+    crate::fixtures::documented::sync(&crew.project.env, &crew.project.repo);
+    let workspace = worked_todo(&crew, "nested-lists");
+    let tick = |crew: &workflow::Crew| crew.project.env.run(crew.root(), ["tick"]).success();
+
+    // A builder lands a commit; the next tick publishes it and the pull
+    // request opens on it.
+    let built = land(&crew, &workspace, "parser.rs", "fn parse() {}\n");
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), built);
+    let pulls: Vec<Value> = crew
+        .project
+        .github
+        .issues(REPOSITORY)
+        .into_iter()
+        .filter(|i| i.get("pull_request").is_some())
+        .collect();
+    assert_eq!(pulls.len(), 1, "{pulls:?}");
+    assert_eq!(pulls[0]["state"], "open");
+
+    // While GitHub cannot be reached the work goes on; the commit reaches
+    // GitHub once it can.
+    let away = crew.origin.with_extension("away");
+    std::fs::rename(&crew.origin, &away).unwrap();
+    crew.project.github.stop();
+    let fixed = land(&crew, &workspace, "render.rs", "fn render() {}\n");
+    crew.project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Rendering joined.",
+    ]);
+    tick(&crew);
+    std::fs::rename(&away, &crew.origin).unwrap();
+    assert_eq!(remote_head(&crew, "nested-lists/work"), built);
+    crew.project.github.resume();
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), fixed);
+
+    // The branch on GitHub moves where the todo's branch cannot follow it:
+    // it is left as it is, and the developer is told why.
+    let elsewhere = crew.project.env.git(
+        crew.root(),
+        [
+            "commit-tree",
+            "-p",
+            &fixed,
+            "-m",
+            "pushed elsewhere",
+            &format!("{fixed}^{{tree}}"),
+        ],
+    );
+    crew.project.env.git(
+        crew.root(),
+        [
+            "push",
+            "--quiet",
+            "origin",
+            &format!("{elsewhere}:refs/heads/nested-lists/work"),
+        ],
+    );
+    land(&crew, &workspace, "lists.rs", "fn lists() {}\n");
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), elsewhere);
+    insta::assert_snapshot!(
+        "unpublishable-branch",
+        redact(&crew.project.ok(["show", "nested-lists"]))
+    );
+}
+
 // spec: project/instrukt/spec/feature/work/github-record UC-GR13
 #[test]
 fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_issue() {

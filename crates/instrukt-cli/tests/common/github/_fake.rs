@@ -463,6 +463,13 @@ impl FakeGitHub {
         comment.updated_at = now;
     }
 
+    /// Serves the branches of `repo` from the bare repository at `source`:
+    /// what is pushed there is on GitHub.
+    pub fn serve_branches_from(&self, repo: &str, source: &std::path::Path) -> &Self {
+        self.lock().repo(repo).branch_source = Some(source.to_owned());
+        self
+    }
+
     /// Puts branch `name` at `sha` on the fake.
     pub fn set_branch(&self, repo: &str, name: &str, sha: &str) -> &Self {
         self.lock()

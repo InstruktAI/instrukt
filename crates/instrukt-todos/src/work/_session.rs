@@ -1403,6 +1403,101 @@ impl<'w> Session<'w> {
         Ok(())
     }
 
+    /// Publishes the work branch of each repository todo still owed it —
+    /// one with a recorded branch, not delivered, not removed and with no
+    /// withdrawal open — whose local head is not the one last published
+    /// (`github-record`, Issues and visible work). It runs on runner ticks,
+    /// outside the reflection lock, so no command's flush waits behind a
+    /// push; each outcome is committed in a brief writer transaction. A
+    /// branch the remote moved away from is left there and its reason kept;
+    /// a remote that cannot be reached leaves everything for the next tick.
+    /// A todo no longer owed publication has its reason cleared.
+    pub fn publish(&mut self) -> Result<(), WorkError> {
+        let remote = github::tracked_remote(&self.project.root, &self.base)?;
+        for index in 0..self.items.len() {
+            let item = &self.items[index];
+            let id = item.record.id.clone();
+            let owed = super::_envelope::is_repository_work(item.record.kind)
+                && item.record.delivery.is_none()
+                && item.record.status != TodoStatus::Removed
+                && self.store.withdrawal_intent(&id)?.is_none();
+            let Some(branch) = item.record.branch.clone().filter(|_| owed) else {
+                if item.reflection.publication_outstanding.is_some() {
+                    self.amend(index, |r| r.publication_outstanding = None)?;
+                }
+                continue;
+            };
+            let head = match git::run(
+                &self.project.root,
+                [
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("refs/heads/{branch}^{{commit}}"),
+                ],
+            ) {
+                Ok(head) => head.trim().to_owned(),
+                Err(git::GitError::Failed { .. }) => continue,
+                Err(error) => return Err(error.into()),
+            };
+            if item.reflection.published_head.as_deref() == Some(head.as_str())
+                && item.reflection.publication_outstanding.is_none()
+            {
+                continue;
+            }
+            let Some(remote) = remote.as_deref() else {
+                let why = format!(
+                    "the default branch `{}` tracks no remote, so branch `{branch}` is not published",
+                    self.base
+                );
+                if item.reflection.publication_outstanding.as_deref() != Some(why.as_str()) {
+                    self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
+                }
+                continue;
+            };
+            match super::_publication::push(&self.project.root, remote, &branch) {
+                super::_publication::Pushed::Published => {
+                    tracing::info!(
+                        event = "work_branch_published",
+                        project = %self.project.slug,
+                        todo = %self.items[index].record.slug,
+                        branch,
+                        head,
+                        "the work branch is on the remote"
+                    );
+                    self.amend(index, |r| {
+                        r.published_head = Some(head.clone());
+                        r.publication_outstanding = None;
+                    })?;
+                }
+                super::_publication::Pushed::Diverged => {
+                    let why = format!(
+                        "branch `{branch}` on `{remote}` moved where this computer's branch cannot follow it, so its commits are not published; the branch on `{remote}` is left as it is"
+                    );
+                    tracing::warn!(
+                        event = "work_branch_diverged",
+                        project = %self.project.slug,
+                        todo = %self.items[index].record.slug,
+                        branch,
+                        "the remote work branch moved; publication is left to the developer"
+                    );
+                    self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
+                }
+                super::_publication::Pushed::Unreached(why) => {
+                    tracing::warn!(
+                        event = "work_branch_unpublished",
+                        project = %self.project.slug,
+                        todo = %self.items[index].record.slug,
+                        branch,
+                        reason = why,
+                        "the work branch could not reach its remote; the next tick tries again"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Gives the session's own item of `row`, a row reflection just
     /// committed, what reflection learned: its reflection state and learned
     /// artifact values, on the session's own record. A record another
@@ -1613,6 +1708,11 @@ pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> Refl
     let pull_owed = _reflect::pull_request_owed(item);
     if let Some(error) = &reflection.board_failure {
         return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
+    }
+    // A work branch that cannot be published stays the todo's outstanding
+    // reason, also once its pull request owes nothing more.
+    if let Some(why) = &reflection.publication_outstanding {
+        return ReflectionStatus::Pending(PendingReason::Failed(why.clone()));
     }
     if !reflection.pending && !pull_owed {
         return ReflectionStatus::Reflected;

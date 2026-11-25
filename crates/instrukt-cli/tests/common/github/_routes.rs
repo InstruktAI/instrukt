@@ -169,7 +169,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }
         ("GET", ["branches", branch @ ..]) => {
             let branch = branch.join("/");
-            match state.repo(&full).branches.get(&branch) {
+            match state.repo(&full).branch_head(&branch) {
                 Some(sha) => Reply::ok(json!({"name": branch, "commit": {"sha": sha}})),
                 None => Reply::not_found(),
             }
@@ -353,7 +353,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
                 return Reply::invalid("title, head and base are required");
             };
             let head = head.split_once(':').map_or(head, |(_, b)| b).to_owned();
-            if !state.repo(&full).branches.contains_key(&head) {
+            if state.repo(&full).branch_head(&head).is_none() {
                 return Reply::invalid(&format!("head branch {head} does not exist"));
             }
             let body = input["body"].as_str().unwrap_or("").to_owned();

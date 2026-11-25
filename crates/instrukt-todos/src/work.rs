@@ -31,6 +31,7 @@ mod _model;
 mod _ops;
 pub(crate) mod _ports;
 mod _positions;
+mod _publication;
 mod _reclamation;
 mod _reflect;
 mod _session;

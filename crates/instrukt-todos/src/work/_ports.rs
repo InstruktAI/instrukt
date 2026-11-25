@@ -822,6 +822,9 @@ impl Reflection for Work {
         project: &ProjectRef,
     ) -> Result<ReflectionReport, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
+        // Publication first, holding no reflection lock: no command's flush
+        // waits behind a push.
+        s.publish()?;
         poll_interest(&mut s)?;
         s.flush()?;
         if let Some(cause) = &s.board_setup_failure {
