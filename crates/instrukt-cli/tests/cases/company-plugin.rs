@@ -140,7 +140,16 @@ fn an_operator_publishes_a_new_version_exactly_when_the_knowledge_changed() {
     let env = TestEnv::new();
     let repo = company(&env);
     plugin(&env, &repo, &[]).success();
-    let first = version(&repo);
+    // The repository's plugin is already in a release series of its own,
+    // as one an earlier renderer left: the manifest holds another version.
+    let rendered = version(&repo);
+    let first = [rendered[0] + 2, rendered[1] + 3, rendered[2] + 4];
+    let manifest = repo.read(MANIFEST).replace(
+        &format!("\"{}.{}.{}\"", rendered[0], rendered[1], rendered[2]),
+        &format!("\"{}.{}.{}\"", first[0], first[1], first[2]),
+    );
+    repo.write(MANIFEST, &manifest);
+    assert_eq!(version(&repo), first);
 
     // Nothing changed: no file is changed and the version is as it was.
     let before = untouched(&repo);
