@@ -49,12 +49,16 @@ and the report procedure itself are outside this shipped process set.
   fingerprint, whichever project's sync computed them, in whatever order the
   projects published, and whichever agent runtimes the computer has
   configured.
-- **Change.** A change of the raw content of an evaluated snippet or an
-  always-on source, a planned block included, changes the prose digest and
-  so the fingerprint, whatever its unit holds. A change of an always-on
-  source's current unit body, and a unit becoming current or ceasing to be,
-  changes the units digest and so the fingerprint while the prose digest
-  stays as it was. Nothing else changes either digest.
+- **Change.** Adding, removing or changing the raw content of an evaluated
+  snippet or an always-on source, a planned block included, changes the
+  prose digest and so the fingerprint, whatever its unit holds; so does a
+  change of `docs/general/index.yaml` or of a required read that adds a
+  source to the always-on sources or removes one, which changes the units
+  digest as well. A source's prose change that leaves its unit stale changes
+  both digests. A unit added, changed, removed or turned current while its
+  source's raw content stays as it was changes the units digest and so the
+  fingerprint, and the prose digest stays as it was. Nothing outside the
+  input changes either digest.
 - **Empty.** A corpus with no evaluated snippet and no always-on source has a
   defined fingerprint of its own, distinct from any non-empty one.
 - **Association.** State records the fingerprint and its two digests per
