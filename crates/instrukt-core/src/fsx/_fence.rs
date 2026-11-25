@@ -324,6 +324,11 @@ pub(super) struct Resolved {
 }
 
 impl Resolved {
+    /// Whether every component of the path exists.
+    fn whole(&self) -> bool {
+        self.existing == self.path.components().count()
+    }
+
     /// Whether the volume holding its existing part treats differently
     /// cased names as one, seen by looking an existing name up in another
     /// case.
@@ -396,11 +401,16 @@ fn same_ignoring_case(a: &OsStr, b: &OsStr) -> bool {
 /// existing component in the file system's own spelling, every symbolic
 /// link followed (a dangling one included), and parts that do not exist
 /// taken as written. A path that exists whole is resolved by the operating
-/// system in one step, with the same result as the walk below; any other
-/// path is walked a component at a time.
+/// system in one step, and a plain path (the root and names only) from its
+/// deepest ancestor that exists whole, each with the same result as the walk
+/// below; any other path is walked a component at a time.
 pub(super) fn resolved(path: &Path) -> Resolved {
     let mut pending = absolute(path);
-    if let Ok(path) = std::fs::canonicalize(&pending) {
+    if plain(&pending) {
+        if let Some(found) = from_existing(&pending) {
+            return found;
+        }
+    } else if let Ok(path) = std::fs::canonicalize(&pending) {
         return Resolved {
             existing: path.components().count(),
             path,
@@ -470,6 +480,56 @@ pub(super) fn resolved(path: &Path) -> Resolved {
     }
 }
 
+/// Whether `path` holds only the root and plain names: no `..`, which the
+/// walk applies only after resolving what precedes it.
+fn plain(path: &Path) -> bool {
+    path.components()
+        .all(|component| matches!(component, Component::RootDir | Component::Normal(_)))
+}
+
+/// A plain absolute path resolved from its deepest ancestor that exists
+/// whole: that ancestor in one step, then each further name as the walk
+/// takes it. `None` when a symbolic link lies past that ancestor, where the
+/// walk alone decides.
+fn from_existing(path: &Path) -> Option<Resolved> {
+    if let Ok(found) = std::fs::canonicalize(path) {
+        return Some(Resolved {
+            existing: found.components().count(),
+            path: found,
+        });
+    }
+    let (parent, name) = (path.parent()?, path.file_name()?);
+    beneath(&from_existing(parent)?, name)
+}
+
+/// `name` in the already resolved `parent`, exactly as the walk continues
+/// there: taken as written once something is missing, followed into the file
+/// system's own spelling where it exists and is no link. `None` for a
+/// symbolic link, whose step depends on how many links the walk has passed.
+fn beneath(parent: &Resolved, name: &OsStr) -> Option<Resolved> {
+    let next = parent.path.join(name);
+    let as_written = |path| {
+        Some(Resolved {
+            path,
+            existing: parent.existing,
+        })
+    };
+    if !parent.whole() {
+        return as_written(next);
+    }
+    match std::fs::symlink_metadata(&next) {
+        Err(_) => as_written(next),
+        Ok(meta) if meta.file_type().is_symlink() => None,
+        Ok(_) => {
+            let path = std::fs::canonicalize(&next).unwrap_or(next);
+            Some(Resolved {
+                existing: path.components().count(),
+                path,
+            })
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -523,6 +583,22 @@ mod tests {
             Resolved {
                 path: dir.join("new/file.yaml"),
                 existing: depth,
+            }
+        );
+    }
+
+    #[test]
+    fn a_path_whose_last_names_do_not_exist_resolves_from_its_deepest_existing_directory() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        let dir = base.join("live/dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(&dir, base.join("to-dir")).unwrap();
+        assert_eq!(
+            resolved(&base.join("to-dir/new/file.yaml")),
+            Resolved {
+                path: dir.join("new/file.yaml"),
+                existing: dir.components().count(),
             }
         );
     }
