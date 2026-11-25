@@ -232,14 +232,29 @@ fn a_write_to_a_hard_link_beside_a_fenced_file_is_admitted() {
     let live = Live::new();
     let mut env = TestEnv::new();
     assert_eq!(initialize(&env, &live).0, Some(0));
-    // The lock every initialization takes, and a fenced second name for
-    // the same file in the same directory.
-    let lock = env.instrukt_home().join("locks/agents.lock");
-    let fenced = env.instrukt_home().join("locks/fenced");
-    std::fs::hard_link(&lock, &fenced).unwrap();
+    // The global configuration a patch rewrites, and a fenced second name
+    // for the same file in the same directory.
+    let config = env.instrukt_home().join("instrukt.yaml");
+    let fenced = env.instrukt_home().join("fenced.yaml");
+    std::fs::hard_link(&config, &fenced).unwrap();
+    let kept = std::fs::read(&fenced).unwrap();
     env.fence(&fenced);
-    assert_eq!(initialize(&env, &live).0, Some(0));
+    let read = env
+        .instrukt(env.home())
+        .args(["config", "get", "--global", "--revision"])
+        .output()
+        .unwrap();
+    assert!(read.status.success());
+    let revision = String::from_utf8(read.stdout).unwrap();
+    let patched = env
+        .instrukt(env.home())
+        .args(["config", "patch", "--global", "--revision", revision.trim()])
+        .args(["--yaml", "ticks: 'off'"])
+        .output()
+        .unwrap();
+    assert_eq!(patched.status.code(), Some(0));
     assert!(env.refusals().is_empty());
+    assert_eq!(std::fs::read(&fenced).unwrap(), kept);
 }
 
 #[cfg(target_os = "macos")]
