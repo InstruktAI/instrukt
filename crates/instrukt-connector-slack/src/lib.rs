@@ -85,13 +85,6 @@ const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
 /// What `context_messages` is, as its finding and editor schema say it.
 const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
 
-/// How a company sets up its Slack app (`slack-connector` spec, The Slack
-/// app).
-const SETUP: &str = "Each company's workspace has its own Slack app, named `agent`: Slack shows that name as the sender of every answer and in front of the status line. Create the app from the manifest below and install it to the workspace.
-The app token is generated in the app's settings as an app-level token with the scope `connections:write`; its reference goes into `app_token`.
-The bot token is issued when the app is installed to the workspace; its reference goes into `bot_token`.
-The agent hears a channel only once it has been invited to it.";
-
 /// The manifest the company's Slack app is created from, in full.
 const MANIFEST: &str = include_str!("app-manifest.yaml");
 
@@ -99,7 +92,11 @@ const MANIFEST: &str = include_str!("app-manifest.yaml");
 pub static SLACK_DECLARATION: Declaration = Declaration {
     key: SLACK,
     message_chars: SLACK_MESSAGE_LIMIT,
-    setup: SETUP,
+    // How a company sets up its Slack app (`slack-connector` spec, The Slack app).
+    setup: "Each company's workspace has its own Slack app, named `agent`: Slack shows that name as the sender of every answer and in front of the status line. Create the app from the manifest below and install it to the workspace.
+The app token is generated in the app's settings as an app-level token with the scope `connections:write`; its reference goes into `app_token`.
+The bot token is issued when the app is installed to the workspace; its reference goes into `bot_token`.
+The agent hears a channel only once it has been invited to it.",
     manifest: Some(MANIFEST),
     fields: &[
         Field {
