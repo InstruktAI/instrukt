@@ -47,13 +47,27 @@ pub trait WorkEvidence: Send + Sync {
         id: &crate::work::TodoId,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
 
-    /// Every todo of `project` this computer's record holds, delivered and
-    /// removed ones within their retention included, read from the local
-    /// record alone: no GitHub request is made and nothing is pulled
-    /// through. Prerequisites are left unexpanded (empty), since expanding
-    /// a structural holder may read GitHub.
-    fn local_evidence(&self, project: &ProjectRef)
-    -> Result<Vec<TodoEvidence>, WorkInterfaceError>;
+    /// The todos of `project` this computer's record holds, delivered and
+    /// removed ones within their retention included, that `listed` names:
+    /// a binding recorded one of its worktrees, or the todo's work branch,
+    /// recorded on it or on one of its attempts, is one of its branches.
+    /// Read from the local record alone: no other todo is read, no GitHub
+    /// request is made and nothing is pulled through. Prerequisites are left
+    /// unexpanded (empty), since expanding a structural holder may read
+    /// GitHub.
+    fn local_evidence(
+        &self,
+        project: &ProjectRef,
+        listed: &ListedResources,
+    ) -> Result<Vec<TodoEvidence>, WorkInterfaceError>;
+}
+
+/// What git lists on a computer that may name a todo: worktree paths, as
+/// git lists them and as the filesystem resolves them, and branch names.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ListedResources {
+    pub worktrees: Vec<PathBuf>,
+    pub branches: Vec<String>,
 }
 
 /// A todo's record as evidence.

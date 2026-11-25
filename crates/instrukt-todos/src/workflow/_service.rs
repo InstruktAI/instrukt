@@ -293,7 +293,7 @@ impl WorktreeStandings for Workflow {
                 message: error.to_string(),
             }
         })?;
-        let evidence = self.evidence.local_evidence(project)?;
+        let evidence = self.evidence.local_evidence(project, &listed.resources())?;
         Ok(super::_standing::worktree_standings(&evidence, &listed))
     }
 }
@@ -564,6 +564,7 @@ mod tests {
         fn local_evidence(
             &self,
             _project: &ProjectRef,
+            _listed: &crate::evidence::ListedResources,
         ) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
             Ok(self.0.values().cloned().collect())
         }

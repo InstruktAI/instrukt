@@ -148,6 +148,32 @@ impl Listed {
     }
 }
 
+impl Listed {
+    /// The worktree paths, as git lists them and as the filesystem
+    /// resolves them, and the branch names, local and on `origin`, that may
+    /// name a todo.
+    pub(crate) fn resources(&self) -> crate::evidence::ListedResources {
+        let mut worktrees: Vec<PathBuf> = Vec::new();
+        for listed in &self.worktrees {
+            worktrees.push(listed.path.clone());
+            let resolved = same_path(&listed.path);
+            if resolved != listed.path {
+                worktrees.push(resolved);
+            }
+        }
+        let branches: BTreeSet<String> = self
+            .local
+            .keys()
+            .chain(self.origin.keys())
+            .cloned()
+            .collect();
+        crate::evidence::ListedResources {
+            worktrees,
+            branches: branches.into_iter().collect(),
+        }
+    }
+}
+
 /// The worktrees `git worktree list --porcelain` printed, the primary one
 /// and those git reports prunable left out.
 fn parse_worktrees(listing: &str) -> Vec<ListedWorktree> {

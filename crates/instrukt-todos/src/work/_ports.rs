@@ -1195,8 +1195,15 @@ impl WorkEvidence for Work {
     fn local_evidence(
         &self,
         project: &ProjectRef,
+        listed: &crate::evidence::ListedResources,
     ) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
-        Ok(_store::read_items(self.home(), &project.slug)?
+        let worktrees: Vec<String> = listed
+            .worktrees
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        Ok(_store::Store::new(self.home(), &project.slug)
+            .items_naming(&worktrees, &listed.branches)?
             .into_iter()
             .map(|item| to_evidence(item.record, Vec::new()))
             .collect())

@@ -427,6 +427,46 @@ impl Store {
         })
     }
 
+    /// The local items of the project a binding of which recorded one of
+    /// `worktrees`, or whose work branch, recorded on the todo or on one of
+    /// its attempts, is one of `branches`. Other items are not read.
+    pub fn items_naming(
+        &self,
+        worktrees: &[String],
+        branches: &[String],
+    ) -> Result<Vec<LocalItem>, WorkError> {
+        let worktrees =
+            serde_json::to_string(worktrees).map_err(|e| WorkError::refused(e.to_string()))?;
+        let branches =
+            serde_json::to_string(branches).map_err(|e| WorkError::refused(e.to_string()))?;
+        self.read(Vec::new(), |conn, path, project| {
+            let sql = StateDbError::sqlite(path);
+            let mut statement = conn
+                .prepare_cached(
+                    "SELECT DISTINCT t.id FROM todos t
+                     LEFT JOIN session_bindings b ON b.todo_id = t.id
+                     WHERE t.project = ?1
+                       AND (t.branch IN (SELECT value FROM json_each(?3))
+                            OR b.branch IN (SELECT value FROM json_each(?3))
+                            OR b.worktree IN (SELECT value FROM json_each(?2)))
+                     ORDER BY t.id",
+                )
+                .map_err(&sql)?;
+            let ids = statement
+                .query_map(params![project.as_str(), worktrees, branches], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(&sql)?
+                .collect::<Result<Vec<String>, _>>()
+                .map_err(&sql)?;
+            let mut items = Vec::with_capacity(ids.len());
+            for id in ids {
+                items.extend(load_rows(conn, path, "id = ?1", &id)?);
+            }
+            Ok(items)
+        })
+    }
+
     /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
         self.read(Vec::new(), load_items)
