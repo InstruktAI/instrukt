@@ -260,8 +260,8 @@ pub struct NativeAssignment {
 }
 
 /// The native session of the role's most recent earlier attempt that has a
-/// bound session on the reservation's runtime, with the selection that attempt
-/// retained where it holds one. That attempt can be older than the role's
+/// bound session on the reservation's runtime, with the selection and the
+/// dispatching session that attempt retained where it holds them. That attempt can be older than the role's
 /// latest attempt when later attempts never bound or bound on another runtime.
 /// Whether the session is still usable is native evidence, not part of this
 /// fact.
@@ -271,6 +271,8 @@ pub struct PriorSession {
     pub attempt: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selection: Option<instrukt_core::config::AgentSelection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatcher: Option<SessionRef>,
 }
 
 /// A reserved role attempt as its reservation replies: the retained native
@@ -311,14 +313,14 @@ fn prior_session(
             Some((b, session))
         })
         .max_by_key(|(b, _)| b.attempt.number)
-        .map(|(b, session)| PriorSession {
-            session: session.clone(),
-            attempt: b.attempt.number,
-            selection: b
-                .attempt
-                .native_assignment
-                .as_ref()
-                .and_then(|a| a.selection.clone()),
+        .map(|(b, session)| {
+            let assignment = b.attempt.native_assignment.as_ref();
+            PriorSession {
+                session: session.clone(),
+                attempt: b.attempt.number,
+                selection: assignment.and_then(|a| a.selection.clone()),
+                dispatcher: assignment.and_then(|a| a.dispatcher.clone()),
+            }
         })
 }
 
@@ -1760,7 +1762,32 @@ mod tests {
                 session: session("planner-1"),
                 attempt: 1,
                 selection: None,
+                dispatcher: None,
             })
         );
+    }
+
+    #[test]
+    fn prior_session_carries_the_dispatcher_its_attempt_recorded() {
+        let planner = RoleName::parse("planner").unwrap();
+        let mut bound = worker_binding("planner", 1, Some(session("planner-1")));
+        bound.attempt.native_assignment = Some(NativeAssignment {
+            dispatcher: Some(session("lead-1")),
+            selection: None,
+            runtime: instrukt_core::config::Runtime::T3,
+            dispatch_allowed: true,
+            brief: "Plan the change.".into(),
+            procedure: None,
+            args: None,
+            role: planner.clone(),
+            attempt: 1,
+            semantic_key: "demo/bug-fix:planner:1".into(),
+            title: "planner".into(),
+            worktree: None,
+            branch: None,
+            base: None,
+        });
+        let prior = prior_session(&[bound], &planner, 2, instrukt_core::config::Runtime::T3);
+        assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
     }
 }
