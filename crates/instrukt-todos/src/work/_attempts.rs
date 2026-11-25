@@ -282,7 +282,8 @@ pub struct ReservedAttempt {
 }
 
 /// The highest-numbered worker attempt of `role` below `attempt` whose binding
-/// carries a session of `runtime`.
+/// carries a session of `runtime`. A worker binding the state migration carried
+/// forward records its kind as unspecified and retains no assignment.
 fn prior_session(
     bindings: &[Binding],
     role: &RoleName,
@@ -296,7 +297,7 @@ fn prior_session(
                 && b.attempt.number < attempt
                 && matches!(
                     b.attempt.assignment,
-                    AssignmentKind::Child | AssignmentKind::Workspace
+                    AssignmentKind::Child | AssignmentKind::Workspace | AssignmentKind::Unspecified
                 )
         })
         .filter_map(|b| {
@@ -1741,6 +1742,22 @@ mod tests {
         assert_eq!(
             prior_session(&bindings, &planner, 2, instrukt_core::config::Runtime::T3),
             None
+        );
+    }
+
+    #[test]
+    fn prior_session_names_a_carried_forward_worker_binding_without_its_unrecorded_facts() {
+        let planner = RoleName::parse("planner").unwrap();
+        let mut migrated = worker_binding("planner", 1, Some(session("planner-1")));
+        migrated.attempt.assignment = AssignmentKind::Unspecified;
+        let prior = prior_session(&[migrated], &planner, 2, instrukt_core::config::Runtime::T3);
+        assert_eq!(
+            prior,
+            Some(PriorSession {
+                session: session("planner-1"),
+                attempt: 1,
+                selection: None,
+            })
         );
     }
 }
