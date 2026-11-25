@@ -19,6 +19,8 @@
 //!   order and task due times.
 //! - [`anomaly`], [`ticks`] and [`install`] — notification, wake-up
 //!   accounting and the OS scheduler registration.
+//! - [`reclamation`] — worktree reclamation: declared regenerable output
+//!   from idle todo worktrees, and delivered todos' worktrees.
 #![cfg_attr(
     test,
     allow(
@@ -41,6 +43,7 @@ pub mod interfaces;
 pub mod keyed;
 pub mod launch;
 pub mod process;
+pub mod reclamation;
 pub mod review;
 pub mod runner;
 pub mod runtime;

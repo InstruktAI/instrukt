@@ -136,7 +136,8 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
         github_credentials: Some(ctx.github.clone()),
         review: Some(_work::review(ctx)?),
         work: _work::ports(ctx)?,
-        workflow: _workflow::assignments(ctx, evidence)?,
+        workflow: _workflow::assignments(ctx, evidence.clone())?,
+        standings: _workflow::standings(ctx, evidence)?,
         company: Some(company()),
     })
 }

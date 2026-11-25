@@ -2,7 +2,6 @@
 mod _db;
 mod _earlier;
 mod _fleet;
-mod _legacy;
 mod _projection;
 mod _store;
 mod _watch;
@@ -173,19 +172,6 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
         }
     }
     Ok(report)
-}
-
-/// Imports the TeleClaude mirror store once, in resumable batches: an
-/// interrupted import continues after its last committed mirror, and a
-/// completed one is preserved without opening the source again. Reports the
-/// conversations this run loaded and, as its position, the last mirror id
-/// committed; the position is `null` when the import was already complete or
-/// no mirror has been committed.
-pub fn import_teleclaude(
-    home: &Home,
-    path: Option<&std::path::Path>,
-) -> Result<Extraction, HistoryError> {
-    _legacy::import(home, path)
 }
 
 /// Every participating computer catches up before searching its own retained store.

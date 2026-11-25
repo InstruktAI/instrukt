@@ -1,10 +1,9 @@
 //! Retained conversations of the earlier shape brought to the current one,
 //! by the rules of `project/instrukt/spec/feature/runner/history` (History
 //! store): the store's own migration and the move out of the state database
-//! both convert through here, and the TeleClaude import retains each mirror
-//! by the mirror rule. A runtime source, named by its identity, selects the
-//! runtime rule; for any other source, the shape of the earlier document
-//! selects the mirror rule or the rule for any other document.
+//! both convert through here. A runtime source, named by its identity,
+//! selects the runtime rule; for any other source, the shape of the earlier
+//! document selects the mirror rule or the rule for any other document.
 use super::{
     _store::{Place, StoredTime, Text},
     HistoryError,
@@ -220,7 +219,7 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
 pub(super) const MESSAGES: &str = "/messages";
 
 /// Whether `document` is a mirror document: an object holding a mirror and
-/// its sources, as the TeleClaude import writes it.
+/// its sources, as an earlier build's import wrote it.
 fn is_mirror(document: &Value) -> bool {
     document.get("mirror").is_some_and(Value::is_object)
         && document.get("sources").is_some_and(Value::is_array)
@@ -234,7 +233,7 @@ fn is_mirror(document: &Value) -> bool {
 /// document keeps its shape; every other member, and every mirror message
 /// entry at its position, stays as it is. A text's native id is its place
 /// with fixed-width positions, so the texts sort in document order.
-pub(super) fn mirror(mut document: Value) -> Current {
+fn mirror(mut document: Value) -> Current {
     let mut texts = Vec::new();
     let mut take = |member: Option<&mut Value>, native_id: String, place: String, role| {
         if let Some(slot) = member.filter(|s| s.as_str().is_some_and(|s| !s.is_empty()))

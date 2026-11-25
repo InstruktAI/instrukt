@@ -3,11 +3,7 @@ use crate::common::TestEnv;
 use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::os::unix::fs::OpenOptionsExt as _;
-use std::{
-    path::{Path, PathBuf},
-    process::Child,
-    time::Duration,
-};
+use std::{path::PathBuf, process::Child, time::Duration};
 
 /// How a write to T3's database waits while the other work streams: the
 /// stream takes the database for a moment every millisecond, so the write is
@@ -807,59 +803,6 @@ impl Drop for Gate {
 pub fn computer(env: &TestEnv, id: &str) {
     std::fs::create_dir_all(env.instrukt_home().join("state")).unwrap();
     std::fs::write(env.instrukt_home().join("state/machine-id"), id).unwrap();
-}
-pub fn mirror(env: &TestEnv) -> PathBuf {
-    let file = env.home().join(".teleclaude/mirrors.db");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let db = Connection::open(&file).unwrap();
-    db.execute_batch("PRAGMA user_version=11;
-CREATE TABLE mirrors(id INTEGER PRIMARY KEY,computer TEXT,title TEXT,conversation_text TEXT,metadata TEXT,native_session_id TEXT,source_identity TEXT,session INTEGER,project_path TEXT,timestamp_start TEXT,timestamp_end TEXT);
-CREATE TABLE mirror_sessions(id INTEGER PRIMARY KEY,session_id TEXT,initiator_session_id TEXT);
-CREATE TABLE mirror_sources(id INTEGER PRIMARY KEY,mirror INTEGER,source_identity TEXT,native_session_id TEXT,agent TEXT,transcript_path TEXT,position INTEGER,archival_text TEXT);
-CREATE TABLE mirror_messages(source INTEGER,ordinal INTEGER,entry_index INTEGER,block_ordinal INTEGER,timestamp TEXT,role TEXT,text TEXT);
-INSERT INTO mirror_sessions VALUES(1,'archive-session',NULL);
-INSERT INTO mirrors VALUES(1,'old-computer','Retained archive','The archive jewels.','{}','native-session','source-alias',1,'/project','2026-01-01T00:00:00Z',NULL);
-INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','/gone/transcript',0,'The archive jewels.');").unwrap();
-    file
-}
-/// The ids of the mirrors `mirrors` adds beside the archive mirror, id 1:
-/// more than one import batch, from below zero through zero and on past it,
-/// each carrying [`BATCHED_TERM`]; those up to zero carry
-/// [`NONPOSITIVE_TERM`] as well.
-pub fn batched_ids() -> impl Iterator<Item = i64> {
-    (-5..=125).filter(|id| *id != 1)
-}
-pub const BATCHED_TERM: &str = "Batchtoken";
-pub const NONPOSITIVE_TERM: &str = "Lowtoken";
-/// A mirror after the first batch the importer cannot read: it has no title.
-pub const UNREADABLE: i64 = 125;
-
-/// The archive mirror store of [`mirror`] with the [`batched_ids`] mirrors
-/// beside it, [`UNREADABLE`] among them.
-pub fn mirrors(env: &TestEnv) -> PathBuf {
-    let file = mirror(env);
-    let db = Connection::open(&file).unwrap();
-    for id in batched_ids() {
-        let title = (id != UNREADABLE).then(|| format!("Batched {id}"));
-        let low = if id <= 0 { NONPOSITIVE_TERM } else { "" };
-        db.execute(
-            "INSERT INTO mirrors(id,computer,title,conversation_text,metadata) VALUES(?1,'old-computer',?2,?3,'{}')",
-            params![id, title, format!("{BATCHED_TERM} {low} mirror {id}.")],
-        )
-        .unwrap();
-    }
-    file
-}
-
-/// Gives mirror `id` a title, or takes it away so the importer cannot read it.
-pub fn retitle(file: &Path, id: i64, title: Option<&str>) {
-    Connection::open(file)
-        .unwrap()
-        .execute(
-            "UPDATE mirrors SET title=?2 WHERE id=?1",
-            params![id, title],
-        )
-        .unwrap();
 }
 
 pub fn configure_cluster(env: &TestEnv, url: &str) {

@@ -1,5 +1,5 @@
 ---
-description: Per-computer searchable history extracted from T3 local state, a one-time TeleClaude mirror import and merged search across computers.
+description: Per-computer searchable history extracted from T3 local state and merged search across computers.
 ---
 # History — Spec
 
@@ -19,12 +19,9 @@ output, file change, reasoning trace, run or subagent record, no report a
 runtime writes of a background command it ran, and none of the terminal lines,
 diff lines or page HTML a message's attached context captured
 (`project/instrukt/spec/feature/runner/session-continuity` defines both); those
-stay with the runtime that produced them. An extract-and-load step reads T3's local state
-into instrukt's own history;
-TeleClaude's existing mirrors are imported once, in bounded batches: an import
-that stops continues after the last batch it committed, and a completed import
-is never read again. A search across computers
-merges results from their local stores. History needs no central service or
+stay with the runtime that produced them. An extract-and-load step reads T3's
+local state into instrukt's own history. A search across computers merges
+results from their local stores. History needs no central service or
 Postgres deployment and does not replace the runtime's live conversations.
 
 ## Canonical fields
@@ -32,8 +29,7 @@ Postgres deployment and does not replace the runtime's live conversations.
 | Surface | Contract |
 | --- | --- |
 | T3 local state | The source of conversations for the extracting computer; instrukt loads each conversation's own record and its messages, and nothing else the runtime holds of it. |
-| Local history | A computer's own extracted/imported store of conversations and their messages, independently searchable by conversation title and message text. |
-| TeleClaude mirrors | A one-time legacy import into history, not a continuing runtime or mirror-reader dependency. |
+| Local history | A computer's own store of retained conversations and their messages, independently searchable by conversation title and message text. |
 | Merged search | Searches participating computers' local stores and combines results while retaining their computer/source identity. |
 
 Extraction and search are distinct from the session adapter's keyed startup,
@@ -44,14 +40,15 @@ between computers requires no conversation-transfer mechanism.
 
 ### Operations and adapter boundary
 
-History exposes explicit extraction, one-time selected-source TeleClaude import,
-local or merged search, and retained-document lookup by native identity or archive
-alias. A retained document is the conversation's document as its source gave
-it, rebuilt from what the store holds. A runtime conversation's document holds
+History exposes explicit extraction, local or merged search, and
+retained-document lookup by native identity or archive alias. A retained
+document is the conversation's document as its source gave it, rebuilt from
+what the store holds. A runtime conversation's document holds
 the source's record of the conversation as `thread` and the conversation's
 messages as `messages`, each the source's record of the message with its text
-as `text`. An imported conversation's document is the document its import
-retained, with every text back in its place.
+as `text`. An imported conversation, one an earlier build imported from
+another archive, has the document that import retained, with every text back
+in its place.
 
 History consumes the text read of the runtime adapter's optional durable
 conversation-source capability, and no other read of it; the text read and
@@ -133,7 +130,7 @@ read. Company bindings refuse a changed source identity under
 `project/instrukt/spec/feature/company/conversations`. History extraction remains
 independently keyed by source identity and keeps its retained archives.
 
-Local extraction, import, lookup and search require no Redis. Installation
+Local extraction, lookup and search require no Redis. Installation
 counts enabled history independently as demand for cluster Redis for merged
 search, without local event consumers, minute wake-up or receiver demand.
 History never requires `modules.events`.
@@ -168,8 +165,8 @@ log.
 
 The history lock `state/history.lock` is the store's write-isolation unit
 (`sdlc/policy/state-storage`). Every history write runs while its process holds
-it: a catch-up section, one import batch, bringing a store of an earlier
-schema version forward, reclaiming the space that freed, or moving earlier
+it: a catch-up section, bringing a store of an earlier schema version
+forward, reclaiming the space that freed, or moving earlier
 history in. A reader of a store that is at the current schema version and
 records the move complete takes no lock. A reader that finds an earlier schema
 version, or the move not recorded complete, takes the write path, and with it
@@ -184,7 +181,7 @@ history in is the only history operation that does, as described below.
 | `history_messages` | one row per retained text of a conversation: its native id, role, text, creation and update times, its place in the conversation's document and, for a runtime message, the source's record of the message without that text | authoritative for the same reason |
 | `history_fts` | the full-text index over each retained conversation's title and the text of its messages, one entry per conversation | derived from `history_conversations` and `history_messages` and written with them; rebuilt on this computer from the retained rows, without any source |
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
-| `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
+| `history_sources` | rows earlier builds wrote: the progress of each import they performed, and a position the runtime source kept here before `history_source_positions` held it. Apart from moving them in from the state database, no history operation reads or writes them | external bookkeeping; losing it loses nothing a history operation reads |
 
 Each retained text is stored once, in its row of `history_messages`: the
 member of the conversation's document it was taken from no longer holds it,
@@ -239,9 +236,9 @@ store held of it, by the kind of its source:
   searchable text. A runtime conversation without a retained conversation
   record fails the migration.
 - **Any other conversation whose earlier document is a mirror document**, an
-  object holding a mirror and its sources as the TeleClaude import writes it,
-  keeps that document. Its texts are the texts it is searched by: the mirror's
-  transcript text where the mirror has one, and otherwise each source's
+  object holding a mirror and its sources as an earlier build's import wrote
+  it, keeps that document. Its texts are the texts it is searched by: the
+  mirror's transcript text where the mirror has one, and otherwise each source's
   archival text and the text of each of that source's mirror messages, in the
   document's order, a message's text under that message's role. Each of these
   that is a non-empty string is taken out of the document and placed where
@@ -254,7 +251,7 @@ store held of it, by the kind of its source:
 
 An earlier document or record that is not the JSON its writer produced fails
 the migration. A failed migration changes nothing and leaves the store at its
-earlier version. The TeleClaude import retains each mirror by the second rule.
+earlier version.
 
 The same transaction rebuilds the full-text index from the retained titles and
 texts, leaves `history_source_positions` and `history_sources` as they
@@ -299,14 +296,7 @@ conversations copied so far, every one of which the state database still
 holds.
 
 Rows of `history_sources` moved from the state database keep the values they
-held there, with the meanings they had. A TeleClaude source whose row comes
-from there is complete, and its position is the number of conversations its
-import wrote, not a mirror id. A source whose identity begins `t3:` holds a
-position the runtime source kept in this table before
-`history_source_positions` held it.
-Neither value is read as a mirror id: an import looks up only its own source,
-a completed import ends before its position is read, opens no mirror store and
-reports no position, and nothing reads a `t3:` row.
+held there; no history operation reads them.
 
 Removal starts only after that record is committed. In one hold of the writer
 lock, one state-database transaction drops the history tables still present
@@ -323,17 +313,10 @@ no longer retains. While history
 is off nothing moves, and the rows stay in the state database until history is
 switched on.
 
-The TeleClaude import reads the selected mirror store strictly read-only and
-never writes or migrates it. It imports mirrors in ascending id order, starting
-at the lowest id the store holds whatever its sign, in batches bounded both in
-mirror count and in retained text, at least one mirror each. A batch is read in
-its own read-only source transaction, which ends before the batch is written;
-the batch's conversations and the id of its last mirror commit in one
-transaction under the history lock, which is released between batches. The
-import is marked complete in the transaction that commits the last mirror the
-store holds, or at once when it holds none past the last committed mirror. A
-rerun continues after the last committed mirror and reads no mirror at or
-before it; a completed import never opens the mirror store again.
+Search and lookup read what the store holds of a conversation: its source
+identity, native id, archive aliases, title, texts and document. Neither needs
+the source that delivered it, so a conversation of a source instrukt no longer
+reads, an imported conversation among them, stays searchable and readable.
 
 ## Use cases
 
@@ -349,19 +332,9 @@ Then every history data operation reports the module is off without touching its
 And stored history survives disabling and can be searched after re-enabling
 ```
 
-### UC-HI2: Keep the TeleClaude mirrors through one import
+### UC-HI2: Keep an earlier archive through one import (retired)
 
-```gherkin
-Given a developer has existing TeleClaude conversation mirrors
-When the one-time history import completes
-Then those conversations are searchable in instrukt's local history
-And the mirror store is unchanged
-And later extraction uses T3 local state rather than ongoing TeleClaude mirroring
-And rerunning the completed import does not duplicate those conversations
-But when the import stops before it completes
-Then the conversations it already imported are searchable
-And rerunning the import adds the remaining conversations without duplicating any
-```
+Retired: history imports no archive; this id is not reused.
 
 ### UC-HI3: Search history held by multiple computers
 
@@ -405,8 +378,8 @@ Then that conversation is in the developer's instrukt history without a search o
   write path and fails visibly when its wait ends, a search included. While
   reclamation runs the store is current, and a reader takes no lock when the
   store is current and also records moving earlier history in complete: then
-  a document lookup and a search's own read succeed, an extraction or an
-  import fails visibly when its wait ends, and a search returns what the store
+  a document lookup and a search's own read succeed, an extraction fails
+  visibly when its wait ends, and a search returns what the store
   retains with its catch-up reported failed. A store whose move from the state
   database is not yet complete keeps every reader on the write path, so a
   document lookup and a search's read wait on the history lock and fail
@@ -422,9 +395,9 @@ Then that conversation is in the developer's instrukt history without a search o
   equality gates. Unknown source shape fails visibly without committing its
   batch or position. Record bounds are owned by the source adapter; oversized
   records fail visibly rather than silently truncating history.
-- The legacy importer supports the source revision owned by its importer and
-  refuses other shapes without migrating the source. A completed selected-source
-  import requires no continuing TeleClaude mirror or runtime dependency.
+- History reads conversations from the selected runtime's source only and
+  imports no other archive. Nothing adds to the conversations an earlier build
+  imported.
 - Native notifications must be available on the source filesystem. A watch
   that cannot be established is reported in the runner's log when it starts
   failing and when it recovers, and the runner keeps trying; no polling
@@ -441,7 +414,7 @@ Then that conversation is in the developer's instrukt history without a search o
   waits to acquire it, 30 seconds for the history lock and 60 for the writer
   lock; it does not bound the move, whose copying takes as long as the retained
   history needs, whose removal grows with the space freed and whose reclamation
-  grows with the data that remains. Meanwhile an extraction, an import or a
+  grows with the data that remains. Meanwhile an extraction or a
   document lookup fails visibly when its wait ends, the runner's extraction
   records the failure and retries, and a work command that waits out the writer
   lock fails with its lock timeout. The move continues, and operations started
@@ -460,10 +433,6 @@ Then that conversation is in the developer's instrukt history without a search o
   freed pages. When the database file itself shortens is that database's rule
   (`project/instrukt/spec/feature/work/state-database`) and can come after the
   move is complete; the move does not return to it.
-- A mirror is never split across import batches, so a single mirror larger than
-  a batch's text bound is read and written whole.
-- A mirror added to the mirror store below the last committed id while an
-  import is incomplete is not imported.
 - A turn whose commit becomes readable after the read its notification
   triggered is read at a later repeated read. The source asks for one no later
   than its longest delay after the previous request. When a reader acts on it

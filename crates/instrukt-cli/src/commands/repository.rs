@@ -1,4 +1,4 @@
-//! Repository commands: `instrukt init`, `instrukt hooks …`, `instrukt repo commit|stamp`.
+//! Repository commands: `instrukt init`, `instrukt hooks …`, `instrukt repo commit|reclaim`.
 //!
 //! One hidden entry serves git rather than people: `instrukt hooks worker`,
 //! the detached process a hook run starts.
@@ -470,6 +470,10 @@ enum RepoCommand {
     /// always, and `Todo:` or `Planned-Todo:` with --todo. Outside an agent
     /// session the commit is the git user's own. Prints the commit's id.
     Commit(CommitArgs),
+    /// Reclaim the declared regenerable output of the worktree this
+    /// session's todo assignment records; it takes no location. Prints each
+    /// path removed and each declared path left with why.
+    Reclaim,
 }
 
 #[derive(Debug, clap::Args)]
@@ -502,7 +506,106 @@ struct CommitArgs {
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         RepoCommand::Commit(args) => commit(args, ctx),
+        RepoCommand::Reclaim => reclaim(ctx),
     }
+}
+
+/// What would let a caller reclaim a todo worktree, by what its assignment
+/// is; the command's refusals and its admission name it. A session without
+/// an assignment is bound to the attempt its dispatcher reserved. A session
+/// whose assignment carries no todo, such as a standing one, cannot also hold
+/// a todo's, so the request goes through a separate session. A todo worked
+/// without a worktree has nothing to reclaim; what qualifies is a writing
+/// assignment bound to a repository todo's worktree.
+pub(crate) fn reclaim_door(
+    assignment: Option<&instrukt_core::capabilities::Assignment>,
+) -> &'static str {
+    match assignment {
+        None => {
+            "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree> --branch <branch> --base <base>`, with the worktree, branch and base the reservation names)"
+        }
+        Some(assignment) if assignment.todo.is_none() => {
+            "this session's assignment cannot also hold a todo's, so ask the todo's dispatcher to reserve a writing role attempt in the todo's worktree, bind it to a separate session, and reclaim from that session"
+        }
+        Some(_) => {
+            "its todo is worked without a worktree, so there is nothing to reclaim; reclaiming needs a writing assignment bound to a repository todo's worktree"
+        }
+    }
+}
+
+/// `instrukt repo reclaim`: what the runner removes from a todo worktree,
+/// removed from the worktree the calling session's assignment records
+/// (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    use instrukt_runner::reclamation::{OnRequest, Request, on_request};
+    let env = crate::wiring::environment(ctx)?;
+    let session = instrukt_core::config::Configuration::load_global(&ctx.home.for_inspection())?
+        .caller(&env)?;
+    let assignment = crate::authorization::caller(ctx)?.map(|(assignment, _)| assignment);
+    let (Some(session), Some(assignment)) = (session, assignment) else {
+        anyhow::bail!(
+            "no todo assignment binds this caller to a worktree; {}",
+            reclaim_door(None)
+        );
+    };
+    let (Some(project), Some(todo), Some(worktree)) = (
+        assignment.project.as_ref(),
+        assignment.todo.as_deref(),
+        assignment.workspace.as_deref(),
+    ) else {
+        anyhow::bail!(
+            "the assignment {} binds this session to no todo worktree; {}",
+            assignment.key,
+            reclaim_door(Some(&assignment))
+        );
+    };
+    let work = crate::wiring::work_ports(ctx)?
+        .ok_or_else(|| anyhow::anyhow!("the todos module is not available in this build"))?;
+    let todo = instrukt_core::ids::TodoId::parse(todo).ok_or_else(|| {
+        anyhow::anyhow!(
+            "the assignment {} records `{todo}`, which is no todo identity",
+            assignment.key
+        )
+    })?;
+    let request = Request {
+        project,
+        todo: &todo,
+        worktree,
+        session,
+    };
+    match on_request(&ctx.home, &request, work.reclamation.as_ref())? {
+        OnRequest::NotPublished => anyhow::bail!(
+            "{project} is not published on this computer; run `instrukt sync` in its checkout"
+        ),
+        OnRequest::NotRecorded => anyhow::bail!(
+            "{project}'s work record on this computer holds no todo {todo}, so nothing was removed"
+        ),
+        OnRequest::Withheld(findings) => anyhow::bail!(
+            "{project}'s declaration of regenerable output is not admitted on this computer, so nothing was removed; correct it in its instrukt.yaml:\n{}",
+            findings.join("\n")
+        ),
+        OnRequest::Held(holder) => anyhow::bail!(
+            "{} is held by {holder}, so nothing was removed; reclaim once it is released",
+            worktree.display()
+        ),
+        OnRequest::NothingDeclared => {
+            ctx.out.line(&format!(
+                "{project} declares no regenerable output; nothing was removed"
+            ))?;
+        }
+        OnRequest::Reclaimed { removed, left } => {
+            if removed.is_empty() {
+                ctx.out.line("nothing was removed")?;
+            }
+            for path in removed {
+                ctx.out.line(&format!("removed: {path}"))?;
+            }
+            for (path, why) in left {
+                ctx.out.line(&format!("left: {path} ({why})"))?;
+            }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {

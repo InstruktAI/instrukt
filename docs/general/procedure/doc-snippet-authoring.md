@@ -271,15 +271,16 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     company's own documents, so taxonomy placement, snippet schemas,
     `instrukt docs validate`, and pending markers do not apply; retain
     ordinary Markdown and relative required reads. The repository's
-    `docs/index.yaml` selects what the company's rendered `AGENTS.md` holds,
-    each entry a document's path relative to `docs/`: `expanded` names the
+    `docs/index.yaml` selects what the company's rendered `AGENTS.md` and
+    the company's plugin hold, each entry a document's path relative to `docs/`: `expanded` names the
     documents every agent of the company acts on in ordinary work, held in
     full; `listed` names the documents an agent fetches when they apply, each
     shown as one line with its `description`. Keep a `listed` document out of
     the required reads of the `expanded` ones. Give each
     document under `docs/` frontmatter with a non-empty `description` (and
-    optional `visibility: internal` or `public`, defaulting to `internal`, so
-    the company skill publisher accepts it alongside `AGENTS.md` rendering).
+    optional `visibility`, `internal` or `public`, `internal` when omitted:
+    the rendering of the company's plugin refuses any other value, and a
+    `public` document that requires or references an `internal` one).
     Apply Step 0, `general/policy/snippet-value-contract`, and
     `general/policy/agent-facing-text`. Author routine knowledge updates in
     documents under `docs/` and in that index inside a separate worktree

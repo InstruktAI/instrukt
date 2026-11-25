@@ -40,8 +40,7 @@ through ordinary closure. Metadata injects no documentation dependencies.
 
 General and domain positions answer every origin of their declared kind.
 Project-position procedures must declare project home and answer only that
-project's origin. This is instrukt's existing project-local reach, an explicit
-adaptation of TeleClaude's global/company/person tiers. A domain's owner project
+project's origin. This is instrukt's existing project-local reach. A domain's owner project
 never silently restricts or broadens domain publication reach. A general or
 domain procedure declaring company home answers the origin of every company
 home (`project/instrukt/spec/feature/configuration/company-homes`). Person

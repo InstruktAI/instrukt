@@ -44,7 +44,7 @@ pub(super) fn root_document_on_disk(root: &Path) -> Result<Option<Vec<u8>>, std:
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.is_file() => std::fs::read(&path).map(Some),
         Ok(_) => Ok(None),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) if gone(&err) => Ok(None),
         Err(err) => Err(err),
     }
 }
@@ -59,7 +59,7 @@ pub(super) fn entry_index_absent_on_disk(root: &Path, rel: &str) -> Result<bool,
         match std::fs::symlink_metadata(&at) {
             Ok(meta) if meta.file_type().is_symlink() => return Ok(false),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) if gone(&err) => return Ok(true),
             Err(err) => return Err(err),
         }
     }
@@ -256,6 +256,28 @@ impl Committed {
     /// `AGENTS.override.md` read whether ignored or not; elsewhere every
     /// file below `root`.
     pub(super) fn working_tree(root: &Path) -> Result<Self, PublicationError> {
+        Self::working_tree_with(root, None)
+    }
+
+    /// The files of the working tree whose root is `root`, as
+    /// [`Committed::working_tree`] reads them, and with `places` also the
+    /// files of its folder and its file, by the same rule: tracked files
+    /// and untracked ones git does not ignore, regular files only. For
+    /// those two places every symbolic link the file system holds at or
+    /// above them, and anywhere inside the folder, is recorded, whether git
+    /// ignores it or not, so nothing is ever read or written through one.
+    pub(super) fn working_tree_places(
+        root: &Path,
+        places: Places<'_>,
+    ) -> Result<Self, PublicationError> {
+        Self::working_tree_with(root, Some(places))
+    }
+
+    fn working_tree_with(
+        root: &Path,
+        places: Option<Places<'_>>,
+    ) -> Result<Self, PublicationError> {
+        let read = |path: &str| is_read(path) || places.is_some_and(|places| places.holds(path));
         let mut paths: BTreeSet<String> = BTreeSet::new();
         if git::worktree_root(root)?.is_some() {
             let listed = |args: &[&str]| -> Result<Vec<String>, PublicationError> {
@@ -299,7 +321,7 @@ impl Committed {
         for path in paths {
             // A link is recorded wherever it stands, a linked `docs` folder
             // included, so a read through it can say so.
-            if !is_read(&path) {
+            if !read(&path) {
                 // The walk outside git lists the root itself, as an empty path.
                 let linked = safe_relative(&path).is_ok_and(|relative| {
                     !path.is_empty()
@@ -323,12 +345,22 @@ impl Committed {
                     continue;
                 }
                 Ok(_) => continue,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) if gone(&err) => continue,
                 Err(source) => return Err(PublicationError::Io { path: full, source }),
             }
             let bytes = std::fs::read(&full)
                 .map_err(|source| PublicationError::Io { path: full, source })?;
             files.insert(path, bytes);
+        }
+        if let Some(places) = places {
+            links.extend(links_at_or_above(root, places.file)?);
+            let above = links_at_or_above(root, places.folder)?;
+            // Behind a link nothing is looked at, so the folder is walked
+            // only when no link stands at or above it.
+            if above.is_empty() {
+                links.extend(links_inside(root, places.folder)?);
+            }
+            links.extend(above);
         }
         Ok(Self { files, links })
     }
@@ -366,6 +398,11 @@ impl Committed {
             self.file(path)
                 .map_or(EntryIndex::Absent, EntryIndex::Present)
         }
+    }
+
+    /// Every symbolic link the view records, by repository-relative path.
+    pub(super) fn links(&self) -> impl Iterator<Item = &str> + '_ {
+        self.links.iter().map(String::as_str)
     }
 
     /// Whether `path`, or a folder above it, is a symbolic link, through
@@ -426,6 +463,78 @@ impl Committed {
     }
 }
 
+/// One folder and one file of a working tree, by repository-relative path,
+/// that a view holds beside what publication reads
+/// ([`Committed::working_tree_places`]).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Places<'a> {
+    /// The folder, without a trailing `/`.
+    pub folder: &'a str,
+    pub file: &'a str,
+}
+
+impl Places<'_> {
+    /// Whether `path` is the file, or lies inside the folder.
+    fn holds(&self, path: &str) -> bool {
+        path == self.file
+            || path
+                .strip_prefix(self.folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
+}
+
+/// Each symbolic link at `place` or at a folder above it below `root`, by
+/// its repository-relative path.
+fn links_at_or_above(root: &Path, place: &str) -> Result<Vec<String>, PublicationError> {
+    let mut links = Vec::new();
+    let mut prefix = String::new();
+    for part in place.split('/') {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(part);
+        let full = root.join(safe_relative(&prefix)?);
+        match std::fs::symlink_metadata(&full) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                links.push(prefix.clone());
+                // Nothing below a link is looked at through it.
+                break;
+            }
+            Ok(_) => {}
+            Err(err) if gone(&err) => break,
+            Err(source) => return Err(PublicationError::Io { path: full, source }),
+        }
+    }
+    Ok(links)
+}
+
+/// Each symbolic link anywhere inside the folder `folder` below `root`, by
+/// its repository-relative path; none when the folder is absent or is
+/// itself no folder.
+fn links_inside(root: &Path, folder: &str) -> Result<Vec<String>, PublicationError> {
+    let dir = root.join(safe_relative(folder)?);
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(Vec::new()),
+        Err(err) if gone(&err) => return Ok(Vec::new()),
+        Err(source) => return Err(PublicationError::Io { path: dir, source }),
+    }
+    let mut links = Vec::new();
+    for entry in walkdir::WalkDir::new(&dir).follow_links(false).min_depth(1) {
+        let entry = entry.map_err(|err| PublicationError::Io {
+            path: err.path().unwrap_or(&dir).to_path_buf(),
+            source: err.into(),
+        })?;
+        if entry.file_type().is_symlink()
+            && let Ok(rel) = entry.path().strip_prefix(root)
+            && let Some(rel) = rel.to_str()
+        {
+            links.push(rel.replace(std::path::MAIN_SEPARATOR, "/"));
+        }
+    }
+    Ok(links)
+}
+
 /// `path` as a relative path of normal components; anything else is
 /// refused rather than written outside its root.
 /// The first folder above `path` below `root` that is a symbolic link, by
@@ -445,11 +554,21 @@ fn linked_folder(root: &Path, path: &str) -> Result<Option<String>, PublicationE
         match std::fs::symlink_metadata(&full) {
             Ok(meta) if meta.file_type().is_symlink() => return Ok(Some(folder)),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) if gone(&err) => return Ok(None),
             Err(source) => return Err(PublicationError::Io { path: full, source }),
         }
     }
     Ok(None)
+}
+
+/// Whether `err`, from looking at a path in the working tree, says nothing
+/// stands there: the path is missing, or a folder on the way to it is now a
+/// file, as when a folder git still lists was replaced by a document.
+fn gone(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {
@@ -499,6 +618,28 @@ mod tests {
         let (second, rest) = next_blob(rest).unwrap();
         assert_eq!(second, b"");
         assert!(rest.is_empty());
+    }
+
+    #[test]
+    fn a_link_above_the_folder_is_recorded_and_nothing_behind_it_is_walked() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(outside.join("acme/inner")).unwrap();
+        std::os::unix::fs::symlink(dir.path().join("elsewhere"), outside.join("acme/inner/x"))
+            .unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("plugins")).unwrap();
+        let tree = Committed::working_tree_places(
+            &root,
+            Places {
+                folder: "plugins/acme",
+                file: ".claude-plugin/marketplace.json",
+            },
+        )
+        .unwrap();
+        let links: Vec<&str> = tree.links().collect();
+        assert_eq!(links, ["plugins"]);
     }
 
     #[test]

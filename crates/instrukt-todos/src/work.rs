@@ -12,7 +12,7 @@
 //!
 //! It serves `instrukt todo` (its methods), the runner (`Pickup`,
 //! `Claims`, `SessionBindings`, `Reflection`, `TaskFirings`,
-//! `AutomaticHolds`, `RetentionPurge`), workflow
+//! `AutomaticHolds`, `RetentionPurge`, `WorktreeReclamation`), workflow
 //! ([`crate::evidence::WorkEvidence`]) and core ([`WorkExistence`] for
 //! `TodoExistence`).
 
@@ -30,11 +30,13 @@ mod _inbound;
 mod _model;
 mod _ops;
 pub(crate) mod _ports;
+mod _reclamation;
 mod _reflect;
 mod _session;
 mod _stamps;
 mod _store;
 mod _withdrawal;
+mod _worktrees;
 
 use std::sync::Arc;
 

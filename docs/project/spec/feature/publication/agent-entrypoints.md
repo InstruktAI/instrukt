@@ -12,16 +12,22 @@ commit holds and stages it into it, so every checkout carries it — on a
 computer without instrukt, in a linked worktree, and in a cloud agent's clone.
 A project's root `AGENTS.md` is the selection in `docs/project/index.yaml`; a
 company home's `AGENTS.md` is the selection its `docs/index.yaml` makes from
-the company's own documents. No file below a repository's root is rendered.
+the company's own documents. No instruction file below a repository's root is
+rendered. A company's repository also carries the company's plugin, which
+instrukt renders from the same index when asked and which is no instruction
+file: it is installed from the repository as a plugin catalog
+(`project/instrukt/spec/feature/publication/company-plugin`).
 The project that owns `docs/general/` also renders a user-scope global file
 for each agent runtime the user has configured, found by asking the selected
 runtime: the always-on `general` content where a native loader is
 established, one line per on-demand domain with the command that loads it,
 and that runtime's own `agents` snippets. It sets the one settings key that
-makes a runtime load `AGENTS.md` files. Every file instrukt renders is its
-own: it opens with the generated line, is written whole each time, whatever it
-held, and no record is kept of what was written. There is no master file and
-there are no addenda: each rendering has one source, an `index.yaml`.
+makes a runtime load `AGENTS.md` files. Every instruction file instrukt
+renders is its own: it opens with the generated line, is written whole each
+time, whatever it held, and no record is kept of what was written. There is no
+master file and there are no addenda: each rendering has one source, an
+`index.yaml`.
+
 
 ## Canonical fields
 
@@ -29,13 +35,14 @@ The root `AGENTS.md` also lists the project's own procedures that declare
 subscriptions, under “Configured Responsibilities”, whether or not events is
 enabled on the computer that renders it. No branding line is emitted.
 instrukt writes no project override instruction file, such as Codex's
-`AGENTS.override.md`: the root `AGENTS.md` is the only file generated in a
-repository (`general/policy/agent-artifact-governance`). An
+`AGENTS.override.md`: the root `AGENTS.md` is the only instruction file
+generated in a repository (`general/policy/agent-artifact-governance`). An
 `AGENTS.override.md` at the root of a repository whose root `AGENTS.md` is
 rendered is a finding of the committed rendering, naming the file: Codex
 reads it in place of `AGENTS.md`, so it hides every committed update.
 instrukt never deletes it, since it may be a person's own
 (`general/policy/agent-artifact-governance`).
+
 
 ### Rendering a selection
 
@@ -503,10 +510,13 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   be parsed is left untouched and named, and the sync goes on: that file is
   the user's (`general/policy/agent-artifact-governance`: an agent's user
   settings belong to its user).
-- **No other agent configuration.** instrukt writes no skill, MCP server, hook
-  or other agent setting. Agents reach declared MCP servers through
-  `instrukt mcp` (`project/instrukt/spec/feature/runner/mcp-access`), which
-  writes none either.
+- **No other agent configuration.** A sync writes no skill, MCP server, hook
+  or other agent setting into an agent runtime's home. Agents reach declared
+  MCP servers through `instrukt mcp`
+  (`project/instrukt/spec/feature/runner/mcp-access`), which writes none
+  either. The skill instrukt renders is the one in a company's plugin, into
+  the company's repository and on request, which no sync renders
+  (`project/instrukt/spec/feature/publication/company-plugin`).
 
 ## Use cases
 
