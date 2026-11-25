@@ -244,7 +244,8 @@ withdrawal whose working resources are being released. It starts empty.
 Version 39 ends the shared remote record. It drops `listing_copies` and the
 reflection columns that tracked a record copy on GitHub (`record_comment`,
 `conflicted`), and adds the issue read positions, the published work-branch
-head and the kept refusals to `reflections`. It replaces the count of
+head with why its publication is outstanding, and the kept refusals to
+`reflections`. It replaces the count of
 reflected build reviews with the reviewed verdicts themselves: the first
 `reviews_reflected` build-verdict stamps, in record order, are recorded as
 reviewed. It gives `inbound_commands` the command's time; a command recorded
@@ -415,6 +416,7 @@ reflection. Key: `todo_id`.
 | `refusals` | Requests GitHub refused as invalid, as JSON, at most one per reflected target: the issue, the pull request's creation, one build verdict's review (by its stamp's record order) or one artifact version (by its record order). Each holds the identity of the request sent — what it sent and the branch head it concerned — and GitHub's validation detail. A request to that target with the same identity is not sent again; one with another identity is sent, and the target's refusal is dropped once GitHub accepts it. A refused artifact version or verdict review never changes, so its refusal stays while the todo is kept. |
 | `pull_number` | The linked pull request. |
 | `published_head` | The work-branch commit the last publication left on the remote; `NULL` before the first. |
+| `publication_outstanding` | Why the work branch's local head is not on the remote — the remote branch moved where the local one cannot fast-forward it, or no remote is tracked — as the last publication found it; `NULL` once a publication leaves the local head there or none is owed. |
 | `etag` | The issue's `ETag` at its last read, for conditional reads. |
 | `comments_since` | The latest update time among the issue's comments read so far: the next read asks only for comments updated after it. `NULL` reads the conversation once in full. |
 | `events_page`, `events_last` | The page of the issue's events holding the last event read, and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
