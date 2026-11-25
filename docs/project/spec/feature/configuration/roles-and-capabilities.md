@@ -240,7 +240,8 @@ that project's todos and `orchestrate` its sessions, and `report` files a
 defect of the system it works through into the project that owns the defect,
 as it does for a company's agent. Those grants are its fleet-attention grants:
 `read` reaches the events and records a condition names, `orchestrate` the
-sessions it concerns, and `record` the holds and dependencies that answer it
+sessions it concerns, and `record` the holds, dependencies and withdrawals
+that answer it
 (`project/instrukt/spec/feature/runner/fleet-attention`).
 <!-- /planned-change:standing-sdlc-coordinator -->
 

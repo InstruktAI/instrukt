@@ -448,7 +448,7 @@ has no origin, as declared in Canonical fields.
 
 <!-- planned:standing-sdlc-coordinator -->
 - **Fleet attention** — `project/instrukt/spec/feature/runner/fleet-attention`
-  — have stuck or colliding work across a project's todos attended to without watching its sessions.
+  — have stuck, converging or conflicting work across a project's todos attended to without watching its sessions.
 <!-- /planned:standing-sdlc-coordinator -->
 
 ## Governing designs and decisions

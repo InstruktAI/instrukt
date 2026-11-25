@@ -13,8 +13,8 @@ has an owner that sees its own work and nothing of the others. Fleet attention
 is the set of conditions that owner cannot see or cannot resolve from inside
 its todo. Each condition becomes an event in the project's origin, so the
 standing procedure subscribed to it is started or woken for that condition. A
-developer running several todos has stuck or colliding work attended to without
-watching its sessions.
+developer running several todos has stuck, converging or conflicting work
+attended to without watching its sessions.
 
 ## Canonical fields
 
@@ -30,10 +30,11 @@ that owner's contract and decides none of it again
 | --- | --- |
 | The session holding a todo's execution claim stopped or failed, or no session could be started for the todo, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). |
 | The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides (`project/instrukt/spec/feature/work/github-record`). |
-| A dispatch hold is placed on a todo. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). |
+| A dispatch hold is placed on a todo, or released from it. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). |
 | A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). |
 | A worker waits for input its orchestrator cannot supply. | That orchestrator, by raising it. |
-| Two live todos of the project collide. | The agent that meets the collision, by raising it. |
+| The work of two or more live todos of the project converges, overlaps or conflicts. | The agent that meets it, by raising it. |
+| An agent working a live todo finds that a solution existing outside the project already provides what the todo is building. | That agent, by raising it. |
 | An agent meets a decision owned by a person and has no conversation with that person to ask it in. | That agent, by raising it. |
 
 The runner observes the session holding a todo's execution claim and no worker
@@ -72,13 +73,13 @@ follow `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 ### What an attention event carries
 
 - Its origin is the project the condition arose in, and its subject is the
-  todo it concerns. A collision names every todo involved.
+  todo it concerns. A condition between todos names every todo involved.
 - It carries addresses: the todo, the session, the role and attempt, the hold
   or the raise. Conversation content stays in its session
   (`general/principle/session-lifecycle`).
 - One occurrence of a condition is published once. Observing the same
-  occurrence again publishes nothing. A new hold, a new failure or a new raise
-  is a new occurrence.
+  occurrence again publishes nothing. A new hold, a release, a new failure or
+  a new raise is a new occurrence.
 - It names work to reconsider and authorizes nothing by itself. The work
   record remains the source of a todo's state
   (`project/instrukt/spec/feature/runner/event-activation`).
