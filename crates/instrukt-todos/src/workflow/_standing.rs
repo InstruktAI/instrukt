@@ -100,7 +100,6 @@ fn back_to_preparation(evidence: &TodoEvidence) -> bool {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ListedWorktree {
     path: PathBuf,
-    branch: Option<String>,
 }
 
 /// What git lists for a project on this computer: its worktrees other than
@@ -158,16 +157,13 @@ fn parse_worktrees(listing: &str) -> Vec<ListedWorktree> {
             found.push((
                 ListedWorktree {
                     path: PathBuf::from(path),
-                    branch: None,
                 },
                 false,
             ));
-        } else if let Some((last, prunable)) = found.last_mut() {
-            if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-                last.branch = Some(branch.to_owned());
-            } else if line == "prunable" || line.starts_with("prunable ") {
-                *prunable = true;
-            }
+        } else if let Some((_, prunable)) = found.last_mut()
+            && (line == "prunable" || line.starts_with("prunable "))
+        {
+            *prunable = true;
         }
     }
     found
@@ -208,9 +204,12 @@ fn same_path(path: &Path) -> PathBuf {
 }
 
 /// Each todo of `evidence` whose worktree, local work branch or work branch
-/// on `origin` is in `listed`, with its standing. Each listed worktree and
-/// branch is attached to one todo: a live todo's record is read before any
-/// other, so it wins over an earlier todo that carried the same name.
+/// on `origin` is in `listed`, with its standing. A worktree is the todo's
+/// only at a path its bindings recorded: a checkout that merely has the work
+/// branch checked out is no assignment's. A branch is the todo's by name.
+/// Each listed worktree and branch is attached to one todo: a live todo's
+/// record is read before any other, so it wins over an earlier todo that
+/// carried the same name.
 pub(crate) fn worktree_standings(evidence: &[TodoEvidence], listed: &Listed) -> Vec<TodoWorktree> {
     let mut ordered: Vec<&TodoEvidence> = evidence.iter().collect();
     ordered.sort_by_key(|todo| !matches!(todo.status, TodoStatus::Active | TodoStatus::Iceboxed));
@@ -226,10 +225,7 @@ pub(crate) fn worktree_standings(evidence: &[TodoEvidence], listed: &Listed) -> 
             .worktrees
             .iter()
             .filter(|listed| !taken_worktrees.contains(&listed.path))
-            .find(|listed| {
-                paths.contains(&same_path(&listed.path))
-                    || (branch.is_some() && listed.branch == branch)
-            })
+            .find(|listed| paths.contains(&same_path(&listed.path)))
             .map(|listed| listed.path.clone());
         let local = branch.as_ref().and_then(|name| listed.local.get(name));
         let origin = branch.as_ref().and_then(|name| listed.origin.get(name));
