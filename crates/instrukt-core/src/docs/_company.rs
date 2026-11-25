@@ -464,9 +464,29 @@ mod tests {
         ));
     }
 
-    /// `text` read as a company document, with each reference and read
-    /// replaced by `new/` before what it names, `@` aside.
-    fn moved(text: &str, part: CompanyText) -> String {
+    /// The path each reference to a file in `text` occupies, then the path
+    /// each required read occupies, each as the text holds it there.
+    fn placed(text: &str) -> (Vec<&str>, Vec<&str>) {
+        let document = company_document(text);
+        let references = document
+            .places
+            .references
+            .iter()
+            .filter(|(reference, _)| matches!(reference, CompanyReference::Path(_)))
+            .map(|(_, range)| &text[range.clone()])
+            .collect();
+        let reads = document
+            .places
+            .reads
+            .iter()
+            .map(|range| &text[range.clone()])
+            .collect();
+        (references, reads)
+    }
+
+    /// `text` as `part` says, with each path replaced by itself as written,
+    /// `@` aside: only where a path's characters stand is anything replaced.
+    fn kept(text: &str, part: CompanyText) -> String {
         let document = company_document(text);
         company_paths(text, &document, part, |path| {
             let written = match path {
@@ -474,66 +494,51 @@ mod tests {
                 CompanyPath::Reference(CompanyReference::Name(_)) => return None,
                 CompanyPath::Read(read) => read,
             };
-            Some(format!(
-                "new/{}",
-                written.strip_prefix('@').unwrap_or(written)
-            ))
+            Some(written.strip_prefix('@').unwrap_or(written).to_owned())
         })
     }
 
     #[test]
-    fn an_at_reference_has_its_path_replaced_and_keeps_its_at() {
-        assert_eq!(
-            moved("# A\n\nAsk @people.md. Not `@x.md`.\n", CompanyText::Whole),
-            "# A\n\nAsk @new/people.md. Not `@x.md`.\n"
-        );
+    fn an_at_references_path_is_placed_without_its_at() {
+        let text = "# A\n\nAsk @people.md. Not `@x.md`.\n";
+        assert_eq!(placed(text), (vec!["people.md"], vec![]));
+        assert_eq!(kept(text, CompanyText::Whole), text);
     }
 
     #[test]
-    fn a_links_target_has_its_path_replaced_and_keeps_its_text_and_anchor() {
-        assert_eq!(
-            moved(
-                "# A\n\nSee [the roles](roles.md#lead) and <!-- [x](hidden.md) --> ![map](<maps/a.md?v=1>).\n",
-                CompanyText::Whole
-            ),
-            "# A\n\nSee [the roles](new/roles.md#lead) and <!-- [x](hidden.md) --> ![map](<new/maps/a.md?v=1>).\n"
-        );
+    fn a_links_path_is_placed_without_its_text_anchor_query_or_brackets() {
+        let text = "# A\n\nSee [the roles](roles.md#lead) and <!-- [x](hidden.md) --> ![map](<maps/a.md?v=1>).\n";
+        assert_eq!(placed(text), (vec!["roles.md", "maps/a.md"], vec![]));
+        assert_eq!(kept(text, CompanyText::Whole), text);
     }
 
     #[test]
-    fn a_link_definitions_target_has_its_path_replaced() {
-        assert_eq!(
-            moved("# A\n\n[roles]: roles.md \"Roles\"\n", CompanyText::Whole),
-            "# A\n\n[roles]: new/roles.md \"Roles\"\n"
-        );
+    fn a_link_definitions_path_is_placed_without_its_title() {
+        let text = "# A\n\n[roles]: roles.md \"Roles\"\n";
+        assert_eq!(placed(text), (vec!["roles.md"], vec![]));
+        assert_eq!(kept(text, CompanyText::Whole), text);
     }
 
     #[test]
-    fn a_see_also_entrys_opening_path_is_replaced_and_its_name_left() {
-        assert_eq!(
-            moved(
-                "# A\n\n## See Also\n\n- `teams.md` — the teams\n- general/policy/commits\n",
-                CompanyText::Whole
-            ),
-            "# A\n\n## See Also\n\n- `new/teams.md` — the teams\n- general/policy/commits\n"
-        );
+    fn a_see_also_entrys_opening_path_is_placed_and_a_name_is_not() {
+        let text = "# A\n\n## See Also\n\n- `teams.md` — the teams\n- general/policy/commits\n";
+        assert_eq!(placed(text), (vec!["teams.md"], vec![]));
+        assert_eq!(kept(text, CompanyText::Whole), text);
     }
 
     #[test]
-    fn a_required_read_has_its_path_replaced_in_the_whole_text_and_leaves_with_its_section() {
+    fn a_required_reads_path_is_placed_and_the_body_leaves_its_section_out() {
         let text = "# A\n\n## Required reads\n\n- roles.md\n- [Teams](teams/a.md) <!-- why -->\n\n## Rules\n\nSee @roles.md.\n";
         assert_eq!(
-            moved(text, CompanyText::Whole),
-            "# A\n\n## Required reads\n\n- new/roles.md\n- [Teams](new/teams/a.md) <!-- why -->\n\n## Rules\n\nSee @new/roles.md.\n"
+            placed(text),
+            (vec!["roles.md"], vec!["roles.md", "teams/a.md"])
         );
-        assert_eq!(
-            moved(text, CompanyText::Body),
-            "# A\n\n## Rules\n\nSee @new/roles.md.\n"
-        );
-        assert_eq!(
-            company_document(text).body,
-            "# A\n\n## Rules\n\nSee @roles.md.\n"
-        );
+        assert_eq!(kept(text, CompanyText::Whole), text);
+        let document = company_document(text);
+        assert_eq!(kept(text, CompanyText::Body), document.body);
+        let body = company_document(&document.body);
+        assert!(body.reads.is_empty());
+        assert_eq!(body.references, document.references);
     }
 
     #[test]
