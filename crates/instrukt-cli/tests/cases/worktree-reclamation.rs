@@ -246,6 +246,6 @@ fn a_working_session_reclaims_only_its_own_worktrees_declared_output() {
     let refused = reclaim("unbound").failure();
     insta::assert_snapshot!(
         String::from_utf8_lossy(&refused.get_output().stderr),
-        @"instrukt: no todo assignment binds this caller to a worktree; the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree>`)"
+        @"instrukt: no todo assignment binds this caller to a worktree; the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree> --branch <branch> --base <base>`, with the worktree, branch and base the reservation names)"
     );
 }

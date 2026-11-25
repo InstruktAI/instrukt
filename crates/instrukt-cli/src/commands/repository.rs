@@ -512,7 +512,7 @@ pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 
 /// What binds a session to the todo worktree `instrukt repo reclaim` acts on;
 /// the command's refusals and its admission name it.
-pub(crate) const RECLAIM_BINDING_DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree>`)";
+pub(crate) const RECLAIM_BINDING_DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree> --branch <branch> --base <base>`, with the worktree, branch and base the reservation names)";
 
 /// `instrukt repo reclaim`: what the runner removes from a todo worktree,
 /// removed from the worktree the calling session's assignment records
