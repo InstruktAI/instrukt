@@ -802,11 +802,9 @@ impl Work {
         let session = s.caller_session()?;
         let completion =
             super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
-        if let Some((binding, _)) = completion
-            && !matches!(
-                request,
-                StampRequest::DriftReviewed { .. } | StampRequest::VerificationDisposition { .. }
-            )
+        if let Some(binding) = completion
+            && super::_attempts::completion(request)
+                .is_some_and(|c| c.repeat == super::_attempts::Repeat::Retained)
             && record.bindings[binding].attempt.released_at.is_some()
             && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
             && let Some(stamp) = record
@@ -985,7 +983,7 @@ impl Work {
             current_drift_replay(&record, &stamp.fact, &stamp.actor).cloned()
         };
         if let Some(prior) = replay_prior {
-            if let Some((binding, _)) = completion
+            if let Some(binding) = completion
                 && record.bindings[binding].attempt.released_at.is_none()
             {
                 let now = s.now;
@@ -1047,7 +1045,7 @@ impl Work {
             }
             let mut stamp = stamp;
             stamp.sequence = record.next_sequence();
-            if let Some((binding, _)) = completion {
+            if let Some(binding) = completion {
                 let b = &mut record.bindings[binding];
                 if b.attempt.released_at.is_none() {
                     b.attempt.completion_sequence = Some(stamp.sequence);
@@ -2068,7 +2066,7 @@ fn admit_disposition(
     record: &TodoRecord,
     caller: Option<&SessionRef>,
     cwd: &Path,
-    completion: Option<(usize, bool)>,
+    completion: Option<usize>,
     disposition: VerificationDisposition,
 ) -> Result<(instrukt_core::ids::RoleName, Option<usize>), WorkError> {
     const NEITHER: &str = "a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator";
@@ -2077,7 +2075,7 @@ fn admit_disposition(
         WorkError::refused(format!("{NEITHER}; no agent session is active: {DOORS}"))
     })?;
     let (binding, driver) = match completion {
-        Some((binding, _)) => (binding, None),
+        Some(binding) => (binding, None),
         None => {
             let driver = super::_attempts::live_driver(record, caller).ok_or_else(|| {
                 WorkError::refused(format!(

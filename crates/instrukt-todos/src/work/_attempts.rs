@@ -901,111 +901,247 @@ pub(super) fn writer_artifact(role: &str) -> Option<&'static str> {
     }
 }
 
-/// Match completion to the caller's reserved shared workspace.
+/// What a completion stamp request completes: the one place a completion
+/// request's admission facts live (`stamps`, which role completes which
+/// request; `state-database`, completion and release per role). A new
+/// completion request is one arm of [`completion`].
+pub(super) struct Completion {
+    /// How admission finds the attempt the request completes.
+    completes: Completes,
+    /// The attempt only reads the shared workspace, so its head must still
+    /// be the one captured when the attempt began.
+    read_only: bool,
+    /// The caller must be a reviewer independent of the orchestrator and
+    /// the writers.
+    independent: bool,
+    /// What a repeat of the request on an already released attempt does.
+    pub(super) repeat: Repeat,
+}
+
+/// How a completion request finds the attempt it completes.
+enum Completes {
+    /// The caller's latest bound attempt of one of `roles`; `unbound` says
+    /// what a caller without one gets.
+    CallerRole {
+        roles: &'static [&'static str],
+        unbound: Unbound,
+    },
+    /// The active or matching-replay `diagnoser` attempt, settled by the
+    /// driving session ([`diagnosis_settlement_binding`]).
+    Diagnoser,
+    /// The active, or still current released, `drift-analyzer` attempt
+    /// ([`drift_review_binding`]).
+    DriftAnalyzer,
+}
+
+/// What a caller without a matching role binding gets.
+#[derive(Clone, Copy)]
+enum Unbound {
+    /// The record-only path: no attempt completes, and the request's own
+    /// admission judges the caller.
+    RecordOnly,
+    /// Refusal: the request completes the caller's bound attempt or nothing.
+    Refused,
+}
+
+/// What a repeat of a completion request on a released attempt does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Repeat {
+    /// The attempt's retained completion stamp answers it.
+    Retained,
+    /// The request's own admission judges it: a drift review stamps each
+    /// drifted artifact under one attempt, and a disposition replays only an
+    /// exact repeat.
+    Admitted,
+}
+
+/// The completion descriptor of `request`, or `None` when the request
+/// completes no attempt.
+pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
+    use super::StampRequest;
+    let completion = match request {
+        StampRequest::RoleComplete => Completion {
+            completes: Completes::CallerRole {
+                roles: &[
+                    "setup",
+                    "finalizer",
+                    "intaker",
+                    "architect",
+                    "planner",
+                    "task-preparer",
+                ],
+                unbound: Unbound::Refused,
+            },
+            read_only: false,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::BuildComplete => Completion {
+            completes: Completes::CallerRole {
+                roles: &["builder", "fixer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: false,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::BuildVerdict { verdict } => Completion {
+            completes: Completes::CallerRole {
+                roles: &["build-reviewer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: true,
+            independent: matches!(verdict, crate::evidence::BuildVerdict::Approve),
+            repeat: Repeat::Retained,
+        },
+        StampRequest::DeferralsProcessed => Completion {
+            completes: Completes::CallerRole {
+                roles: &["deferrer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        // Deliberately recorded preparation reviews without native dispatch
+        // remain admissible on the record-only path.
+        StampRequest::PreparationVerdict { phase, .. } => Completion {
+            completes: Completes::CallerRole {
+                roles: match phase {
+                    PreparationReview::PrdReview => &["prd-reviewer"],
+                    PreparationReview::ArchitectureReview => &["architecture-reviewer"],
+                    PreparationReview::PlanReview => &["plan-reviewer"],
+                },
+                unbound: Unbound::RecordOnly,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        // A disposition from a caller with no verifier binding takes the
+        // record-only path, where its admission judges the caller.
+        StampRequest::VerificationDisposition { .. } => Completion {
+            completes: Completes::CallerRole {
+                roles: &[crate::workflow::VERIFIER_ROLE],
+                unbound: Unbound::RecordOnly,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Admitted,
+        },
+        StampRequest::DiagnosisSettled => Completion {
+            completes: Completes::Diagnoser,
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::DriftReviewed { .. } => Completion {
+            completes: Completes::DriftAnalyzer,
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Admitted,
+        },
+        StampRequest::Approval { .. }
+        | StampRequest::CarriedApproval { .. }
+        | StampRequest::IntentChecked
+        | StampRequest::Kickback { .. }
+        | StampRequest::ArchitectureSkipped { .. }
+        | StampRequest::DiagnosisUnresolved { .. }
+        | StampRequest::BuildStarted
+        | StampRequest::FinalizeReady
+        | StampRequest::TaskFiringStarted { .. }
+        | StampRequest::TaskOutcome { .. } => return None,
+    };
+    Some(completion)
+}
+
+/// The caller's latest bound attempt of one of `roles`; a caller without
+/// one takes the record-only path or is refused, as `unbound` says.
+fn caller_role_binding(
+    record: &TodoRecord,
+    caller: Option<&SessionRef>,
+    roles: &[&str],
+    unbound: Unbound,
+) -> Result<Option<usize>, WorkError> {
+    let Some(caller) = caller else {
+        return match unbound {
+            Unbound::RecordOnly => Ok(None),
+            Unbound::Refused => Err(WorkError::refused(
+                "completion requires a bound role session",
+            )),
+        };
+    };
+    let found = record
+        .bindings
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, b)| b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str()))
+        .map(|(index, _)| index);
+    match (found, unbound) {
+        (Some(index), _) => Ok(Some(index)),
+        (None, Unbound::RecordOnly) => Ok(None),
+        (None, Unbound::Refused) => Err(WorkError::refused("caller has no bound completion role")),
+    }
+}
+
+/// Match completion to the caller's reserved shared workspace: the index of
+/// the attempt `request` completes, or `None` when it completes none.
 pub(super) fn completion_binding(
     record: &TodoRecord,
     caller: Option<&SessionRef>,
     cwd: &Path,
     request: &super::StampRequest,
-) -> Result<Option<(usize, bool)>, WorkError> {
-    use super::StampRequest;
-    let (index, b) = if matches!(request, StampRequest::DiagnosisSettled) {
-        let Some(index) = diagnosis_settlement_binding(record, caller)? else {
-            return Ok(None);
-        };
-        (index, &record.bindings[index])
-    } else if matches!(request, StampRequest::DriftReviewed { .. }) {
-        let Some(index) = drift_review_binding(record, caller)? else {
-            return Ok(None);
-        };
-        (index, &record.bindings[index])
-    } else {
-        let roles: &[&str] = match request {
-            StampRequest::RoleComplete => &[
-                "setup",
-                "finalizer",
-                "intaker",
-                "architect",
-                "planner",
-                "task-preparer",
-            ],
-            StampRequest::BuildComplete => &["builder", "fixer"],
-            StampRequest::BuildVerdict { .. } => &["build-reviewer"],
-            StampRequest::DeferralsProcessed => &["deferrer"],
-            StampRequest::VerificationDisposition { .. } => &[crate::workflow::VERIFIER_ROLE],
-            StampRequest::PreparationVerdict { phase, .. } => match phase {
-                PreparationReview::PrdReview => &["prd-reviewer"],
-                PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-                PreparationReview::PlanReview => &["plan-reviewer"],
-            },
-            _ => return Ok(None),
-        };
-        // A disposition from a caller with no verifier binding takes the
-        // record-only path, where admission judges the caller.
-        let record_only = matches!(
-            request,
-            StampRequest::PreparationVerdict { .. } | StampRequest::VerificationDisposition { .. }
-        );
-        if caller.is_none() && record_only {
-            return Ok(None);
+) -> Result<Option<usize>, WorkError> {
+    let Some(completion) = completion(request) else {
+        return Ok(None);
+    };
+    let selected = match completion.completes {
+        Completes::Diagnoser => diagnosis_settlement_binding(record, caller)?,
+        Completes::DriftAnalyzer => drift_review_binding(record, caller)?,
+        Completes::CallerRole { roles, unbound } => {
+            caller_role_binding(record, caller, roles, unbound)?
         }
+    };
+    let Some(index) = selected else {
+        return Ok(None);
+    };
+    let b = &record.bindings[index];
+    if completion.independent {
         let caller =
             caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-        let Some((index, b)) =
-            record.bindings.iter().enumerate().rev().find(|(_, b)| {
-                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
+        let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
+            .bindings
+            .iter()
+            .map(|item| {
+                (
+                    item.role.clone(),
+                    item.attempt.assignment,
+                    item.session.as_ref(),
+                )
             })
-        else {
-            // Existing deliberately recorded preparation reviews without native
-            // dispatch remain admissible; a disposition takes the record-only path.
-            if record_only {
-                return Ok(None);
-            }
-            return Err(WorkError::refused("caller has no bound completion role"));
-        };
-        if matches!(
-            request,
-            StampRequest::BuildVerdict {
-                verdict: crate::evidence::BuildVerdict::Approve
-            }
+            .collect();
+        if !crate::workflow::is_independent_reviewer(
+            record.claim.as_ref().and_then(|c| c.session.as_ref()),
+            &tuples,
+            &crate::evidence::Actor::Session(caller.clone()),
+            None,
         ) {
-            let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
-                .bindings
-                .iter()
-                .map(|item| {
-                    (
-                        item.role.clone(),
-                        item.attempt.assignment,
-                        item.session.as_ref(),
-                    )
-                })
-                .collect();
-            if !crate::workflow::is_independent_reviewer(
-                record.claim.as_ref().and_then(|c| c.session.as_ref()),
-                &tuples,
-                &crate::evidence::Actor::Session(caller.clone()),
-                None,
-            ) {
-                return Err(WorkError::refused(
-                    "build approval requires an independent reviewer distinct from the orchestrator and writers",
-                ));
-            }
+            return Err(WorkError::refused(
+                "build approval requires an independent reviewer distinct from the orchestrator and writers",
+            ));
         }
-        (index, b)
-    };
+    }
     if b.worktree.is_none()
         && record.kind == instrukt_runner::interfaces::TodoKind::Task
         && b.attempt.assignment == AssignmentKind::Child
     {
-        if b.attempt.released_at.is_some() {
-            if b.attempt.completion_sequence.is_none() {
-                return Err(WorkError::refused(
-                    "released attempt has no matching completion",
-                ));
-            }
-            return Ok(Some((index, true)));
+        if b.attempt.released_at.is_some() && b.attempt.completion_sequence.is_none() {
+            return Err(WorkError::refused(
+                "released attempt has no matching completion",
+            ));
         }
-        return Ok(Some((index, true)));
+        return Ok(Some(index));
     }
     let path = b
         .worktree
@@ -1027,16 +1163,7 @@ pub(super) fn completion_binding(
             "completion branch differs from the shared assignment",
         ));
     }
-    let readonly = matches!(
-        request,
-        StampRequest::BuildVerdict { .. }
-            | StampRequest::DeferralsProcessed
-            | StampRequest::DiagnosisSettled
-            | StampRequest::DriftReviewed { .. }
-            | StampRequest::PreparationVerdict { .. }
-            | StampRequest::VerificationDisposition { .. }
-    );
-    if readonly && b.attempt.base_head.as_ref() != Some(&current) {
+    if completion.read_only && b.attempt.base_head.as_ref() != Some(&current) {
         return Err(WorkError::refused(
             "read-only attempt changed from its captured head",
         ));
@@ -1049,7 +1176,7 @@ pub(super) fn completion_binding(
                 "released attempt has no matching completion",
             ));
         }
-        return Ok(Some((index, true)));
+        return Ok(Some(index));
     }
     if b.role.as_str() == "finalizer"
         && head(
@@ -1075,7 +1202,7 @@ pub(super) fn completion_binding(
             "writer completion requires a version of its {artifact} artifact"
         )));
     }
-    Ok(Some((index, true)))
+    Ok(Some(index))
 }
 
 /// The caller's live driver binding on the todo: the binding the
@@ -1849,5 +1976,248 @@ mod tests {
         });
         let prior = prior_session(&[bound], &planner, 2, instrukt_core::config::Runtime::T3);
         assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
+    }
+
+    /// A task record: its child attempts complete without a shared
+    /// worktree, so admission decides before any Git inspection.
+    fn task_record(bindings: Vec<Binding>) -> TodoRecord {
+        TodoRecord {
+            kind: TodoKind::Task,
+            bindings,
+            ..base_record()
+        }
+    }
+
+    fn child_binding(role: &str, number: u64, bound: &str) -> Binding {
+        let mut binding = worker_binding(role, number, Some(session(bound)));
+        binding.attempt.assignment = AssignmentKind::Child;
+        binding
+    }
+
+    fn admit(
+        record: &TodoRecord,
+        caller: Option<&str>,
+        request: &crate::work::StampRequest,
+    ) -> Result<Option<usize>, WorkError> {
+        let caller = caller.map(session);
+        completion_binding(record, caller.as_ref(), Path::new("/nonexistent"), request)
+    }
+
+    fn preparation_verdict(phase: PreparationReview) -> crate::work::StampRequest {
+        crate::work::StampRequest::PreparationVerdict {
+            phase,
+            verdict: crate::evidence::ReviewVerdict::Approve,
+        }
+    }
+
+    fn disposition() -> crate::work::StampRequest {
+        crate::work::StampRequest::VerificationDisposition {
+            disposition: crate::evidence::VerificationDisposition::Pass,
+            follow_up: None,
+        }
+    }
+
+    fn build_verdict(verdict: crate::evidence::BuildVerdict) -> crate::work::StampRequest {
+        crate::work::StampRequest::BuildVerdict { verdict }
+    }
+
+    fn refused(result: Result<Option<usize>, WorkError>) -> bool {
+        matches!(result, Err(WorkError::Refused(_)))
+    }
+
+    #[test]
+    fn requests_that_complete_no_attempt_leave_the_callers_attempt_open() {
+        use crate::work::StampRequest;
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        for request in [
+            StampRequest::IntentChecked,
+            StampRequest::BuildStarted,
+            StampRequest::FinalizeReady,
+            StampRequest::Kickback {
+                reason: "scope moved".into(),
+            },
+            StampRequest::TaskFiringStarted { occurrence: None },
+        ] {
+            assert_eq!(admit(&record, Some("builder-1"), &request).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn a_completion_without_a_session_is_refused_unless_it_is_record_only() {
+        use crate::evidence::BuildVerdict;
+        use crate::work::StampRequest;
+        let record = task_record(Vec::new());
+        for request in [
+            StampRequest::RoleComplete,
+            StampRequest::BuildComplete,
+            StampRequest::DeferralsProcessed,
+            build_verdict(BuildVerdict::ChangesRequested),
+            build_verdict(BuildVerdict::Approve),
+        ] {
+            assert!(refused(admit(&record, None, &request)), "{request:?}");
+        }
+        for request in [
+            preparation_verdict(PreparationReview::PrdReview),
+            disposition(),
+        ] {
+            assert_eq!(admit(&record, None, &request).unwrap(), None);
+        }
+    }
+
+    #[test]
+    fn a_session_without_the_requests_role_is_refused_unless_it_is_record_only() {
+        use crate::evidence::BuildVerdict;
+        use crate::work::StampRequest;
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        for request in [
+            StampRequest::RoleComplete,
+            StampRequest::DeferralsProcessed,
+            build_verdict(BuildVerdict::ChangesRequested),
+        ] {
+            assert!(
+                refused(admit(&record, Some("builder-1"), &request)),
+                "{request:?}"
+            );
+        }
+        for request in [
+            preparation_verdict(PreparationReview::PrdReview),
+            disposition(),
+        ] {
+            assert_eq!(admit(&record, Some("builder-1"), &request).unwrap(), None);
+        }
+        assert_eq!(
+            admit(&record, Some("builder-1"), &StampRequest::BuildComplete).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_completion_completes_the_callers_latest_attempt_of_its_roles() {
+        use crate::work::StampRequest;
+        let record = task_record(vec![
+            child_binding("builder", 1, "worker"),
+            child_binding("fixer", 2, "worker"),
+            child_binding("fixer", 3, "other"),
+            child_binding("deferrer", 4, "worker"),
+        ]);
+        assert_eq!(
+            admit(&record, Some("worker"), &StampRequest::BuildComplete).unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            admit(&record, Some("other"), &StampRequest::BuildComplete).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            admit(&record, Some("worker"), &StampRequest::DeferralsProcessed).unwrap(),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn a_preparation_verdict_completes_the_reviewer_attempt_of_its_phase() {
+        let record = task_record(vec![child_binding("plan-reviewer", 1, "reviewer-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("reviewer-1"),
+                &preparation_verdict(PreparationReview::PlanReview)
+            )
+            .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            admit(
+                &record,
+                Some("reviewer-1"),
+                &preparation_verdict(PreparationReview::PrdReview)
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn only_a_build_approval_requires_an_independent_reviewer() {
+        use crate::evidence::BuildVerdict;
+        // `driver-1` holds the todo's claim (`base_record`).
+        let record = task_record(vec![
+            child_binding("build-reviewer", 1, "driver-1"),
+            child_binding("build-reviewer", 2, "reviewer-1"),
+        ]);
+        assert!(refused(admit(
+            &record,
+            Some("driver-1"),
+            &build_verdict(BuildVerdict::Approve)
+        )));
+        assert_eq!(
+            admit(
+                &record,
+                Some("driver-1"),
+                &build_verdict(BuildVerdict::ChangesRequested)
+            )
+            .unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            admit(
+                &record,
+                Some("reviewer-1"),
+                &build_verdict(BuildVerdict::Approve)
+            )
+            .unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_released_attempt_completes_again_only_with_its_recorded_completion() {
+        use crate::work::StampRequest;
+        let mut released = child_binding("builder", 1, "builder-1");
+        released.attempt.released_at = Some(jiff::Timestamp::from_second(4).unwrap());
+        let unrecorded = task_record(vec![released.clone()]);
+        assert!(refused(admit(
+            &unrecorded,
+            Some("builder-1"),
+            &StampRequest::BuildComplete
+        )));
+        released.attempt.completion_sequence = Some(2);
+        let recorded = task_record(vec![released]);
+        assert_eq!(
+            admit(&recorded, Some("builder-1"), &StampRequest::BuildComplete).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn diagnosis_and_drift_requests_complete_through_their_own_selection() {
+        use crate::evidence::DriftClass;
+        use crate::work::StampRequest;
+        let drift = StampRequest::DriftReviewed {
+            artifact: ArtifactName::new(artifact_names::PRD),
+            class: DriftClass::Cosmetic,
+            reason: "wording".into(),
+        };
+        let unbound = task_record(Vec::new());
+        assert_eq!(
+            admit(&unbound, Some("driver-1"), &StampRequest::DiagnosisSettled).unwrap(),
+            None
+        );
+        assert_eq!(admit(&unbound, None, &drift).unwrap(), None);
+        let record = task_record(vec![
+            child_binding("diagnoser", 1, "diagnoser-1"),
+            child_binding("drift-analyzer", 2, "analyzer-1"),
+        ]);
+        assert_eq!(
+            admit(&record, Some("driver-1"), &StampRequest::DiagnosisSettled).unwrap(),
+            Some(0)
+        );
+        assert!(refused(admit(
+            &record,
+            Some("diagnoser-1"),
+            &StampRequest::DiagnosisSettled
+        )));
+        assert_eq!(admit(&record, Some("analyzer-1"), &drift).unwrap(), Some(1));
+        assert!(refused(admit(&record, Some("driver-1"), &drift)));
     }
 }
