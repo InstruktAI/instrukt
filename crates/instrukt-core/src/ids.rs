@@ -405,6 +405,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_todo_identity_that_is_not_32_lowercase_hex_digits_is_refused_when_decoded() {
+        assert!(serde_json::from_str::<TodoId>("\"ABCDEF0123456789abcdef0123456789\"").is_err());
+    }
+
+    #[test]
     fn slugs_accept_lowercase_kebab_and_refuse_the_rest() {
         assert!(ProjectSlug::parse("instrukt").is_ok());
         assert!(TodoSlug::parse("first-build.v2_a").is_ok());
@@ -537,9 +542,21 @@ mod tests {
 
 /// A todo's durable identity: survives rename, removal and recovery, and is
 /// never reused, where a slug may be. 32 lowercase hexadecimal characters.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 #[serde(transparent)]
 pub struct TodoId(String);
+
+impl<'de> Deserialize<'de> for TodoId {
+    /// The same wire string, through the same validation as [`TodoId::parse`].
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Self::parse(&raw).ok_or_else(|| {
+            serde::de::Error::custom(format!(
+                "invalid todo identity `{raw}`: expected 32 lowercase hexadecimal characters"
+            ))
+        })
+    }
+}
 
 impl TodoId {
     /// Validates `value` as an identity: 32 lowercase hex characters.
