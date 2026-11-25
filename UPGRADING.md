@@ -595,10 +595,14 @@ The first history operation after upgrading, on each computer, converts
 dropped records held, holding the history lock throughout; on a large store
 each step takes a while. While the conversion runs, every history command
 fails once its wait for the lock times out. Once the conversion has
-committed, `history show` and the search's own read work again while the
-rewrite continues; `history extract` and `history import-teleclaude` still
-time out, and `history search` returns what is retained and reports its
-catch-up as failed. The runner retries its extraction throughout. What the
+committed, and provided this computer had already finished moving its earlier
+history out of `state/instrukt.db`, `history show` and the search's own read
+work again while the rewrite continues; `history extract` and
+`history import-teleclaude` still time out, and `history search` returns what
+is retained and reports its catch-up as failed. If that earlier move had not
+finished, every history command, `history show` and `history search`
+included, keeps waiting for the lock and can time out until the rewrite and
+the move complete. The runner retries its extraction throughout. What the
 store held of tool records, runs and subagents is dropped by the conversion
 and nothing restores it. To keep a copy, take one before installing the new
 build, while the store is still in its earlier shape, with SQLite's online

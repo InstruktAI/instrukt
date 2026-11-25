@@ -496,11 +496,16 @@ Then that conversation is in the developer's instrukt history without a search o
   reclamation grows with the data that remains. While the migration runs the
   store is still at its earlier version, so every history operation takes the
   write path and fails visibly when its wait ends, a search included. While
-  reclamation runs the store is current: a document lookup and a search's own
-  read take no lock and succeed, an extraction or an import fails visibly when
-  its wait ends, and a search returns what the store retains with its
-  catch-up reported failed. The runner's extraction records each failure and
-  retries. Operations started after both complete succeed.
+  reclamation runs the store is current, and a reader takes no lock when the
+  store is current and also records moving earlier history in complete: then
+  a document lookup and a search's own read succeed, an extraction or an
+  import fails visibly when its wait ends, and a search returns what the store
+  retains with its catch-up reported failed. A store whose move from the state
+  database is not yet complete keeps every reader on the write path, so a
+  document lookup and a search's read wait on the history lock and fail
+  visibly when that wait ends, as an extraction does. The runner's extraction
+  records each failure and retries. Operations started after both complete
+  succeed.
 - The first catch-up after a store is brought forward reads again every
   conversation the source still holds whose stored fingerprint covered more
   than its own record and its messages, one conversation per committed batch,
