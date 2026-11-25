@@ -94,9 +94,9 @@ declaring computer.
 
 For projects enabling todos, configure the machine's public `github.apps`
 inventory and `github.project_app`, and the shared `agents.yaml` role entries'
-`github_app` references under the GitHub Apps contract. Reuse the existing
-TeleClaude project, author and reviewer Apps when present on the installation;
-record their observed App ids, slugs and stable bot account ids/node ids/logins.
+`github_app` references under the GitHub Apps contract. Reuse the project,
+author and reviewer Apps already present on the installation; record their
+observed App ids, slugs and stable bot account ids/node ids/logins.
 For a new installation, guide the developer through creating and installing
 three distinct Apps, using the actual assigned identities and the repository
 and account permissions required by their responsibilities. The project App
