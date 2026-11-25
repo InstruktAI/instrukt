@@ -1501,12 +1501,14 @@ pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<Local
 }
 
 /// Local items, listing copies and provider state of `project`, read
-/// without the writer lock; no database yet is empty state.
+/// through an inspection snapshot: without the writer lock, and with older
+/// state brought forward in memory only, so the file stays as found; no
+/// database yet is empty state.
 pub(crate) fn read_existence_state(
     home: &Home,
     project: &ProjectSlug,
 ) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
-    Store::new(home, project).existence()
+    Store::new(&home.for_inspection(), project).existence()
 }
 
 /// Writes every row of `item` inside `tx`: the `todos` row first, then the

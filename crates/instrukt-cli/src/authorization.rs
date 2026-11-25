@@ -23,8 +23,10 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
     let Some(session) = config.caller(&env)? else {
         return Ok(None);
     };
+    // Admission precedes every command, read-only ones included: it reads
+    // the recorded assignment without migrating the state database.
     let assignment = instrukt_runner::assignments::resolve(
-        &ctx.home,
+        &inspection,
         &session,
         instrukt_todos::work::recorded_assignment,
         instrukt_company::conversations::conversation_assignment,

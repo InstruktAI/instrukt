@@ -124,10 +124,12 @@ fn target_workspace(
             path: "--target".into(),
             reason: "target documentation needs its project".into(),
         })?;
-    let state = StateRead::open(home)?.ok_or_else(|| DocsError::ConfigUnresolved {
-        path: target.to_string(),
-        reason: "target todo has no work record".into(),
-    })?;
+    // A documentation read inspects the work record; it never migrates it.
+    let state =
+        StateRead::open(&home.for_inspection())?.ok_or_else(|| DocsError::ConfigUnresolved {
+            path: target.to_string(),
+            reason: "target todo has no work record".into(),
+        })?;
     let recorded: bool = state
         .conn()
         .query_row(
