@@ -256,6 +256,14 @@ impl Home {
         self.state_dir().join("withdrawal.lock")
     }
 
+    /// `~/.instrukt/state/delivered-release.lock` — held by work for the
+    /// length of one release of a delivered todo's worktree and work branch,
+    /// across its git and network steps, outside the writer lock; taken
+    /// without waiting, so one such release runs at a time.
+    pub fn delivered_release_lock_file(&self) -> PathBuf {
+        self.state_dir().join("delivered-release.lock")
+    }
+
     /// `~/.instrukt/state/runner.lock` — serializes runner invocations; it
     /// guards no data.
     pub fn runner_lock_file(&self) -> PathBuf {
@@ -393,6 +401,7 @@ mod tests {
             home.writer_lock_file(),
             home.reflection_lock_file(),
             home.withdrawal_lock_file(),
+            home.delivered_release_lock_file(),
             home.runner_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),

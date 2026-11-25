@@ -633,8 +633,40 @@ pub enum SectionOutcome {
     NotRecorded,
 }
 
+/// A working resource of a delivered todo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveredResource {
+    Worktree(PathBuf),
+    LocalBranch(String),
+    OriginBranch(String),
+}
+
+impl std::fmt::Display for DeliveredResource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Worktree(path) => write!(f, "the worktree {}", path.display()),
+            Self::LocalBranch(name) => write!(f, "the local branch {name}"),
+            Self::OriginBranch(name) => write!(f, "the branch {name} on origin"),
+        }
+    }
+}
+
+/// What a delivered release did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveredRelease {
+    /// Another delivered release runs on this computer: nothing was done
+    /// and the cleanup stays owed.
+    Busy,
+    /// What was released, and what stays with its cause.
+    Done {
+        released: Vec<DeliveredResource>,
+        kept: Vec<(DeliveredResource, String)>,
+    },
+}
+
 /// Work's part in worktree reclamation (`work` domain, "Work → runner
-/// (worktree reclamation)"): a section free of role attempts.
+/// (worktree reclamation)"): a section free of role attempts, and the
+/// release of a delivered todo's worktree and work branch.
 pub trait WorktreeReclamation: Send + Sync {
     /// Runs `action` inside one write transaction of the work record, under
     /// the writer lock, in which no role attempt opens on `todo`'s
@@ -647,6 +679,15 @@ pub trait WorktreeReclamation: Send + Sync {
         admission: &SectionAdmission,
         action: &mut dyn FnMut(),
     ) -> Result<SectionOutcome, WorkInterfaceError>;
+
+    /// Releases what the delivered todo `todo` still holds on this
+    /// computer: its worktree, then its work branch locally and on origin
+    /// (`todos`, "Parking, withdrawal and delivery").
+    fn release_delivered(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoIdentity,
+    ) -> Result<DeliveredRelease, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
