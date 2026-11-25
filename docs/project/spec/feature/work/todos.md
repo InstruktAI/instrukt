@@ -307,6 +307,13 @@ removed. This release records no intent and writes no marker:
 git shows of the worktree and of each branch whether it is still there, and a
 release that stopped part-way is continued by the next from what git shows
 (`sdlc/policy/state-storage`).
+
+One such release runs at a time on a computer. Work holds the per-computer
+lock `~/.instrukt/state/delivered-release.lock` for the length of a release,
+across its git and network steps and outside the writer lock. It takes the
+lock without waiting: a release asked for while another holds it does nothing,
+the cleanup stays owed, and the runner asks again on its next invocation. No
+command takes this lock.
 <!-- /planned-change:runner-owned-workspace-cleanup -->
 
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
