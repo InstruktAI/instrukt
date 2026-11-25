@@ -406,72 +406,36 @@
               "minLength": 1
             },
             "light": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "model"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
+              "$ref": "#/$defs/inherited-kind-chain"
             },
             "standard": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "model"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
+              "$ref": "#/$defs/inherited-kind-chain"
             },
             "strong": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "model"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
+              "$ref": "#/$defs/inherited-kind-chain"
             },
             "premium": {
-              "type": "array",
-              "minItems": 1,
-              "items": {
-                "type": "object",
-                "required": [
-                  "model"
-                ],
-                "properties": {
-                  "model": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                }
-              }
+              "$ref": "#/$defs/inherited-kind-chain"
             }
           }
         }
       ]
+    },
+    "inherited-kind-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     },
     "codex-chain": {
       "type": "array",
