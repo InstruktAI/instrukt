@@ -394,6 +394,14 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             FindingKind::EventsNeedTransport | FindingKind::AutomaticReviewNotReady
         ) {
             report.finding(label, &finding.message);
+        } else if instrukt_core::config::withholds_thread_retention(finding) {
+            report.finding(
+                label,
+                format!(
+                    "{}; thread retention is withheld on this computer while the runner's other work runs",
+                    finding.message
+                ),
+            );
         } else if instrukt_core::config::withholds_reclamation(finding)
             && withheld.contains(&finding.document)
         {
