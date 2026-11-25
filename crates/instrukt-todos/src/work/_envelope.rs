@@ -49,12 +49,19 @@ impl IssueFields {
 /// held, delivered or withdrawn (a structural holder is active work),
 /// never a workflow phase.
 pub(crate) fn record_status(record: &TodoRecord) -> &'static str {
-    match (record.status, &record.hold) {
+    shown_status(record.status, record.hold.is_some())
+}
+
+/// The status shown for a todo in `status` with a hold set or not: a
+/// delivered, withdrawn or iceboxed todo shows that status whatever hold
+/// it retains; otherwise a hold shows as held.
+pub(crate) fn shown_status(status: TodoStatus, held: bool) -> &'static str {
+    match (status, held) {
         (TodoStatus::Delivered, _) => "delivered",
         (TodoStatus::Removed, _) => "withdrawn",
         (TodoStatus::Iceboxed, _) => "iceboxed",
-        (_, Some(_)) => "held",
-        (TodoStatus::Active | TodoStatus::StructuralHolder, None) => "active",
+        (_, true) => "held",
+        (TodoStatus::Active | TodoStatus::StructuralHolder, false) => "active",
     }
 }
 

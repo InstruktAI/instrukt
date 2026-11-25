@@ -2,7 +2,7 @@
 //! runner's work interfaces, workflow's evidence read and core's todo
 //! existence.
 
-use instrukt_core::config::Configuration;
+use instrukt_core::config::{Approver, Configuration};
 use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
@@ -1289,6 +1289,15 @@ pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisi
     out
 }
 
+/// Whether the todo waits on a person (`github-record`, the `Needs you`
+/// marker): it shows as held, or a current approval gate waits for a
+/// human under the configured `prd` and `task` approvers. Work decides
+/// this once; the board marker and workflow's assignment relay it.
+pub(crate) fn waits_on_person(evidence: &TodoEvidence, prd: Approver, task: Approver) -> bool {
+    super::_envelope::shown_status(evidence.status, evidence.hold.is_some()) == "held"
+        || crate::workflow::waiting_for_human_approval(evidence, prd, task)
+}
+
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
     TodoEvidence {
         branch: record.branch.clone(),
@@ -1377,4 +1386,51 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use instrukt_core::config::Approver;
+    use instrukt_runner::interfaces::TodoKind;
+
+    use super::waits_on_person;
+    use crate::evidence::{
+        PreparationReview, ReviewVerdict, StampFact, TodoEvidence, TodoStatus, artifact_names,
+    };
+    use crate::workflow::_testing::{digest, todo};
+
+    fn waits(evidence: &TodoEvidence, approver: Approver) -> bool {
+        waits_on_person(evidence, approver, approver)
+    }
+
+    #[test]
+    fn a_hold_waits_on_a_person_while_the_todo_shows_as_held() {
+        let held = todo(TodoKind::Change).held().build();
+        assert!(waits(&held, Approver::Human));
+        assert!(waits(&held, Approver::Peer));
+
+        let delivered = todo(TodoKind::Change)
+            .held()
+            .status(TodoStatus::Delivered)
+            .build();
+        assert!(!waits(&delivered, Approver::Human));
+        assert!(!waits(&delivered, Approver::Peer));
+    }
+
+    #[test]
+    fn an_unapproved_reviewed_prd_waits_on_a_person_only_under_a_human_approver() {
+        let reviewed = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-v1")
+            .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
+            .stamped(StampFact::PreparationVerdict {
+                phase: PreparationReview::PrdReview,
+                verdict: ReviewVerdict::Approve,
+                target: digest("prd-v1"),
+                report: digest("ok"),
+            })
+            .build();
+        assert!(waits(&reviewed, Approver::Human));
+        assert!(!waits(&reviewed, Approver::Peer));
+        assert!(!waits(&todo(TodoKind::Feature).build(), Approver::Human));
+    }
 }
