@@ -212,7 +212,9 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
     match item.reflection.pull {
         None => true,
         Some(_) => {
-            build_verdicts(record).len() > item.reflection.reviews_reflected
+            build_verdicts(record)
+                .iter()
+                .any(|v| !item.reflection.reviews.contains(&v.sequence))
                 || (record.delivery.is_some() && !item.reflection.pull_closed)
         }
     }
@@ -439,7 +441,18 @@ fn reflect_pull_request(
     };
     item.reflection.pull_outstanding = Some(format!("pull request #{pull} is not up to date"));
     let verdicts = build_verdicts(&item.record);
-    for (verdict, commit, report, role) in verdicts.iter().skip(item.reflection.reviews_reflected) {
+    let owed: Vec<&BuildVerdictView> = verdicts
+        .iter()
+        .filter(|v| !item.reflection.reviews.contains(&v.sequence))
+        .collect();
+    for verdict in owed {
+        let BuildVerdictView {
+            sequence,
+            verdict,
+            commit,
+            report,
+            role,
+        } = verdict;
         let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review);
         let bot = reviewer.bot()?;
         let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
@@ -467,7 +480,7 @@ fn reflect_pull_request(
                 &json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body}),
             )?;
         }
-        item.reflection.reviews_reflected += 1;
+        item.reflection.reviews.push(*sequence);
     }
     if item.record.delivery.is_some() && !item.reflection.pull_closed {
         author.patch(
@@ -490,9 +503,19 @@ fn pull_body(record: &TodoRecord, issue: IssueRef) -> String {
     }
 }
 
-/// The record's build-review verdicts, oldest first: (verdict, reviewed
-/// commit, report digest).
-fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String, Option<String>)> {
+/// One build-review verdict of a record, as its review reflects it.
+struct BuildVerdictView {
+    /// Its stamp's record order.
+    sequence: u64,
+    verdict: &'static str,
+    commit: String,
+    report: String,
+    /// The role of the session that recorded it.
+    role: Option<String>,
+}
+
+/// The record's build-review verdicts, oldest first.
+fn build_verdicts(record: &TodoRecord) -> Vec<BuildVerdictView> {
     record
         .stamps
         .iter()
@@ -501,14 +524,15 @@ fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String, Opt
                 verdict,
                 target,
                 report,
-            } => Some((
-                match verdict {
+            } => Some(BuildVerdictView {
+                sequence: stamp.sequence,
+                verdict: match verdict {
                     crate::evidence::BuildVerdict::Approve => "approve",
                     crate::evidence::BuildVerdict::ChangesRequested => "changes_requested",
                 },
-                target.to_string(),
-                report.to_string(),
-                match &stamp.actor {
+                commit: target.to_string(),
+                report: report.to_string(),
+                role: match &stamp.actor {
                     crate::evidence::Actor::Session(session) => record
                         .bindings
                         .iter()
@@ -516,7 +540,7 @@ fn build_verdicts(record: &TodoRecord) -> Vec<(&'static str, String, String, Opt
                         .map(|b| b.role.to_string()),
                     _ => None,
                 },
-            )),
+            }),
             _ => None,
         })
         .collect()

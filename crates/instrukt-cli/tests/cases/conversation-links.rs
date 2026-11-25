@@ -264,6 +264,7 @@ fn an_interrupted_send_recovers_native_acceptance_without_duplicate_input() {
     let previous =
         instrukt_core::state_db::rusqlite::Connection::open(home.state_db_file()).unwrap();
     previous.execute_batch("UPDATE conversation_relay_positions SET pending_json=(SELECT json_group_array(json(json_remove(value,'$.origin'))) FROM json_each(conversation_relay_positions.pending_json)); ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=11;").unwrap();
+    crate::common::recreate_pre_v39_listing_copies(&previous);
     drop(previous);
     let runner = run();
     wait_for(|| {
@@ -392,6 +393,7 @@ fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dis
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
         .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v39_listing_copies(&db);
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let env = &f.crew.project.env;

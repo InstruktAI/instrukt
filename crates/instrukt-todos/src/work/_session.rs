@@ -388,7 +388,7 @@ impl<'w> Session<'w> {
                     ),
                     None => format!("@{original_login}: recorded your change request on {gate}."),
                 };
-                if !self.answered(index, id, &answer)? {
+                if !self.answered(index, id, comment["created_at"].as_str(), &answer)? {
                     break;
                 }
                 continue;
@@ -435,7 +435,7 @@ impl<'w> Session<'w> {
                     },
                 }
             };
-            if !self.answered(index, id, &answer)? {
+            if !self.answered(index, id, comment["created_at"].as_str(), &answer)? {
                 break;
             }
         }
@@ -459,11 +459,17 @@ impl<'w> Session<'w> {
     /// Records command `comment` of item `index` as answered with `answer`;
     /// `false`, with nothing recorded, when the todo's withdrawal opened
     /// meanwhile: the command and those after it stay outstanding.
-    fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<bool, WorkError> {
+    fn answered(
+        &mut self,
+        index: usize,
+        comment: u64,
+        commanded_at: Option<&str>,
+        answer: &str,
+    ) -> Result<bool, WorkError> {
         let id = self.items[index].record.id.clone();
         if !self
             .store
-            .retain_reply(&self.items[index].record, comment, answer)?
+            .retain_reply(&self.items[index].record, comment, commanded_at, answer)?
         {
             return Ok(false);
         }
@@ -747,7 +753,7 @@ impl<'w> Session<'w> {
             Ok(())
         },|tx| {
             tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT(todo_id,decision_sequence) DO UPDATE SET content=excluded.content WHERE approval_attention.state='pending' AND approval_attention.input_id IS NULL",instrukt_core::state_db::rusqlite::params![todo_id,sequence,notice]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
-            _store::retain_reply(tx,std::path::Path::new(tx.path().unwrap_or("")),&todo_id,comment_id,&answer)?;
+            _store::retain_reply(tx,std::path::Path::new(tx.path().unwrap_or("")),&todo_id,comment_id,source_at,&answer)?;
             Ok(())
         })?;
         tracing::info!(

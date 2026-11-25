@@ -77,12 +77,51 @@ pub(crate) struct ReflectionState {
     pub pending: bool,
     /// The linked pull request's number.
     pub pull: Option<u64>,
-    /// How many build-review verdicts the pull request carries.
-    pub reviews_reflected: usize,
+    /// The build verdicts whose review is on the pull request, by their
+    /// stamps' record order.
+    pub reviews: Vec<u64>,
     /// Whether delivery closed the pull request.
     pub pull_closed: bool,
     /// The last reflection failure that left the item pending.
     pub failure: Option<String>,
+    /// The latest update time among the issue's comments read so far.
+    pub comments_since: Option<String>,
+    /// The page of the issue's events holding the last event read, and
+    /// that event's identity.
+    pub events_page: Option<u64>,
+    pub events_last: Option<u64>,
+    /// The work-branch commit the last publication left on the remote.
+    pub published_head: Option<String>,
+    /// Why the work branch's local head is not on the remote.
+    pub publication_outstanding: Option<String>,
+    /// Requests GitHub refused as invalid, at most one per reflected target.
+    pub refusals: Vec<KeptRefusal>,
+}
+
+/// A request GitHub refused as invalid, kept for its reflected target
+/// (`state-database`, `reflections.refusals`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct KeptRefusal {
+    pub target: RefusedTarget,
+    /// The identity of the request sent: a digest of what it sent and the
+    /// branch head it concerned.
+    pub identity: String,
+    /// GitHub's validation detail.
+    pub detail: String,
+}
+
+/// A reflected target a refusal is kept for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "target")]
+pub(crate) enum RefusedTarget {
+    /// The todo's issue.
+    Issue,
+    /// The creation of the todo's pull request.
+    PullCreation,
+    /// One build verdict's review, by its stamp's record order.
+    Review { verdict: u64 },
+    /// One artifact version, by its record order.
+    Artifact { name: String, sequence: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -518,13 +557,21 @@ impl Store {
         &self,
         decided_on: &TodoRecord,
         comment: u64,
+        commanded_at: Option<&str>,
         answer: &str,
     ) -> Result<bool, WorkError> {
         self.write(|tx, path, project| {
             if !may_record_inbound(tx, path, project, decided_on)? {
                 return Ok(false);
             }
-            retain_reply(tx, path, decided_on.id.as_str(), comment, answer)?;
+            retain_reply(
+                tx,
+                path,
+                decided_on.id.as_str(),
+                comment,
+                commanded_at,
+                answer,
+            )?;
             Ok(true)
         })
     }
@@ -1142,7 +1189,13 @@ pub(crate) fn merge_reflection(
         board_failure,
         pending,
         pull,
-        reviews_reflected,
+        reviews,
+        comments_since,
+        events_page,
+        events_last,
+        published_head,
+        publication_outstanding,
+        refusals,
         pull_closed,
         failure
     );
@@ -1172,14 +1225,17 @@ fn written(tx: &Connection, path: &Path, id: &TodoId) -> Result<LocalItem, WorkE
         .ok_or_else(|| invalid(path, format!("todo {id} vanished as it was written")))
 }
 
+/// Retains the reply `answer` to command `comment` of `todo`, created at
+/// `commanded_at` as GitHub gave it, pending until it is posted.
 pub(crate) fn retain_reply(
     tx: &Connection,
     path: &Path,
     todo: &str,
     comment: u64,
+    commanded_at: Option<&str>,
     answer: &str,
 ) -> Result<(), WorkError> {
-    tx.execute("INSERT INTO inbound_commands(todo_id,comment_id,reply,reply_pending) VALUES (?1,?2,?3,1) ON CONFLICT(todo_id,comment_id) DO UPDATE SET reply=COALESCE(inbound_commands.reply,excluded.reply),reply_pending=CASE WHEN inbound_commands.reply IS NULL THEN 1 ELSE inbound_commands.reply_pending END",params![todo,comment,answer]).map_err(StateDbError::sqlite(path))?;
+    tx.execute("INSERT INTO inbound_commands(todo_id,comment_id,reply,reply_pending,commanded_at) VALUES (?1,?2,?3,1,?4) ON CONFLICT(todo_id,comment_id) DO UPDATE SET reply=COALESCE(inbound_commands.reply,excluded.reply),reply_pending=CASE WHEN inbound_commands.reply IS NULL THEN 1 ELSE inbound_commands.reply_pending END,commanded_at=COALESCE(inbound_commands.commanded_at,excluded.commanded_at)",params![todo,comment,answer,commanded_at]).map_err(StateDbError::sqlite(path))?;
     Ok(())
 }
 
@@ -1316,14 +1372,6 @@ fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkErr
     let r = &item.record;
     let id = r.id.as_str();
     let sql = StateDbError::sqlite(path);
-    // A todo that is a local item has no listing copy.
-    if let Some(issue) = item.reflection.issue {
-        tx.execute(
-            "DELETE FROM listing_copies WHERE project = ?1 AND issue_number = ?2",
-            params![r.project.as_str(), issue.number],
-        )
-        .map_err(&sql)?;
-    }
     let (agent, tier) = match &r.agent {
         Some(pref) => (Some(pref.agent.as_str()), pref.tier.as_ref().map(text_of)),
         None => (None, None),
@@ -1492,27 +1540,33 @@ fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkErr
     let f = &item.reflection;
     tx.execute(
         "INSERT OR REPLACE INTO reflections (todo_id, issue_number, remote_revision, pending,
-            conflicted, failure, pull_number, issue_id, record_comment, etag, pull_outstanding,
-            reviews_reflected, pull_closed, board, board_item, board_status, board_failure)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            failure, pull_number, issue_id, etag, pull_outstanding, reviews, pull_closed, board,
+            board_item, board_status, board_failure, comments_since, events_page, events_last,
+            published_head, publication_outstanding, refusals)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17,
+            ?18, ?19, ?20, ?21)",
         params![
             id,
             f.issue.map(|i| i.number),
             f.remote_revision,
             f.pending,
-            false,
             f.failure,
             f.pull,
             f.issue.map(|i| i.id),
-            None::<u64>,
             f.etag,
             f.pull_outstanding,
-            f.reviews_reflected as u64,
+            json_of(&f.reviews)?,
             f.pull_closed,
             f.board,
             f.board_item,
             f.board_status,
             f.board_failure,
+            f.comments_since,
+            f.events_page,
+            f.events_last,
+            f.published_head,
+            f.publication_outstanding,
+            json_of(&f.refusals)?,
         ],
     )
     .map_err(&sql)?;
@@ -2019,41 +2073,60 @@ fn load_bindings(conn: &Connection, path: &Path, id: &str) -> Result<Vec<Binding
 
 fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<ReflectionState, WorkError> {
     let sql = StateDbError::sqlite(path);
-    let mut reflection = conn
+    type Row = (ReflectionState, String, String);
+    let row: Option<Row> = conn
         .query_row(
-            "SELECT issue_number, remote_revision, pending, conflicted, failure, pull_number,
-                issue_id, record_comment, etag, pull_outstanding, reviews_reflected, pull_closed,
-                board, board_item, board_status, board_failure
+            "SELECT issue_number, remote_revision, pending, failure, pull_number, issue_id, etag,
+                pull_outstanding, reviews, pull_closed, board, board_item, board_status,
+                board_failure, comments_since, events_page, events_last, published_head,
+                publication_outstanding, refusals
              FROM reflections WHERE todo_id = ?1",
             params![id],
             |row| {
                 let number: Option<u64> = row.get(0)?;
-                let issue_id: Option<u64> = row.get(6)?;
-                Ok(ReflectionState {
-                    refreshed_at: None,
-                    issue: number
-                        .zip(issue_id)
-                        .map(|(number, id)| IssueRef { number, id }),
-                    remote_revision: row.get(1)?,
-                    pending: row.get(2)?,
-                    failure: row.get(4)?,
-                    pull: row.get(5)?,
-                    etag: row.get(8)?,
-                    pull_outstanding: row.get(9)?,
-                    reviews_reflected: row.get::<_, u64>(10)? as usize,
-                    pull_closed: row.get(11)?,
-                    board: row.get(12)?,
-                    board_item: row.get(13)?,
-                    board_status: row.get(14)?,
-                    board_failure: row.get(15)?,
-                    commands_seen: Vec::new(),
-                    inbound: Vec::new(),
-                })
+                let issue_id: Option<u64> = row.get(5)?;
+                Ok((
+                    ReflectionState {
+                        refreshed_at: None,
+                        issue: number
+                            .zip(issue_id)
+                            .map(|(number, id)| IssueRef { number, id }),
+                        remote_revision: row.get(1)?,
+                        pending: row.get(2)?,
+                        failure: row.get(3)?,
+                        pull: row.get(4)?,
+                        etag: row.get(6)?,
+                        pull_outstanding: row.get(7)?,
+                        reviews: Vec::new(),
+                        pull_closed: row.get(9)?,
+                        board: row.get(10)?,
+                        board_item: row.get(11)?,
+                        board_status: row.get(12)?,
+                        board_failure: row.get(13)?,
+                        comments_since: row.get(14)?,
+                        events_page: row.get(15)?,
+                        events_last: row.get(16)?,
+                        published_head: row.get(17)?,
+                        publication_outstanding: row.get(18)?,
+                        refusals: Vec::new(),
+                        commands_seen: Vec::new(),
+                        inbound: Vec::new(),
+                    },
+                    row.get(8)?,
+                    row.get(19)?,
+                ))
             },
         )
         .optional()
-        .map_err(&sql)?
-        .unwrap_or_default();
+        .map_err(&sql)?;
+    let mut reflection = match row {
+        Some((mut reflection, reviews, refusals)) => {
+            reflection.reviews = parse_json(path, &reviews)?;
+            reflection.refusals = parse_json(path, &refusals)?;
+            reflection
+        }
+        None => ReflectionState::default(),
+    };
     reflection.commands_seen = query(
         conn,
         path,

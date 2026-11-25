@@ -118,6 +118,7 @@ fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let db = Connection::open(&file).unwrap();
     db.execute_batch("DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=4;")
         .unwrap();
+    crate::common::recreate_pre_v39_listing_copies(&db);
     let checkout = env.git_repo("retained");
     let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
     db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'retry_allowed')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
@@ -595,7 +596,6 @@ fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
     let mut rows = Vec::new();
     for query in [
         "SELECT * FROM todos ORDER BY id",
-        "SELECT * FROM reflections ORDER BY todo_id",
         "SELECT * FROM artifacts ORDER BY todo_id, name",
         "SELECT * FROM artifact_versions ORDER BY todo_id, sequence",
         "SELECT * FROM stamps ORDER BY todo_id, sequence",
