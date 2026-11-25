@@ -515,7 +515,7 @@ pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 /// (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     use instrukt_runner::reclamation::{OnRequest, Request, on_request};
-    const DOOR: &str = "a todo attempt bound to this session would (`instrukt todo bind <slug> --session <session>`)";
+    const DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree>`)";
     let env = crate::wiring::environment(ctx)?;
     let session = instrukt_core::config::Configuration::load_global(&ctx.home.for_inspection())?
         .caller(&env)?;
