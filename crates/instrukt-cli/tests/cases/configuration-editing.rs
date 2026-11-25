@@ -493,6 +493,13 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
         whole_json["properties"]["connectors"]["properties"]["slack"],
         json
     );
+    // And a member entry as validation reads it.
+    let members: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json", "members"]).success())).unwrap();
+    assert_eq!(whole_json["properties"]["members"], members);
+    let entry = &members["additionalProperties"];
+    assert_eq!(entry["required"], serde_json::json!(["email"]));
+    assert_eq!(entry["additionalProperties"], serde_json::json!(false));
 
     // What it shows is what validation admits: a Slack entry with exactly the
     // fields shown is accepted, and one the entry cannot take is refused.

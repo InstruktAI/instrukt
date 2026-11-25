@@ -911,7 +911,7 @@ pub(super) fn company_issuer(
 
 /// JSON Schema for `mcp` in `layer`.
 pub(super) fn mcp_json_schema(layer: LayerKind) -> serde_json::Value {
-    let secret_ref = json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    use super::_schema::secret_reference;
     let mut properties = serde_json::Map::new();
     properties.insert(
         "url".into(),
@@ -978,8 +978,15 @@ pub(super) fn mcp_json_schema(layer: LayerKind) -> serde_json::Value {
                         "required": ["id"],
                         "description": "Company-local pre-registered OAuth client. Mutually exclusive with `client_ref`.",
                         "properties": {
-                            "id": secret_ref,
-                            "secret": secret_ref
+                            "id": secret_reference(
+                                "The identifier of a client registered with the authorization \
+                                 server beforehand; required when `client` is declared",
+                                LayerKind::Company,
+                            ),
+                            "secret": secret_reference(
+                                "That client's secret, only for a client that has one",
+                                LayerKind::Company,
+                            )
                         }
                     },
                     "accept_return_without_issuer": {
@@ -1001,12 +1008,25 @@ pub(super) fn mcp_json_schema(layer: LayerKind) -> serde_json::Value {
             }),
         );
     }
+    let servers = match layer {
+        LayerKind::Company => {
+            "The MCP servers whose tools the company's agent calls, one named declaration \
+             each; a declaration here replaces the machine-wide one of the same name for \
+             this company."
+        }
+        LayerKind::Global | LayerKind::Project => {
+            "The MCP servers whose tools this computer's agents call, one named declaration \
+             each; a company home's declaration of the same name replaces it for that company."
+        }
+    };
     json!({
         "type": "object",
+        "description": servers,
         "additionalProperties": {
             "type": "object",
             "additionalProperties": false,
             "required": ["url", "description"],
+            "description": "One server, under a name following the grammar of a project slug.",
             "properties": properties
         }
     })

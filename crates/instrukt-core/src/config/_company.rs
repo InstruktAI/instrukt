@@ -100,6 +100,50 @@ impl Members {
     }
 }
 
+/// The editor schema of a company home's `members`, admitting what
+/// [`check_members`] admits but for an address two members list, which no
+/// JSON Schema can compare across entries.
+pub(super) fn members_schema() -> serde_json::Value {
+    use super::_schema::{non_blank_pattern, secret_reference};
+    serde_json::json!({
+        "type": "object",
+        "description": "The company's people, keyed by member: what a provider cannot supply, \
+            a person's own stored logins for the company's tools. An entry carries no role \
+            and grants nothing.",
+        "propertyNames": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "additionalProperties": {
+            "type": "object",
+            "description": "One person, under a member key unique within the company that \
+                follows the grammar of a project slug.",
+            "additionalProperties": false,
+            "required": ["email"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": non_blank_pattern(),
+                    "description": "The person's display name; the member key when omitted.",
+                },
+                "email": {
+                    "type": "string",
+                    "pattern": "@",
+                    "description": "The person's email address, by which a speaker's entry is \
+                        found; two addresses differing only in case are one, and an address is \
+                        listed by at most one member.",
+                },
+                "credentials": {
+                    "type": "object",
+                    "description": "The person's own logins for the company's tools, keyed by \
+                        the name an `mcp.<name>.credential` gives.",
+                    "additionalProperties": secret_reference(
+                        "The person's own login for that tool, never a literal value",
+                        super::LayerKind::Company,
+                    ),
+                },
+            },
+        },
+    })
+}
+
 /// The editor schema of a company home's `connectors` map: one named entry per
 /// connector, defaulting `kind` to the map key when omitted, plus common
 /// conversation settings (`role`, `admit`, `session_scope`, `reply_mode`) and
@@ -213,6 +257,8 @@ pub(super) fn connectors_schema() -> serde_json::Value {
     };
     serde_json::json!({
         "type": "object",
+        "description": "The connectors the company's people reach its agent through, one named \
+            entry each; an entry under a kind's own key, such as `slack`, is of that kind.",
         "additionalProperties": additional,
         "properties": kinds,
     })

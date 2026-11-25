@@ -9,7 +9,8 @@ expression: "String::from_utf8(bytes).unwrap()"
   "properties": {
     "schema_version": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "description": "The schema version this document is written in; `instrukt config init` writes the current one, an older document is converted and a newer one refused."
     },
     "project": {
       "type": "string"
@@ -124,6 +125,7 @@ expression: "String::from_utf8(bytes).unwrap()"
     },
     "webhooks": {
       "type": "object",
+      "description": "Inbound event sources, keyed by event domain (`[a-z][a-z0-9_]*`); each declared domain is served at `/hooks/inbound/project/<slug>/<domain>`, and a delivery's event type is `<domain>.<name>`.",
       "propertyNames": {
         "pattern": "^[a-z][a-z0-9_]*$"
       },
@@ -133,14 +135,17 @@ expression: "String::from_utf8(bytes).unwrap()"
         "required": [
           "secret"
         ],
+        "description": "One event source, under its event domain: how its deliveries are verified and where each one's event name comes from.",
         "properties": {
           "secret": {
             "type": "string",
-            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+            "description": "The signing secret every delivery is verified against; an exact ${NAME} reference into the machine's secrets file `~/.instrukt/secrets.env`, its value written with `instrukt secrets set <NAME>`"
           },
           "previous_secret": {
             "type": "string",
-            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+            "description": "The signing secret being rotated out, which verifies too until it is removed; an exact ${NAME} reference into the machine's secrets file `~/.instrukt/secrets.env`, its value written with `instrukt secrets set <NAME>`"
           },
           "verify": {
             "enum": [
@@ -148,30 +153,36 @@ expression: "String::from_utf8(bytes).unwrap()"
               "github",
               "hmac-sha256"
             ],
-            "default": "native"
+            "default": "native",
+            "description": "The verification scheme: `native` (`X-Hook-Signature`), `github` (`X-Hub-Signature-256` and GitHub's normalizer) or `hmac-sha256` (the declared `header`); never an unsigned fallback."
           },
           "header": {
             "type": "string",
-            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"
+            "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+            "description": "The HTTP header carrying the signature; required with `verify: hmac-sha256` and refused with the other schemes."
           },
           "state": {
             "type": "array",
             "items": {
               "type": "string",
               "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
-            }
+            },
+            "description": "Event names, without the domain, that are external state rather than occurrences; requires `subject_from`."
           },
           "subject_from": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The dotted payload field whose nonempty string or number qualifies the source's subject for its state names."
           },
           "name_from": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The top-level JSON field whose string value names each delivery's event, normalized to the event-name grammar; exclusive with `name` and with `verify: github`."
           },
           "name": {
             "type": "string",
-            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+            "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+            "description": "A fixed event name for every delivery; exclusive with `name_from` and with `verify: github`."
           }
         },
         "allOf": [
