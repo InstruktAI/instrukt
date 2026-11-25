@@ -123,6 +123,7 @@ A receiver or wake-up another enabled project needs stays installed.
 
 ### Canonical checkout synchronization
 
+<!-- planned-change:company-home-integration -->
 Before dispatch on each tick, the runner observes and fetches remote canonical
 main and fast-forwards a clean canonical project checkout when it is behind.
 Its post-merge hook publishes docs and hands the revision to enabled blueprint.
@@ -133,6 +134,21 @@ Every new phase branch starts only after a fresh origin fetch, from origin/main;
 local main is never its base. An outstanding runner.main_failing event wakes
 the integrator for the existing revert-first obligation, and creates no new
 runner admission predicate or todo hold.
+<!-- change:company-home-integration -->
+Before dispatch on each tick, the runner observes and fetches remote canonical
+main and fast-forwards a clean canonical checkout when it is behind: a
+considered todo/event project's checkout, with events independently
+switchable, and, while the machine's events are on, each company's home on the
+computer (`project/instrukt/spec/feature/configuration/company-homes`). For a
+project, its post-merge hook publishes docs and hands the revision to enabled
+blueprint. Dirty or non-fast-forward checkouts, and a company home that is no
+checkout of its repository, are reported and preserved; no force, stash or
+branch switch is used. The operation consumes no GitHub API quota.
+Every new phase branch starts only after a fresh origin fetch, from origin/main;
+local main is never its base. An outstanding runner.main_failing event wakes
+the integrator for the existing revert-first obligation, and creates no new
+runner admission predicate or todo hold.
+<!-- /planned-change:company-home-integration -->
 
 ### Todo pickup
 

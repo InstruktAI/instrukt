@@ -68,6 +68,14 @@ of the same branch/head/run/conclusion is idempotent; a new head or failed rerun
 is fresh evidence. The source needs the existing Git remote and GitHub observation
 credentials, not a webhook or separate failure delivery service.
 
+<!-- planned:company-home-integration -->
+Candidate, canonical and dependency-update CI observation run for each company
+home's repository as for a project's, while the machine's events are on. Their
+events name that company home as their origin and reach the standing
+integrator of that home
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+<!-- /planned:company-home-integration -->
+
 On a project that opted in to automatic review, the same conditional pass reads
 the repository's open pull requests, every page, with a credential scoped to
 that read. These pages and their validators are kept in that source's own

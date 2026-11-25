@@ -258,17 +258,23 @@ And no file is changed
   `visibility` selects nothing.
 - A version is raised against what the working tree holds. Two branches that
   each render the plugin and are then merged can carry one version for
-  different content; the rendering the catalog serves is the one each
-  integration candidate of the repository's default branch carries
-  (`project/instrukt/spec/feature/workflow/integration-gate`).
+  different content; a rendering is asked for where the catalog is installed
+  from, the repository's default branch.
+- Between the merge of a change to the knowledge and the rendering asked for
+  on the default branch, the catalog serves the previous plugin. A company
+  home integrated through its standing integrator has no such interval: each
+  integration candidate carries its rendering
+  (`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+  candidate).
 - The rendering depends on the instrukt release that renders it. A release
   that renders a plugin differently raises that plugin's version at its next
   rendering although no document changed.
-- A company repository whose host also runs the shared workflows
-  repository's publisher (`project/instrukt/policy/shared-workflows`) has a
-  second writer of its default branch beside its integrator
-  (`general/policy/commits`): each writes `plugins/<key>/` whole and raises its
-  version, and the repository receives each renderer's bytes in turn.
+- instrukt and the shared workflows repository's publisher
+  (`project/instrukt/policy/shared-workflows`) each write `plugins/<key>/`
+  whole and each raise its version; a repository whose plugin both render
+  receives each renderer's bytes in turn. In a company home integrated through
+  its standing integrator, that publisher is a second writer of the default
+  branch beside the integrator (`general/policy/commits`).
 - When and whether a Claude client takes a new copy of an installed plugin is
   Claude's (See Also).
 - What Claude does with a skill's main file before an agent reads it, and how
