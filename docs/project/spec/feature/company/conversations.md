@@ -251,10 +251,10 @@ gives.
 
 - Under `reply_mode: turn_output` (the default), when a turn started by an
   addressed message finishes, the agent's conversational output of that turn is
-  posted to the conversation as the agent wrote it (with resolved credentials
-  scrubbed), in parts where the connector's message size limit requires, in
-  order. Tool calls, tool results, thinking and control input are not posted. A
-  bare `NOOP` posts nothing.
+  posted to the conversation exactly as the agent wrote it, in parts where the
+  connector's message size limit requires, in order. No secret value is
+  searched for or replaced in it. Tool calls, tool results, thinking and
+  control input are not posted. A bare `NOOP` posts nothing.
 - Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
   turn output (and suppresses relaying raw turn text to the connector's status
   line, showing only the generic working or unavailable state) so internal
@@ -273,11 +273,13 @@ gives.
   under `session_scope: company`, `--conversation <id>` is required and must
   name an admitted conversation (one with an admitted, non-refused message and
   no conflicting conversation-scoped binding) of that `(company, connector)`.
-  The command scrubs resolved company/machine secrets and stored MCP credentials
-  (at least 8 characters long) from the reply text and its own CLI output,
-  splits the reply to the connector kind's declared message limit, and writes
-  ordered pieces into `conversation_answers`, so the runner's existing
-  answer-posting relay delivers them with full retry and recovery.
+  The command takes the reply text exactly as the agent wrote it, searching for
+  and replacing no secret value in it, splits it to the connector kind's
+  declared message limit, and writes ordered pieces into
+  `conversation_answers`, so the runner's existing answer-posting relay
+  delivers them with full retry and recovery. Its own output is the queued
+  reply's summary (company, connector, conversation, turn and piece count),
+  never the reply text.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction
@@ -666,8 +668,8 @@ Given a company home declares a named connector with reply_mode set to explicit
 When a member addresses that connector and the agent finishes its turn with raw output
 Then the raw turn output is not posted to the conversation
 When the active conversation session runs instrukt company reply for an admitted conversation
-Then credentials are scrubbed from the queued reply and CLI output
-And the connector posts the explicit reply to that conversation through the durable answer outbox
+Then the command's output is the queued reply's summary, not the reply text
+And the connector posts the explicit reply to that conversation exactly as the agent wrote it, through the durable answer outbox
 ```
 
 ## Known caveats

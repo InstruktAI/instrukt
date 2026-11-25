@@ -88,8 +88,8 @@ use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, readable_secret_values, resolve_secret,
-    resolve_secret_from, set_secret, set_secret_in,
+    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
+    set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its
