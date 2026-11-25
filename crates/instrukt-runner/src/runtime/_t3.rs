@@ -668,6 +668,51 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
     Ok(())
 }
 
+/// A thread's status as T3 spells it in `t3 thread show` and `t3 thread list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ThreadStatus {
+    Running,
+    Preparing,
+    Starting,
+    Resuming,
+    Queued,
+    Waiting,
+    WaitingForInput,
+    WaitingForApproval,
+    Idle,
+    Completed,
+    Stopped,
+    Failed,
+    Interrupted,
+    Cancelled,
+    RolledBack,
+}
+impl ThreadStatus {
+    /// The member T3's spelling `native` names; a spelling outside the set
+    /// names none and is observed as an unknown state.
+    fn parse(native: &str) -> Option<Self> {
+        use serde::de::IntoDeserializer as _;
+        let spelling: serde::de::value::StrDeserializer<'_, serde::de::value::Error> =
+            native.into_deserializer();
+        Self::deserialize(spelling).ok()
+    }
+    fn state(self) -> SessionState {
+        match self {
+            Self::Running | Self::Preparing | Self::Starting | Self::Resuming | Self::Queued => {
+                SessionState::Running
+            }
+            Self::Waiting | Self::WaitingForInput | Self::WaitingForApproval => {
+                SessionState::NeedsInput
+            }
+            Self::Idle | Self::Completed | Self::Stopped => SessionState::InputReady,
+            Self::Failed | Self::Interrupted | Self::Cancelled | Self::RolledBack => {
+                SessionState::EndedFailed
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeThread {
@@ -695,13 +740,8 @@ impl NativeThread {
         if self.thread_id.is_empty() {
             return Err(failure("decode", "incomplete thread identity"));
         }
-        let status = match self.status.as_str() {
-            "running" | "preparing" | "starting" | "resuming" | "queued" => SessionState::Running,
-            "waiting" | "waiting_for_input" | "waiting_for_approval" => SessionState::NeedsInput,
-            "idle" | "completed" | "stopped" => SessionState::InputReady,
-            "failed" | "interrupted" | "cancelled" | "rolled_back" => SessionState::EndedFailed,
-            _ => SessionState::Unknown,
-        };
+        let native_status = ThreadStatus::parse(&self.status);
+        let status = native_status.map_or(SessionState::Unknown, ThreadStatus::state);
         let presence = if self.archived == Some(true) {
             super::Presence::Archived
         } else {
@@ -741,7 +781,7 @@ impl NativeThread {
             worktree: self.worktree_path.filter(|p| !p.as_os_str().is_empty()),
             provider: self.provider_instance_id,
             model: self.model,
-            interrupted: self.status == "interrupted",
+            interrupted: native_status == Some(ThreadStatus::Interrupted),
             settled: self.settled,
             settled_at: self.settled_at,
             native_status: self.status,
