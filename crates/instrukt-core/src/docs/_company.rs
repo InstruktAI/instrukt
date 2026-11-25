@@ -30,13 +30,6 @@ pub(crate) struct CompanyDocument {
     /// What its frontmatter says.
     pub frontmatter: CompanyFrontmatter,
     /// Where each path [`company_paths`] can replace stands in the text.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the company plugin's rendering is its first reader"
-        )
-    )]
     places: Places,
 }
 
@@ -109,13 +102,6 @@ pub(crate) enum CompanyReference {
 
 /// A path of a company document, as written, that [`company_paths`] asks
 /// to replace.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the company plugin's rendering is its first caller"
-    )
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompanyPath<'a> {
     /// A reference in its text outside the `## Required reads` section.
@@ -125,13 +111,6 @@ pub(crate) enum CompanyPath<'a> {
 }
 
 /// Which text of a company document [`company_paths`] returns.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the company plugin's rendering is its first caller"
-    )
-)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompanyText {
     /// The whole text, its `## Required reads` section included.
@@ -208,13 +187,6 @@ pub(crate) fn company_document(text: &str) -> CompanyDocument {
 /// gives a replacement for replaced. Only the path's characters are
 /// replaced: an `@`, a link's text, an anchor or a query after the path
 /// and the rest of the line stay as written.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the company plugin's rendering is its first caller"
-    )
-)]
 pub(crate) fn company_paths(
     text: &str,
     document: &CompanyDocument,

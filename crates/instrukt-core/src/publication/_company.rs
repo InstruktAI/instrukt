@@ -29,7 +29,7 @@ use crate::docs::{self, CompanyDocument, CompanyFrontmatter, CompanyReference, D
 use crate::ids::{DomainName, SnippetId};
 
 /// The home's documents are below this folder.
-const DOCS: &str = "docs/";
+pub(super) const DOCS: &str = "docs/";
 
 /// The company index, which selects the home's rendering.
 pub(super) const COMPANY_INDEX: &str = "docs/index.yaml";
@@ -304,6 +304,8 @@ pub(super) struct Selection {
 
 /// One document a company's index selects or a required read reaches.
 pub(super) struct SelectedDocument {
+    /// Its whole text, as the view holds it.
+    pub text: String,
     /// Its text as a company rendering reads it.
     pub document: CompanyDocument,
 }
@@ -534,7 +536,7 @@ impl Walk<'_> {
             self.held.push(path.to_owned());
         }
         self.documents
-            .insert(path.to_owned(), SelectedDocument { document });
+            .insert(path.to_owned(), SelectedDocument { text, document });
     }
 
     /// The findings of the document at `path` itself: its directives and
@@ -580,18 +582,7 @@ impl Walk<'_> {
     /// document at `reader`, names: its repository-relative path, or why it
     /// names none.
     fn file(&self, reader: &str, file: &str) -> Result<String, CompanyReadProblem> {
-        let file = file.strip_prefix('@').unwrap_or(file);
-        let path = relative_to(reader, file).ok_or(CompanyReadProblem::OutsideDocs)?;
-        if !path.starts_with(DOCS) {
-            return Err(CompanyReadProblem::OutsideDocs);
-        }
-        if self.tree.is_link(&path) {
-            return Err(CompanyReadProblem::Link);
-        }
-        if self.tree.file(&path).is_none() {
-            return Err(CompanyReadProblem::Missing);
-        }
-        Ok(path)
+        resolve(self.tree, reader, file)
     }
 
     fn found(&mut self, kind: RenderFindingKind) {
@@ -600,6 +591,28 @@ impl Walk<'_> {
             kind,
         });
     }
+}
+
+/// The home's file in `tree` that the file reference `file`, written in
+/// the file at `reader`, names: its repository-relative path, or why it
+/// names none. The one rule every company rendering resolves a path by.
+pub(super) fn resolve(
+    tree: &Committed,
+    reader: &str,
+    file: &str,
+) -> Result<String, CompanyReadProblem> {
+    let file = file.strip_prefix('@').unwrap_or(file);
+    let path = relative_to(reader, file).ok_or(CompanyReadProblem::OutsideDocs)?;
+    if !path.starts_with(DOCS) {
+        return Err(CompanyReadProblem::OutsideDocs);
+    }
+    if tree.is_link(&path) {
+        return Err(CompanyReadProblem::Link);
+    }
+    if tree.file(&path).is_none() {
+        return Err(CompanyReadProblem::Missing);
+    }
+    Ok(path)
 }
 
 /// What the name `name` (its `@` aside) references outside the home: a

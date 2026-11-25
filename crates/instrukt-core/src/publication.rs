@@ -24,6 +24,7 @@ mod _editor;
 mod _fingerprint;
 mod _patch;
 pub(crate) use _patch::target_entries;
+mod _plugin;
 mod _render;
 mod _source;
 mod _sync;
@@ -46,6 +47,7 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
+pub use _plugin::{CompanyName, CompanyNameError, PluginFinding};
 pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
