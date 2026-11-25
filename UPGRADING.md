@@ -122,10 +122,10 @@ file and says so. Antigravity's file moves from
 `~/.gemini/antigravity-cli/AGENTS.md` to `~/.gemini/AGENTS.md`, which
 Antigravity reads without a settings key; the old file and the key instrukt
 set in `~/.gemini/antigravity-cli/settings.json` stay until you delete them. Each file is written whole by every sync
-that publishes it, over whatever the destination holds, a file TeleClaude or
-you wrote included: move instructions you want to keep into documentation
-before the first sync of this release that publishes. instrukt removes no
-global file: the file of a runtime no enabled instance uses any more,
+that publishes it, over whatever the destination holds, a file you or
+another program wrote included: move instructions you want to keep into
+documentation before the first sync of this release that publishes. instrukt
+removes no global file: the file of a runtime no enabled instance uses any more,
 DeepSeek's among them unless the runtime reports it, stays until you delete
 it. The record of written files an earlier release kept under
 `~/.instrukt/state/publication/outputs/` is deleted by the first sync that
@@ -266,7 +266,7 @@ configured” above).
 Existing installations using `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`
 need App setup before remote work reflection and CI observation:
 
-1. Reuse existing TeleClaude project/author/reviewer Apps when available, or
+1. Reuse existing project, author and reviewer Apps when available, or
    create three distinct Apps and install them for each intended repository.
    Keep the observed App ids, slugs and stable bot id/node-id/login tuples.
 2. Grant the project's record App issues write and contents/pull-requests read;
@@ -595,8 +595,8 @@ conversation's tools ran and returned, the files it changed, its reasoning
 traces, its runs or its subagents; that text is no longer found by
 `instrukt history search`, and `instrukt history show` of a runtime
 conversation prints its `thread` and `messages` without the `runs`,
-`subagents` and `turnItems` collections. Conversations imported from
-TeleClaude keep their document and are found by the same text as before.
+`subagents` and `turnItems` collections. Conversations an earlier import
+retained keep their document and are found by the same text as before.
 
 The first history operation after upgrading, on each computer, converts
 `state/history.db` in place and then rewrites it to free the space the
@@ -605,10 +605,10 @@ each step takes a while. While the conversion runs, every history command
 fails once its wait for the lock times out. Once the conversion has
 committed, and provided this computer had already finished moving its earlier
 history out of `state/instrukt.db`, `history show` and the search's own read
-work again while the rewrite continues; `history extract` and
-`history import-teleclaude` still time out, and `history search` returns what
-is retained and reports its catch-up as failed. If that earlier move had not
-finished, every history command, `history show` and `history search`
+work again while the rewrite continues; `history extract` still times out,
+and `history search` returns what is retained and reports its catch-up as
+failed. If that earlier move had not finished, every history command,
+`history show` and `history search`
 included, keeps waiting for the lock and can time out until the rewrite and
 the move complete. The runner retries its extraction throughout. What the
 store held of tool records, runs and subagents is dropped by the conversion
@@ -617,3 +617,20 @@ build, while the store is still in its earlier shape, with SQLite's online
 backup, which is safe while instrukt uses the store:
 
     sqlite3 ~/.instrukt/state/history.db ".backup '/path/to/history-before-upgrade.db'"
+
+### Worktree reclamation: declared regenerable output
+
+instrukt now reclaims the disk todo worktrees hold itself: the runner removes
+a project's declared regenerable output from idle todo worktrees and releases
+a delivered todo's worktree and work branch, and `instrukt repo reclaim`
+reclaims a working session's own worktree. What may be removed from a todo
+worktree that stays is only what a project declares under the project-layer
+key `regenerable`; a project that declares nothing loses no files from it. A
+delivered todo's clean worktree is removed whole, with everything git ignores
+in it, whatever the project declares.
+
+This repository declares `regenerable` in its `instrukt.yaml`. On a computer
+whose installed instrukt predates this release, that key is an unknown key in
+this repository's layer: the layer does not validate there, which withholds
+history extraction for the project on that computer until instrukt is
+upgraded. Upgrade instrukt on each computer that serves this repository.

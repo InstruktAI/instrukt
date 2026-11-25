@@ -113,6 +113,10 @@ commands.
 - **Implementation roots** — `crates/instrukt-core/` (repository);
   `crates/instrukt-cli/` (command surface).
 
+`instrukt repo reclaim` shares the `repo` namespace and is not this context's:
+it reclaims the regenerable output of a todo's worktree and belongs to runner
+(`project/instrukt/spec/domain/runner`).
+
 ## Canonical fields
 
 ### Aggregates

@@ -44,7 +44,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["bugs", "suppressions" | "list"] => TodoRead,
         ["bugs", "report"] => BugReport,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
-        ["docs", "fold" | "render"] => DocsWrite,
+        ["docs", "fold" | "render" | "plugin"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
         ["todo", "list" | "show" | "refresh"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
@@ -61,7 +61,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
-        ["history", "import-teleclaude" | "extract"] => HistoryRead,
+        ["history", "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
         ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,
@@ -71,7 +71,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["secrets", "set" | "generate"] => SecretsWrite,
         ["hooks", "status"] => RepositoryRead,
         ["hooks", "install" | "remove"] | ["init"] | ["dev-seed"] => RepositoryWrite,
-        ["repo", "commit"] => CodeCommit,
+        ["repo", "commit" | "reclaim"] => CodeCommit,
         ["sync"] => Publication,
         ["specs", "coverage" | "reserve" | "trace"] => CodeCheck,
         [
@@ -110,7 +110,8 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 }
 
 /// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `hooks run`, the
+/// nothing else of the computer: `docs render [--check]`, `docs plugin
+/// [--check | --validate]`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
 /// be read still has its runs recorded and shown; whether the caller is in
@@ -118,7 +119,7 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render"] | ["hooks", "run" | "worker" | "status"]
+        ["docs", "render" | "plugin"] | ["hooks", "run" | "worker" | "status"]
     )
 }
 
@@ -130,10 +131,14 @@ pub fn state_inspection(matches: &ArgMatches) -> bool {
     action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
-/// The commands that write no log: `docs render [--check]`, so a check
-/// writes nothing anywhere and errors go to stderr alone.
+/// The commands that write no log: `docs render [--check]` and `docs plugin
+/// [--check | --validate]`, so a check writes nothing anywhere and errors go
+/// to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
-    command_path(matches).0 == ["docs", "render"]
+    matches!(
+        command_path(matches).0.as_slice(),
+        ["docs", "render" | "plugin"]
+    )
 }
 
 /// Whether the caller's working tree's root document is a project layer,
@@ -165,12 +170,7 @@ pub fn deferred_writing(matches: &ArgMatches) -> bool {
 }
 
 pub fn strict_inspection(matches: &ArgMatches) -> bool {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     matches!(
         path.as_slice(),
         ["events", "status" | "dead-letters"] | ["ticks", "status"] | ["status"]
@@ -179,12 +179,7 @@ pub fn strict_inspection(matches: &ArgMatches) -> bool {
 /// The owning project a work read names with `--project`: the project whose
 /// layer it reads, wherever the caller stands.
 pub fn named_project(matches: &ArgMatches) -> Option<ProjectSlug> {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     matches!(
         path.as_slice(),
         ["todo", "list"] | ["bugs", "list" | "suppressions" | "report"]
@@ -193,12 +188,7 @@ pub fn named_project(matches: &ArgMatches) -> Option<ProjectSlug> {
     .flatten()
 }
 pub fn read_only(matches: &ArgMatches) -> bool {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     if path == ["webhooks", "serve"] {
         return true;
     }
@@ -243,15 +233,12 @@ pub fn read_only(matches: &ArgMatches) -> bool {
 }
 
 pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     let action = if path == ["install"] && leaf.get_flag("check") {
         Some(Action::InstallationRead)
-    } else if path == ["docs", "render"] && leaf.get_flag("check") {
+    } else if path == ["docs", "render"] && leaf.get_flag("check")
+        || path == ["docs", "plugin"] && (leaf.get_flag("check") || leaf.get_flag("validate"))
+    {
         Some(Action::DocsRead)
     } else {
         action(&path)
@@ -274,13 +261,17 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         return Ok(());
     }
-    let config = if repository_local(matches) {
+    // Reclaiming acts on the worktree the assignment records, wherever the
+    // caller stands: nothing of the caller's directory is read for it.
+    let reclaim = path == ["repo", "reclaim"];
+    let config = if repository_local(matches) || reclaim {
         None
     } else {
         Some(Configuration::load_at(&ctx.home, &ctx.cwd)?)
     };
     let project = match &config {
         Some(config) => config.project()?,
+        None if reclaim => None,
         None => root_project(ctx)?,
     };
     let in_project = assignment.project.is_some() && assignment.project == project;
@@ -312,17 +303,11 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         _ => false,
     };
-    let workspace = assignment.workspace.as_ref().is_some_and(|workspace| {
-        workspace
-            .canonicalize()
-            .ok()
-            .zip(
-                instrukt_core::git::run(&ctx.cwd, ["rev-parse", "--show-toplevel"])
-                    .ok()
-                    .and_then(|root| std::path::Path::new(root.trim()).canonicalize().ok()),
-            )
-            .is_some_and(|(workspace, root)| root == workspace)
-    });
+    let workspace = if reclaim {
+        assignment.workspace.is_some()
+    } else {
+        recorded_workspace_is_cwd(ctx, &assignment)
+    };
     use Action::*;
     let owned = match action {
         // Review evidence addresses the project the caller stands in.
@@ -389,17 +374,39 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         _ => false,
     };
     if !grants.admits(action, owned) {
-        return Err(PermissionRefused(grants.refusal(
+        let mut refusal = grants.refusal(
             action,
             &format!(
                 "{}{}",
                 path.join(" "),
                 target.map(|s| format!(" ({s})")).unwrap_or_default()
             ),
-        ))
-        .into());
+        );
+        if reclaim && (assignment.todo.is_none() || assignment.workspace.is_none()) {
+            refusal.push_str(&format!(
+                "; reclaiming acts on the todo worktree an assignment records, and this session's assignment records none: {}",
+                crate::commands::repository::reclaim_door(Some(&assignment))
+            ));
+        }
+        return Err(PermissionRefused(refusal).into());
     }
     Ok(())
+}
+
+/// Whether the caller stands in the workspace its assignment records: the
+/// repository root of its working directory is that workspace.
+fn recorded_workspace_is_cwd(ctx: &Ctx, assignment: &Assignment) -> bool {
+    assignment.workspace.as_ref().is_some_and(|workspace| {
+        workspace
+            .canonicalize()
+            .ok()
+            .zip(
+                instrukt_core::git::run(&ctx.cwd, ["rev-parse", "--show-toplevel"])
+                    .ok()
+                    .and_then(|root| std::path::Path::new(root.trim()).canonicalize().ok()),
+            )
+            .is_some_and(|(workspace, root)| root == workspace)
+    })
 }
 
 pub fn help(mut command: Command, path: &mut Vec<String>, caps: &Capabilities) -> Command {

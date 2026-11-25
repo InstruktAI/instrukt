@@ -39,6 +39,7 @@ pub(crate) fn todo(kind: instrukt_runner::interfaces::TodoKind) -> EvidenceBuild
             slug: TodoSlug::parse("add-login").unwrap(),
             kind,
             status: crate::evidence::TodoStatus::Active,
+            revision: 1,
             artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: None,

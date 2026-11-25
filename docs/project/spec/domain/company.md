@@ -193,4 +193,4 @@ The company context has no governing design or decision record of its own.
 
 ## Known caveats
 
-- Slack is the one connector. Other channels and help desks stay in TeleClaude.
+- Slack is the one connector. Other channels and help desks are outside instrukt.

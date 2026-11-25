@@ -24,7 +24,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
 | configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
-| publication | Committed-state publication, index patching, rendering of the global agent files and of committed `AGENTS.md` files, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| publication | Committed-state publication, index patching, rendering of the global agent files, of committed `AGENTS.md` files and of a company's plugin with its catalog entry, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
@@ -124,6 +124,15 @@ Fleet attention adds these crossings
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 <!-- /planned:standing-sdlc-coordinator -->
 
+Worktree reclamation adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/worktree-reclamation`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The project's admitted declaration of regenerable output |
+| workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
+| work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator
@@ -146,6 +155,10 @@ additional contexts.
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
+
+Publication is **Conformist** to Claude's plugin, skill and plugin catalog
+formats, for the company plugin it renders into a company's repository
+(`project/instrukt/spec/domain/publication`).
 
 ## Governing designs and decisions
 

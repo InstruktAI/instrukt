@@ -138,17 +138,23 @@ Apply these configured action values to the identified assignment and session.
 
 ### 1. Establish mode and orient
 
-Apply the artifact-discovery rule from `preparation-artifact-quality` first —
+Apply the artifact-discovery rule from `sdlc/policy/preparation-artifact-quality` first —
 `instrukt todo artifacts list {slug}` — before assuming `input` is the only thing
-present. A re-entry after later phases already ran may carry `architecture`,
-`implementation-plan`, or a `log` breadcrumb; read whatever exists that bears
-on re-orienting, not only the two cases below.
+present. Walk the project's governing contracts and existing specs
+(`sdlc/policy/preparation-artifact-quality`) before drafting the PRD or any
+feature-spec update so current behavioral contracts and existing use cases
+ground intake from the start. A re-entry after later phases already ran may
+carry `architecture`, `implementation-plan`, or a `log` breadcrumb; read
+whatever exists that bears on re-orienting, not only the two cases below.
 
 Two cases determine where the PRD's basis comes from:
 
 - **`input` artifact exists.** Read it in full before doing anything else. It
-  may be a human dump or an agent-authored handoff; either is the authorized
-  basis. Assess whether that basis is rich enough to write the PRD directly
+  may be a human dump or an agent-authored handoff; either carries the
+  behavioral scope basis, while factual claims and named mechanisms remain
+  premises to ground against current substrate and standing principles
+  (`general/policy/human-contract`, `sdlc/policy/preparation-artifact-quality`).
+  Assess whether that basis is rich enough to write the PRD directly
   without elicitation — if the intent, scope, and success criteria are already
   clear, omit unnecessary elicitation and continue through the applicable
   preparation steps. If it is sparse or ambiguous, elicit from the human in
@@ -326,7 +332,9 @@ framework only after the situation reveals a question that framework handles;
 never run a default framework sequence.
 
 Every consequential recommendation answers “why here?” Its reason resolves to
-an inspectable premise or is labelled as an assumption. An assumption may orient
+an inspectable premise, or is labelled as an assumption only when it cannot be
+inspected against current substrate now (`general/policy/grounding`,
+`sdlc/policy/preparation-artifact-quality`). An assumption may orient
 investigation or name an open decision; it cannot supply product or business
 intent the input does not carry.
 Consider both failure pressure and opportunity: what becomes costly or unsafe

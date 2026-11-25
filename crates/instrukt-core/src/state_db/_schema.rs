@@ -48,7 +48,20 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Step(v35),
     Sql(V36),
     Sql(V37),
+    Sql(V38),
 ];
+
+/// Version 38: lookups of the todos a worktree path or a work branch names,
+/// and of a todo's hold history and label actions, so worktree standing
+/// reads only the todos what git lists on a computer names, and only their
+/// rows (`worktree-reclamation`), whatever else the record retains.
+const V38: &str = "
+CREATE INDEX IF NOT EXISTS session_bindings_worktree ON session_bindings (worktree);
+CREATE INDEX IF NOT EXISTS session_bindings_branch ON session_bindings (branch);
+CREATE INDEX IF NOT EXISTS todos_branch ON todos (branch);
+CREATE INDEX IF NOT EXISTS holds_todo ON holds (todo_id);
+CREATE INDEX IF NOT EXISTS github_label_actions_todo ON github_label_actions (todo_id);
+";
 
 /// Version 36: a stored Antigravity reservation holding `thinking_level` carries it as T3's `thought_level`.
 const V36: &str = "

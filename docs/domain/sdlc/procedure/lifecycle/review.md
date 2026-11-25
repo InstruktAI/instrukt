@@ -58,8 +58,10 @@ preferred classification or design alone does not reopen a decision.
 
 Where a procedure has you read the conversation that produced the work — a
 session transcript named by an artifact's writers or a commit's `Session:`
-trailer — that reading corroborates the authorized basis and never gates the
-work. Read it when it can be read. When it cannot — the writer has no recorded
+trailer — that reading serves the comparison the invoking procedure assigns.
+Where the invoking procedure makes an unreadable conversation a blocker, as the
+intent check on a todo's `input` does (`sdlc/policy/todo-creation-discipline`),
+its rule applies. Otherwise read it when it can be read. When it cannot — the writer has no recorded
 session, or the conversation is unavailable through
 the configured runtime conversation read instruction — record what you tried and why
 it failed, and proceed on the artifact or commit as the authorized basis, with its governing
@@ -85,8 +87,7 @@ defective: finding defects is the lane's work.
   or a fast-track lifecycle review with no prepare artifacts (and verifies no
   contract delta was missed when preparation authored pending docs).
 - The project's focus points: walk the project's fixed entry points to its
-  governing contracts (`sdlc/policy/preparation-artifact-quality`, Governing
-  contracts) and take every contract that bears on the target. Each is carried
+  governing contracts (`sdlc/policy/preparation-artifact-quality`) and take every contract that bears on the target. Each is carried
   in the brief of the general lane it sharpens, or runs as a lane of its own
   when no general lane covers it. An entry point the project lacks is recorded
   as a gap, never as nothing found.
@@ -201,7 +202,7 @@ prescribe speculative defenses.
 
 The review result carries findings, investigation leads, and the verdict. It
 names no owner, destination, or decision for another party: what follows a
-review is the dispatching orchestrator's (§6, `general/procedure/orchestration`).
+review is the dispatching orchestrator's (`general/procedure/orchestration`).
 
 A finding is valid only when all four hold:
 
@@ -209,10 +210,13 @@ A finding is valid only when all four hold:
    violates — a principle is a citeable clause;
 2. it establishes, from current authoritative sources and the reviewed
    artifact, that the cited clause applies here — including that no more
-   specific contract on the same subject decides the case otherwise, such as a
-   project policy that settles what a general spec leaves open
+   specific governing contract on the same subject decides the case otherwise,
+   such as a project policy that settles what a general spec leaves open
    (`general/policy/conflict-resolution`), or, for a bug, the bug-fix lane's
-   scope authority (`sdlc/policy/definition-of-done-lanes`);
+   scope authority (`sdlc/policy/definition-of-done-lanes`). A work artifact
+   (`input`, `prd`, `architecture`, `implementation-plan`) stands outside that
+   precedence ladder and never shields a target from a standing principle,
+   ownership, storage, or grounding violation (`general/policy/conflict-resolution`);
 3. it explains the contradiction causally — what the target introduces and why
    that conflicts with the clause. Every factual premise the contradiction rests
    on is shown by an observation of current substrate — the file, the command
@@ -220,13 +224,19 @@ A finding is valid only when all four hold:
    target leaves as it was, or restores to its previously delivered behavior,
    is not introduced by the target;
 4. it states the closure condition as a state of the target within the frozen
-   scope, without prescribing implementation. A closure that waits on a
-   decision or an authorization names no state of the target.
+   scope, without prescribing implementation. When an upstream artifact itself
+   prescribes a standing-principle violation or an unreachable premise, state
+   the closure as the compliant state of the reviewed target; routing any
+   upstream revision belongs to the orchestrator (`general/procedure/orchestration`).
+   A closure that waits on a decision or an authorization names no state of the
+   target.
 
 A finding that claims a defect establishes, from current sources, that a
-reachable condition triggers it (`sdlc/concept/defect-evidence`); any defect
-claim failing `sdlc/concept/defect-evidence` is an investigation lead, never a
-finding.
+reachable condition triggers it (`sdlc/concept/defect-evidence` — including a
+substrate-grounded design derivation for an unbuilt preparation target, subject
+to that concept's tail-risk and external-substrate exclusions and the
+convergence and re-derivation bounds below); any defect claim failing
+`sdlc/concept/defect-evidence` is an investigation lead, never a finding.
 
 An observation missing any one of these is an **investigation lead**, not a
 finding: it cannot block, never enters remediation, requires no producer
@@ -404,5 +414,5 @@ Verdict: APPROVE | REQUEST CHANGES
 
 If the target, applicable contract, or required evidence cannot be resolved,
 report the blocker to the invoking procedure and stop. Do not narrow the review
-to what happens to be available. A producing conversation that cannot be read
-is not such a blocker; Step 0 governs it.
+to what happens to be available. Step 0 decides whether a producing
+conversation that cannot be read is such a blocker.

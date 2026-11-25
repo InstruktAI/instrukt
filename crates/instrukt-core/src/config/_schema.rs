@@ -151,6 +151,8 @@ enum Shape {
     BranchPrefixes,
     ModuleList,
     Identity,
+    /// Paths inside a checkout (`regenerable`).
+    Regenerable,
 }
 
 enum Node {
@@ -245,6 +247,10 @@ fn schema() -> Node {
         (
             "review",
             map(vec![("automatic", Leaf(ProjectOnly, Shape::Bool))]),
+        ),
+        (
+            super::_regenerable::REGENERABLE_KEY,
+            Leaf(ProjectOnly, Shape::Regenerable),
         ),
         ("ticks", Leaf(GlobalOnly, Shape::OnOff)),
         (
@@ -599,6 +605,7 @@ fn check_shape(
             None => out.push(invalid("expected a list of modules")),
         },
 
+        Shape::Regenerable => super::_regenerable::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -1068,6 +1075,9 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         }
 
         Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
+        Shape::Regenerable => {
+            json!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
+        }
     }
 }
 

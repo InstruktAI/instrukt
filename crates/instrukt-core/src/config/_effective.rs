@@ -12,6 +12,7 @@ use super::_interpolate::{Interpolator, Mode};
 use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
 use super::_module::Module;
+use super::_regenerable::{REGENERABLE_KEY, RegenerablePath};
 use super::_runtime::{Env, Runtime};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
 use crate::home::Home;
@@ -651,6 +652,20 @@ impl Configuration {
             None | Some(Value::Null) => Ok(false),
             Some(Value::Bool(on)) => Ok(*on),
             Some(_) => Err(invalid("review.automatic", "is not a boolean")),
+        }
+    }
+
+    /// The locations the project declares regenerable (`regenerable`);
+    /// none when it declares nothing.
+    pub fn regenerable(&self) -> Result<Vec<RegenerablePath>, ConfigError> {
+        match self.at(&[REGENERABLE_KEY]) {
+            None | Some(Value::Null) => Ok(Vec::new()),
+            Some(value) => super::_regenerable::parse(value).ok_or_else(|| {
+                invalid(
+                    REGENERABLE_KEY,
+                    "holds an entry that names no location inside the checkout",
+                )
+            }),
         }
     }
 

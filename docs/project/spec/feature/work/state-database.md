@@ -215,6 +215,13 @@ holds `thinking_level` to carry it as T3's `thought_level`.
 Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
 withdrawal whose working resources are being released. It starts empty.
 
+Version 38 adds lookups of `session_bindings` by `worktree` and by `branch`,
+of `todos` by `branch`, and of `holds` and `github_label_actions` by todo, so
+the todos a computer's worktrees and work branches name, and their records,
+are read without reading the rest of the record
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
+table, column or row.
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to
