@@ -636,7 +636,8 @@ pub struct RenderPlan {
 pub struct PlannedFile {
     /// Relative to the repository root.
     pub path: PathBuf,
-    /// The rendering, opening with [`GENERATED_LINE`].
+    /// The rendering: an entrypoint's opens with [`GENERATED_LINE`], a
+    /// company plugin's file as its format requires.
     pub text: String,
     /// What the view holds at `path`; `None` when it holds no file there.
     pub current: Option<Vec<u8>>,

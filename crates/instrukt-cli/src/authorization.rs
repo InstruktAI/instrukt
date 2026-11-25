@@ -44,7 +44,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["bugs", "suppressions" | "list"] => TodoRead,
         ["bugs", "report"] => BugReport,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
-        ["docs", "fold" | "render"] => DocsWrite,
+        ["docs", "fold" | "render" | "plugin"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
         ["todo", "list" | "show" | "refresh"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
@@ -110,7 +110,8 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 }
 
 /// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `hooks run`, the
+/// nothing else of the computer: `docs render [--check]`, `docs plugin
+/// [--check | --validate]`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
 /// be read still has its runs recorded and shown; whether the caller is in
@@ -118,14 +119,18 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render"] | ["hooks", "run" | "worker" | "status"]
+        ["docs", "render" | "plugin"] | ["hooks", "run" | "worker" | "status"]
     )
 }
 
-/// The commands that write no log: `docs render [--check]`, so a check
-/// writes nothing anywhere and errors go to stderr alone.
+/// The commands that write no log: `docs render [--check]` and `docs plugin
+/// [--check | --validate]`, so a check writes nothing anywhere and errors go
+/// to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
-    command_path(matches).0 == ["docs", "render"]
+    matches!(
+        command_path(matches).0.as_slice(),
+        ["docs", "render" | "plugin"]
+    )
 }
 
 /// Whether the caller's working tree's root document is a project layer,
@@ -230,7 +235,9 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     }
     let action = if path == ["install"] && leaf.get_flag("check") {
         Some(Action::InstallationRead)
-    } else if path == ["docs", "render"] && leaf.get_flag("check") {
+    } else if path == ["docs", "render"] && leaf.get_flag("check")
+        || path == ["docs", "plugin"] && (leaf.get_flag("check") || leaf.get_flag("validate"))
+    {
         Some(Action::DocsRead)
     } else {
         action(&path)
