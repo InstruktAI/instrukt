@@ -230,7 +230,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
-  `instrukt history extract|import-teleclaude|search|show`,
+  `instrukt history extract|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
   `instrukt review start`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
