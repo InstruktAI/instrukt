@@ -33,20 +33,41 @@ pub(super) struct Text {
     pub native_id: String,
     pub role: Option<String>,
     pub text: String,
-    /// In [`stored_time`]'s form, so that text order is time order.
-    pub created_at: Option<String>,
-    pub updated_at: Option<String>,
-    /// Where the text belongs in its conversation's document, as a JSON
-    /// pointer; `None` for a text of no document.
-    pub place: Option<String>,
-    /// The source's record of a runtime message without its text.
-    pub record: Option<Value>,
+    pub created_at: Option<StoredTime>,
+    pub updated_at: Option<StoredTime>,
+    pub place: Place,
 }
 
-/// The one form a retained text's time is stored in: fixed width, so that
-/// ordering the stored text orders the times.
-pub(super) fn stored_time(time: jiff::Timestamp) -> String {
-    time.strftime("%Y-%m-%dT%H:%M:%S.%9fZ").to_string()
+/// Where a retained text belongs in its conversation's document, a place
+/// given as a JSON pointer.
+pub(super) enum Place {
+    /// A text of no document: searched by, never shown.
+    Nowhere,
+    /// The string member at this place.
+    Member(String),
+    /// `record`, the source's record of a runtime message without its text,
+    /// with the text as `text`, appended to the list at this place.
+    Appended { list: String, record: Value },
+}
+
+impl Place {
+    /// The bytes of the record the place carries.
+    pub(super) fn record_bytes(&self) -> usize {
+        match self {
+            Self::Appended { record, .. } => record.to_string().len(),
+            Self::Nowhere | Self::Member(_) => 0,
+        }
+    }
+}
+
+/// A retained text's time in the one form it is stored in: fixed width, so
+/// that ordering the stored text orders the times.
+pub(super) struct StoredTime(String);
+
+impl From<jiff::Timestamp> for StoredTime {
+    fn from(time: jiff::Timestamp) -> Self {
+        Self(time.strftime("%Y-%m-%dT%H:%M:%S.%9fZ").to_string())
+    }
 }
 
 /// Where the TeleClaude import of a source stands.
@@ -284,15 +305,20 @@ pub(super) fn write_texts_of(
 pub(super) fn write_texts(tx: &Transaction<'_>, key: i64, texts: &[Text]) -> rusqlite::Result<()> {
     let mut statement = tx.prepare_cached("INSERT INTO history_messages(conversation,native_id,role,text,created_at,updated_at,place,record) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(conversation,native_id) DO UPDATE SET role=excluded.role,text=excluded.text,created_at=excluded.created_at,updated_at=excluded.updated_at,place=excluded.place,record=excluded.record")?;
     for t in texts {
+        let (place, record) = match &t.place {
+            Place::Nowhere => (None, None),
+            Place::Member(member) => (Some(member.as_str()), None),
+            Place::Appended { list, record } => (Some(list.as_str()), Some(record.to_string())),
+        };
         statement.execute(params![
             key,
             t.native_id,
             t.role,
             t.text,
-            t.created_at,
-            t.updated_at,
-            t.place,
-            t.record.as_ref().map(Value::to_string)
+            t.created_at.as_ref().map(|time| time.0.as_str()),
+            t.updated_at.as_ref().map(|time| time.0.as_str()),
+            place,
+            record
         ])?;
     }
     Ok(())

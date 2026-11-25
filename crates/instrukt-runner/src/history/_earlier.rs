@@ -5,7 +5,7 @@
 //! by the mirror rule. The rule is selected by the kind of a conversation's
 //! source, never guessed from what it holds.
 use super::{
-    _store::{Text, stored_time},
+    _store::{Place, StoredTime, Text},
     HistoryError,
 };
 use instrukt_core::state_db::rusqlite::{self, Connection, params};
@@ -105,7 +105,7 @@ impl Current {
             + self
                 .texts
                 .iter()
-                .map(|t| t.text.len() + t.record.as_ref().map_or(0, |r| r.to_string().len()))
+                .map(|t| t.text.len() + t.place.record_bytes())
                 .sum::<usize>()
     }
 }
@@ -134,8 +134,7 @@ pub(super) fn convert(records: &Connection, earlier: &Earlier) -> Result<Current
                 text: body.clone(),
                 created_at: None,
                 updated_at: None,
-                place: None,
-                record: None,
+                place: Place::Nowhere,
             })
             .into_iter()
             .collect(),
@@ -185,10 +184,10 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
             }
             _ => record["text"].as_str().unwrap_or_default().to_owned(),
         };
-        let time = |name: &str| -> Result<Option<String>, ConversionError> {
+        let time = |name: &str| -> Result<Option<StoredTime>, ConversionError> {
             record[name]
                 .as_str()
-                .map(|time| Ok(stored_time(time.parse()?)))
+                .map(|time| Ok(StoredTime::from(time.parse::<jiff::Timestamp>()?)))
                 .transpose()
         };
         texts.push(Text {
@@ -197,8 +196,10 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
             text,
             created_at: time("created_at")?,
             updated_at: time("updated_at")?,
-            place: Some(MESSAGES.into()),
-            record: Some(native),
+            place: Place::Appended {
+                list: MESSAGES.into(),
+                record: native,
+            },
         });
     }
     let thread = conversation.ok_or(ConversionError::Shape(
@@ -240,8 +241,7 @@ pub(super) fn mirror(mut document: Value) -> Current {
                 text,
                 created_at: None,
                 updated_at: None,
-                place: Some(place),
-                record: None,
+                place: Place::Member(place),
             });
         }
     };

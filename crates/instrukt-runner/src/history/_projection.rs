@@ -2,7 +2,7 @@
 //! position.
 use super::{
     _earlier::MESSAGES,
-    _store::{self, Conversation, Text, stored_time},
+    _store::{self, Conversation, Place, StoredTime, Text},
     HistoryError,
 };
 use crate::runtime::conversations::{ConversationText, SourcePosition};
@@ -54,10 +54,12 @@ pub(super) fn apply(
                         native_id: m.id,
                         role: serde_json::to_value(m.role)?.as_str().map(str::to_owned),
                         text: m.text,
-                        created_at: m.created_at.map(stored_time),
-                        updated_at: m.updated_at.map(stored_time),
-                        place: Some(MESSAGES.into()),
-                        record: Some(m.record),
+                        created_at: m.created_at.map(StoredTime::from),
+                        updated_at: m.updated_at.map(StoredTime::from),
+                        place: Place::Appended {
+                            list: MESSAGES.into(),
+                            record: m.record,
+                        },
                     })
                 })
                 .collect::<Result<Vec<_>, HistoryError>>()?;
