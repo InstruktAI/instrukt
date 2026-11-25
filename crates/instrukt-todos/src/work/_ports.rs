@@ -149,6 +149,23 @@ impl Claims for Work {
             if !holds {
                 return Ok(ClaimOutcome::ClaimedElsewhere);
             }
+            // This computer's unassigned claim passes to the todo's live
+            // driver session taking it up (`work-dispatch`, Deliberate
+            // pickup), as `record_dispatch` assigns it to a started session.
+            if let Some(session) = &session
+                && claim.session.is_none()
+                && super::_attempts::live_driver(record, session).is_some()
+            {
+                s.commit("claim taken up by its orchestrator", |s| {
+                    let claim = s.items[index].record.claim.as_mut().ok_or_else(|| {
+                        WorkError::refused("the execution claim was released during pickup")
+                    })?;
+                    claim.session = Some(session.clone());
+                    Ok(())
+                })?;
+                s.flush()?;
+                return Ok(claim_outcome(s.status(index)));
+            }
             if !s.items[index].reflection.pending {
                 return Ok(ClaimOutcome::AlreadyHeld);
             }
