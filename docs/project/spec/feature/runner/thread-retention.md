@@ -50,17 +50,13 @@ Whatever its age, a thread is never archived when:
 
 - the person pinned it in the runtime;
 - it is the thread of a standing responsibility the runner keeps a binding
-  for, which automation never settles or archives
+  for, which automation never finishes or archives
   (`project/instrukt/spec/feature/runner/procedure-standing-agent`); or
 - it is bound to a todo that has not reached a terminal outcome, delivered or
   withdrawn, as the work record decides (`project/instrukt/spec/domain/work`).
-  An archived thread with outstanding owner-admitted work is succeeded by a new
-  generation (`project/instrukt/spec/feature/runner/session-continuity`), so
-  archiving it would replace a conversation that open work still expects to
-  continue.
 
-The runner archives only threads that are already finished. It never finishes,
-settles or deletes a thread. Archived threads remain within history extraction
+The runner archives only threads that are already finished. It never finishes
+or deletes a thread. Archived threads remain within history extraction
 (`project/instrukt/spec/feature/runner/history`).
 
 ### Pace
