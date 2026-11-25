@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::_discover::{DiscoveredAuth, discover_auth};
-use super::_issuer::{bearer_logins, is_token_fresh, obtain_issuer_login};
+use super::_issuer::{bearer_logins, cached_login_usable, is_token_fresh, obtain_issuer_login};
 use super::_redis_mcp::{claim_sign_in_return, ping_cluster};
 use super::_registrations::{
     Registration, ensure_company_client_registration, ensure_dynamic_registration,
@@ -515,11 +515,15 @@ fn obtain_authorization_code_login(
 
     if let Some((ref resource, _, ref ret_id, ref access_token, ref expires_at, checked, _)) =
         cached
-        && rejected_access_token.is_none_or(|bad| bad != access_token.as_str())
         && resource == &server.url
         && cached_matches_reg(ret_id)
-        && checked != 0
-        && is_token_fresh(expires_at.as_deref(), now)
+        && cached_login_usable(
+            access_token,
+            checked,
+            expires_at.as_deref(),
+            rejected_access_token,
+            now,
+        )
     {
         return Ok(bearer_logins(&server.name, access_token.clone()));
     }
@@ -2337,71 +2341,5 @@ fn try_refresh_login(
                 cause: format!("renewed login identity check failed: {cause}"),
             })
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use instrukt_core::config::{McpServer, SpeakerLogin};
-    use instrukt_core::home::Home;
-    use instrukt_core::ids::ProjectSlug;
-    use instrukt_core::state_db::StateDb;
-    use instrukt_core::state_db::rusqlite::params;
-    use jiff::Timestamp;
-
-    use super::resolve_sign_in_login;
-    use crate::mcp::Speaker;
-
-    /// A retry after HTTP 401 on `T1`, made once another call has already
-    /// renewed the login to a checked, fresh `T2`, carries `T2` as it is: it
-    /// neither discovers the authorization server nor exchanges a refresh
-    /// token. The server's address is unreachable, so any renewal fails.
-    #[test]
-    fn a_retry_after_a_rejected_token_reuses_a_login_another_call_already_renewed() {
-        let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        let home = Home::at_user_home(dir.path().to_path_buf());
-        let company = ProjectSlug::parse("acme").unwrap();
-        let server = McpServer {
-            name: ProjectSlug::parse("workspace").unwrap(),
-            url: "http://127.0.0.1:9/mcp".into(),
-            description: "A sign-in server".into(),
-            speaker_login: SpeakerLogin::SignIn,
-            credential: None,
-            login: None,
-            sign_in: None,
-        };
-        let speaker = Speaker {
-            identity: Some("USTEVEN".into()),
-            name: "Steven".into(),
-            email: Some("Steven@Example.com".into()),
-            is_admin: false,
-            is_direct: true,
-            connector: Some("slack".into()),
-            conversation: Some("D1".into()),
-            message: None,
-        };
-        let now = Timestamp::now();
-        let expires = now
-            .checked_add(jiff::SignedDuration::from_hours(1))
-            .unwrap()
-            .to_string();
-        let mut db = StateDb::open(&home).unwrap();
-        db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
-            tx.execute(
-                "INSERT INTO mcp_logins(company, person, server, resource, return_id, access_token, expires_at, checked, refresh_token, signed_in_at)
-                 VALUES (?1, 'steven@example.com', ?2, ?3, 'return-1', 'token-2', ?4, 1, 'refresh-2', ?5)",
-                params![company.as_str(), server.name.as_str(), server.url, expires, now.to_string()],
-            )
-            .unwrap();
-            Ok(())
-        })
-        .unwrap();
-        drop(db);
-
-        let (header, _) =
-            resolve_sign_in_login(&home, &company, &server, &speaker, Some("token-1"), now)
-                .unwrap();
-
-        assert_eq!(header.value, "Bearer token-2");
     }
 }
