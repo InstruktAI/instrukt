@@ -210,6 +210,7 @@ may deliver only a reference to the session, never its failure content.
 
 ### 6. Complete the handoff and park
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 After work promotion, confirm the exact remote commit and record delivery evidence
 with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
 commit under the work-record contract. Remove the clean `<slug>/work` worktree and
@@ -234,6 +235,26 @@ After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json`:
    (`git push origin --delete <workspace.branch>`) until both refs are absent.
    Preserve the runtime thread record and retained attempt evidence; todo cleanup
    is separate from the persistent integration workspace.
+<!-- change:runner-owned-workspace-cleanup -->
+After work promotion, confirm the exact remote commit and record delivery evidence
+with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed delivered
+commit under the work-record contract. instrukt itself removes the delivered
+todo's clean `<slug>/work` worktree and deletes `<slug>/work` locally and on
+`origin`, on each computer that holds them; issue no removal command for them
+(`general/policy/shared-machine-resources`).
+
+After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json` and
+retire the terminal orchestrator threads. Read the delivered todo's recorded
+orchestrator bindings (`todo-orchestrator`, plus any legacy phase-orchestrator
+bindings) and retire each non-standing orchestrator thread through the
+configured `runtime.retire_thread` action. Converge idempotently on
+already-retired threads (distinguishing an already-retired thread from a failed
+observation), preserve any unfinished human or worker obligations, and never
+retire standing agents (including this integrator session). A worktree or
+branch whose removal is still owed shows in that ledger with its cause; it does
+not gate retiring the delivered todo's orchestrator threads. Preserve the
+runtime thread record and retained attempt evidence.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 When all current work is settled, park as the standing integrator. The next
 `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
@@ -241,9 +262,14 @@ binding.
 
 ## Outputs
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 - Exact verified candidates promoted and confirmed on remote main (with pending
   docs folded at delivery and `<slug>/work` worktree and local/origin branch
   cleanup); ready one-off work integrated through the same gate.
+<!-- change:runner-owned-workspace-cleanup -->
+- Exact verified candidates promoted and confirmed on remote main (with pending
+  docs folded at delivery); ready one-off work integrated through the same gate.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 - Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 
@@ -255,6 +281,7 @@ binding.
 - A failed push, fetch or observation remains an explicit unresolved operation.
 - An unresolved conflict stays with the integrator and its governing contracts.
   Only missing human intent or a human-owned exposure is asked in the thread.
+<!-- planned-change:runner-owned-workspace-cleanup -->
 - A candidate already promoted needs delivery-record reconciliation, not
   another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
   then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`,
@@ -264,3 +291,13 @@ binding.
   `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
   the handoff and remaining cleanup; apart from terminal orchestrator retirement,
   the runtime owns session ending. A failed cleanup remains unresolved.
+<!-- change:runner-owned-workspace-cleanup -->
+- A candidate already promoted needs delivery-record reconciliation, not
+  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
+  then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`
+  and retire the delivered todo's recorded non-standing phase orchestrator
+  thread(s) through `runtime.retire_thread`. Release an owed claim with
+  `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
+  the handoff; apart from terminal orchestrator retirement, the runtime owns
+  session ending.
+<!-- /planned-change:runner-owned-workspace-cleanup -->

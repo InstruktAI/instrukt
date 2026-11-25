@@ -131,6 +131,7 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
 
 ### Waiting & Re-Dispatch Discipline
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 The runner suppresses re-dispatch for unclaimed active todos only while waiting
 on configured human approval (`approvals.prd` / `approvals.task`) or while a
 `--finalize-ready` handoff stands for `integrate`. When waiting on anything else
@@ -144,6 +145,19 @@ todo's work sessions and their delegates (`general/policy/shared-machine-resourc
 leaving the clean committed tree, the todo branch and any published head intact,
 and record any removal that cannot complete as an owed obligation. This does not
 apply to a checkout still in active build or awaiting review before handoff.
+<!-- change:runner-owned-workspace-cleanup -->
+The runner suppresses re-dispatch for unclaimed active todos only while waiting
+on configured human approval (`approvals.prd` / `approvals.task`) or while a
+`--finalize-ready` handoff stands for `integrate`. When waiting on anything else
+(a human clarification, external input, or a peer reply), keep the claim on your
+live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
+so the runner does not re-dispatch a fresh turn on every tick.
+While `<slug>/work` sits idle — its candidate handed to `integrate`, the todo
+parked or held, or its work gone back to preparation — the runner reclaims the
+build output there; remove none of it yourself
+(`general/policy/shared-machine-resources`). A worktree still in its rounds of
+building, reviewing and fixing keeps its output.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 ## Preconditions
 
@@ -400,6 +414,7 @@ apply to a checkout still in active build or awaiting review before handoff.
            external paid/legal third-party credential, place an explicit hold
            (`instrukt todo update {slug} --hold --reason "..."`) naming the
            prerequisite or credential-pool request.
+<!-- planned-change:runner-owned-workspace-cleanup -->
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, current exact-SHA
@@ -426,6 +441,32 @@ apply to a checkout still in active build or awaiting review before handoff.
    claim with `instrukt todo update {slug} --unclaim`. Keep this orchestrator
    thread wakeable (never retire it before delivery — `integrate` retires it
    once the todo is delivered).
+<!-- change:runner-owned-workspace-cleanup -->
+5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
+   no workspace attempt is active, `origin/<slug>/work` matches the exact
+   independently approved HEAD commit SHA, current exact-SHA
+   `verification-findings` holds (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED`
+   with the tracked follow-up todo an emergency hotfix owes,
+   `sdlc/policy/live-verification`, and zero unresolved `FAIL` or `BLOCKED`),
+   and all required approvals hold.
+   For every `kind: bug` todo originating from a real occurrence
+   (`sdlc/concept/defect-evidence`) on any route — except an emergency hotfix
+   carrying `HOTFIX_DEFERRED`, whose tracked follow-up todo owns post-hotfix
+   `escape-assessment` — confirm `escape-assessment`
+   (`sdlc/policy/live-verification`) is persisted via
+   `instrukt todo artifacts write {slug} escape-assessment '<content>'` and
+   that `regression-graduated` tests ship on the reviewed candidate HEAD while
+   any `trigger-added` or `substrate-upgraded` work outside minimal bug-fix
+   scope (`sdlc/policy/definition-of-done-lanes`) is filed as a
+   tracked follow-up cited in `escape-assessment`. Record
+   `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
+   `workflow.finalized`). Then release the claim with
+   `instrukt todo update {slug} --unclaim`; the runner reclaims the build output
+   `<slug>/work` holds while the handoff waits
+   (`general/policy/shared-machine-resources`). Keep this orchestrator thread
+   wakeable (never retire it before delivery — `integrate` retires it once the
+   todo is delivered).
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm

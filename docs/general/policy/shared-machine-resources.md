@@ -19,6 +19,7 @@ visibility: 'public'
 - **Delegation carries the duty.** A session that delegates work which creates
   checkouts names that cleanup in the brief, and when a round of delegated work
   ends, removes the regenerable output its finished delegates left behind.
+<!-- planned-change:runner-owned-workspace-cleanup -->
 - **Waiting work checkouts drop their build output.** When a todo's work
   checkout transitions into an idle wait — after its candidate is handed to
   integration, or when a kickback to preparation leaves it idle after build
@@ -33,6 +34,29 @@ visibility: 'public'
   space. With less than 20 GiB free, clean up output this session owns first;
   if that does not restore 20 GiB, stop and report the free space and the
   largest regenerable directories rather than building.
+<!-- change:runner-owned-workspace-cleanup -->
+- **instrukt reclaims todo worktrees.** A todo's worktree is outside the
+  removal duties this policy gives a session: instrukt returns the disk it
+  holds, and no session deletes its build output, or the worktree itself, with
+  a shell command. The runner removes the regenerable output the project
+  declares in its `instrukt.yaml` from a todo worktree that is idle — its
+  candidate handed to integration, its todo parked or held, or its work gone
+  back to preparation — and removes a delivered todo's worktree and work
+  branch. A worktree whose todo is still being built, reviewed or fixed keeps
+  its output for the role that works there next. The clean committed tree, the
+  todo branch and any published head remain intact; if work later resumes in
+  that worktree, the next build regenerates what it needs. Where the project
+  declares no regenerable output, nothing is removed until the delivered
+  worktree goes as a whole.
+- **Measure before building in a new place.** Before a build, install or full
+  test run in a checkout that has no build output yet, check the volume's free
+  space. With less than 20 GiB free, clean up output this session owns first;
+  if that does not restore 20 GiB, stop and report the free space and the
+  largest regenerable directories rather than building. In a todo's worktree
+  that cleanup is `instrukt repo reclaim`: the session that writes there runs
+  it whenever the volume falls below the floor, before a build or during one,
+  and it removes that worktree's declared regenerable output and nothing else.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 - **Reuse before duplicating.** Work that needs only evidence a build already
   produced, such as a hook run or CI result for the same commit, cites that
   evidence instead of rebuilding in another checkout.
@@ -58,12 +82,25 @@ reproduction server, container or load generator left running after a session
 moves on steals CPU and memory from every other agent and application on the
 host until someone hunts it down.
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 Once a todo's work checkout hands off to integration or a kickback to
 preparation leaves it idle, it sits idle for the full duration of downstream
 integration or the wait after the kickback with no live build inside it. Keeping its regenerable output turns disk usage
 into a function of every todo in flight rather than active builds, risking the
 machine's headroom floor. Dropping that output at the transition leaves
 committed work untouched and pays at most one rebuild if work returns.
+<!-- change:runner-owned-workspace-cleanup -->
+A todo's worktree sits idle for the whole of a wait — on integration, on a
+person, or on preparation — with no live build inside it. Keeping its
+regenerable output turns disk usage into a function of every todo in flight
+rather than active builds, risking the machine's headroom floor. Removing that
+output leaves committed work untouched and pays at most one rebuild if work
+returns. instrukt removes it because the work record already holds every fact
+the removal turns on — which worktree is which todo's, whether a role is
+working in it, whether the todo is delivered — so the removal needs no agent's
+judgment. A deletion command issued from an agent's shell stops at the agent
+runtime's permission prompt and reaches a person as a line they cannot judge.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 ## Scope
 
@@ -71,9 +108,15 @@ All agents, all sessions, all projects, on every machine they run on.
 
 ## Enforcement
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 Reviewers treat a checkout left with build output that the rules above require
 removed, or an ephemeral process left orphaned after its work ends, as a process
 miss.
+<!-- change:runner-owned-workspace-cleanup -->
+Reviewers treat a checkout left with build output that the rules above require
+removed, an ephemeral process left orphaned after its work ends, or a shell
+command that deletes a todo worktree or its build output, as a process miss.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 ## Exceptions
 
