@@ -274,8 +274,7 @@ impl Agents {
         let Some(before) = read_existing(&path)? else {
             return Ok(());
         };
-        let unedited = |bytes: &[u8]| Deployment::load(&state).is_some_and(|d| d.recognises(bytes));
-        if !unedited(&before) && super::_agents_migrate::current(&before)?.is_none() {
+        if next_write(&before, Deployment::load(&state).as_ref())? == NextWrite::Keep {
             return Ok(());
         }
         let _lock = LockGuard::acquire(
@@ -285,42 +284,42 @@ impl Agents {
         let Some(current) = read_existing(&path)? else {
             return Ok(());
         };
-        if unedited(&current) {
-            for removed in [&path, &state] {
-                match crate::fsx::remove_file(removed) {
-                    Ok(()) => {}
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(source) => {
-                        return Err(crate::fsx::FsError::Write {
-                            path: removed.clone(),
-                            source,
-                        }
-                        .into());
-                    }
-                }
+        match next_write(&current, Deployment::load(&state).as_ref())? {
+            NextWrite::Keep => {}
+            NextWrite::Remove => remove_copy(&path, &state)?,
+            NextWrite::Convert(converted) => {
+                atomic_write(&path, &converted.bytes)?;
+                tracing::info!(
+                    event = "agents_shape_migrated",
+                    from_version = converted.from,
+                    to_version = VERSION
+                );
             }
-            tracing::info!(event = "agents_defaults_copy_removed");
-            return Ok(());
-        }
-        if let Some(converted) = super::_agents_migrate::current(&current)? {
-            atomic_write(&path, &converted.bytes)?;
-            tracing::info!(
-                event = "agents_shape_migrated",
-                from_version = converted.from,
-                to_version = VERSION
-            );
         }
         Ok(())
     }
 
+    /// What a reading command reports about `agents.yaml`: the change the
+    /// next writing command makes to it, if any, without making it.
     pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
         let path = home.agents_file();
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(ConfigError::Read { path, source }),
+        let Some(bytes) = read_existing(&path)? else {
+            return Ok(None);
         };
-        Ok(super::_agents_migrate::current(&bytes)?.map(|_|format!("{}: selection configuration inspected in memory; file migrates on the next writing command",path.display())))
+        let state = home.agents_deployment_file();
+        Ok(
+            match next_write(&bytes, Deployment::load(&state).as_ref())? {
+                NextWrite::Keep => None,
+                NextWrite::Remove => Some(format!(
+                    "{}: an unedited copy of earlier shipped defaults; the next writing command removes it and the shipped defaults apply",
+                    path.display()
+                )),
+                NextWrite::Convert(_) => Some(format!(
+                    "{}: selection configuration inspected in memory; file migrates on the next writing command",
+                    path.display()
+                )),
+            },
+        )
     }
 
     /// The effective selection: the admitted one when served, else the file
@@ -488,6 +487,50 @@ impl Agents {
             .collect()
     }
 }
+/// What the next writing command does to `agents.yaml`.
+#[derive(Debug, PartialEq, Eq)]
+enum NextWrite {
+    /// Nothing: the file is current and not a recognised copy.
+    Keep,
+    /// Remove the file and then the deployment record: the record recognises
+    /// the file as a copy an earlier release wrote and nobody edited.
+    Remove,
+    /// Persist the file's own bytes at the current shape.
+    Convert(super::_agents_migrate::Converted),
+}
+
+/// The decision for `file` beside `record`, the readable deployment record
+/// (`None` when there is none, or it is unreadable). Removal comes first, so
+/// a recognised copy is never converted and kept.
+fn next_write(file: &[u8], record: Option<&Deployment>) -> Result<NextWrite, ConfigError> {
+    if record.is_some_and(|record| record.recognises(file)) {
+        return Ok(NextWrite::Remove);
+    }
+    Ok(match super::_agents_migrate::current(file)? {
+        Some(converted) => NextWrite::Convert(converted),
+        None => NextWrite::Keep,
+    })
+}
+
+/// Removes a recognised copy at `path`, then its record at `state`.
+fn remove_copy(path: &std::path::Path, state: &std::path::Path) -> Result<(), ConfigError> {
+    for removed in [path, state] {
+        match crate::fsx::remove_file(removed) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(crate::fsx::FsError::Write {
+                    path: removed.to_path_buf(),
+                    source,
+                }
+                .into());
+            }
+        }
+    }
+    tracing::info!(event = "agents_defaults_copy_removed");
+    Ok(())
+}
+
 /// `agents.yaml`'s bytes, or `None` when there is no file.
 fn read_existing(path: &std::path::Path) -> Result<Option<Vec<u8>>, ConfigError> {
     match std::fs::read(path) {
@@ -519,17 +562,39 @@ impl Deployment {
             Ok(bytes) => bytes,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
             Err(error) => {
-                tracing::debug!(event = "agents_deployment_record_unreadable", %error);
+                tracing::warn!(
+                    event = "agents_deployment_record_unreadable",
+                    record = %state.display(),
+                    %error,
+                    "agents.yaml is kept as it is; remove the record if agents.yaml is an unedited copy of earlier defaults"
+                );
                 return None;
             }
         };
-        let record = serde_json::from_slice::<Self>(&bytes)
-            .ok()
-            .filter(|record| record.schema_version == DEPLOYMENT_VERSION);
-        if record.is_none() {
-            tracing::debug!(event = "agents_deployment_record_unknown_shape");
+        match Self::parse(&bytes) {
+            Ok(record) => Some(record),
+            Err(cause) => {
+                tracing::warn!(
+                    event = "agents_deployment_record_invalid",
+                    record = %state.display(),
+                    %cause,
+                    "agents.yaml is kept as it is; remove the record if agents.yaml is an unedited copy of earlier defaults"
+                );
+                None
+            }
         }
-        record
+    }
+
+    /// A deployment record from its bytes, or why it recognises nothing.
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let record: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if record.schema_version != DEPLOYMENT_VERSION {
+            return Err(format!(
+                "schema_version {} is not the supported {DEPLOYMENT_VERSION}",
+                record.schema_version
+            ));
+        }
+        Ok(record)
     }
 
     /// Whether `bytes` are what an earlier release itself wrote: the deployed
@@ -924,74 +989,60 @@ mod tests {
         ));
     }
 
-    /// A writing home holding `file` as `agents.yaml` and `record` as the
-    /// deployment record beside it.
-    fn deployed(
-        dir: &tempfile::TempDir,
-        file: &str,
-        record: &str,
-    ) -> (crate::home::Home, std::path::PathBuf, std::path::PathBuf) {
-        let home = crate::home::Home::at_user_home(dir.path().to_path_buf());
-        let (path, state) = (home.agents_file(), home.agents_deployment_file());
-        for (at, contents) in [(&path, file), (&state, record)] {
-            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
-            std::fs::write(at, contents).unwrap();
-        }
-        (home, path, state)
-    }
-
-    fn record_of(bytes: &str) -> String {
+    /// The deployment record an earlier release kept of `bytes`.
+    fn record_of(bytes: &str) -> super::Deployment {
         use sha2::Digest as _;
-        serde_json::json!({
+        let record = serde_json::json!({
             "schema_version": 1,
             "digest": hex::encode(sha2::Sha256::digest(bytes.as_bytes())),
-        })
-        .to_string()
+        });
+        super::Deployment::parse(record.to_string().as_bytes()).unwrap()
+    }
+
+    /// The shipped defaults in the shape an earlier release wrote: the split
+    /// orchestrator role the current shape retires.
+    fn older_shape(text: &str) -> String {
+        text.replacen("  todo-orchestrator:", "  work-orchestrator:", 1)
     }
 
     #[test]
-    fn a_writing_load_removes_a_recognised_unedited_copy_and_then_its_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let older = SHIPPED_AGENTS.replace("gpt-6.1-sol", "an-older-default");
-        let (home, path, state) = deployed(&dir, &older, &record_of(&older));
-        let loaded = Agents::load(&home).unwrap();
-        assert!(!path.exists());
-        assert!(!state.exists());
+    fn a_recognised_older_copy_is_removed_rather_than_converted() {
+        let older = older_shape(SHIPPED_AGENTS);
         assert_eq!(
-            loaded.select(Some("builder"), None, None, None).unwrap(),
-            Agents::parse(SHIPPED_AGENTS)
-                .unwrap()
-                .select(Some("builder"), None, None, None)
-                .unwrap()
+            super::next_write(older.as_bytes(), Some(&record_of(&older))).unwrap(),
+            super::NextWrite::Remove
         );
     }
 
     #[test]
-    fn an_edited_copy_is_kept_by_a_writing_command() {
-        let dir = tempfile::tempdir().unwrap();
+    fn an_edited_older_file_is_converted_and_kept() {
+        let edited = format!("{}# my own note\n", older_shape(SHIPPED_AGENTS));
+        let decided = super::next_write(
+            edited.as_bytes(),
+            Some(&record_of(&older_shape(SHIPPED_AGENTS))),
+        )
+        .unwrap();
+        assert!(matches!(decided, super::NextWrite::Convert(_)));
+    }
+
+    #[test]
+    fn an_edited_current_file_is_kept_as_it_is() {
         let edited = format!("{SHIPPED_AGENTS}# my own note\n");
-        let (home, path, state) = deployed(&dir, &edited, &record_of(SHIPPED_AGENTS));
-        Agents::converge_file(&home).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
-        assert!(state.exists());
+        assert_eq!(
+            super::next_write(edited.as_bytes(), Some(&record_of(SHIPPED_AGENTS))).unwrap(),
+            super::NextWrite::Keep
+        );
     }
 
     #[test]
-    fn a_copy_beside_an_unreadable_record_is_kept_and_the_command_proceeds() {
-        let dir = tempfile::tempdir().unwrap();
-        let (home, path, _) = deployed(&dir, SHIPPED_AGENTS, "{not a record");
-        Agents::converge_file(&home).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), SHIPPED_AGENTS);
-    }
-
-    #[test]
-    fn an_inspection_load_changes_neither_the_copy_nor_its_record() {
-        let dir = tempfile::tempdir().unwrap();
-        let record = record_of(SHIPPED_AGENTS);
-        let (home, path, state) = deployed(&dir, SHIPPED_AGENTS, &record);
-        Agents::load(&home.for_inspection()).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), SHIPPED_AGENTS);
-        assert_eq!(std::fs::read_to_string(&state).unwrap(), record);
+    fn a_record_in_an_unknown_shape_recognises_nothing() {
+        use sha2::Digest as _;
+        let record = serde_json::json!({
+            "schema_version": 2,
+            "digest": hex::encode(sha2::Sha256::digest(SHIPPED_AGENTS.as_bytes())),
+        });
+        assert!(super::Deployment::parse(record.to_string().as_bytes()).is_err());
+        assert!(super::Deployment::parse(b"{not a record").is_err());
     }
 
     #[test]
