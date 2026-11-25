@@ -35,6 +35,7 @@ mod _session;
 mod _stamps;
 mod _store;
 mod _withdrawal;
+mod _worktrees;
 
 use std::sync::Arc;
 
