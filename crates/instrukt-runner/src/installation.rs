@@ -365,23 +365,31 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
 /// though the rest of the layer is admitted: event responses switched on
 /// without the event transport they are carried on (`modules.events`), and
 /// automatic review switched on without what it needs
-/// (`review.automatic`). On a check, the two identities' readiness is asked
-/// for every project admitted for automatic review.
+/// (`review.automatic`), and a declaration of regenerable output that is not
+/// admitted, which withholds worktree reclamation for its project. On a
+/// check, the two identities' readiness is asked for every project admitted
+/// for automatic review.
 fn admission_findings(request: &Request<'_>, report: &mut Report) {
     use instrukt_core::config::FindingKind;
     let Ok(candidate) = instrukt_core::config::Admitted::load(request.home) else {
         return;
     };
-    for finding in candidate.findings.iter().filter(|finding| {
-        matches!(
+    for finding in &candidate.findings {
+        let label = format!("{} `{}`", finding.document.display(), finding.key);
+        if matches!(
             finding.kind,
             FindingKind::EventsNeedTransport | FindingKind::AutomaticReviewNotReady
-        )
-    }) {
-        report.finding(
-            format!("{} `{}`", finding.document.display(), finding.key),
-            &finding.message,
-        );
+        ) {
+            report.finding(label, &finding.message);
+        } else if instrukt_core::config::withholds_reclamation(finding) {
+            report.finding(
+                label,
+                format!(
+                    "{}; worktree reclamation is withheld for this project on this computer",
+                    finding.message
+                ),
+            );
+        }
     }
     if !request.check {
         return;
