@@ -167,7 +167,6 @@ admitted and the reservation is a worktree-less `Child` assignment with no
 `worktree`, `branch`, or `base`. The command records facts and calls no runtime.
 Setup admits its setup-only brief; other roles match the procedure's declared role.
 
-<!-- planned:reuse-retained-worker-sessions -->
 The reply also names the role's prior session when the record holds one: the
 native identity and attempt number of the role's most recent earlier attempt
 that was bound on the reservation's runtime, with that attempt's recorded
@@ -175,30 +174,7 @@ selection and the session that dispatched it where the record holds them. It
 is read from the record's session bindings when the reply is made and is absent
 when the role has no such attempt. Whether that session is still usable is the
 orchestrator's native evidence, not a recorded fact.
-<!-- /planned:reuse-retained-worker-sessions -->
 
-<!-- planned-change:reuse-retained-worker-sessions -->
-Reservation commits before native delegation. An outstanding same-role retry
-returns the same attempt and inputs. Changed inputs or a second workspace/child
-role refuse while that attempt is outstanding. Claim, hold, and configured
-`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
-require PRD approval when configured). Every new repository attempt captures the
-current shared `<slug>/work` head. The orchestrator delegates with shared
-isolation through `runtime.dispatch`.
-
-Immediately after delegation it records `instrukt todo bind <slug> --role <role>
---attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
-[--base <sha>]`. Binding requires the reservation, same claim holder and selected
-runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
-(and matching worktree, branch, and clean initial head) are required and every
-child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
-worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
-`--branch`, and `--base` must be omitted. Bind
-before workspace work, record writes or stamps. If a child starts before binding,
-it reports that prerequisite and awaits its parent's native follow-up. Exact
-replay succeeds; changed child identity or workspace refuses. Binding neither
-calls the runtime nor transfers the orchestrator's claim to the child.
-<!-- change:reuse-retained-worker-sessions -->
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
@@ -224,7 +200,6 @@ earlier attempt of that role was bound to: the earlier attempt keeps its
 recorded completion and release, and the session's evidence is attributed to
 the new attempt. Binding neither calls the runtime nor transfers the
 orchestrator's claim to the child.
-<!-- /planned-change:reuse-retained-worker-sessions -->
 
 An interrupted dispatch or bind leaves the reservation outstanding. Recover the
 existing child through the parent's native task evidence and bind it; project
@@ -434,7 +409,6 @@ Then nothing is filed
 And the agent is told that a bug is reported through the bug front door, and how to reach it
 ```
 
-<!-- planned:reuse-retained-worker-sessions -->
 ### UC-TD13: A developer's further round assigned to the earlier worker keeps its context
 
 ```gherkin
@@ -444,7 +418,6 @@ Then the further round is recorded on that worker's conversation, where its earl
 And each round's evidence is attributed to its own round
 And the earlier round's record stays as it was
 ```
-<!-- /planned:reuse-retained-worker-sessions -->
 
 ## Known caveats
 

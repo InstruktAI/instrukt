@@ -250,21 +250,6 @@ apply to a checkout still in active build or awaiting review before handoff.
        additions, edits, replacements, or retirements; publication-checked
        `instrukt docs get <id>` from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
-<!-- planned-change:reuse-retained-worker-sessions -->
-3. **Select and dispatch the next primitive.** Every admitted role that shares
-   `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
-   `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
-   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) uses
-   `runtime.dispatch` above: reserve each attempt via
-   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
-   delegate with shared isolation in `<slug>/work`, and immediately bind via
-   `instrukt todo bind`. Only one workspace attempt may be active at a time;
-   completion stamps release it atomically. Live verification (`verifier`) is
-   not a shared `<slug>/work` `runtime.dispatch` child; it runs per Step 4b in
-   a separate one-off worktree session (`runtime.start_thread` /
-   `runtime.inspect_thread`) so the shared-workspace admission guarantee
-   remains unbroken.
-<!-- change:reuse-retained-worker-sessions -->
 3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
@@ -279,7 +264,6 @@ apply to a checkout still in active build or awaiting review before handoff.
    per Step 4b in a separate one-off worktree session (`runtime.start_thread` /
    `runtime.inspect_thread`) so the shared-workspace admission guarantee remains
    unbroken.
-<!-- /planned-change:reuse-retained-worker-sessions -->
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
    discloses each finding's `Method:` (finding format in
