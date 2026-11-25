@@ -96,8 +96,8 @@ Company conversation sends use authenticated WebSocket `orchestration.dispatchCo
 <!-- planned:archive-finished-threads -->
 Thread archiving is checked through the adapter's finished-thread listing and
 archive. The listing decodes a fixture thread's finished, quiet and pinned
-facts and its latest activity from the real listing, a recorded opening of the
-thread in the projection included. The archive's re-read validates every table
+facts and its latest activity from the real listing and the projection, a
+recorded opening of the thread included. The archive's re-read validates every table
 and column it consumes, the thread's runs, runtime requests and delegated tasks
 among them, against the migrated database. Authenticated
 `orchestration.dispatchCommand` with `thread.archive` archives a fixture
