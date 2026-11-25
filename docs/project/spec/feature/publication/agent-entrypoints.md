@@ -250,18 +250,25 @@ the home and leaves any other there as it is.
 <!-- change:company-home-generation -->
 - **What makes a repository a company home.** The rendering mode comes from
   what the working tree's root holds, tracked or not:
-  - a `docs/index.yaml`, a `company.yaml`, or a root `instrukt.yaml` that
-    still declares `company`: company rendering — the company's home, a clone
-    of the company's repository, or its CI, whether or not the root also
-    holds the project layer the company's repository commits
+  - a root `instrukt.yaml` that is a project layer declaring
+    `company_repository`: company rendering — the company's home, a clone of
+    the company's repository, or its CI
     (`project/instrukt/spec/feature/configuration/company-homes`, The home);
-  - otherwise a root `instrukt.yaml` is the project layer: project rendering,
+  - a root `instrukt.yaml` that declares `company` is a company's settings
+    document not yet converted to `company.yaml`: company rendering — the
+    company's home, where that file is present and ignored;
+  - any other root `instrukt.yaml` is the project layer: project rendering,
     from the moment `instrukt init` writes it
-    (`project/instrukt/spec/feature/repository/project-initialization`).
+    (`project/instrukt/spec/feature/repository/project-initialization`),
+    whatever the repository's `docs/` folder holds;
+  - no root `instrukt.yaml` and a `docs/index.yaml`: company rendering — a
+    clone of a company's repository that commits no project layer, its CI, or
+    a home whose settings are in `company.yaml`.
 
-  A company's repository carries its index with it, so a company's home and
-  a clone of its repository render the same bytes. A root `instrukt.yaml`
-  that cannot be read, where it decides the mode, is a finding naming it,
+  The declaration and the index are committed with the company's
+  repository, so a company's home and a clone of its repository render the
+  same bytes, and a project's `docs/index.yaml` never makes it a company's. A
+  root `instrukt.yaml` that cannot be read is a finding naming it,
   handled as every finding is: the mode is never guessed from a file that
   cannot be read (`sdlc/principle/design-fundamentals`). A company's settings
   document tracked by mistake changes no rendering; configuration validation

@@ -153,6 +153,13 @@ todo's worktree does not depend on it
 organisation that owns the company home repositories this computer adds, and
 what it may hold is stated with company home generation
 (`project/instrukt/spec/feature/configuration/company-homes`, Generation).
+
+`company_repository` (boolean, default off) is project only. On, it declares
+the repository a company's: its documentation is the company's knowledge, read
+and rendered as a company's
+(`project/instrukt/spec/feature/configuration/company-homes`, The home;
+`project/instrukt/spec/feature/publication/agent-entrypoints`, What makes a
+repository a company home).
 <!-- /planned:company-home-generation -->
 
 Runtime choice is global-only: a cloned repository does not decide which runtime

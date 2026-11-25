@@ -57,7 +57,7 @@ adopted project receives works for it from the moment its home exists.
 | --- | --- | --- |
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `company.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
-| Project layer | `instrukt.yaml` at the root of the home's repository, committed | Part of the company skeleton (Generation): the home's repository is an adopted project like any other, named `company-<name>`, with todos off and automatic review on, under the project layer's rules (`project/instrukt/spec/feature/configuration/layered-configuration`). |
+| Project layer | `instrukt.yaml` at the root of the home's repository, committed | Part of the company skeleton (Generation): the home's repository is an adopted project like any other, named `company-<name>`, declaring itself a company's repository, with todos off and automatic review on, under the project layer's rules (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
 | Company knowledge | The company's documents in the home's `docs/` folder, and the index `docs/index.yaml` that selects from them | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md` and, on request, into the company's skill, which also holds a document's `visibility` to its rules. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`, `project/instrukt/spec/feature/publication/company-plugin`), and it is never published to the computer's documentation (`project/instrukt/spec/feature/publication/project-publication`). |
 | Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
@@ -118,14 +118,13 @@ adopted project receives works for it from the moment its home exists.
   and instrukt's hook sections, and the computer has published it as the
   project its project layer names. It is then a company on the computer and an
   adopted project like any other: a commit made in it carries its rendered
-  `AGENTS.md`, and its pull requests are reviewed automatically and its
-  changes integrated as every adopted project's are
-  (`project/instrukt/spec/feature/configuration/layered-configuration`,
+  `AGENTS.md`, and its changes are integrated as every adopted project's
+  are. A computer that meets automatic review's prerequisites admits it for
+  the home out of the box; on one that does not, the home is added all the
+  same, automatic review is withheld there and reported as every project
+  layer's is (`project/instrukt/spec/feature/configuration/layered-configuration`,
   Automatic review enablement;
-  `project/instrukt/spec/feature/runner/pull-request-review`). Adding a
-  company is refused, naming what is missing, on a computer that lacks a
-  prerequisite of the home's project layer, and no repository and no home is
-  created.
+  `project/instrukt/spec/feature/runner/pull-request-review`).
 - **The company's knowledge stays the company's.** Publishing the home
   publishes none of the company's documents to the computer's documentation,
   so no agent working elsewhere on the computer reads them

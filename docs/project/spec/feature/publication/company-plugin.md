@@ -88,8 +88,12 @@ naming the document and what is wrong:
 <!-- change:company-home-generation -->
 - **The index.** A repository without `docs/index.yaml` holds no knowledge
   to render: that is a finding naming the file, for a rendering, a check and
-  a validation alike. The project layer a company's repository commits beside
-  it changes nothing: a company's home is also a project
+  a validation alike. So does a repository whose root `instrukt.yaml` makes
+  it a project rather than a company's
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, What makes
+  a repository a company home): that is a finding naming that file. A project
+  layer that declares the repository a company's makes it one: a company's
+  home is also a project
   (`project/instrukt/spec/feature/configuration/company-homes`, The home).
 <!-- /planned-change:company-home-generation -->
 - **Nothing the plugin names lies outside it.** A reference in a document's
