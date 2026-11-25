@@ -42,8 +42,14 @@ fixing have paused or ended: its candidate waits for integration, the todo is
 parked or held, its work has gone back to preparation, or the todo is
 delivered. Between the rounds of work still under way — after a build and
 before its review, after a review and before its fix — the worktree is not
-idle, and its output stays for the role that works there next. These states
-are facts of the work record (`project/instrukt/spec/domain/work`).
+idle, and its output stays for the role that works there next.
+
+That a todo is parked, held or delivered is a fact of the work record
+(`project/instrukt/spec/domain/work`). That its candidate waits for
+integration, that its work has gone back to preparation, and that its rounds
+are still under way are states workflow derives from that record
+(`project/instrukt/spec/domain/workflow`). The runner takes each from its
+owner.
 
 The runner reclaims the regenerable output of the idle todo worktrees on the
 computer it runs on. It reclaims nothing in a worktree where a role attempt is
