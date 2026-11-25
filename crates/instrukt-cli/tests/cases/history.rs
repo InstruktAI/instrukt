@@ -746,13 +746,13 @@ fn only_conversation_records_and_messages_are_read_and_retained() {
     let source = fixture::T3Store::new(&env);
     source.native_records();
     // The messages are found; what only a tool call, a reasoning trace, a
-    // run, a subagent or captured terminal and diff context held is not.
+    // run, a subagent or captured terminal, diff and page context held is not.
     for said in ["Useritemtoken", "Assistantitemtoken"] {
         assert_eq!(search(&env, said)["matches"].as_array().unwrap().len(), 1);
     }
     let result = search(
         &env,
-        "Toolitemtoken OR Reasonitemtoken OR Subagenttoken OR Terminalonlytoken OR Diffonlytoken",
+        "Toolitemtoken OR Reasonitemtoken OR Subagenttoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken",
     );
     assert_eq!(result["matches"].as_array().unwrap().len(), 0);
     let source_id = search(&env, "Useritemtoken")["matches"][0]["source"]

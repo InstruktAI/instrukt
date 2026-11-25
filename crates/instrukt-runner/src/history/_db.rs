@@ -807,7 +807,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         assert!(
             found(
                 &home,
-                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken OR Terminalonlytoken OR Diffonlytoken"
+                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken"
             )
             .is_empty()
         );
@@ -878,9 +878,14 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             .iter_mut()
             .find(|m| m.get("context").is_some())
             .unwrap();
-        for (record, member) in [(0, "text"), (1, "diff")] {
+        for (record, member) in [
+            ("/context/records/0", "text"),
+            ("/context/records/1", "diff"),
+            ("/context/records/2/elements/0", "htmlPreview"),
+            ("/context/records/3", "htmlPreview"),
+        ] {
             let record = captured
-                .pointer_mut(&format!("/context/records/{record}"))
+                .pointer_mut(record)
                 .and_then(Value::as_object_mut)
                 .unwrap();
             assert!(record.shift_remove(member).is_some());

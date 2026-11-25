@@ -70,6 +70,46 @@ expression: document
             "endIndex": 4,
             "rangeLabel": "Lines 3-4",
             "text": "Keep this comment."
+          },
+          {
+            "version": 1,
+            "contextId": "annotation-fixture",
+            "kind": "preview-annotation",
+            "label": "Fixture page",
+            "annotationId": "annotation-1",
+            "pageUrl": "http://localhost:3000/",
+            "pageTitle": "Fixture page",
+            "comment": "Make this button bigger.",
+            "targetSummary": "1 selected element",
+            "styleChanges": [],
+            "elements": [
+              {
+                "pageUrl": "http://localhost:3000/",
+                "pageTitle": "Fixture page",
+                "tagName": "button",
+                "selector": "#save",
+                "componentName": "SaveButton",
+                "source": null,
+                "styles": "color: red;"
+              }
+            ],
+            "elementIds": [
+              "element-1"
+            ],
+            "styleChangeDetails": []
+          },
+          {
+            "version": 1,
+            "contextId": "element-fixture",
+            "kind": "element",
+            "label": "button#save",
+            "pageUrl": "http://localhost:3000/",
+            "pageTitle": "Fixture page",
+            "tagName": "button",
+            "selector": "#save",
+            "componentName": "SaveButton",
+            "source": null,
+            "styles": "color: red;"
           }
         ]
       },

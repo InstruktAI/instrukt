@@ -827,11 +827,14 @@ impl T3Conversations {
     }
 }
 
-/// Removes from `message`, a T3 message's native record, what T3's composer
-/// captured rather than a person wrote: the lines of each terminal context
-/// record and the diff lines of each review-comment context record. The
-/// context records stay, with their labels, locations and a review comment's
-/// own text.
+/// Removes from `message`, a T3 message's native record, the members of its
+/// composer context records that hold what T3 captured: a `terminal`
+/// record's `text` (the selected terminal lines), a `review-comment`
+/// record's `diff` (the selected diff lines), an `element` record's
+/// `htmlPreview` and the `htmlPreview` of each of a `preview-annotation`
+/// record's `elements` (the selected element's HTML). Every other member
+/// stays: labels, locations, selectors, styles, a review comment's `text`
+/// and an annotation's `comment`.
 pub(crate) fn without_captured_context(message: &mut Value) {
     let Some(records) = message
         .pointer_mut("/context/records")
@@ -839,14 +842,24 @@ pub(crate) fn without_captured_context(message: &mut Value) {
     else {
         return;
     };
+    let remove = |holder: &mut Value, member: &str| {
+        if let Some(holder) = holder.as_object_mut() {
+            holder.shift_remove(member);
+        }
+    };
     for record in records {
-        let captured = match record["kind"].as_str() {
-            Some("terminal") => "text",
-            Some("review-comment") => "diff",
-            _ => continue,
-        };
-        if let Some(record) = record.as_object_mut() {
-            record.shift_remove(captured);
+        match record["kind"].as_str() {
+            Some("terminal") => remove(record, "text"),
+            Some("review-comment") => remove(record, "diff"),
+            Some("element") => remove(record, "htmlPreview"),
+            Some("preview-annotation") => {
+                if let Some(elements) = record.get_mut("elements").and_then(Value::as_array_mut) {
+                    for element in elements {
+                        remove(element, "htmlPreview");
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
