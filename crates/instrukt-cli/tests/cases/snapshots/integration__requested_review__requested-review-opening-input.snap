@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&project.rt.opening(\"s1\"), &commits, &[])"
+---
+[Instrukt Assignment]
+Run `instrukt docs get sdlc/procedure/lifecycle/work/review-commits --closure` and execute that procedure for the one-off worktree review it describes.
+role: commit-reviewer
+project: demo
+worktree: [TMP]/demo-feature
+branch: feature
+head: [HEAD]
+base: [BASE]
+report: [TMP]/reports/one.md
+[/Instrukt Assignment]
