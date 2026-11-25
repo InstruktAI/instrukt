@@ -259,9 +259,12 @@ pub struct NativeAssignment {
     pub base: Option<CommitSha>,
 }
 
-/// The native session a role's most recent earlier attempt was bound to, with
-/// the selection that attempt retained. Whether it is still usable is native
-/// evidence, not part of this fact.
+/// The native session of the role's most recent earlier attempt that has a
+/// bound session on the reservation's runtime, with the selection that attempt
+/// retained where it holds one. That attempt can be older than the role's
+/// latest attempt when later attempts never bound or bound on another runtime.
+/// Whether the session is still usable is native evidence, not part of this
+/// fact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PriorSession {
     pub session: SessionRef,
