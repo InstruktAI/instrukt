@@ -215,6 +215,15 @@ worktree, or wakes its existing bound orchestrator; invoking the record command
 from an unrelated checkout does not place a workspace. A due task keeps its own
 task execution placement.
 
+<!-- planned:in-thread-orchestrator-self-resume -->
+A claim the runner recorded on this computer for automatic dispatch, before
+any session holds it, passes to the todo's recorded orchestrator when that
+orchestrator resumes through `instrukt todo work <slug>` in its own worktree
+(`project/instrukt/spec/feature/runner/session-continuity`, One worktree per
+todo team). The runner then dispatches that todo no further; a reservation
+it already made resolves to that same conversation.
+<!-- /planned:in-thread-orchestrator-self-resume -->
+
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions` and `tick` refuse only
 when both `modules.todos` and `modules.events` are off, and then name both;

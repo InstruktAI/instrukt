@@ -491,6 +491,21 @@ exposes.
 Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `verifier`, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
 Retry or wake uses the retained native assignment and its worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
+<!-- planned:in-thread-orchestrator-self-resume -->
+The todo's recorded orchestrator resumes without placement evidence. Its
+record is the todo's latest driver binding for the orchestrator role that has
+not failed. When that binding's native session calls `todo work <slug>` on the
+same computer, under the selected runtime the binding recorded, from its
+recorded worktree on its recorded branch, the same binding is reopened with
+its key, attempt, title and worktree, and that session holds the todo's claim. The resume also takes up a
+claim the runner on this computer recorded for the todo that no session holds
+yet, so a pickup racing it starts no other conversation. Any other caller — a
+different session, a caller with no native session, an orchestrator a later
+binding superseded, or one outside its recorded worktree or branch — still
+needs placement evidence, and a claim held by another session or computer
+refuses entry.
+<!-- /planned:in-thread-orchestrator-self-resume -->
+
 Only the integrator writes main. Pending documentation authored in `<slug>/work` is folded into current contracts at work delivery, and after confirmed delivery the runner has the clean `<slug>/work` worktree released and `<slug>/work` deleted locally and on `origin`, on each computer that holds them (`project/instrukt/spec/feature/runner/worktree-reclamation`). Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. The release goes through git's own worktree commands: the published `t3 thread` CLI has no operation that removes a worktree, and a delivered todo's thread keeps naming the path it was attached to. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
 ### Approval attention
@@ -819,6 +834,39 @@ Then the pickup accepts the orchestrator in that conversation and its managed wo
 And no failed start is reported for it
 And the orchestrator has received its opening brief once
 ```
+
+<!-- planned:in-thread-orchestrator-self-resume -->
+### UC-SS30: A developer's orchestrator continues in its own conversation after they approve there
+
+```gherkin
+Given a developer's todo orchestrator released its todo's claim to wait for their approval
+When the developer approves in that orchestrator's conversation
+And the orchestrator picks the todo up again from its worktree without placement evidence
+Then the orchestrator holds the todo's claim under its same recorded assignment and worktree
+And no other conversation is started for the todo
+And the runner sends that conversation no wake for the todo
+```
+
+### UC-SS31: A resuming orchestrator takes over the runner's pickup of its own todo
+
+```gherkin
+Given a developer's todo orchestrator released its todo's claim
+And the runner on the same computer claimed the todo but has not given it to a conversation
+When the orchestrator picks the todo up again from its worktree without placement evidence
+Then the orchestrator holds the todo's claim under its same recorded assignment
+And the runner dispatches the todo no further
+And no other conversation is started for the todo
+```
+
+### UC-SS32: Only the recorded orchestrator resumes without placement evidence
+
+```gherkin
+Given a developer's todo orchestrator released its todo's claim
+When another conversation picks the todo up from that worktree without placement evidence
+Then the pickup is refused
+And the todo stays unclaimed with its recorded assignment unchanged
+```
+<!-- /planned:in-thread-orchestrator-self-resume -->
 
 ## Known caveats
 
