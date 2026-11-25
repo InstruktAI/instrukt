@@ -149,12 +149,15 @@ building, reviewing and fixing keeps its output.
 
 <!-- planned:in-thread-orchestrator-self-resume -->
 An approval stamp (`--prd-approved`, `--task-approved`) records the human's
-decision as state. When the human gives that decision in your own conversation,
-you are its live orchestrator: record it with `--by human --session` naming
-this conversation, take the claim back with `instrukt todo work <slug>` from
-`<slug>/work` (or keep it while you still hold it), and continue at once. Do not
-wait for the runner. Its wake-up serves a decision that arrives elsewhere, such
-as on GitHub, while your conversation is idle.
+decision as state; record a decision given in your own conversation with
+`--by human --session` naming this conversation. For repository work
+(`--prd-approved`) you are its live orchestrator: take the claim back with
+`instrukt todo work <slug>` from `<slug>/work` (or keep it while you still hold
+it) and continue at once; do not wait for the runner. A `kind: task` has no
+`<slug>/work`: after `--task-approved`, leave its claim released, because the
+runner dispatches `task-runner` on schedule only to an unclaimed task. Runner
+wake-up of an orchestrator serves a decision that arrives elsewhere, such as on
+GitHub, while your conversation is idle.
 <!-- /planned:in-thread-orchestrator-self-resume -->
 
 ## Preconditions
