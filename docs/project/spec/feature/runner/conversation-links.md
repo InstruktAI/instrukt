@@ -148,6 +148,7 @@ header-looking text they quote. Reading discipline is
 
 ### Stream reader and durable progress
 
+<!-- planned-change:history-text-only-messages -->
 The relay is one more independent reader hosted by the existing long-lived
 `instrukt run`. Its T3 adapter reads the runtime's durable conversation source: the same
 read-only T3 projection-database reader, per-conversation fingerprints and
@@ -166,6 +167,28 @@ that failed is tried again after a growing delay, whether or not the source chan
 meanwhile; a pass that cannot acquire the source retries the acquisition inside the
 relay (`project/instrukt/policy/checks-and-guards`: a part that depends on an outside
 service retries until it returns).
+<!-- change:history-text-only-messages -->
+The relay is one more independent reader hosted by the existing long-lived
+`instrukt run`. Its T3 adapter reads the runtime's durable conversation source through the
+turn read (`project/instrukt/spec/feature/runner/session-continuity`): the
+read-only T3 projection-database reader and native database change
+notifications that history's extraction also uses, with per-conversation
+fingerprints over every record the source holds of a conversation. Each link is an
+independent consumer with its own opaque source position; it never borrows
+history's extraction position. Native reads used for acceptance and native
+sends run in a worker for that link. A slow target can delay its own link's
+handover while other links and company conversations continue. This reader needs no T3 session token. Native target delivery uses the adapter's supported input operation;
+read scope alone grants no send authority. Redis is transport only and owns
+neither turns, link membership nor relay decisions. There is no separate relay
+process, agent relay tool or scheduled tick relay. Besides native
+notifications, each link reads again when the source asks its readers to
+(`project/instrukt/spec/feature/runner/history`);
+a link awaiting the retry of a failed pass keeps to that retry. A relay pass
+that failed is tried again after a growing delay, whether or not the source changes
+meanwhile; a pass that cannot acquire the source retries the acquisition inside the
+relay (`project/instrukt/policy/checks-and-guards`: a part that depends on an outside
+service retries until it returns).
+<!-- /planned-change:history-text-only-messages -->
 
 Runner-owned link and direction positions live in the existing state database
 under `project/instrukt/spec/feature/work/state-database`. Each direction

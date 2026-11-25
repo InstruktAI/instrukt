@@ -72,24 +72,24 @@ consumers; history does not implement conversation relay or runtime lifecycle.
 <!-- change:history-text-only-messages -->
 History exposes explicit extraction, one-time selected-source TeleClaude import,
 local or merged search, and retained-document lookup by native identity or archive
-alias. A retained document is the conversation as the store holds it, in one
-shape for every source: its source and native identity, the computer it came
-from, its title, parent, archive aliases, limitations and source record, and
-its messages ordered by creation time and then native id, each with its native
-id, role, times, text and source record.
+alias. A retained document is the conversation's document as its source gave
+it, rebuilt from what the store holds. A runtime conversation's document holds
+the source's record of the conversation as `thread` and the conversation's
+messages as `messages`, each the source's record of the message with its text
+as `text`. An imported conversation's document is the document its import
+retained, with every text back in its place.
 
-The runtime adapter owns its optional durable conversation-source capability,
-which offers two reads. History uses the text read: over every conversation the
-source holds, it returns each changed conversation's own record, where the
-source holds one, with its native id, title and parent link, and that
-conversation's finished messages, each with
+History consumes the text read of the runtime adapter's optional durable
+conversation-source capability
+(`project/instrukt/spec/feature/runner/session-continuity`). Each item of a
+text read names one changed conversation by its native id and carries that
+conversation's own record, where the source holds one, with its title, parent
+link and native record, and the conversation's finished messages, each with
 its native id, role, available times, text and the source's record of the
-message without that text. The other read returns, for the conversations a
-caller names, everything completed-turn evidence rests on; it serves the other
-conversation consumers and history never uses it. History stores the adapter's
-source position opaquely. A runtime without the capability reports extraction
-as unsupported. History does not implement conversation relay or runtime
-lifecycle.
+message without that text. History uses no other read of that capability. It
+stores the adapter's source position opaquely. A runtime without the
+capability reports extraction as unsupported. History does not implement
+conversation relay or runtime lifecycle.
 <!-- /planned-change:history-text-only-messages -->
 
 The T3 adapter reads the durable projection database located by
@@ -118,16 +118,14 @@ Source reads never retain a read transaction across local history writes.
 The adapter owns source discovery and conversation change accounting. Catch-up
 recognizes newly durable identities and in-place changes independently of native
 timestamps, including later hydration of older records and equal-time updates.
-Each scoped read obtains presence, fingerprints and all changed records in one
-finite read-only SQLite transaction. The text read discovers its inventory of
-every conversation in one finite transaction, then reads each selected
-conversation in a fresh transaction; the returned records determine its loaded
-fingerprint. A text read's fingerprint of a conversation covers that
-conversation's own record and its messages and nothing else the source holds
-of it, so a change to anything else is not a change the text read reports, and
-the text read validates and reads no other source table. A stored position
-whose fingerprint of a conversation differs from the text read's has that
-conversation read again.
+The text read discovers its inventory of every conversation in one finite
+read-only SQLite transaction, then reads each selected conversation in a fresh
+transaction; the returned records determine its loaded fingerprint. That
+fingerprint covers the conversation's own record and its messages only
+(`project/instrukt/spec/feature/runner/session-continuity`), so a change to
+anything else the source holds of a conversation is not a change history is
+told of. A stored position whose fingerprint of a conversation differs from
+the text read's has that conversation read again.
 Streaming content remains deferred until complete. A conversation's loaded-source
 fingerprint and its retained conversation, messages and index entry commit
 atomically;
@@ -210,6 +208,7 @@ carries no path or version. The local command and this computer's failure in a
 merged search carry the same text; the detailed error stays in this computer's
 log.
 
+<!-- planned-change:history-text-only-messages -->
 The history lock `state/history.lock` is the store's write-isolation unit
 (`sdlc/policy/state-storage`). Every history write runs while its process holds
 it: a catch-up section, one import batch, or moving earlier history in. Readers
@@ -217,6 +216,19 @@ take no lock, and work's writes never wait on the history lock. Once the store
 records that earlier history has been moved in, no history read or write opens
 the state database or takes its writer lock. Moving earlier history in is the
 only history operation that does, as described below.
+<!-- change:history-text-only-messages -->
+The history lock `state/history.lock` is the store's write-isolation unit
+(`sdlc/policy/state-storage`). Every history write runs while its process holds
+it: a catch-up section, one import batch, bringing a store of an earlier
+schema version forward, reclaiming the space that freed, or moving earlier
+history in. A reader of a store that is at the current schema version and
+records the move complete takes no lock. A reader that finds an earlier schema
+version, or the move not recorded complete, takes the write path, and with it
+the lock, before it reads. Work's writes never wait on the history lock. Once
+the store records that earlier history has been moved in, no history read or
+write opens the state database or takes its writer lock. Moving earlier
+history in is the only history operation that does, as described below.
+<!-- /planned-change:history-text-only-messages -->
 
 <!-- planned-change:history-text-only-messages -->
 | Table | Holds | Nature and loss cost |
@@ -234,18 +246,29 @@ how far moving earlier history in has progressed.
 <!-- change:history-text-only-messages -->
 | Table | Holds | Nature and loss cost |
 | --- | --- | --- |
-| `history_conversations` | one row per retained conversation: its source and native identity, the computer it came from, its title, parent, archive aliases and limitations, and the source's own record of the conversation | authoritative; a conversation no source still holds cannot be extracted again |
-| `history_messages` | one row per retained message of a conversation: its native id, role, text, creation and update times, and the source's record of the message without that text | authoritative for the same reason |
+| `history_conversations` | one row per retained conversation: its source and native identity, the computer it came from, its title, parent, archive aliases and limitations, and its document without the texts its messages hold | authoritative; a conversation no source still holds cannot be extracted again |
+| `history_messages` | one row per retained text of a conversation: its native id, role, text, creation and update times, the source's record of the message without that text, and its place in the conversation's document | authoritative for the same reason |
 | `history_fts` | the full-text index over each retained conversation's title and the text of its messages, one entry per conversation | derived from `history_conversations` and `history_messages` and written with them; rebuilt on this computer from the retained rows, without any source |
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
 | `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
 
-Each retained fact is stored once. A message's text lives in its row of
-`history_messages` and nowhere else: no table holds a second copy of a
-conversation or its messages, and the full-text index stores terms, reading the
-text it shows from the retained rows. A message already retained keeps its row
-when a later read of its conversation no longer returns it, so messages a
-source has dropped stay in history.
+Each retained text is stored once, in its row of `history_messages`: the
+conversation's document does not hold it and no other table repeats it. The
+full-text index stores terms and reads the text it shows from the retained
+rows. A row already retained stays when a later read of its conversation no
+longer returns it, so messages a source has dropped stay in history.
+
+A conversation's messages are ordered by creation time and then by native id.
+A runtime message's creation time is stored in one fixed form whose text order
+is its time order. A text of an imported conversation has no creation time of
+its own in its row and a native id that encodes its position in the import's
+document, so its native id orders it; the time its source gave it stays in its
+record.
+
+A retained document is rebuilt by putting each text back at its place. A text
+with a record is that record with the text as `text`, appended to the list at
+its place; a text without a record is the string at its place; a text without
+a place belongs to no document.
 
 A conversation's row, its messages and its index entry commit in the
 transaction that commits the source position that delivered them. A message
@@ -258,27 +281,39 @@ A store at an earlier schema version is brought to the current one in place
 when it is opened for writing, in one transaction under the history lock,
 before anything else is written. Every retained conversation keeps its key,
 its source and native identity, its computer, title, parent, archive aliases
-and limitations. Its source record and its messages come from what the earlier
-store held of it:
+and limitations. Its document and its messages come from what the earlier
+store held of it, by the kind of its source:
 
-- **A conversation with retained native records** keeps the source's record of
-  the conversation and one message for each retained message record, with that
-  record's native id, role, text and times and the source's record of the
-  message without that text. Its run, subagent and turn-item records are
-  removed, and so are the copies of every record that its earlier document and
-  searchable text held.
-- **A conversation without native records whose earlier document holds mirror
-  messages** keeps one message for each mirror message, in mirror order, with
-  its role, time and text, and keeps that document as its source record
-  without the message texts and the rendering of them.
-- **Any other conversation** keeps its earlier document as its source record
-  and its earlier searchable text, when it has any, as one message without a
-  role.
+- **A conversation of a runtime source**, one whose source identity begins
+  `t3:`, takes the native record of its retained conversation record as
+  `thread` of its document and one message for each of its retained message
+  records, placed in the document's `messages`. A message takes its record's
+  native id and role, the times its record holds in the fixed form, and the
+  text of the native record where the native record has one, otherwise the
+  record's own text; its record is the native record without that text.
+  Everything else the earlier store held of the conversation is removed: its
+  run, subagent and turn-item records, its earlier document and its earlier
+  searchable text. A runtime conversation without a retained conversation
+  record fails the migration.
+- **Any other conversation whose earlier document is a mirror document**, an
+  object holding a mirror and its sources as the TeleClaude import writes it,
+  keeps that document, and every non-empty text in it becomes a message placed
+  where the document held it: the mirror's transcript text and each source's
+  archival text as texts without role or record, and each mirror message with
+  its role and with the rest of its entry as its record. The store does not
+  compare one of these texts with another.
+- **Any other conversation** keeps its earlier document unchanged and its
+  earlier searchable text, when it has any, as one text without role, record
+  or place.
+
+An earlier document or record that is not the JSON its writer produced fails
+the migration. A failed migration changes nothing and leaves the store at its
+earlier version. The TeleClaude import retains each mirror by the second rule.
 
 The same transaction rebuilds the full-text index from the retained titles and
-message texts, leaves `history_source_positions` and `history_sources` as they
+texts, leaves `history_source_positions` and `history_sources` as they
 are, and records that the freed space is to be reclaimed. No retained
-conversation and no message text is discarded
+conversation and no retained text is discarded
 (`project/instrukt/policy/checks-and-guards`). Reclaiming follows the
 migration under the same hold of the history lock: the rewrite and checkpoint
 `project/instrukt/spec/feature/work/state-database` describes for the state
@@ -337,6 +372,7 @@ Neither value is read as a mirror id: an import looks up only its own source,
 a completed import ends before its position is read, opens no mirror store and
 reports no position, and nothing reads a `t3:` row.
 
+<!-- planned-change:history-text-only-messages -->
 Removal starts only after that record is committed. In one hold of the writer
 lock, one state-database transaction drops the history tables still present
 and the state database then reclaims the freed space
@@ -348,6 +384,20 @@ reclaimed even when the process stopped between the two. No retained
 row is discarded (`project/instrukt/policy/checks-and-guards`). While history
 is off nothing moves, and the rows stay in the state database until history is
 switched on.
+<!-- change:history-text-only-messages -->
+Removal starts only after that record is committed. In one hold of the writer
+lock, one state-database transaction drops the history tables still present
+and the state database then reclaims the freed space
+(`project/instrukt/spec/feature/work/state-database`). The move is recorded
+complete once that database has been rewritten without the freed pages. A move
+that stops after the copy finished continues with removal and reclamation
+whether or not the tables are already gone, so space freed by a drop is
+reclaimed even when the process stopped between the two. No retained
+conversation and no retained text is discarded
+(`project/instrukt/policy/checks-and-guards`). While history
+is off nothing moves, and the rows stay in the state database until history is
+switched on.
+<!-- /planned-change:history-text-only-messages -->
 
 The TeleClaude import reads the selected mirror store strictly read-only and
 never writes or migrates it. It imports mirrors in ascending id order, starting

@@ -30,6 +30,7 @@ The trait's operations take structured inputs and return structured results. A
 session reference is the selected runtime name and its native id; instrukt
 creates no replacement session identity.
 
+<!-- planned-change:history-text-only-messages -->
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
 | `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
@@ -40,6 +41,18 @@ creates no replacement session identity.
 | `conversation_source` | Optional durable changes since an opaque source position: normalized conversations/messages and native records, native ids and parent links, roles, available timestamps, typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text) and the next position; also supplies a native change-notification subscription. | History extraction and the independent conversation-link relay, without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
+<!-- change:history-text-only-messages -->
+| Primitive | Input and result | Released consumer |
+| --- | --- | --- |
+| `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
+| `start` | Project or company home, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences and conversation sessions. |
+| `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
+| `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
+| `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
+| `conversation_source` | Optional durable changes since an opaque source position, through two reads, each returning the next position; also supplies a native change-notification subscription. The turn read returns, for the conversations a caller names, normalized conversations/messages and native records, native ids and parent links, roles, available timestamps and typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text). The text read returns, over every conversation the source holds, each changed conversation by its native id with its own record, where the source holds one, and its finished messages with native ids, roles, available timestamps, text and the native record without that text. Each read validates, fingerprints and reads only the source records it returns from, so a position of one read holds fingerprints the other does not share. | The independent conversation-link relay (turn read) and history extraction (text read), without owning their storage, indexing or relay behavior. |
+| `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
+| `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
+<!-- /planned-change:history-text-only-messages -->
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
@@ -454,6 +467,7 @@ adapter runs the installed `t3` on the host's executable search path; there are
 no configured command templates in this adapter contract. Agent-native
 instruction prose is a separate configuration surface.
 
+<!-- planned-change:history-text-only-messages -->
 | Operation | Native translation and evidence |
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
@@ -464,6 +478,18 @@ instruction prose is a separate configuration surface.
 | Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
 | Linked-thread source | The adapter reads the T3 projection database read-only, with per-conversation fingerprints and native database change notifications, as history does. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+<!-- change:history-text-only-messages -->
+| Operation | Native translation and evidence |
+| --- | --- |
+| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
+| Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
+| State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
+| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
+| Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
+| Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
+| Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+<!-- /planned-change:history-text-only-messages -->
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
