@@ -13,6 +13,7 @@ revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: pending: GitHub: GitHub App API unavailable; retry the pending operation
+GitHub not read (GitHub is unreachable): shown as this computer records it; what people did on the issue since its last read is applied by the next read
 issue: #1
 claim: not held
 hold: none

@@ -20,7 +20,9 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef, Version,
     digest_of, valid_artifact_name,
 };
-use super::_session::{ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of};
+use super::_session::{
+    GitHubRead, ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of,
+};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::_store::{BranchRelease, Completed, LocalItem, Store, WithdrawalIntent};
 use super::_withdrawal::{WithdrawalLock, plan_release, release};
@@ -101,6 +103,9 @@ pub struct TodoView {
     pub record_status: &'static str,
     /// Where the todo's reflection stands.
     pub reflection: ReflectionStatus,
+    /// Whether GitHub was read for this view: when not, what people did on
+    /// the issue since its last read is not applied yet, and why.
+    pub github: GitHubRead,
     pub issue: Option<u64>,
     pub pull: Option<u64>,
     pub prerequisites: Vec<PrerequisiteView>,
@@ -1682,6 +1687,7 @@ fn view(s: &Session<'_>, index: usize) -> TodoView {
     TodoView {
         record_status: super::_envelope::record_status(&record).as_str(),
         reflection: s.status(index),
+        github: s.github_read(),
         issue: item.reflection.issue.map(|i| i.number),
         pull: item.reflection.pull,
         record,

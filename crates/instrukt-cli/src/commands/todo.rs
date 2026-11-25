@@ -1122,6 +1122,12 @@ fn render_view(
         }
     }
     out.push(format!("reflection: {}", reflection_word(&view.reflection)));
+    if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.github {
+        out.push(format!(
+            "GitHub not read ({}): shown as this computer records it; what people did on the issue since its last read is applied by the next read",
+            describe(reason)
+        ));
+    }
     if let Some(issue) = view.issue {
         out.push(format!("issue: #{issue}"));
     }

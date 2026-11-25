@@ -12,6 +12,7 @@ revision: 4
 intent:
   Lists keep their depth everywhere.
 reflection: pending: GitHub is unreachable
+GitHub not read (GitHub is unreachable): shown as this computer records it; what people did on the issue since its last read is applied by the next read
 issue: #1
 claim: held since <time> by session t3:lead-1
 hold: Waits for the parser review. (manual, by session t3:lead-1, <time>)
