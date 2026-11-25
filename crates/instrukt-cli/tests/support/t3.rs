@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 use crate::common::TestEnv;
 
 const SCRIPT: &str = r###"#!/usr/bin/env python3
-import hashlib, json, os, pathlib, sqlite3, subprocess, sys, time
+import fcntl, hashlib, json, os, pathlib, sqlite3, subprocess, sys, time
+from typing import TypedDict
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
 args=sys.argv[1:]
@@ -109,13 +110,24 @@ def all_threads():
 # before its thread reports it, and no projection reads a thread file that a
 # concurrent save has yet to project. No hold waits inside it.
 class state_lock:
-    def __enter__(self):
-        import fcntl
+    def __enter__(self) -> None:
         self.file=open(root/'state.lock','a'); fcntl.flock(self.file,fcntl.LOCK_EX)
-    def __exit__(self,*_): self.file.close()
+    def __exit__(self,*_: object) -> None: self.file.close()
+# What a projection reads of a thread's input and of the thread itself.
+class Input(TypedDict, total=False):
+    role: str
+    text: str
+    runId: str | None
+    queued: bool
+class Thread(TypedDict, total=False):
+    threadId: str
+    status: str
+    activeRunId: str | None
+    commandId: str
+    messages: list[Input]
 # Projects every thread, `updated` in place of its file when given. Callers
 # hold `state_lock`.
-def sync_inputs(updated=None):
+def sync_inputs(updated: Thread | None = None) -> None:
     db=pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite'
     db.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(db) as connection:
