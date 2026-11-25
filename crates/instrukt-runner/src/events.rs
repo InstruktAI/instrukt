@@ -100,7 +100,7 @@ acquisition_events! {
         project: ProjectSlug, todo: TodoSlug, source: AttentionHoldSource, placed_at: Timestamp
     };
     AttentionAttemptsFailing, "runner.attention.attempts_failing", "A role's attempt on a todo failed where an earlier attempt of that role on that todo already failed.", Occurrence, Todo {
-        project: ProjectSlug, todo: TodoSlug, role: RoleName, attempt: u32, reason: String
+        project: ProjectSlug, todo: TodoSlug, role: RoleName, attempt: u64, reason: String
     };
     AttentionFleetQuiet, "runner.attention.fleet_quiet", "The project's attention episode ended: its last active todo that is unheld and not a structural holder left active work or was held.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, opened_by: String

@@ -871,6 +871,7 @@ pub struct WorkPorts {
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
     pub reclamation: Arc<dyn WorktreeReclamation>,
+    pub fleet: Arc<dyn FleetRecord>,
 }
 
 impl std::fmt::Debug for WorkPorts {

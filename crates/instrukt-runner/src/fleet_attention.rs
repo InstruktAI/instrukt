@@ -34,7 +34,7 @@ pub struct HoldFact {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FailedAttempt {
     pub role: RoleName,
-    pub attempt: u32,
+    pub attempt: u64,
     pub reason: String,
     pub earlier_failures: usize,
 }
@@ -62,23 +62,40 @@ pub fn record(
     now: Timestamp,
     change: &RecordChange,
 ) -> Result<(), EventLogError> {
+    let conditions = conditions(change);
+    let closing = !change.runnable_remains && open_episode_of(tx, &change.project)?.is_some();
+    if conditions.is_empty() && !closing {
+        return Ok(());
+    }
     let context = context(home, now, None)?;
+    for event in &conditions {
+        condition(tx, &context, event, change.runnable_remains)?;
+    }
+    if closing {
+        close_episode(tx, &context, &change.project, &change.todo)?;
+    }
+    Ok(())
+}
+
+/// The condition events `change` establishes: a hold released and one
+/// placed (a replacement both), and a role's repeated failure.
+fn conditions(change: &RecordChange) -> Vec<Event> {
     let project = &change.project;
     let todo = &change.todo;
     let moved = |a: &HoldFact, b: &HoldFact| a.placed_at != b.placed_at || a.source != b.source;
+    let mut events = Vec::new();
     if let Some(before) = &change.hold_before
         && change
             .hold_after
             .as_ref()
             .is_none_or(|after| moved(before, after))
     {
-        let released = Event::AttentionHoldReleased {
+        events.push(Event::AttentionHoldReleased {
             project: project.clone(),
             todo: todo.clone(),
             source: before.source,
             placed_at: before.placed_at,
-        };
-        condition(tx, &context, &released, change.runnable_remains)?;
+        });
     }
     if let Some(after) = &change.hold_after
         && change
@@ -86,31 +103,26 @@ pub fn record(
             .as_ref()
             .is_none_or(|before| moved(before, after))
     {
-        let placed = Event::AttentionHoldPlaced {
+        events.push(Event::AttentionHoldPlaced {
             project: project.clone(),
             todo: todo.clone(),
             source: after.source,
             reason: after.reason.clone(),
             placed_at: after.placed_at,
-        };
-        condition(tx, &context, &placed, change.runnable_remains)?;
+        });
     }
     if let Some(failed) = &change.failed_attempt
         && failed.earlier_failures > 0
     {
-        let failing = Event::AttentionAttemptsFailing {
+        events.push(Event::AttentionAttemptsFailing {
             project: project.clone(),
             todo: todo.clone(),
             role: failed.role.clone(),
             attempt: failed.attempt,
             reason: failed.reason.clone(),
-        };
-        condition(tx, &context, &failing, change.runnable_remains)?;
+        });
     }
-    if !change.runnable_remains {
-        close_episode(tx, &context, project, todo)?;
-    }
-    Ok(())
+    events
 }
 
 /// Appends the condition `event` in `tx`; a new occurrence opens the
@@ -239,7 +251,7 @@ mod tests {
         }
     }
 
-    fn failed(attempt: u32, earlier_failures: usize) -> Option<FailedAttempt> {
+    fn failed(attempt: u64, earlier_failures: usize) -> Option<FailedAttempt> {
         Some(FailedAttempt {
             role: RoleName::parse("builder").unwrap(),
             attempt,
