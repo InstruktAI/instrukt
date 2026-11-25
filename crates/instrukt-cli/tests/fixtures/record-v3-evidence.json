@@ -1,0 +1,61 @@
+{
+  "sequence": 3,
+  "stamps": [
+    {
+      "fact": {
+        "fact": "build_verdict",
+        "verdict": "approve",
+        "target": "1111111111111111111111111111111111111111",
+        "report": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "at": "2026-11-01T10:00:00Z",
+      "actor": {"session": "t3:reviewer-1"},
+      "model": null,
+      "eval_fingerprint": null,
+      "role": "build-reviewer",
+      "human_involved": null,
+      "sequence": 2,
+      "model_provenance": "unknown"
+    },
+    {
+      "fact": {
+        "fact": "finalize_ready",
+        "commit": "1111111111111111111111111111111111111111"
+      },
+      "at": "2026-11-01T11:00:00Z",
+      "actor": {"session": "t3:lead-1"},
+      "model": null,
+      "eval_fingerprint": null,
+      "role": "todo-orchestrator",
+      "human_involved": null,
+      "sequence": 3,
+      "model_provenance": "unknown"
+    }
+  ],
+  "bindings": [
+    {
+      "role": "build-reviewer",
+      "session": "t3:reviewer-1",
+      "worktree": null,
+      "runtime": null,
+      "native_placement": null,
+      "assignment": "workspace",
+      "occurrence": null,
+      "attempt": 1,
+      "semantic_key": "instrukt:todo:demo/schema-change:build-reviewer:1",
+      "native_assignment": null,
+      "lane": null,
+      "start_from": null,
+      "no_start_reason": null,
+      "branch": "schema-change/work",
+      "base_head": "1111111111111111111111111111111111111111",
+      "completion_sequence": 2,
+      "completed_head": "1111111111111111111111111111111111111111",
+      "failure_reason": null,
+      "failure_head": null,
+      "failure_workspace": null,
+      "failed_at": null,
+      "released_at": "2026-11-01T10:00:00Z"
+    }
+  ]
+}

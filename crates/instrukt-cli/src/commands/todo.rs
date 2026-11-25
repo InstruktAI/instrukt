@@ -1584,6 +1584,18 @@ fn fact(fact: &StampFact) -> String {
         StampFact::DeferralsProcessed { deferrals } => {
             format!("deferrals processed — deferrals {deferrals}")
         }
+        StampFact::VerificationDisposition {
+            disposition,
+            commit,
+            report,
+            follow_up,
+        } => format!(
+            "verification {disposition} — commit {commit}, report {report}{}",
+            follow_up
+                .as_ref()
+                .map(|todo| format!(", follow-up {} ({})", todo.slug, todo.id))
+                .unwrap_or_default()
+        ),
         StampFact::FinalizeReady { commit } => format!("finalize ready — commit {commit}"),
         StampFact::TaskFiringStarted { occurrence } => {
             format!("task firing started — occurrence {}", time(*occurrence))

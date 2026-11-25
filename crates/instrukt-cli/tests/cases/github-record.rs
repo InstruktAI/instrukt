@@ -1525,11 +1525,49 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
         "log",
         "continued after conversion",
     ]);
-    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 3);
+    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 4);
     insta::assert_snapshot!(
         "converted-schema-evidence",
         project.ok(["artifacts", "read", "schema-change", "input"])
     );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR10
+#[test]
+fn schema_three_record_converts_to_four_with_its_retained_evidence_unchanged() {
+    let project = Project::new();
+    project.create("schema-change", "bug", INTENT);
+    let golden: Value =
+        serde_json::from_str(include_str!("../fixtures/record-v3-evidence.json")).unwrap();
+    let mut seeded = Value::Null;
+    seed_revision(&project.github, |record| {
+        record["schema"] = 3.into();
+        record["sequence"] = golden["sequence"].clone();
+        record["stamps"] = golden["stamps"].clone();
+        record["bindings"] = golden["bindings"].clone();
+        seeded = record.clone();
+    });
+    project.ok([
+        "artifacts",
+        "write",
+        "schema-change",
+        "log",
+        "continued after conversion",
+    ]);
+    let converted = &latest_envelope(&project.github)["record"];
+    assert_eq!(converted["schema"], 4);
+    assert_eq!(converted["stamps"], golden["stamps"]);
+    assert_eq!(converted["bindings"], golden["bindings"]);
+    let input = |record: &Value| {
+        record["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "input")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(input(converted), input(&seeded));
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR5
