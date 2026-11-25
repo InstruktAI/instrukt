@@ -93,10 +93,11 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     tagged release publication, not pull requests.
   - A pull request runs, of the checks above, only those its changed files
     reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
-    release runs every check. A shipped document a workspace test reads is a
-    Rust input, and a change to it runs the Rust checks alongside the
-    document checks. A change only to documents no test reads and to
-    configuration, root `instrukt.yaml` among them, reaches no Rust input:
+    release runs every check. A shipped document or configuration file a
+    workspace test reads is a Rust input, and a change to it runs the Rust
+    checks alongside the document checks. A change confined to documents and
+    configuration that no Rust check or test reads, root `instrukt.yaml`
+    among them, reaches no Rust input:
     Linux builds the CLI binary and runs the document, configuration,
     use-case coverage and instruction-file checks with it,
     without the workspace test suite, doctests, macOS, the dependency audit,
