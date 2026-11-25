@@ -446,8 +446,9 @@ const PLACEMENT_PAUSE: Duration = Duration::from_millis(250);
 /// Reads and verifies the thread a launch created. While the runtime answers
 /// that its placement is still being prepared, it observes the thread again
 /// after a pause, until verification answers otherwise or the placement
-/// window has elapsed; the last answer is the start's. No observation starts
-/// once the window has elapsed.
+/// window has elapsed; the last answer is the start's. A pause never asks
+/// for more than the window has left, and no observation starts once the
+/// window has elapsed.
 fn observe_launch(
     adapter: &dyn RuntimeAdapter,
     guard: &KeyGuard,
@@ -461,9 +462,7 @@ fn observe_launch(
         match adapter.verify_start(input, &thread) {
             Ok(()) => return Ok(thread),
             Err(pending @ SessionsError::PlacementPreparing(_)) => {
-                if window.judge(None::<()>) == Look::Running {
-                    std::thread::sleep(PLACEMENT_PAUSE);
-                }
+                std::thread::sleep(PLACEMENT_PAUSE.min(window.remaining()));
                 if window.judge(None::<()>) == Look::Passed {
                     return Err(pending);
                 }
