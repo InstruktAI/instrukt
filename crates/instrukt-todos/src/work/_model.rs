@@ -408,8 +408,10 @@ pub struct Binding {
 impl Binding {
     /// Whether this is a role attempt open on the todo's worktree: an
     /// unreleased workspace or child assignment. A driver binding is not
-    /// one. It is the writer that keeps another role, readiness and
-    /// reclamation out of the worktree.
+    /// one. While it is open no other role starts there, readiness is
+    /// refused and the runner reclaims nothing there; a session other than
+    /// its own is refused reclaiming, while its own session may reclaim
+    /// during it.
     pub(crate) fn is_open_role_attempt(&self) -> bool {
         matches!(
             self.attempt.assignment,
