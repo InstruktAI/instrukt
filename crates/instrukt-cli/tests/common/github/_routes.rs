@@ -740,10 +740,31 @@ fn issue_route(
             };
             match method {
                 "GET" => {
+                    // Versions newest first, paged as GitHub pages them.
                     let artifact = &issue.artifacts[&a];
-                    Reply::ok(
-                        json!({"artifact": artifact.json(), "versions": artifact.versions_json()}),
-                    )
+                    let per_page = query_param(query, "per_page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(30)
+                        .clamp(1, 100);
+                    let page = query_param(query, "page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .max(1);
+                    let Value::Array(all) = artifact.versions_json() else {
+                        return Reply::not_found();
+                    };
+                    let total = all.len();
+                    let versions: Vec<Value> = all
+                        .into_iter()
+                        .skip((page - 1) * per_page)
+                        .take(per_page)
+                        .collect();
+                    Reply::ok(json!({
+                        "artifact": artifact.json(),
+                        "versions": versions,
+                        "has_next_page": page * per_page < total,
+                        "total_count": total,
+                    }))
                 }
                 "PATCH" => {
                     let Some(artifact) = issue.artifacts.get_mut(&a) else {

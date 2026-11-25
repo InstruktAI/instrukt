@@ -350,9 +350,12 @@ pub(crate) fn has_write_access(comment: &Value) -> bool {
     TRUSTED_ASSOCIATIONS.contains(&comment["author_association"].as_str().unwrap_or_default())
 }
 
-/// Uploads every artifact version not yet on GitHub, then learns the
-/// provider's version numbers by digest. A retry reuses versions GitHub
-/// already holds instead of uploading them twice.
+/// Uploads every artifact version not yet on GitHub and learns the
+/// provider's version numbers by digest. Only the versions newer than the
+/// last one confirmed are read, and an upload is confirmed by GitHub's
+/// newest version alone, so the cost does not grow with the artifact's
+/// history (SC-11). A retry reuses versions GitHub already holds instead of
+/// uploading them twice.
 fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Result<(), GitHubError> {
     let number = issue.number;
     let mut listed: Option<Vec<Value>> = None;
@@ -375,8 +378,14 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                     .flatten()
             });
         }
+        let confirmed = artifact
+            .versions
+            .iter()
+            .filter_map(|v| v.remote)
+            .max()
+            .unwrap_or(0);
         let mut remote = match artifact.address {
-            Some(address) => remote_versions(gh, number, address)?,
+            Some(address) => remote_versions(gh, number, address, confirmed)?,
             None => Vec::new(),
         };
         // Versions keep their order: a version maps to a remote version
@@ -427,26 +436,39 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                     message: "a created artifact without a number".to_owned(),
                 });
             };
-            remote = remote_versions(gh, number, address)?;
-            version.remote = remote
-                .iter()
-                .rev()
-                .find(|(n, digest)| *n > floor && *digest == version.digest.as_str())
-                .map(|(n, _)| *n);
+            version.remote = match newest_version(gh, number, address)? {
+                Some((n, digest)) if n > floor && digest == version.digest.as_str() => Some(n),
+                _ => {
+                    remote = remote_versions(gh, number, address, floor)?;
+                    remote
+                        .iter()
+                        .rev()
+                        .find(|(n, digest)| *n > floor && *digest == version.digest.as_str())
+                        .map(|(n, _)| *n)
+                }
+            };
             floor = version.remote.unwrap_or(floor);
         }
     }
     Ok(())
 }
 
-/// An artifact's versions on GitHub, oldest first, as (version, digest).
-fn remote_versions(
+/// How many artifact versions one page of GitHub's answer holds.
+const VERSIONS_PAGE: u64 = 100;
+
+/// One page of an artifact's versions on GitHub, newest first, as
+/// (version, digest), and whether GitHub has a next page.
+fn versions_page(
     gh: &GitHub,
     number: u64,
     address: u64,
-) -> Result<Vec<(u64, String)>, GitHubError> {
-    let read = gh.read(&format!("/issues/{number}/artifacts/{address}"))?;
-    let mut versions: Vec<(u64, String)> = read["versions"]
+    per_page: u64,
+    page: u64,
+) -> Result<(Vec<(u64, String)>, bool), GitHubError> {
+    let read = gh.read(&format!(
+        "/issues/{number}/artifacts/{address}?per_page={per_page}&page={page}"
+    ))?;
+    let versions = read["versions"]
         .as_array()
         .map(|list| {
             list.iter()
@@ -459,8 +481,51 @@ fn remote_versions(
                 .collect()
         })
         .unwrap_or_default();
+    Ok((versions, read["has_next_page"].as_bool().unwrap_or(false)))
+}
+
+/// The newest version of an artifact on GitHub, as (version, digest).
+fn newest_version(
+    gh: &GitHub,
+    number: u64,
+    address: u64,
+) -> Result<Option<(u64, String)>, GitHubError> {
+    Ok(versions_page(gh, number, address, 1, 1)?
+        .0
+        .into_iter()
+        .next())
+}
+
+/// An artifact's versions on GitHub newer than `floor`, oldest first, as
+/// (version, digest): GitHub's pages, newest first, are read until one
+/// reaches `floor` or the history ends, so every version newer than it is
+/// read however long the history (SC-10).
+fn remote_versions(
+    gh: &GitHub,
+    number: u64,
+    address: u64,
+    floor: u64,
+) -> Result<Vec<(u64, String)>, GitHubError> {
+    let mut versions = Vec::new();
+    let mut page = 1;
+    loop {
+        let (read, has_next) = versions_page(gh, number, address, VERSIONS_PAGE, page)?;
+        let numbers: Vec<u64> = read.iter().map(|(n, _)| *n).collect();
+        versions.extend(read.into_iter().filter(|(n, _)| *n > floor));
+        if walk_ends(&numbers, has_next, floor) {
+            break;
+        }
+        page += 1;
+    }
     versions.sort_by_key(|(n, _)| *n);
     Ok(versions)
+}
+
+/// Whether a newest-first walk of an artifact's versions ends after a page
+/// holding `numbers`: the history ends there, or the page reached `floor`,
+/// below which every version is already confirmed.
+fn walk_ends(numbers: &[u64], has_next: bool, floor: u64) -> bool {
+    !has_next || numbers.is_empty() || numbers.iter().any(|n| *n <= floor)
 }
 
 fn reflect_pull_request(
@@ -659,4 +724,22 @@ pub(crate) fn output_label(label: &str) -> bool {
             | "status:removed"
             | "on-hold"
     ) || label == TODO_LABEL
+}
+
+#[cfg(test)]
+mod tests {
+    use super::walk_ends;
+
+    #[test]
+    fn a_version_walk_ends_where_the_history_ends() {
+        assert!(walk_ends(&[3, 2, 1], false, 0));
+        assert!(walk_ends(&[], true, 0));
+    }
+
+    #[test]
+    fn a_version_walk_ends_at_the_last_confirmed_version() {
+        assert!(walk_ends(&[205, 204, 203], true, 204));
+        assert!(!walk_ends(&[205, 204, 203], true, 120));
+        assert!(!walk_ends(&[205], true, 0));
+    }
 }
