@@ -754,34 +754,42 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
     assert_eq!(version, instrukt_core::state_db::schema_version());
     assert_eq!(work_rows(&raw), before);
 
-    // Each lookup worktree standing makes is answered by its index.
-    for (lookup, index) in [
-        (
-            "SELECT todo_id FROM session_bindings WHERE worktree = ?1",
-            "session_bindings_worktree",
-        ),
-        (
-            "SELECT todo_id FROM session_bindings WHERE branch = ?1",
-            "session_bindings_branch",
-        ),
-        ("SELECT id FROM todos WHERE branch = ?1", "todos_branch"),
-        ("SELECT reason FROM holds WHERE todo_id = ?1", "holds_todo"),
-        (
-            "SELECT action FROM github_label_actions WHERE todo_id = ?1",
-            "github_label_actions_todo",
-        ),
+    // Unrelated records of every kind a standing lookup reads.
+    raw.execute_batch(
+        "CREATE TEMP TABLE other AS SELECT * FROM todos;
+         UPDATE other SET id = 'e' || substr(id, 2), slug = 'other-a', branch = 'other-a/work';
+         INSERT INTO todos SELECT * FROM other;
+         UPDATE other SET id = 'f' || substr(id, 2), slug = 'other-b', branch = 'other-b/work';
+         INSERT INTO todos SELECT * FROM other;
+         INSERT INTO holds SELECT 'e' || substr(todo_id, 2), source, reason, set_by, set_at, released_at, released_by FROM holds;
+         INSERT INTO holds SELECT 'f' || substr(todo_id, 2), source, reason, set_by, set_at, released_at, released_by FROM holds WHERE todo_id LIKE 'd%';
+         INSERT INTO session_bindings(todo_id, role, attempt, semantic_key, worktree, branch, evidence) VALUES
+             ('e34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-a', '/work/other-a', 'other-a/work', '{}'),
+             ('f34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-b', '/work/other-b', 'other-b/work', '{}'),
+             ('d34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-c', '/work/list-depth', 'list-depth', '{}');
+         INSERT INTO github_label_actions VALUES
+             ('demo', 1, 1, 'd34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted'),
+             ('demo', 2, 2, 'e34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted'),
+             ('demo', 3, 3, 'f34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted');",
+    )
+    .unwrap();
+
+    // Each lookup worktree standing makes reaches its rows by a search,
+    // never by stepping through the others.
+    for lookup in [
+        "SELECT todo_id FROM session_bindings WHERE worktree = ?1",
+        "SELECT todo_id FROM session_bindings WHERE branch = ?1",
+        "SELECT id FROM todos WHERE branch = ?1",
+        "SELECT reason FROM holds WHERE todo_id = ?1",
+        "SELECT action FROM github_label_actions WHERE todo_id = ?1",
     ] {
-        let used: Vec<String> = raw
-            .prepare(&format!("EXPLAIN QUERY PLAN {lookup}"))
-            .unwrap()
-            .query_map(["x"], |row| row.get::<_, String>(3))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        let named: Vec<bool> = used
-            .iter()
-            .map(|detail| detail.split_whitespace().any(|word| word == index))
-            .collect();
-        assert_eq!(named, [true], "{lookup}: {used:?}");
+        let mut statement = raw.prepare(lookup).unwrap();
+        let found = statement.query_map(["absent"], |_| Ok(())).unwrap().count();
+        assert_eq!(found, 0);
+        assert_eq!(
+            statement.get_status(instrukt_core::state_db::rusqlite::StatementStatus::FullscanStep),
+            0,
+            "{lookup}"
+        );
     }
 }
