@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Architecture derivation phase. Ground the approved PRD in code reality, author the design directly into the affected domain-spec or architecture design snippets, and write a thin reviewer-approved architecture index artifact for downstream plan derivation.'
+description: 'Architecture derivation phase. Ground the approved PRD in code reality, author structural design decisions directly into the affected domain-spec or architecture design snippets, and write a reviewer-approved architecture delivery-reasoning artifact for downstream plan derivation.'
 visibility: 'public'
 role: architect
 parameters:
@@ -60,6 +60,17 @@ delivery land in docs across two locations — route per change:
   to `project/<slug>/spec/domain/event-catalog` AND may add a new context-map edge if
   the consumer set changes.
 
+- **Boundary with reflection and intake snippets** → `architecture` authors only
+  snippets that own structural design decisions: affected domain specs,
+  cross-cutting architecture design docs, or another snippet that directly owns
+  a structural decision (`sdlc/policy/preparation-artifact-quality`).
+  Consequential reflection updates (policies, principles, procedures, and
+  consumer docs that reflect the converged design rather than owning structural
+  decisions) belong to `sdlc/procedure/lifecycle/prepare/plan-draft` and are
+  only referenced here. A needed feature-spec change is an intent gap returned
+  to `sdlc/procedure/lifecycle/prepare/intake`, never an in-place edit over
+  intake's pending block.
+
 Author new and changed design material through the pending carriers prescribed
 by `general/procedure/doc-snippet-authoring`.
 
@@ -70,24 +81,27 @@ remain authoritative and carry the normal pending-delivery semantics.
 
 For decisions that DON'T survive delivery (implementation-tactic choices,
 library selection, internal sequencing within a build), keep them ephemeral.
-Record them in the thin `architecture` index for the planner; the approved PRD
-is not rewritten — they're scaffolding, not contract.
+Record them in the `architecture` delivery-reasoning artifact for the planner;
+the approved PRD is not rewritten — they're scaffolding, not contract.
 
-The `architecture` workflow.artifact is a thin index of the doc-snippet edits:
-snippet ids, affected sections, their pending carriers and a brief reason each,
-plus the delivery reasoning named in step 2. The design content itself lives in
-the snippets — the snippets are authoritative; the artifact never restates the
-contract they carry.
+The `architecture` workflow.artifact carries the delivery reasoning named in
+step 2 and ephemeral tactical choices; the todo's documentation diff in
+`<slug>/work` establishes which snippets changed
+(`sdlc/principle/documentation-first-development`). Cite the todo's own pending
+snippets freely, and name any worktree-only ADR by repository path rather than
+an `@` reference so provenance stays resolved. The design content itself lives
+in the snippets — the snippets are authoritative; the artifact never restates
+the contract they carry.
 
 ### Outcome
 
 Take the approved PRD and ground it in the codebase. Identify which existing
 services + event flows the work touches, which cross-cutting concerns are
 affected, which new components (if any) need to exist, and how the work
-decomposes architecturally. Author durable design decisions DIRECTLY into the
-appropriate doc snippets (domain spec, design doc, or both per the routing
-above). Record ephemeral tactic decisions in the thin `architecture` index for
-the planner.
+decomposes architecturally. Author durable structural design decisions DIRECTLY
+into the appropriate doc snippets (domain spec, design doc, or both per the
+routing above). Record delivery reasoning and ephemeral tactic decisions in the
+`architecture` artifact for the planner.
 
 ## Preconditions
 
@@ -181,8 +195,8 @@ state changes — is authored into the snippets. The delivery reasoning —
 governing contracts and paradigms, target preservation, current and intended
 state, brownfield reconciliation, platform defaults, prior art and
 adopt-vs-build, decomposition, open questions — goes to
-the thin `architecture` index, where the planner and reviewer read it. Neither
-restates the other; live contracts are not decision journals:
+the `architecture` delivery-reasoning artifact, where the planner and reviewer
+read it. Neither restates the other; live contracts are not decision journals:
 
 | Section | What it captures |
 | ------- | ---------------- |
@@ -211,22 +225,22 @@ consumers, implicit cross-service dependencies — under
 freshness and fallback. Keep confirmed dependencies distinct from inferred
 ones.
 
-### 4. Write the thin architecture index artifact
+### 4. Write the architecture delivery-reasoning artifact
 
-Author the design content into the affected snippets first, each through a
-pending carrier naming this slug.
-Then write the thin index artifact:
+Author the structural design content into the affected snippets first, each
+through a pending carrier naming this slug.
+Then write the delivery-reasoning artifact:
 
 ```
 instrukt todo artifacts write {slug} architecture <content>
 ```
 
-The artifact is an index: every snippet id touched with its affected sections,
-its pending carrier and a one-line reason (which architectural change it
-carries), plus the delivery reasoning from step 2. It does NOT restate the
-design body — that lives in the snippets and is the authoritative record. Snippets whose section
-doesn't apply (e.g., no "Event flow changes" for purely-UI work) simply aren't
-touched; the index records only what changed.
+The artifact carries the delivery reasoning from step 2 and any ephemeral
+tactical decisions. Do not maintain a manual snippet table or recorded head SHA
+in it, and do not restate the design body — that lives in the snippets and is
+the authoritative record, discovered from the worktree's documentation diff.
+Snippets whose section doesn't apply (e.g., no "Event flow changes" for
+purely-UI work) simply aren't touched.
 
 **Architecture is a translation, not an implementation.** Translate product
 intent into technical shape. Do not implement, do not write tests, and do not
@@ -239,24 +253,26 @@ one-off silently.
 
 ### 5. Complete and return to `todo-orchestrator`
 
-When the `architecture` artifact and pending doc updates are committed in
-`<slug>/work`, stamp `instrukt todo stamp {slug} --role-complete` and end your
-turn. `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
-and dispatches an independent `architecture-reviewer`. On `approve`,
-`todo-orchestrator` advances to planning or build; on `needs_work`, it routes
-findings back here. Read `architecture-review-findings` and apply the
-finding-validation, disposition, and evidence-recording rules in
-`sdlc/procedure/lifecycle/fix-review-findings` to the indexed design and its
-thin `architecture` artifact, then stamp `--role-complete` again.
+When the `architecture` artifact and pending structural doc updates are
+committed in `<slug>/work`, stamp `instrukt todo stamp {slug} --role-complete`
+and end your turn. `todo-orchestrator` reads the factual ledger
+(`instrukt todo show {slug} --json`) and dispatches an independent
+`architecture-reviewer`. On `approve`, `todo-orchestrator` advances to planning
+or build; on `needs_work`, it routes findings back here. Read
+`architecture-review-findings` and apply the finding-validation, disposition,
+and evidence-recording rules in `sdlc/procedure/lifecycle/fix-review-findings`
+to the design snippets and `architecture` artifact; after any snippet edits in
+remediation, rewrite the `architecture` artifact before stamping
+`--role-complete` so it recaptures current owned-snippet provenance.
 
 ## Outputs
 
 - **Domain-spec / architecture design-doc snippet updates** — the
-  code-grounded design, authored directly into the affected snippets, each
-  through a pending carrier naming this slug.
-- **Thin `architecture` index artifact** — written via
-  `instrukt todo artifacts write {slug} architecture <content>`; indexes the
-  touched snippets and carries the delivery reasoning, NOT the design body.
+  code-grounded structural design, authored directly into the affected snippets,
+  each through a pending carrier naming this slug.
+- **`architecture` delivery-reasoning artifact** — written via
+  `instrukt todo artifacts write {slug} architecture <content>`; carries the
+  delivery reasoning and ephemeral tactical choices, not the design body.
 - **`architecture_review` verdict `approve`** is stamped by the reviewer (not
   by this procedure).
 
@@ -279,7 +295,7 @@ default owner; resolve the domain meaning first.
   its sources before deriving further. An unresolved product-intent question
   returns to intake. Technical realization within established intent remains
   architecture's responsibility; ground the choice and record its material
-  reason in the architecture index, while the affected snippets carry the
+  reason in the `architecture` artifact, while the affected snippets carry the
   resulting contract.
 - **Architecture would require a flavor that doesn't exist.** This is a
 
