@@ -13,17 +13,23 @@ fn standing_assignment(
     let Some(db) = StateRead::open(home)? else {
         return Ok(None);
     };
-    let mut stmt = db.conn().prepare("SELECT semantic_key,exact_home,checkout,declaration,procedure FROM procedure_responsibilities WHERE session=?1 UNION ALL SELECT g.semantic_key,r.exact_home,json_extract(g.request,'$.checkout'),g.declaration,r.procedure FROM procedure_generations g JOIN procedure_responsibilities r ON r.responsibility=g.responsibility WHERE g.session=?1").map_err(StateDbError::sqlite(db.path()))?;
+    // The third branch admits each start this runner recorded for the caller
+    // before its responsibility records that start's session; distinct
+    // standing assignments among all branches still conflict below.
+    let mut stmt = db.conn().prepare("SELECT semantic_key,exact_home,checkout,declaration,procedure FROM procedure_responsibilities WHERE session=?1 UNION ALL SELECT g.semantic_key,r.exact_home,json_extract(g.request,'$.checkout'),g.declaration,r.procedure FROM procedure_generations g JOIN procedure_responsibilities r ON r.responsibility=g.responsibility WHERE g.session=?1 UNION ALL SELECT p.semantic_key,p.exact_home,p.checkout,p.declaration,p.procedure FROM runtime_bindings b JOIN procedure_responsibilities p ON p.semantic_key=b.semantic_key WHERE b.runtime=?2 AND b.session=?1 AND p.session IS NULL").map_err(StateDbError::sqlite(db.path()))?;
     let rows = stmt
-        .query_map([caller.to_string()], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, String>(2)?,
-                r.get::<_, String>(3)?,
-                r.get::<_, String>(4)?,
-            ))
-        })
+        .query_map(
+            instrukt_core::state_db::rusqlite::params![caller.to_string(), caller.runtime.as_str()],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            },
+        )
         .map_err(StateDbError::sqlite(db.path()))?;
     let mut found = None;
     for row in rows {
@@ -78,8 +84,63 @@ fn standing_assignment(
     Ok(found)
 }
 
-/// Work owns its bindings; runner composes those facts with its own standing/start records.
-pub type WorkLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
+/// A start this runner recorded for a caller's native session: the semantic
+/// key it started, the session that start replaces, and the worktree the
+/// runtime placed it in once known. A reused native session carries one per
+/// key it was started for, such as each attempt of the same assignment. An
+/// owner that has not yet recorded the session (or still names the replaced
+/// one) decides from these facts whether the caller is the start of its
+/// object.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecordedStart {
+    pub semantic_key: String,
+    pub replaced_session: Option<String>,
+    pub worktree: Option<String>,
+}
+
+/// Every start this runner recorded for the caller's native session, and
+/// whether one of them is a work or standing start that must yield an
+/// assignment. Which start carries the assignment is the owning lookup's
+/// decision. Both facts come from one read: the starts handed to the
+/// [`WorkLookup`] are exactly those the lost-assignment check counts. The
+/// standing and company lookups read their own state separately.
+fn recorded_starts(
+    home: &Home,
+    caller: &SessionRef,
+) -> Result<(Vec<RecordedStart>, bool), StateDbError> {
+    let Some(db) = StateRead::open(home)? else {
+        return Ok((Vec::new(), false));
+    };
+    let mut stmt = db
+        .conn()
+        .prepare("SELECT semantic_key,replaced_session,worktree,kind IN ('todo','work','task','standing') FROM runtime_bindings WHERE runtime=?1 AND session=?2")
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let rows = stmt
+        .query_map(
+            instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(), caller.to_string()],
+            |r| {
+                Ok((
+                    RecordedStart {
+                        semantic_key: r.get(0)?,
+                        replaced_session: r.get(1)?,
+                        worktree: r.get(2)?,
+                    },
+                    r.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .map_err(StateDbError::sqlite(db.path()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(StateDbError::sqlite(db.path()))?;
+    let known = rows.iter().any(|(_, known)| *known);
+    Ok((rows.into_iter().map(|(start, _)| start).collect(), known))
+}
+
+/// Work owns its bindings and the precedence among their attempts; runner
+/// composes those facts with its own standing/start records and supplies
+/// every start it recorded for the caller.
+pub type WorkLookup =
+    fn(&Home, &SessionRef, &[RecordedStart]) -> Result<Option<Assignment>, StateDbError>;
 /// The company owns its conversation sessions' bindings, as work owns its
 /// own: the assignment of a session one of its conversations bound.
 pub type CompanyLookup = fn(&Home, &SessionRef) -> Result<Option<Assignment>, StateDbError>;
@@ -89,7 +150,8 @@ pub fn resolve(
     work: WorkLookup,
     company: CompanyLookup,
 ) -> Result<Option<Assignment>, StateDbError> {
-    let work = work(home, caller)?;
+    let (starts, known) = recorded_starts(home, caller)?;
+    let work = work(home, caller, &starts)?;
     let standing = match standing_assignment(home, caller)? {
         Some(standing) => Some(standing),
         None => company(home, caller)?,
@@ -103,18 +165,13 @@ pub fn resolve(
         ));
     }
     let assignment = work.or(standing);
-    if assignment.is_none()
-        && let Some(db) = StateRead::open(home)?
-    {
-        let known:bool=db.conn().query_row("SELECT EXISTS(SELECT 1 FROM runtime_bindings WHERE runtime=?1 AND session=?2 AND kind IN ('todo','work','task','standing'))",instrukt_core::state_db::rusqlite::params![caller.runtime.as_str(),caller.to_string()],|r|r.get(0)).map_err(StateDbError::sqlite(db.path()))?;
-        if known {
-            return Err(StateDbError::invalid(
-                db.path(),
-                format!(
-                    "{caller} has a known start but lost its assignment; recover the affected binding/attempt or standing key"
-                ),
-            ));
-        }
+    if assignment.is_none() && known {
+        return Err(StateDbError::invalid(
+            &home.state_db_file(),
+            format!(
+                "{caller} has a known start but lost its assignment; recover the affected binding/attempt or standing key"
+            ),
+        ));
     }
     Ok(assignment)
 }

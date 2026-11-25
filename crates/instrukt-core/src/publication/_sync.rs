@@ -9,7 +9,7 @@ use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
-use super::_render::Renderer;
+use super::_render::{GENERATED_LINE, Renderer};
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
@@ -116,7 +116,7 @@ pub struct SyncReport {
     /// in the primary worktree.
     pub editor: Vec<EditorChange>,
     /// What a publishing sync reports without refusing: a domain without
-    /// `index.yaml`, a root master without `docs/project/index.yaml`.
+    /// `index.yaml`.
     pub notices: Vec<Notice>,
     /// Each global agent file a publishing sync wrote or found current.
     pub global_files: Vec<GlobalDestination>,
@@ -684,14 +684,7 @@ fn global_files(
                         reference: reference.clone(),
                     }),
             );
-        let text = if runtime.cli == "cursor" {
-            format!(
-                "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{}",
-                global.text
-            )
-        } else {
-            global.text.clone()
-        };
+        let text = global_file_text(runtime.cli, &global.text);
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
@@ -905,4 +898,35 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
         .map_err(|_| PublicationError::Unconfined {
             path: path.to_path_buf(),
         })
+}
+
+/// The text written to the global file of the agent runtime `cli`: the
+/// generated line, then `rendering`. Where the runtime's file format puts
+/// something of its own first, as Cursor's rule file does with its
+/// frontmatter, the generated line follows it.
+fn global_file_text(cli: &str, rendering: &str) -> String {
+    if cli == "cursor" {
+        format!(
+            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{GENERATED_LINE}\n{rendering}"
+        )
+    } else {
+        format!("{GENERATED_LINE}\n{rendering}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const RENDERING: &str = "# General\n\nBe kind.\n";
+
+    #[test]
+    fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING));
+    }
+
+    #[test]
+    fn another_runtimes_file_opens_with_the_generated_line() {
+        insta::assert_snapshot!(global_file_text("claude", RENDERING));
+    }
 }

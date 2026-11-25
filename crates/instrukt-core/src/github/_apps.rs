@@ -77,6 +77,12 @@ pub enum Operation {
     Review,
     Board,
     Observe,
+    /// Reading a repository's pull requests for automatic review, under the
+    /// project identity.
+    ReviewObserve,
+    /// Publishing an automatic review's verdict on pull requests and
+    /// commits, under the identity the `commit-reviewer` role selects.
+    ReviewPublish,
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {

@@ -16,11 +16,15 @@ description: Decide whether a todo should exist, audit that decision at preparat
 
 Apply these configured action values to the identified assignment and session.
 
+<!-- @config: runtime.look_around -->
+
 <!-- @config: runtime.read_thread -->
 
 <!-- @config: runtime.message_peer -->
 
 <!-- @config: runtime.inspect_thread -->
+
+<!-- @config: runtime.retire_thread -->
 
 ### Progress, hold, or retire
 
@@ -50,6 +54,13 @@ Apply these configured action values to the identified assignment and session.
   owed keeps its owner and gates. Withdrawing a human-owned outcome follows
   `general/policy/human-contract`; lack of a technical path does not confer
   that authority on the agent.
+- **Retire terminal orchestrator threads after recording terminal state.** Once
+  a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
+  recorded orchestrator thread(s) (`todo-orchestrator`, plus any legacy
+  phase-orchestrator bindings) through the configured `runtime.retire_thread`
+  action. Complete all record writes and handoffs first when self-retiring, converge idempotently on already-retired
+  threads, preserve unfinished human or worker obligations, never gate
+  retirement on unrelated resource cleanup, and never retire standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
@@ -91,12 +102,23 @@ once, deduplicated, while preserving the existing restoration obligation.
   created with `--icebox` and made valid before it is unfrozen; unfreezing
   enters it into the lifecycle. Hold is a brake on valid work awaiting an
   external gate.
-- **Run the bounded creation check before every `instrukt todo create`.** Read
-  `instrukt todo list`, which lists the live work — the todos a new one could
-  overlap with. For each plausible match, read its `input`; if whether it has
-  started build affects the choice, inspect its current state too. This is
-  a cheap check for an obvious existing home, not the deeper judgment about
-  whether one premise yields to, supersedes, or depends on another.
+- **Run the bounded creation check before every `instrukt todo create` and
+  before starting ad-hoc work.** Read `instrukt todo list`, which lists the
+  live work — the todos a new one could overlap with. For each plausible
+  match, read its `input`; if whether it has started build affects the
+  choice, inspect its current state too. Live work also runs outside todos:
+  read `git worktree list` for active non-todo worktrees and branches, and
+  the project's open pull requests. Where the active runtime lists and reads
+  threads, discover unsettled non-todo top-level threads in the project or
+  home with the configured `runtime.look_around` action, then inspect
+  plausible overlaps with `runtime.inspect_thread` and `runtime.read_thread`,
+  reading each one's opening and latest messages. The check is
+  read-only: never message or interrupt another thread merely to ask what it
+  is doing. Message it with the configured `runtime.message_peer` action only
+  when the read-only inspection confirms a real overlap whose boundary or
+  sequencing needs coordination. This is a cheap check for an obvious
+  existing home, not the deeper judgment about whether one premise yields to,
+  supersedes, or depends on another.
 - **Use what the check finds.** Do not create a todo when the work is already
   plainly covered. When a small addition belongs in an existing `change`,
   `bug`, or `feature` that has not started build, route it to that todo's live
@@ -190,13 +212,14 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **A worker's observation is decided by the session that governs it.** A
   worker is a session executing one job for a governing session it reports back to: a
-  builder, reviewer, diagnosis peer, fixer, or finalizer. What it notices
+  builder, reviewer, verifier, diagnosis peer, fixer, or finalizer. What it notices
   outside that job reaches the governing session as an observation — what it
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides
-  each observation under this standard. A build's entries are decided by the
-  deferral worker `todo-orchestrator` dispatches: deciding them, and
-  creating or filing what this policy admits, is that worker's job
+  each observation under this standard. A build's entries and a verifier's
+  pre-existing observations are decided by the deferral worker
+  `todo-orchestrator` dispatches: deciding them, and creating or filing what
+  this policy admits, is that worker's job
   (`sdlc/procedure/lifecycle/work/deferrals`).
 
 - **A defect contradicts a current contract.** A defect is observed behavior
@@ -333,8 +356,9 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     recorded sessions. Before releasing
     the claim, make the todo tell the truth by either holding it with the log
     entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
-    its outcome, then record the settled assignments and handoff. The runtime
-    owns session ending and cleanup. A bare release is forbidden: it
+    its outcome, then record the settled assignments and handoff. Apart from
+    terminal orchestrator retirement, the runtime owns session ending and
+    cleanup. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
     the same preparation waste.
   - **Retract.** For work that is truly invalid — including doc-only work,
@@ -347,9 +371,14 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     evidence during the work record's recovery window and releases working
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
-    claiming it complete. Record the lane's handoff; the runtime owns session
-    ending and cleanup. Removal changes the work record, not a conversation's
-    lifecycle.
+    claiming it complete, and record the lane's handoff. Once removal, handoff,
+    and all record writes are confirmed, retire the withdrawn todo's recorded
+    phase orchestrator thread(s) through the configured `runtime.retire_thread`
+    action under the retirement rule above (converging idempotently on replay,
+    preserving unfinished human or worker obligations, never gating retirement
+    on unrelated resource cleanup, and never retiring standing agents). Apart
+    from terminal orchestrator retirement, session ending and cleanup belong to
+    the runtime.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
   failure or other authoritative evidence that the claimant cannot answer —
@@ -387,9 +416,11 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   future dispatch and does not establish that current work stopped. Once the
   claim is released through `instrukt todo update <slug> --unclaim` and release is
   confirmed, record the claimant and worker handoffs, then run
-  `instrukt todo remove <slug>` and
-  inspect its outcome. The withdrawing agent removes the slug's pending
-  markers in a doc commit; nothing does so automatically.
+  `instrukt todo remove <slug>` and inspect its outcome. The withdrawing agent
+  removes the slug's pending markers in a doc commit; nothing does so
+  automatically. Once removal and all record writes are confirmed, retire the
+  withdrawn todo's recorded phase orchestrator thread(s) through the configured
+  `runtime.retire_thread` action under the retirement rule above.
 
 - **Only an agent-originated filing is the filer's to withdraw.** A filing that
   carries a human's request in their own words is withdrawn only by that human:

@@ -1,6 +1,6 @@
 ---
 activation_trigger: 'Use when a new project/repository is about to be created — a design handoff arrived, a reference repo was named, or the human asks to build a new site, app, service, or tool from scratch.'
-description: 'The "what do you want me to build?" game for new projects: harvest, classify the workload, run the branching checklist, present the brief as the contract, then scaffold via the flavor''s own generator.'
+description: 'The "what do you want me to build?" game for new projects: apply adopt-before-build triage first, harvest, classify the workload, run the branching checklist, present the brief as the contract, then scaffold via the flavor''s own generator.'
 ---
 
 # Greenfield Intake — Procedure
@@ -19,6 +19,13 @@ every production default ships silently from the applicable baseline.
   reference repo are available for harvesting.
 
 ## Steps
+
+0. **Adopt before build.** Before harvesting or scaffolding a new repository,
+   run the adopt-before-build triage ladder in
+   `general/procedure/technical-coordinator` (evaluating existing SaaS/tools
+   over MCP and self-hosted OSS over MCP before custom software); continue to
+   Step 1 only when that ladder selects a custom build
+   (`general/principle/grounding`).
 
 1. **Harvest before asking.** Read the design handoff, reference repo, and any
    provided content. Everything derivable from those is pre-answered and
@@ -77,7 +84,7 @@ every production default ships silently from the applicable baseline.
 6. **Create the project, then scaffold inside it.** Create the project's
    folder and its git repository, then run `instrukt init` in it. It writes
    `instrukt.yaml` with the `project` slug taken from the folder name,
-   `docs/project/`, `AGENTS.master.md` if absent, the hook sections and — when
+   `docs/project/` with its `index.yaml`, the hook sections and — when
    the sdlc domain is published on the computer — `docs/project/schema.yaml`
    copied from sdlc's schema, and never overwrites. Scaffold inside that
    folder via the flavor's own generator, aimed at the existing folder, then
@@ -95,6 +102,9 @@ every production default ships silently from the applicable baseline.
      `sdlc/procedure/scaffolding/typescript-platforms/hono`.
 
    For sites, follow `sdlc/procedure/setup-visual-regression`.
+
+   Bootstrap the project's live verification substrate via
+   `sdlc/procedure/verification-bootstrap` (`sdlc/policy/live-verification`).
 
    Whatever the flavor, end by documenting the project's own quality commands
    in its project documentation so procedures can run those checks.
@@ -124,6 +134,7 @@ handoff, the reference repo, or a baseline already answers is a violation.
 
 ## See Also
 
+- [general/procedure/technical-coordinator](../../../general/procedure/technical-coordinator.md)
 - [sdlc/concept/delivery-portfolio](../concept/delivery-portfolio.md)
 - [sdlc/policy/frontend-production-baseline](../policy/frontend-production-baseline.md)
 - [sdlc/policy/ci-pipeline-conventions](../policy/ci-pipeline-conventions.md)

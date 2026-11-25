@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/session-continuity.rs
+expression: "shown(&p, &refused.get_output().stderr).replace(&native, \"[NATIVE]\")"
+---
+instrukt: the state database at [TMP]/home/.instrukt/state/instrukt.db holds a value this build cannot read: t3:instrukt:launch:<event 1> has a known start but lost its assignment; recover the affected binding/attempt or standing key

@@ -65,34 +65,7 @@ pub(crate) fn subscriptions(home: &Home) -> Result<Subscriptions, ReactionError>
         .into_iter()
         .filter(|entry| !entry.subscriptions.is_empty() && entry.delivered_by.is_empty())
     {
-        let invalid = if entry.taxonomy != "procedure" {
-            Some("only a procedure may declare subscriptions".to_owned())
-        } else if entry
-            .role
-            .as_deref()
-            .is_none_or(|role| role.trim().is_empty())
-        {
-            Some("a subscribing procedure must declare a role".to_owned())
-        } else if entry.activation_trigger.is_some() {
-            Some("a subscribing procedure must not declare an activation trigger".to_owned())
-        } else if entry.subscription_home.is_none() {
-            Some("a subscribing procedure must declare its subscription home".to_owned())
-        } else if entry.scope == IndexScope::Local
-            && entry.subscription_home != Some(SubscriptionHome::Project)
-        {
-            Some("a project's own procedure must subscribe in its project".to_owned())
-        } else {
-            None
-        };
-        let patterns = match invalid {
-            Some(reason) => Err(reason),
-            None => entry
-                .subscriptions
-                .iter()
-                .map(|text| TypePattern::parse(text))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|error| error.to_string()),
-        };
+        let patterns = instrukt_core::subscription::subscriber_patterns(&entry);
         match patterns {
             Ok(patterns) => selected.push((entry, patterns)),
             Err(reason) => dropped.push(DroppedEntry {
@@ -214,6 +187,12 @@ pub(crate) fn consumer(
     })
 }
 
+/// Whether activation `a` is still replaceable, as an SQL condition over the
+/// alias `a`: accepted or pending, with no runtime input selected, accepted
+/// or entered and no delivery selected without a target. Anything else is
+/// frozen for handover or has ended.
+pub(crate) const REPLACEABLE: &str = "a.state IN ('accepted','pending') AND NOT EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND i.state IN ('selected','accepted','entered')) AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state='selected' AND d.target IS NULL)";
+
 /// Only unselected input is replaceable. Selected/accepted runtime messages are immutable.
 fn supersede(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
@@ -222,7 +201,7 @@ fn supersede(
     home: &str,
 ) -> Result<(), StateError> {
     let path = state::db_path(tx);
-    let mut q=tx.prepare("SELECT a.event_id,a.envelope FROM procedure_activations a WHERE a.procedure=?1 AND a.exact_home=?2 AND a.subject=?3 AND a.event_type=?4 AND a.delivery_kind='state' AND a.state IN ('accepted','pending') AND NOT EXISTS (SELECT 1 FROM standing_deliveries d JOIN runtime_inputs i ON i.input_id=d.input_id WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND i.state IN ('selected','accepted','entered')) AND NOT EXISTS (SELECT 1 FROM standing_deliveries d WHERE d.event_id=a.event_id AND d.procedure=a.procedure AND d.exact_home=a.exact_home AND d.state='selected' AND d.target IS NULL) ORDER BY a.rowid").map_err(state::sql(&path))?;
+    let mut q=tx.prepare(&format!("SELECT a.event_id,a.envelope FROM procedure_activations a WHERE a.procedure=?1 AND a.exact_home=?2 AND a.subject=?3 AND a.event_type=?4 AND a.delivery_kind='state' AND {REPLACEABLE} ORDER BY a.rowid")).map_err(state::sql(&path))?;
     let rows = q
         .query_map(
             params![procedure, home, event.subject.to_string(), event.event_type],
@@ -244,10 +223,33 @@ fn supersede(
     }
     for (id, _) in rows {
         if newest.as_ref().is_some_and(|(latest, _)| latest != &id) {
-            tx.execute("UPDATE procedure_activations SET state='superseded',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![id,procedure,home,format!("superseded before delivery by {}",newest.as_ref().map(|r|r.0.as_str()).unwrap_or("unknown"))]).map_err(state::sql(&path))?;
-            tx.execute("UPDATE runtime_inputs SET state='superseded' WHERE state='pending' AND input_id IN (SELECT input_id FROM standing_deliveries WHERE event_id=?1 AND procedure=?2 AND exact_home=?3)",params![id,procedure,home]).map_err(state::sql(&path))?;
-            tx.execute("UPDATE standing_deliveries SET state='superseded' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![id,procedure,home]).map_err(state::sql(&path))?;
+            end_replaceable(
+                tx,
+                &id,
+                procedure,
+                home,
+                &format!(
+                    "superseded before delivery by {}",
+                    newest.as_ref().map(|r| r.0.as_str()).unwrap_or("unknown")
+                ),
+            )?;
         }
     }
+    Ok(())
+}
+
+/// Ends a replaceable activation before delivery: it, its pending input and
+/// its delivery become superseded, with `failure` saying why.
+pub(crate) fn end_replaceable(
+    tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+    event: &str,
+    procedure: &str,
+    home: &str,
+    failure: &str,
+) -> Result<(), StateError> {
+    let path = state::db_path(tx);
+    tx.execute("UPDATE procedure_activations SET state='superseded',failure=?4 WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![event,procedure,home,failure]).map_err(state::sql(&path))?;
+    tx.execute("UPDATE runtime_inputs SET state='superseded' WHERE state='pending' AND input_id IN (SELECT input_id FROM standing_deliveries WHERE event_id=?1 AND procedure=?2 AND exact_home=?3)",params![event,procedure,home]).map_err(state::sql(&path))?;
+    tx.execute("UPDATE standing_deliveries SET state='superseded' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![event,procedure,home]).map_err(state::sql(&path))?;
     Ok(())
 }

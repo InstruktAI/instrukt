@@ -21,10 +21,20 @@ names a home path.
 | File | Schema in `.instrukt/schemas/` | Generated from |
 | --- | --- | --- |
 | `docs/general/index.yaml` | `general-index.schema.json` | the `general` position's index type: `expanded`, `listed`, `agents`, where `agents` admits open provider keys constrained to 1–64 ASCII characters, a leading letter and then letters, digits, underscores or hyphens |
-| `docs/domain/<x>/index.yaml` | `domain-index.schema.json` | the domain position's index type: `description`, `expanded`, `listed` |
+| `docs/domain/<x>/index.yaml` | `domain-index.schema.json` | the domain position's index type: `description`, which the schema requires and admits only as a text, `expanded`, `listed` |
 | `docs/project/index.yaml` | `project-index.schema.json` | the project position's index type: `expanded`, `listed` |
 | `schema.yaml` at the root of any position | `snippet-schema.schema.json` | the snippet-schema type |
 | `instrukt.yaml` (the project layer) | `instrukt.schema.json` | the configuration schema at the current schema version |
+
+The table lists the files that carry a modeline, each with the schema it
+names. The generated set holds one schema more: `company-index.schema.json`,
+generated from the type publication reads a company home's `docs/index.yaml`
+with (`project/instrukt/spec/feature/publication/agent-entrypoints`:
+`expanded` and `listed`, each a list of paths ending in `.md`, no other key,
+and a document holding nothing admitted). It is written wherever the others
+are, and no file carries a modeline naming it: in a project a file at
+`docs/index.yaml` is a misplaced index, and in a company home nothing writes
+`.instrukt/schemas/`.
 
 - Each schema is generated from the same type the validator reads that file
   with — the position index and snippet schema types of the docs context

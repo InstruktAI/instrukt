@@ -19,6 +19,8 @@ pub mod history;
 pub mod mapped;
 #[path = "support/mcp.rs"]
 pub mod mcp;
+#[path = "support/reviewed.rs"]
+pub mod reviewed;
 #[path = "support/runtime.rs"]
 pub mod runtime;
 #[path = "support/slack.rs"]

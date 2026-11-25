@@ -26,11 +26,17 @@ Guide the human's request from the observed state:
 
 - **Adopt a repository:** work in the repository they name. If adopted, report
   what it publishes. Otherwise run `instrukt init` and show the files and claims.
-  If init retained `.instrukt/adopted/AGENTS.md`, review it with the human:
-  move its purpose into the master's `## Purpose` and its instructions into
-  project snippets with index entries, using `instrukt docs schema docs/project`.
-  Remove the kept copy after that review. The first commit to main starts
-  publication; leave that commit pending until the human directs it.
+  If init retained `.instrukt/adopted/AGENTS.md`, review it with the human
+  before the first commit: move its purpose into a project snippet named first
+  in the index's `expanded`, and each instruction into a project snippet of
+  its type with its index entry, using `instrukt docs schema docs/project`.
+  Remove the kept copy after that review. When adopting an existing codebase or
+  repository with docs outside `docs/project/` and `sdlc` is published, run
+  `sdlc/procedure/project-analysis`
+  (`instrukt docs get sdlc/procedure/project-analysis --closure`) to harvest
+  existing docs and conventions into `docs/project/` and `docs/project/index.yaml`.
+  The first commit to main starts publication; leave that commit pending until
+  the human directs it.
 - **Enable a module:** for todos, establish from status that the project's code
   is on GitHub. Establish the chosen runtime's required adapter capabilities;
   report absent prerequisites and keep the module off until they are met.
@@ -48,7 +54,12 @@ Guide the human's request from the observed state:
   reviewer identities. Store instrukt secrets through `instrukt secrets
   set/generate` in the protected machine-local secrets file.
 - **Other requests:** use `instrukt -h` and `instrukt docs` to find the owning
-  command or contract.
+  command or contract. This cockpit covers platform setup on the computer
+  (binary, adopted repositories, runtime, models, GitHub Apps, modules); to
+  onboard a company (company home, members, connectors, and business services),
+  load
+  `instrukt docs get general/procedure/company-onboarding/overview --closure`
+  once platform setup stands.
 
 Ask for human-owned choices: runtime, which documentation repository to adopt
 when none publishes, agent preferences and git authors, modules, and required

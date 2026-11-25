@@ -109,6 +109,37 @@ struct Direction {
     pending: Vec<Pending>,
     delivered: Option<String>,
     receipts: std::collections::BTreeMap<String, Disposition>,
+    /// Its progress as the state database holds it, as this pass last
+    /// loaded or wrote it.
+    stored: StoredProgress,
+    /// A failure is recorded against it.
+    failure_recorded: bool,
+}
+/// A direction's progress in its stored form.
+#[derive(Debug, Default, PartialEq)]
+struct StoredProgress {
+    position: String,
+    seen: String,
+    pending: String,
+    delivered: Option<String>,
+    receipts: String,
+}
+impl Direction {
+    fn progress(&self) -> Result<StoredProgress, serde_json::Error> {
+        Ok(StoredProgress {
+            position: serde_json::to_string(&self.position)?,
+            seen: serde_json::to_string(&self.seen)?,
+            pending: serde_json::to_string(&self.pending)?,
+            delivered: self.delivered.clone(),
+            receipts: serde_json::to_string(&self.receipts)?,
+        })
+    }
+    /// Whether writing this direction would change what is stored: its
+    /// progress differs from what was last loaded or written, or a recorded
+    /// failure is to be cleared. A pass that finds nothing new owes none.
+    fn owes_write(&self) -> Result<bool, serde_json::Error> {
+        Ok(self.failure_recorded || self.progress()? != self.stored)
+    }
 }
 
 pub fn open(
@@ -392,7 +423,7 @@ fn directions_for(home: &Home, link: Option<&str>) -> Result<Vec<Direction>, Lin
     let Some(db) = StateRead::open(home)? else {
         return Ok(Vec::new());
     };
-    let mut q=db.conn().prepare("SELECT p.link,p.source,p.target,p.position_json,p.seen_json,p.pending_json,p.delivered_turn,p.receipts_json FROM conversation_relay_positions p JOIN conversation_links l ON l.id=p.link WHERE l.active=1 AND (?1 IS NULL OR l.id=?1) ORDER BY l.rowid,p.source")?;
+    let mut q=db.conn().prepare("SELECT p.link,p.source,p.target,p.position_json,p.seen_json,p.pending_json,p.delivered_turn,p.receipts_json,p.failure IS NOT NULL FROM conversation_relay_positions p JOIN conversation_links l ON l.id=p.link WHERE l.active=1 AND (?1 IS NULL OR l.id=?1) ORDER BY l.rowid,p.source")?;
     let rows = q
         .query_map([link], |r| {
             Ok((
@@ -404,13 +435,24 @@ fn directions_for(home: &Home, link: Option<&str>) -> Result<Vec<Direction>, Lin
                 r.get::<_, String>(5)?,
                 r.get::<_, Option<String>>(6)?,
                 r.get::<_, String>(7)?,
+                r.get::<_, bool>(8)?,
             ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
     rows.into_iter()
         .map(
-            |(link, source, target, position, seen, pending, delivered, receipts)| {
-                Ok(Direction {
+            |(
+                link,
+                source,
+                target,
+                position,
+                seen,
+                pending,
+                delivered,
+                receipts,
+                failure_recorded,
+            )| {
+                let mut direction = Direction {
                     link,
                     source: source
                         .parse()
@@ -423,27 +465,57 @@ fn directions_for(home: &Home, link: Option<&str>) -> Result<Vec<Direction>, Lin
                     pending: serde_json::from_str(&pending)?,
                     delivered,
                     receipts: serde_json::from_str(&receipts)?,
-                })
+                    stored: StoredProgress::default(),
+                    failure_recorded,
+                };
+                direction.stored = direction.progress()?;
+                Ok(direction)
             },
         )
         .collect()
 }
-fn retain(home: &Home, d: &Direction) -> Result<(), LinkError> {
+/// Records a direction's progress, only when that changes what is stored.
+fn retain(home: &Home, d: &mut Direction) -> Result<(), LinkError> {
+    if !d.owes_write()? {
+        return Ok(());
+    }
     write_direction(home, d, None)
 }
-fn write_direction(home: &Home, d: &Direction, origin: Option<&Origin>) -> Result<(), LinkError> {
+fn write_direction(
+    home: &Home,
+    d: &mut Direction,
+    origin: Option<&Origin>,
+) -> Result<(), LinkError> {
+    let progress = d.progress()?;
     let mut db = StateDb::open(home)?;
     db.write::<_,LinkError>(|tx| {
-        tx.execute("UPDATE conversation_relay_positions SET position_json=?3,seen_json=?4,pending_json=?5,delivered_turn=?6,receipts_json=?7,failure=NULL WHERE link=?1 AND source=?2",params![d.link,d.source.to_string(),serde_json::to_string(&d.position)?,serde_json::to_string(&d.seen)?,serde_json::to_string(&d.pending)?,d.delivered,serde_json::to_string(&d.receipts)?])?;
+        tx.execute("UPDATE conversation_relay_positions SET position_json=?3,seen_json=?4,pending_json=?5,delivered_turn=?6,receipts_json=?7,failure=NULL WHERE link=?1 AND source=?2",params![d.link,d.source.to_string(),progress.position,progress.seen,progress.pending,progress.delivered,progress.receipts])?;
         if matches!(origin,Some(Origin::Closing{..})) {tx.execute("UPDATE conversation_links SET active=0 WHERE id=?1",[&d.link])?;}
         Ok(())
     })?;
+    d.stored = progress;
+    d.failure_recorded = false;
     if matches!(origin, Some(Origin::Closing { .. })) {
         _diagnostics::closed(home, &d.link, &d.source)?;
     }
     Ok(())
 }
 
+/// Whether a failure is recorded against the link itself.
+fn link_failure_recorded(home: &Home, id: &str) -> Result<bool, LinkError> {
+    let Some(db) = StateRead::open(home)? else {
+        return Ok(false);
+    };
+    Ok(db
+        .conn()
+        .query_row(
+            "SELECT failure IS NOT NULL FROM conversation_links WHERE id=?1",
+            [id],
+            |r| r.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
 fn active(home: &Home, id: &str) -> Result<bool, LinkError> {
     let Some(db) = StateRead::open(home)? else {
         return Ok(false);
@@ -484,7 +556,7 @@ fn relay_link(
     let mut retry = false;
     for mut d in directions_for(home, Some(link))? {
         let result = relay_direction(home, source, adapter, &mut d);
-        if result.is_ok() {
+        if result.is_ok() && link_failure_recorded(home, link)? {
             let mut db = StateDb::open(home)?;
             db.write::<_, LinkError>(|tx| {
                 tx.execute(
@@ -641,4 +713,37 @@ fn deliver(
         summary.completed(d, true);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "pure write-decision observation")]
+    use super::*;
+
+    fn loaded(failure_recorded: bool) -> Direction {
+        let mut direction = Direction {
+            link: "link".into(),
+            source: "t3:parent".parse().unwrap(),
+            target: "t3:child".parse().unwrap(),
+            position: serde_json::from_value(serde_json::json!({"cursor": 7})).unwrap(),
+            seen: ["turn".to_owned()].into(),
+            pending: Vec::new(),
+            delivered: Some("turn".into()),
+            receipts: [("turn".to_owned(), Disposition::Empty)].into(),
+            stored: StoredProgress::default(),
+            failure_recorded,
+        };
+        direction.stored = direction.progress().unwrap();
+        direction
+    }
+
+    #[test]
+    fn an_unchanged_direction_with_no_recorded_failure_owes_no_write() {
+        assert!(!loaded(false).owes_write().unwrap());
+    }
+
+    #[test]
+    fn an_unchanged_direction_with_a_recorded_failure_owes_a_write() {
+        assert!(loaded(true).owes_write().unwrap());
+    }
 }

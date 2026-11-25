@@ -10,9 +10,8 @@ role: diagnosis-driver
 ## Required reads
 
 - sdlc
-- [sdlc/procedure/debugging](../../debugging.md)
+- [sdlc/procedure/lifecycle/prepare/diagnose-peer](diagnose-peer.md)
 - [sdlc/policy/process-change-authority](../../../policy/process-change-authority.md)
-- [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
 - [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
 ## Goal
@@ -65,6 +64,8 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.read_thread -->
 
+<!-- @config: runtime.retire_thread -->
+
 ### 1. Triage — the driving session, before any peer is dispatched
 
 Simultaneous log scans and human reports produce near-coincident reports of the same
@@ -84,8 +85,10 @@ judgment is yours to make from the symptoms, not a string match.
   occurrence or dangerous path the filing cites, and confirm it as
   `sdlc/policy/todo-creation-discipline` requires. A bug whose evidence holds continues
   through the rest of triage. A bug without evidence, or whose cited evidence fails a check,
-  is retired: record the reason in the todo's `log`, run `instrukt todo remove {slug}`, and end
-  the session without dispatching a peer. A fix the human asked for in their own words is
+  is retired: record the reason in the todo's `log`, run `instrukt todo remove {slug}` and
+  confirm its outcome, and then retire the withdrawn todo's orchestrator thread via the
+  configured `runtime.retire_thread` action without dispatching a peer (complete all record
+  writes first and never retire standing agents). A fix the human asked for in their own words is
   authorized intent and is not retired here; a human's acknowledgement of an agent's report
   is not such a request.
 - **If a sibling for the same defect is already in flight, retire this todo as the
@@ -93,8 +96,10 @@ judgment is yours to make from the symptoms, not a string match.
   retire themselves: the **survivor** is whichever twin is already further along (has a
   `diagnosis` or a live peer in this phase); when both sit at the same fresh state, the
   survivor is the **earliest-created** todo, tie-broken by lexically-first slug. If this todo
-  is not the survivor, remove it — `instrukt todo remove {slug}`, naming the surviving slug in
-  the reason — and end the session. Dispatch no peer.
+  is not the survivor, remove it — run `instrukt todo remove {slug}` (naming the surviving
+  slug in the reason) and confirm its outcome — and after any additive handoff message below
+  and all record writes complete, retire this withdrawn todo's orchestrator thread via
+  `runtime.retire_thread`. Dispatch no peer.
 - **Hand forward material info — only when sure it helps.** Before removing, compare this
   twin's `input` against the survivor's. If this twin carries discovery context the survivor
   does not surface — a distinct reproduction, a second occurrence site, an environment
@@ -106,7 +111,10 @@ judgment is yours to make from the symptoms, not a string match.
   dispatching.** A report may describe expected behavior, an intentionally
   accepted limit, or a symptom already fixed. Confirm that conclusion against
   `input`, current contracts and targeted evidence. Record the evidence in
-  `log`, remove the todo and end this diagnosis assignment. When confidence is
+  `log`, run `instrukt todo remove {slug}` and confirm its outcome, and retire
+  the withdrawn todo's orchestrator thread via `runtime.retire_thread` once all
+  record writes complete (converging idempotently on replay and never retiring
+  standing agents). When confidence is
   insufficient, retain the todo and dispatch. No suppression ledger participates.
 - **Triage a fix-shaped input.** When the `input` names a missing capability or a solution
   rather than an observed wrong behavior ("X has no way to do Y", "add Z"), re-derive the
@@ -199,8 +207,8 @@ Interrogate in this order:
 3. **Ask why the trace stops at the claimed origin** rather than at an upstream cause. A
    stopping point that reflects where the investigation began, rather than where the system
    boundary is, is the most common way a located symptom passes as a mechanism. Apply the
-   debugging procedure's operation-outcome and failure-handling distinction to the claimed
-   stopping point. Challenge whether the cited contract applies to the observed conditions
+   operation-outcome and failure-handling distinction (`sdlc/procedure/lifecycle/prepare/diagnose-peer`)
+   to the claimed stopping point. Challenge whether the cited contract applies to the observed conditions
    and whether the evidence supports the diagnosis's occurrence coverage.
 4. **Challenge horizontal completeness.** When the claimed origin is a shared contract, ask
    which producers, entry paths, and consumers implement it and what evidence accounts for
@@ -269,7 +277,7 @@ confirmation record is the evidence the three conditions are read from.
   consumer within the system boundary; no sibling implementation is left unexplained.
 - The mechanism is stated as a shape decidable at one site, and the family census records
   its two searches and every site found, each marked matching, not matching, or undecided
-  (`sdlc/procedure/debugging`). A census that investigated a site's reachability, or
+  (`sdlc/procedure/lifecycle/prepare/diagnose-peer`). A census that investigated a site's reachability, or
   searched beyond its two searches, is returned to the peer to be cut back.
 - Every causal transition cites the observations that carry it, names what would falsify it,
   and bottoms out in independently auditable observation. Repeatability limits, where they
@@ -284,7 +292,7 @@ confirmation record is the evidence the three conditions are read from.
   and its diff hunk for Regression; both the introducing and the reachability change for
   Latent; the files, range, and search terms actually covered for Provenance not established.
   Any sibling damage a named commit reveals is recorded for its own triage, never folded into
-  this fix (`sdlc/procedure/debugging`, step 5).
+  this fix (`sdlc/policy/todo-creation-discipline`).
 - The root cause states its minimal causal set and its counterfactual, and prescribes no fix
   and no verification approach.
 
@@ -395,7 +403,7 @@ authorized symptom and causal scope (`sdlc/policy/process-change-authority`).
 ### The cause is a governing decision
 
 When the settled mechanism is one a governing design or decision record prescribes
-(`sdlc/procedure/debugging`, Name the mechanism), the `diagnosis` names that contract and
+(`sdlc/procedure/lifecycle/prepare/diagnose-peer`, Mechanism), the `diagnosis` names that contract and
 states whether its design's `Failure modes` already record this failure. The interrogation
 tests both claims like any other transition. A repeat makes the remedy reopen the decision
 (`sdlc/policy/preparation-artifact-quality`, Structural decisions carry architecture

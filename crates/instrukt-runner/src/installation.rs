@@ -287,7 +287,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         report.finding("earlier registrations", error);
     }
     if request.module.is_none() && !request.conversations {
-        events_transport(request, &mut report);
+        admission_findings(request, &mut report);
     }
     if request.module.is_none() {
         runner_service(request, &demand, &mut report);
@@ -361,22 +361,69 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     Ok(report)
 }
 
-/// Event responses switched on without the event transport they are carried
-/// on: the admission finding at `modules.events`, which keeps that project's
-/// events from being admitted on this computer.
-fn events_transport(request: &Request<'_>, report: &mut Report) {
+/// The admission findings that withhold a responsibility on this computer
+/// though the rest of the layer is admitted: event responses switched on
+/// without the event transport they are carried on (`modules.events`), and
+/// automatic review switched on without what it needs
+/// (`review.automatic`). On a check, the two identities' readiness is asked
+/// for every project admitted for automatic review.
+fn admission_findings(request: &Request<'_>, report: &mut Report) {
+    use instrukt_core::config::FindingKind;
     let Ok(candidate) = instrukt_core::config::Admitted::load(request.home) else {
         return;
     };
-    for finding in candidate
-        .findings
-        .iter()
-        .filter(|finding| finding.kind == instrukt_core::config::FindingKind::EventsNeedTransport)
-    {
+    for finding in candidate.findings.iter().filter(|finding| {
+        matches!(
+            finding.kind,
+            FindingKind::EventsNeedTransport | FindingKind::AutomaticReviewNotReady
+        )
+    }) {
         report.finding(
             format!("{} `{}`", finding.document.display(), finding.key),
             &finding.message,
         );
+    }
+    if !request.check {
+        return;
+    }
+    for project in candidate
+        .generation
+        .projects()
+        .iter()
+        .filter(|project| project.review)
+    {
+        let repository: Result<String, String> = project
+            .config
+            .github_api_url()
+            .map_err(|error| error.to_string())
+            .and_then(|api_url| {
+                instrukt_core::github::repository(&project.config, api_url, &project.checkout)
+                    .map_err(|error| error.to_string())
+            });
+        let label = format!(
+            "{} `{}`",
+            project
+                .checkout
+                .join(instrukt_core::config::CONFIG_FILE_NAME)
+                .display(),
+            instrukt_core::config::REVIEW_AUTOMATIC_KEY
+        );
+        let repository = match repository {
+            Ok(repository) => repository,
+            Err(error) => {
+                report.finding(label, error);
+                continue;
+            }
+        };
+        use instrukt_core::interfaces::ReviewReadiness;
+        match request.github.review_readiness(&repository, request.now) {
+            ReviewReadiness::Met { .. } => {}
+            ReviewReadiness::Unmet(message) => report.finding(label, message),
+            ReviewReadiness::CannotAsk(cause) => report.finding(
+                label,
+                format!("GitHub cannot be asked whether automatic review's identities are ready on {repository}: {cause}"),
+            ),
+        }
     }
 }
 
@@ -588,6 +635,24 @@ fn receiver(request: &Request<'_>, demand: &Demand, report: &mut Report) -> anyh
             kind => format!("{kind}:{}", record.slug),
         });
         ingress_port = Some(ingress.port);
+    }
+    if ingress_port.is_none()
+        && global.module_enabled(Module::Events)?
+        && global.ingress_url()?.is_some()
+        && let Ok(ingress) = global.ingress()
+    {
+        let machine = std::fs::read_to_string(request.home.machine_id_file()).map_err(|_| {
+            anyhow::anyhow!("machine identity missing/unreadable; restore the recorded machine-id before receiver placement or withdrawal")
+        })?;
+        anyhow::ensure!(
+            instrukt_core::machine::MachineId::parse(machine.trim()).is_some(),
+            "invalid machine identity; restore the recorded machine-id before receiver placement"
+        );
+        if machine.trim() == ingress.computer.as_str() {
+            ingress_port = Some(ingress.port);
+            health_route = Some("/hooks/inbound/sign-in/00000000000000000000000000000000".into());
+            projects.push("ingress:url".into());
+        }
     }
     if let Some(port) = ingress_port {
         let ingress = global.ingress()?;

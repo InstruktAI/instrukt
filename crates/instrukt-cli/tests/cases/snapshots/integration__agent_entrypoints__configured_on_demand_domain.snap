@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/cases/agent-entrypoints.rs
+expression: "stdout(&env, &on_demand)"
+---
+# instrukt docs get --domain sdlc
+
+# Sdlc
+
+- sdlc/procedure/ship: About Ship. — when: When the human asks to ship. — `instrukt docs get sdlc/procedure/ship --closure`
+
+## Configured Responsibilities — started when their events arrive
+
+- sdlc/procedure/watch: About Watch. — answers: repo.pushed

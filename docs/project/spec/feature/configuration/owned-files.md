@@ -53,7 +53,7 @@ installation convergence and ticks persist the conversion before proceeding; a s
 compares its outputs only after migration, whether or not main has moved.
 
 A project layer is committed to its repository, so it changes only in a commit,
-as do the editor modelines and the repository's generated `AGENTS.md` files
+as do the editor modelines and the repository's generated root `AGENTS.md`
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 instrukt's pre-commit hook section converts an older project layer and stages it
 into the commit being made, and the `instrukt config` writing verbs a developer

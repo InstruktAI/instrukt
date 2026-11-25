@@ -47,11 +47,38 @@ impl CiState {
     }
 }
 
-/// The candidate's result: its own CI's completed result, or — only while
+/// What the candidate's review says of its result on a project that opted
+/// in to automatic review.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ReviewGate {
+    /// The commit's current verdict with work is needs work.
+    pub needs_work: bool,
+    /// The state of the reviewer bot's review status the commit carries.
+    pub status: Option<String>,
+}
+
+/// The candidate's result: on a project that opted in, its review decides
+/// first (`integration-gate`, Candidate and verification): needs work
+/// current with work fails it, no review status keeps it pending, a failure
+/// status fails it. Then its own CI's completed result, or — only while
 /// nothing has reported for the candidate — "no CI" when the canonical
 /// head carries no status and no check run either. A candidate with nothing
 /// reported on a project whose canonical head has CI is pending.
-pub fn candidate_result(candidate: CiState, canonical_head: Option<CiState>) -> Option<CiResult> {
+pub fn candidate_result(
+    candidate: CiState,
+    canonical_head: Option<CiState>,
+    review: Option<&ReviewGate>,
+) -> Option<CiResult> {
+    if let Some(review) = review {
+        if review.needs_work {
+            return Some(CiResult::Failure);
+        }
+        match review.status.as_deref() {
+            None => return None,
+            Some("failure" | "error") => return Some(CiResult::Failure),
+            Some(_) => {}
+        }
+    }
     match (candidate, canonical_head) {
         (CiState::NothingReported, Some(CiState::NothingReported)) => Some(CiResult::NoCi),
         (state, _) => state.completed(),
@@ -68,12 +95,13 @@ pub fn events(
     project: &ProjectSlug,
     candidate: Option<&CommitSha>,
     candidate_state: Option<CiState>,
+    candidate_review: Option<&ReviewGate>,
     head: Option<&CommitSha>,
     head_state: Option<CiState>,
 ) -> Vec<Event> {
     let mut events = Vec::new();
     if let (Some(candidate), Some(state)) = (candidate, candidate_state)
-        && let Some(result) = candidate_result(state, head_state)
+        && let Some(result) = candidate_result(state, head_state, candidate_review)
     {
         events.push(Event::CiCompleted {
             project: project.clone(),
@@ -102,7 +130,63 @@ pub struct CombinedStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct StatusEntry {
     pub state: String,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub creator: Option<serde_json::Value>,
 }
+
+/// Reduces a commit's status listing, newest first, as GitHub lists every
+/// status ever posted: the reviewer bot's statuses named `instrukt/review`
+/// are set apart, the newest of them being the review status the commit
+/// carries; of the rest the newest of each context is that context's
+/// status, with the state GitHub's combined answer would derive.
+pub fn reduce(
+    listing: &[StatusEntry],
+    reviewer: &instrukt_core::github::Bot,
+) -> (CombinedStatus, Option<String>) {
+    let mut review = None;
+    let mut contexts = std::collections::BTreeSet::new();
+    let mut statuses = Vec::new();
+    for status in listing {
+        let context = status.context.clone().unwrap_or_default();
+        let by_reviewer = status
+            .creator
+            .as_ref()
+            .is_some_and(|creator| reviewer.matches(creator));
+        if context == REVIEW_STATUS_CONTEXT && by_reviewer {
+            review.get_or_insert_with(|| status.state.clone());
+            continue;
+        }
+        if contexts.insert(context) {
+            statuses.push(status.clone());
+        }
+    }
+    let state = if statuses
+        .iter()
+        .any(|s| matches!(s.state.as_str(), "failure" | "error"))
+    {
+        "failure"
+    } else if statuses.iter().any(|s| s.state == "pending") {
+        "pending"
+    } else {
+        "success"
+    };
+    (
+        CombinedStatus {
+            state: state.to_owned(),
+            statuses,
+        },
+        review,
+    )
+}
+
+/// The review status's context (`github-apps`, Review verdict on the
+/// reviewed commit).
+const REVIEW_STATUS_CONTEXT: &str = "instrukt/review";
+
+/// A status listing's page size; a shorter page ends it.
+const STATUS_PAGE: usize = 100;
 
 /// GitHub's check runs of a commit.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
@@ -174,6 +258,9 @@ pub enum CiRead {
 pub struct CommitChecks {
     pub state: CiState,
     pub failed_checks: Vec<CheckRun>,
+    /// On a project that opted in, the state of the reviewer bot's review
+    /// status the commit carries.
+    pub review_status: Option<String>,
 }
 
 impl CheckRun {
@@ -269,10 +356,11 @@ struct Validators {
     cause: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-struct Cached {
-    etag: String,
-    body: String,
+/// One kept answer: its validator and its body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Cached {
+    pub(crate) etag: String,
+    pub(crate) body: String,
 }
 
 /// GitHub's commit status API for one project's repository.
@@ -282,6 +370,9 @@ pub struct CiClient<'a> {
     token: String,
     state: &'a RunnerState,
     project: &'a ProjectSlug,
+    /// On a project that opted in, the reviewer identity's bot: statuses
+    /// are read as a listing and its review status is set apart.
+    reviewer: Option<instrukt_core::github::Bot>,
 }
 
 impl<'a> CiClient<'a> {
@@ -298,7 +389,15 @@ impl<'a> CiClient<'a> {
             token,
             state,
             project,
+            reviewer: None,
         }
+    }
+
+    /// Reads statuses as a listing and sets the reviewer bot's review
+    /// status apart, as on a project that opted in to automatic review.
+    pub fn with_reviewer(mut self, reviewer: instrukt_core::github::Bot) -> Self {
+        self.reviewer = Some(reviewer);
+        self
     }
 
     /// Reads each of `commits`' CI states at `now`, unless the source
@@ -319,16 +418,20 @@ impl<'a> CiClient<'a> {
                 "{}/repos/{}/commits/{commit}",
                 self.api_url, self.repository
             );
-            let read = self
-                .get(&format!("{base}/status"), &mut validators, &mut interval)
-                .and_then(|status| {
-                    self.check_runs(
-                        &format!("{base}/check-runs"),
-                        &mut validators,
-                        &mut interval,
-                    )
-                    .map(|checks| (base, status, checks))
-                });
+            let status = match &self.reviewer {
+                Some(_) => {
+                    self.status_listing(&format!("{base}/statuses"), &mut validators, &mut interval)
+                }
+                None => self.get(&format!("{base}/status"), &mut validators, &mut interval),
+            };
+            let read = status.and_then(|status| {
+                self.check_runs(
+                    &format!("{base}/check-runs"),
+                    &mut validators,
+                    &mut interval,
+                )
+                .map(|checks| (base, status, checks))
+            });
             match read {
                 Ok(read) => bodies.push(read),
                 Err(err) => {
@@ -348,9 +451,17 @@ impl<'a> CiClient<'a> {
         }
         let mut states = Vec::with_capacity(bodies.len());
         for (base, status_body, checks_body) in bodies {
-            let status: CombinedStatus = parse(&format!("{base}/status"), &status_body)?;
+            let (status, review_status) = match &self.reviewer {
+                Some(reviewer) => {
+                    let listing: Vec<StatusEntry> =
+                        parse(&format!("{base}/statuses"), &status_body)?;
+                    reduce(&listing, reviewer)
+                }
+                None => (parse(&format!("{base}/status"), &status_body)?, None),
+            };
             let checks = checks_body;
             states.push(CommitChecks {
+                review_status,
                 state: classify(&status, &checks),
                 failed_checks: checks
                     .check_runs
@@ -360,6 +471,32 @@ impl<'a> CiClient<'a> {
             });
         }
         Ok(CiRead::States(states))
+    }
+
+    /// Every status of a commit, newest first, read page by page under the
+    /// pass's validators until a short page ends it; the pages joined as one
+    /// JSON list.
+    fn status_listing(
+        &self,
+        url: &str,
+        validators: &mut Validators,
+        interval: &mut Option<i64>,
+    ) -> Result<String, CiError> {
+        let mut all: Vec<serde_json::Value> = Vec::new();
+        for page in 1.. {
+            let paged = format!("{url}?per_page={STATUS_PAGE}&page={page}");
+            let items: Vec<serde_json::Value> =
+                parse(&paged, &self.get(&paged, validators, interval)?)?;
+            let full = items.len() == STATUS_PAGE;
+            all.extend(items);
+            if !full {
+                break;
+            }
+        }
+        serde_json::to_string(&all).map_err(|err| CiError::Body {
+            url: url.to_owned(),
+            message: err.to_string(),
+        })
     }
 
     fn check_runs(
@@ -392,73 +529,104 @@ impl<'a> CiClient<'a> {
         validators: &mut Validators,
         interval: &mut Option<i64>,
     ) -> Result<String, CiError> {
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
-            .timeout_global(Some(REQUEST_TIMEOUT))
-            .build()
-            .into();
-        let mut request = agent
-            .get(url)
-            .header("Accept", "application/vnd.github+json")
-            .header("User-Agent", "instrukt");
-        request = request.header("Authorization", &format!("Bearer {}", self.token));
-        if let Some(cached) = validators.answers.get(url) {
-            request = request.header("If-None-Match", &cached.etag);
+        match conditional_get(url, &self.token, validators.answers.get(url), interval)? {
+            Fetched::Unchanged { body } => {
+                tracing::debug!(event = "ci_not_modified", url);
+                Ok(body)
+            }
+            Fetched::Fresh { etag, body } => {
+                match etag {
+                    Some(etag) => {
+                        validators.answers.insert(
+                            url.to_owned(),
+                            Cached {
+                                etag,
+                                body: body.clone(),
+                            },
+                        );
+                    }
+                    None => {
+                        validators.answers.remove(url);
+                    }
+                }
+                Ok(body)
+            }
         }
-        let mut response = request.call().map_err(|err| CiError::Request {
+    }
+}
+
+/// What one conditional GitHub request answered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Fetched {
+    /// `304`: the validator sent still matches; this is the kept body.
+    Unchanged { body: String },
+    /// A fresh `2xx` body with the validator GitHub sent for it, if any.
+    Fresh { etag: Option<String>, body: String },
+}
+
+/// One conditional `GET` of a GitHub API `url` under `token`. `cached` is the
+/// answer the caller keeps for `url`; a `304` is `Unchanged` only when one
+/// was sent. An `X-Poll-Interval` header raises `interval` whether or not the
+/// answer is usable. Where answers are kept is the caller's.
+pub(crate) fn conditional_get(
+    url: &str,
+    token: &str,
+    cached: Option<&Cached>,
+    interval: &mut Option<i64>,
+) -> Result<Fetched, CiError> {
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .http_status_as_error(false)
+        .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
+        .timeout_global(Some(REQUEST_TIMEOUT))
+        .build()
+        .into();
+    let mut request = agent
+        .get(url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "instrukt");
+    request = request.header("Authorization", &format!("Bearer {token}"));
+    if let Some(cached) = cached {
+        request = request.header("If-None-Match", &cached.etag);
+    }
+    let mut response = request.call().map_err(|err| CiError::Request {
+        url: url.to_owned(),
+        message: err.to_string(),
+    })?;
+    if let Some(secs) = response
+        .headers()
+        .get("X-Poll-Interval")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+    {
+        *interval = Some(interval.map_or(secs, |known| known.max(secs)));
+    }
+    let status = response.status().as_u16();
+    if status == 304
+        && let Some(cached) = cached
+    {
+        return Ok(Fetched::Unchanged {
+            body: cached.body.clone(),
+        });
+    }
+    if !(200..300).contains(&status) {
+        return Err(CiError::Status {
+            url: url.to_owned(),
+            status,
+        });
+    }
+    let etag = response
+        .headers()
+        .get("ETag")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+    let body = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|err| CiError::Body {
             url: url.to_owned(),
             message: err.to_string(),
         })?;
-        if let Some(secs) = response
-            .headers()
-            .get("X-Poll-Interval")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.trim().parse::<i64>().ok())
-        {
-            *interval = Some(interval.map_or(secs, |known| known.max(secs)));
-        }
-        let status = response.status().as_u16();
-        if status == 304
-            && let Some(cached) = validators.answers.get(url)
-        {
-            tracing::debug!(event = "ci_not_modified", url);
-            return Ok(cached.body.clone());
-        }
-        if !(200..300).contains(&status) {
-            return Err(CiError::Status {
-                url: url.to_owned(),
-                status,
-            });
-        }
-        let etag = response
-            .headers()
-            .get("ETag")
-            .and_then(|v| v.to_str().ok())
-            .map(str::to_owned);
-        let body = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|err| CiError::Body {
-                url: url.to_owned(),
-                message: err.to_string(),
-            })?;
-        match etag {
-            Some(etag) => {
-                validators.answers.insert(
-                    url.to_owned(),
-                    Cached {
-                        etag,
-                        body: body.clone(),
-                    },
-                );
-            }
-            None => {
-                validators.answers.remove(url);
-            }
-        }
-        Ok(body)
-    }
+    Ok(Fetched::Fresh { etag, body })
 }
 
 fn parse<T: serde::de::DeserializeOwned>(url: &str, body: &str) -> Result<T, CiError> {
@@ -478,6 +646,39 @@ pub(crate) fn credential_deferral(
         .not_before
         .filter(|until| *until > now))
 }
+/// Records `cause` as the source's state without deferring it: the next
+/// tick reads again.
+pub(crate) fn record_source_cause(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    cause: &str,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let mut validators = load_validators(state, project)?;
+    validators.not_before = Some(validators.not_before.map_or(now, |until| until.max(now)));
+    validators.cause = Some(cause.to_owned());
+    save_validators(state, project, &validators)
+}
+
+/// Defers the source for `seconds` from `now`, unless it is already
+/// deferred longer: a poll interval one of its reads was given.
+pub(crate) fn defer_polling(
+    state: &RunnerState,
+    project: &ProjectSlug,
+    seconds: i64,
+    now: Timestamp,
+) -> Result<(), StateError> {
+    let Ok(until) = now.checked_add(SignedDuration::from_secs(seconds)) else {
+        return Ok(());
+    };
+    let mut validators = load_validators(state, project)?;
+    if validators.not_before.is_some_and(|known| known >= until) {
+        return Ok(());
+    }
+    validators.not_before = Some(until);
+    save_validators(state, project, &validators)
+}
+
 pub(crate) fn record_credential_failure(
     state: &RunnerState,
     project: &ProjectSlug,
@@ -502,7 +703,11 @@ mod tests {
             state: state.into(),
             statuses: entries
                 .iter()
-                .map(|s| StatusEntry { state: (*s).into() })
+                .map(|s| StatusEntry {
+                    state: (*s).into(),
+                    context: None,
+                    creator: None,
+                })
                 .collect(),
         }
     }
@@ -585,18 +790,117 @@ mod tests {
     fn no_ci_is_decided_from_the_canonical_head_never_from_the_candidate() {
         use CiState::{Green, NothingReported, Pending, Red};
         assert_eq!(
-            candidate_result(NothingReported, Some(NothingReported)),
+            candidate_result(NothingReported, Some(NothingReported), None),
             Some(CiResult::NoCi)
         );
-        assert_eq!(candidate_result(NothingReported, Some(Green)), None);
-        assert_eq!(candidate_result(NothingReported, Some(Pending)), None);
-        assert_eq!(candidate_result(NothingReported, None), None);
-        assert_eq!(candidate_result(Pending, Some(NothingReported)), None);
+        assert_eq!(candidate_result(NothingReported, Some(Green), None), None);
+        assert_eq!(candidate_result(NothingReported, Some(Pending), None), None);
+        assert_eq!(candidate_result(NothingReported, None, None), None);
+        assert_eq!(candidate_result(Pending, Some(NothingReported), None), None);
         assert_eq!(
-            candidate_result(Green, Some(NothingReported)),
+            candidate_result(Green, Some(NothingReported), None),
             Some(CiResult::Success)
         );
-        assert_eq!(candidate_result(Red, Some(Green)), Some(CiResult::Failure));
+        assert_eq!(
+            candidate_result(Red, Some(Green), None),
+            Some(CiResult::Failure)
+        );
+    }
+
+    fn reviewer() -> instrukt_core::github::Bot {
+        instrukt_core::github::Bot {
+            id: 3,
+            node_id: "BOT_3".into(),
+            login: "reviewer[bot]".into(),
+        }
+    }
+
+    fn listed(context: &str, state: &str, creator: (u64, &str)) -> StatusEntry {
+        StatusEntry {
+            state: state.into(),
+            context: Some(context.into()),
+            creator: Some(serde_json::json!({"id": creator.0, "node_id": creator.1})),
+        }
+    }
+
+    fn gate(needs_work: bool, status: Option<&str>) -> ReviewGate {
+        ReviewGate {
+            needs_work,
+            status: status.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn a_needs_work_verdict_fails_the_candidate_whatever_status_it_carries() {
+        assert_eq!(
+            candidate_result(CiState::Green, None, Some(&gate(true, Some("success")))),
+            Some(CiResult::Failure)
+        );
+    }
+
+    #[test]
+    fn a_candidate_without_a_review_status_is_pending() {
+        assert_eq!(
+            candidate_result(CiState::Green, None, Some(&gate(false, None))),
+            None
+        );
+    }
+
+    #[test]
+    fn a_failing_review_status_fails_the_candidate() {
+        assert_eq!(
+            candidate_result(CiState::Green, None, Some(&gate(false, Some("failure")))),
+            Some(CiResult::Failure)
+        );
+    }
+
+    #[test]
+    fn an_approving_review_status_leaves_the_ci_result() {
+        assert_eq!(
+            candidate_result(CiState::Red, None, Some(&gate(false, Some("success")))),
+            Some(CiResult::Failure)
+        );
+        assert_eq!(
+            candidate_result(CiState::Green, None, Some(&gate(false, Some("success")))),
+            Some(CiResult::Success)
+        );
+    }
+
+    #[test]
+    fn the_reviewer_bots_status_is_no_ci_result() {
+        let listing = [listed("instrukt/review", "failure", (3, "BOT_3"))];
+        let (status, review) = reduce(&listing, &reviewer());
+        assert_eq!(review.as_deref(), Some("failure"));
+        assert_eq!(classify(&status, &checks(&[])), CiState::NothingReported);
+    }
+
+    #[test]
+    fn without_the_reviewer_bots_status_the_ci_statuses_classify_as_before() {
+        let listing = [listed("ci", "success", (9, "U_9"))];
+        let (status, review) = reduce(&listing, &reviewer());
+        assert_eq!(review, None);
+        assert_eq!(classify(&status, &checks(&[])), CiState::Green);
+    }
+
+    #[test]
+    fn a_context_that_failed_and_then_succeeded_on_a_rerun_is_green() {
+        let newest_first = [
+            listed("ci", "success", (9, "U_9")),
+            listed("ci", "failure", (9, "U_9")),
+        ];
+        let (status, _) = reduce(&newest_first, &reviewer());
+        assert_eq!(classify(&status, &checks(&[])), CiState::Green);
+    }
+
+    #[test]
+    fn another_identitys_status_of_the_review_name_is_read_like_any_other() {
+        let listing = [
+            listed("instrukt/review", "failure", (9, "U_9")),
+            listed("instrukt/review", "success", (3, "BOT_3")),
+        ];
+        let (status, review) = reduce(&listing, &reviewer());
+        assert_eq!(review.as_deref(), Some("success"));
+        assert_eq!(classify(&status, &checks(&[])), CiState::Red);
     }
 
     fn sha(c: char) -> CommitSha {
@@ -608,14 +912,14 @@ mod tests {
         let project = ProjectSlug::parse("demo").unwrap();
         let head = sha('a');
         assert_eq!(
-            events(&project, None, None, Some(&head), Some(CiState::Red)),
+            events(&project, None, None, None, Some(&head), Some(CiState::Red)),
             [Event::MainFailing {
                 project: project.clone(),
                 head: head.clone()
             }]
         );
         for state in [CiState::Green, CiState::Pending, CiState::NothingReported] {
-            assert!(events(&project, None, None, Some(&head), Some(state)).is_empty());
+            assert!(events(&project, None, None, None, Some(&head), Some(state)).is_empty());
         }
         let candidate = sha('b');
         assert_eq!(
@@ -623,6 +927,7 @@ mod tests {
                 &project,
                 Some(&candidate),
                 Some(CiState::Green),
+                None,
                 Some(&head),
                 Some(CiState::Red)
             ),

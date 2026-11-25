@@ -74,8 +74,9 @@ declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
 The runner likewise declares conversation hosting in `instrukt run` and the
-conversation assignment lookup; `instrukt-company` implements them and the CLI
-wires them, preserving company → runner → core.
+conversation assignment lookup; `instrukt-company` implements them (along with
+explicit reply queueing for `instrukt company reply`) and the CLI wires them,
+preserving company → runner → core.
 Blueprint supplies its release-owned tool lifecycle to runner's module
 installation; runner consumes that API rather than defining tool policy.
 Core likewise declares the hook-generation interface; the CLI wires blueprint
@@ -132,6 +133,7 @@ deleting the home is not a lossless reset.
 | `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
+| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
 | `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained searchable conversations with their source documents and full-text index, normalized native records, each source's extraction position and each TeleClaude import's progress; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
 | `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, one import batch, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
@@ -164,11 +166,10 @@ Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
 publish it; one project owns each on a computer, and `general`, `project` and
 `third-party` (whose published tree is unchanged) are never a domain's name. Each position may carry an `index.yaml` selecting
 what is rendered and a `schema.yaml` adding sections
-(`project/instrukt/spec/domain/docs`). The project also carries its
-root `AGENTS.master.md` (its purpose only), any nested masters, the committed
-`AGENTS.md` beside each master, rendered at each commit from the repository's
-own content, the generated and git-ignored `.instrukt/schemas/` its YAML
-files' modelines name, and
+(`project/instrukt/spec/domain/docs`). The project also carries its one
+committed `AGENTS.md`, at its root, rendered at each commit from
+`docs/project/index.yaml` and the repository's own content, the generated and
+git-ignored `.instrukt/schemas/` its YAML files' modelines name, and
 instrukt's marked sections in its git hooks. No generated index lives in a
 repository, and no git filter rewrites its files: references are snippet ids
 the CLI resolves when read.
@@ -216,7 +217,7 @@ the command-line parser's own text and exit status 2.
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
-| Slack | company, through its Slack connector | a Socket Mode connection opened outward per company home that declares the connector, hosted in `instrukt run` by the runner; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
+| Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
 
@@ -397,8 +398,10 @@ recorded assignments and native identities. Native turn completion releases
 recorded conversational content to the peer in identity envelopes. Link and
 per-direction progress commit in the existing database, outside native network
 waits; ordinary startup resumes retained positions. Relay failure is visible in
-`instrukt events status` and logs. This reader has no scheduled tick path or
-periodic fallback. Redis remains transport only.
+`instrukt events status` and logs. This reader has no scheduled tick path. Besides
+native notifications it reads again when the source asks its readers to
+(`project/instrukt/spec/feature/runner/history`).
+Redis remains transport only.
 
 ### Event platform
 
@@ -440,6 +443,117 @@ reacting computer, the ingress unless `ingress.reactions` names another, and
 unavailable homes fail there.
 Runtime delivery retains procedure-first briefing, untrusted event provenance and
 session-fixed timing through A3's bounded batch log.
+
+### Review gate
+
+On a project that opts in, every commit GitHub checks before the canonical
+branch advances carries the reviewer bot's review status, obtained without
+anyone asking: an eligible pull request's current head and the integrator's
+candidate. Four contexts take part and each keeps its own decision; the review
+itself belongs to the procedure that answers the request.
+
+| Context | Decides | Contract |
+| --- | --- | --- |
+| runner | Which commits are owed a review; the one live request per commit and its repetition until a verdict exists | `project/instrukt/spec/feature/runner/pull-request-review` |
+| work | Review evidence and its admission, which evidence is current, its publication and transfer, and the two identities' readiness | `project/instrukt/spec/feature/work/github-apps` |
+| workflow | Whether a candidate's content is covered | `project/instrukt/spec/feature/workflow/integration-gate` |
+| configuration | The per-project opt-in and where its prerequisites are refused | `project/instrukt/spec/feature/configuration/layered-configuration` |
+
+```mermaid
+sequenceDiagram
+  participant G as GitHub
+  participant R as runner (tick)
+  participant V as reviewer (agent)
+  participant W as work
+  participant F as workflow
+  participant I as integrator (agent)
+  R->>G: open pull requests and heads (conditional requests)
+  R->>W: does this head carry a verdict?
+  W->>G: for a head with no evidence here, the reviewer bot's status on it, the review that status links and its latest review on each pull request observed at that head
+  R-->>V: runner.review_needed for an owed commit with no live request (head, pinned base, request number)
+  V->>W: instrukt review show (head), then instrukt review record (head, base, verdict, report)
+  W->>R: this commit's requests with their standing and pinned base, and for a settled commit which input opened the turn the caller offers its revision in
+  R->>W: publish what is outstanding to the pull requests observed at each head
+  W->>G: a review on each such pull request and the review status on the commit, linking one of those reviews, as the reviewer bot, until the newest of each shows the current verdict
+  R->>F: active candidate: is its content covered?
+  F->>W: current evidence of each head and commit the finding depends on
+  alt every commit covered
+    R->>W: record the derived approval
+    W->>G: review status on the candidate commit, by a tick that found it covered
+  else a commit is not covered
+    R-->>V: runner.review_needed for the exact candidate
+  end
+  R-->>I: runner.ci_completed once the candidate's result is complete
+```
+
+A review is one judgment of one commit from the pinned base its request
+carries, which the runner selects
+(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests).
+A verdict covers the canonical branch only when that base lies on it, and
+earns candidate coverage only then. Requests are counted per commit: one is live
+at a time, and a request delivery selected for handover keeps the commit until
+its outcome is known, whichever pull requests point at it meanwhile. The
+outcome is delivered to every eligible pull request at that commit. The runner
+reads GitHub and decides what is owed; it decides nothing about a verdict.
+Work admits the first verdict for a commit; only the settling session revises
+it, in a turn no request for the commit opened. Where a request of the commit
+reached that session, work asks the runner which input opened the turn the
+session has in progress; while the runtime cannot say, the revision is refused
+within the command's wait, and the earlier version stays current and
+published. A candidate's result follows work's current verdict of it before
+the status does: needs work is a failed result from its admission. A derived
+approval is
+derived again until GitHub shows it as the status, and is withdrawn when a
+commit is no longer covered
+(`project/instrukt/spec/feature/workflow/integration-gate`).
+
+instrukt owns the review state and GitHub reflects and enforces it. Evidence
+is recorded locally before anything is published, and GitHub receives two
+publications and no evidence: the review status and the pull-request reviews.
+Each follows the commit's current verdict by what the reviewer bot published
+last, so a revision replaces what an earlier version left there, also when it
+returns to an earlier outcome, and a publication is retried from the evidence
+without another review (`sdlc/policy/state-storage`). The status links the
+review that carries the same verdict, so the review of a commit is found from
+the commit itself.
+
+Review state has three stores, split by who writes and who waits. Commands
+wait on the evidence store alone; the tick writes the other two, and none of
+them takes the state database's writer lock.
+
+| Path | Holds | Re-created from |
+| --- | --- | --- |
+| `state/review.db` | head verdicts with their versions, reports and moments, each standing here, handed off by an export or set aside by an import, exemptions and imported derived approvals; written only by the `instrukt review` commands | nothing: it is the only copy of this computer's evidence and must be preserved; another computer receives it through an export |
+| `state/review.lock` | the evidence store's write-isolation unit, held for each of those commands' transactions | taken again by the next command |
+| `state/review-publication.db` | the derived approvals the tick recorded and each withdrawal of one, what GitHub shows of each current verdict per destination, and the verdicts recognised as already published with their review body; written only by the tick | what GitHub shows, and a fresh coverage derivation for the integration head; the derived approval of a candidate the canonical branch has taken and each withdrawal with the commit found uncovered are not re-created |
+| `state/review-publication.lock` | the publication store's write-isolation unit, held for each tick's publication writes | taken again by the next tick |
+| `state/review-observation.db` | the pages of the pull-request listing with their conditional validators; written only by the tick's review observation | one unconditional request per page |
+| `state/review-observation.lock` | the observation store's write-isolation unit, held for each observation pass's writes | taken again by the next pass |
+
+One computer serves a project's automatic review: the one the project is
+admitted on. It alone observes and publishes. Serving moves to another
+computer with the evidence that stands in the evidence store, through
+`instrukt review export` on the one and `instrukt review import` on the other.
+An export is one snapshot under the evidence lock, declared by its digest. It
+hands the exported verdicts off: the exporting computer publishes and revises
+them no further, and they stand again where the file is imported. An import
+adds to what the importing computer holds; where another verdict of a commit
+stands there, it changes nothing until its operator states which stands, and
+the other one is kept as set aside. A computer that
+serves without an import recognises, among the verdicts the reviewer bot
+published for a head, the one decided last, from its status, the review that
+status links and its reviews on the pull requests observed there. Every
+publication carries the moment its verdict was decided, and that moment orders
+them; the date GitHub gives a publication says when it was delivered, and a
+verdict repeated on a further pull request keeps the moment it had. A verdict
+that an import keeps or makes current over another one is given a moment
+later than that one's where it is not later already, so the operator's choice
+orders two verdicts as a revision orders two versions. The
+computer brings a status or a pull request that lags behind that verdict up to
+it and asks for the rest.
+Observation rides the tick's existing
+conditional GitHub pass, requests the event platform and publication the tick;
+the gate adds no webhook, queue or process.
 
 ## Failure modes
 
@@ -499,3 +613,118 @@ session-fixed timing through A3's bounded batch log.
   `instrukt todo refresh <slug>` is its door
   (`project/instrukt/spec/feature/work/github-record`).
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
+- **A turn's commit becomes readable after the read its notification triggered:**
+  that read finds nothing new and ends successfully, no native notification
+  follows, and the link shows neither a failure nor a pending handover for the
+  turn. Each reader then reaches the turn on its own trigger. Link relay reads
+  again when the source asks its readers to
+  (`project/instrukt/spec/feature/runner/conversation-links`). History
+  extraction reads again on the requests it follows
+  (`project/instrukt/spec/feature/runner/history`). A company conversation
+  with outstanding work reads again on the company relay's own retry
+  (`project/instrukt/spec/feature/company/conversations`). A history search or
+  an explicit extraction catches up history only.
+
+- **A reviewer's turn ends without a verdict for a head it was handed:** the
+  head stays owed. While it is still current the runner asks again at growing
+  intervals; the head carries no review status meanwhile and, where the status
+  is required, cannot merge.
+- **A review request is accepted by the runtime and never seen entering a
+  turn:** the request ends as unconfirmed and the commit is asked for again.
+  If the first handover enters after the commit was settled, its procedure
+  reads the commit's evidence first and reviews nothing.
+- **A request selected for handover belongs to a commit that stopped being
+  owed:** it is handed over as selected and stays live; no other request is
+  emitted for that commit until its outcome is known.
+- **A commit stops being a head while its request is live and becomes one
+  again, on the same or another pull request:** no second request is emitted;
+  the live review is that commit's and its verdict reaches the pull requests
+  then at that head.
+- **A head is replaced before its request reaches a reviewer and later becomes
+  current again:** it is asked for under a new request; the replaced request's
+  record does not stand in its way.
+- **GitHub is unavailable while a verdict waits for publication:** the
+  evidence stays recorded with its publication outstanding and its cause; a
+  later tick publishes it. The review is not repeated.
+- **GitHub shows an earlier version of a commit's verdict, or lost its
+  status:** the status and the reviews are written again from the current
+  verdict; a reversed verdict replaces the earlier one, and a verdict that
+  returns to an earlier outcome is written as a new review.
+- **A pull request is closed before its review was written and reopened at the
+  same head:** the review is owed again and written from the existing
+  evidence.
+- **A session records a verdict while a request of that commit is selected and
+  no session holds it yet:** the verdict is refused; the review is that
+  request's.
+- **The runtime cannot say which input opened the turn of a settling session
+  that a request of the commit reached:** the command asks again within its
+  own wait and then refuses the revision, naming the runtime. Nothing is
+  recorded, the earlier version stays current and published, and the session
+  records the revision once the runtime answers.
+- **A needs-work version of a candidate's verdict is admitted while GitHub
+  still shows the earlier approving status:** the candidate's result is a
+  failure from that tick on, whatever the status shows, and the failure status
+  follows when it is published.
+- **A covering head's approval is replaced by needs work before the
+  candidate's derived approval reached GitHub:** the derivation that precedes
+  publication finds the commit uncovered, the derived approval is withdrawn
+  and the exact candidate is reviewed. A derived approval reaches GitHub
+  status first, so nothing of a withdrawn one was published.
+- **A candidate adds a commit that is neither an approved head, reproducible
+  nor exempted by its author:** it receives no derived approval; the exact
+  candidate is reviewed, and promotion waits for that verdict.
+- **A recovery candidate removes more than the red head's own promotion
+  added:** it is not covered as a revert; the exact candidate is reviewed.
+- **A verdict is recorded while its project's evidence is being exported:**
+  the recording falls wholly before the snapshot or wholly after it; a later
+  version of a handed-off verdict is refused on the exporting computer and
+  names the export and its door.
+- **An import brings another verdict of a commit than the one that stands
+  here:** the import is refused whole and names the commit; nothing changes
+  until the operator states which verdict stands, and the other one is kept
+  as set aside.
+- **An export file is imported again:** with the same statement it changes
+  nothing further. A file whose content does not match the digest it declares
+  is refused whole.
+- **An export file is lost before it is imported:** its verdicts stay handed
+  off on the computer that wrote it and stand nowhere. The computer that
+  serves next recognises what was published of them and has every other owed
+  head reviewed again.
+- **An earlier file is imported on a computer that has since handed the
+  commit's verdict on:** the file's version stands there again. Work keeps no
+  account of where a verdict went; the two are met as two verdicts of one
+  commit when a file of one computer reaches the other, and the operator
+  states which stands.
+- **A head with no evidence here already carries the reviewer bot's status,
+  and another eligible pull request has it as its head:** the review that
+  status links is read, also from a pull request that was closed unmerged, and
+  written to that pull request too; no review is asked for. A status that no
+  review accompanies is recognised as well: no review is asked for and none is
+  written.
+- **A publication stopped between a review and its status, and a computer
+  without the evidence serves next:** the verdict decided last among those the
+  reviewer bot published is recognised from the reviews on the observed pull
+  requests as well as from the status, the status is brought up to it, and a
+  verdict decided earlier is never written over a later one.
+- **A computer without the evidence repeated an approval on a further pull
+  request while the pull request carrying a later change request was a draft,
+  and that pull request is ready again:** the repeated approval carries the
+  moment of the approval it repeats, so the change request is the verdict
+  decided last although GitHub received it earlier. The status and the other
+  pull request are brought up to the change request with its findings, and the
+  head is not reviewed again.
+- **An import chose a change request over a verdict whose approval was
+  recorded later and is on GitHub, the publication stopped between the review
+  and the status, and a computer without the evidence serves next:** the
+  import gave the chosen change request a moment later than the approval's, so
+  the review on the pull request is the verdict decided last although its
+  review was judged first. The status is brought up to it, the approval that
+  was set aside is written nowhere again, and the head is not reviewed again.
+- **The publication store is lost after a tick withdrew a derived approval:**
+  the account of that withdrawal and of the commit found uncovered is gone and
+  no derivation gives it again. Nothing is published from the loss: an approval
+  GitHub does not show is derived again before anything of it is written.
+- **A computer is lost, or loses its home, without an export:** what it had
+  not published is gone. The computer that serves next recognises what the
+  reviewer bot published, has every other owed head reviewed again, and shows
+  whatever approval GitHub last received.

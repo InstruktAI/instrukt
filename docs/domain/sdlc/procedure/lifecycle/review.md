@@ -148,12 +148,39 @@ If the review produces no Important-or-higher findings, include a
 3. Evidence that copy-paste duplication was checked.
 4. Evidence that security was reviewed.
 
-For user-facing changes, record the observable behavior verified and the
-evidence that confirms it. For browser-based changes, follow the project's
-applicable browser smoke path when the environment allows it and record the
-observation.
-When lifecycle build evidence exists, inspect the builder's recorded smoke path
-as well. An unverified user-facing requirement is a finding.
+**Static review boundary.** Review judges the frozen target through static
+white-box inspection — reading source files, diffs, contracts, architecture,
+domain ownership, security, error handling, documentation, and test quality,
+along with read-only structural checks (`git diff`, `instrukt docs validate`,
+`instrukt docs render --check`, `instrukt specs coverage --check`). Live
+behavioral verification on real surfaces (booting application stacks,
+containers, browsers, mobile simulators, live daemons, and black-box user
+flows) belongs to the downstream `verifier` stage
+(`sdlc/procedure/lifecycle/work/verify`, `sdlc/policy/live-verification`) on
+the exact committed candidate HEAD; full test-suite execution belongs to
+`integrate` / CI (`sdlc/procedure/lifecycle/integrate`). Definition of Done
+gates (`sdlc/policy/definition-of-done`) name test passage and live behavior as
+delivery outcomes; on routes covered by downstream verification, leave
+test-suite execution to `integrate` / CI and live stack or runtime probes to
+`verifier` (`sdlc/policy/live-verification`), and do not file a finding solely
+that downstream live verification has not run yet.
+
+- **Lifecycle builds covered by downstream `verifier`**
+  (`sdlc/procedure/lifecycle/work/review-build`, excluding `HOTFIX_DEFERRED`
+  hotfixes): confirm from source, contracts, and test bindings that every
+  required user-facing outcome is delivered, inspecting recorded builder
+  build-smoke notes when present; live proof on the real surface runs in the
+  downstream `verifier` stage.
+- **Targets carrying no downstream `verifier` pass** — ad-hoc commit reviews
+  outside a todo lifecycle (`sdlc/procedure/lifecycle/work/review-commits`) and
+  emergency hotfixes deferring `verifier` via `HOTFIX_DEFERRED`
+  (`sdlc/policy/live-verification`): record the observable user-facing behavior
+  verified and the evidence confirming it. For browser-based changes on these
+  routes, follow the project's applicable browser smoke path when the
+  environment allows it (or rely on independent CI browser verification or a
+  separate `verifier` pass when present) and record the observation; an
+  unverified user-facing requirement observed by no party other than its author
+  is a finding.
 
 ### 3. Preserve reviewer separation
 
@@ -197,8 +224,9 @@ A finding is valid only when all four hold:
    decision or an authorization names no state of the target.
 
 A finding that claims a defect establishes, from current sources, that a
-reachable condition triggers it (`sdlc/concept/defect-evidence`); a defect claim
-on an unreachable condition is an investigation lead.
+reachable condition triggers it (`sdlc/concept/defect-evidence`); any defect
+claim failing `sdlc/concept/defect-evidence` is an investigation lead, never a
+finding.
 
 An observation missing any one of these is an **investigation lead**, not a
 finding: it cannot block, never enters remediation, requires no producer
@@ -218,9 +246,14 @@ Use this format:
 Severity — Policy: <citation>
 Location: <file:line>
 Violation: <one sentence stating what the target does that the cited rule forbids>
+Method: <how the finding was discovered or reproduced — e.g. direct source or document comparison, concrete deliberate-misuse path, or real-use producer / unassisted ordinary-use steps — explicitly disclosing any constructed inputs, synthetic setup, state tampering, environment modification, or timing control>
 Evidence: <each factual premise of the violation, with the observation that shows it>
 Closure: <the state of the target that resolves it, within the frozen scope, stated without prescribing implementation>
 ```
+
+Every finding states its `Method:` by default without being asked, so the
+reviewer checks admissibility before filing and the receiving author and
+orchestrator can independently audit how the conclusion was reached.
 
 Use exactly three severity tiers:
 
@@ -262,8 +295,9 @@ not part of that denominator (`sdlc/policy/preparation-artifact-quality`).
 Remediation closes valid findings
 within that scope; a valid omission finding may add material, but scope growth
 is semantic and line count proves nothing either way. A remediation changes the
-target, not its authority; every addition remains answerable to the same frozen
-denominator.
+target, not its authority: it does not introduce new binding specification
+promises solely to defend an added mechanism against an earlier finding, and
+every addition remains answerable to the same frozen denominator.
 
 The first review of a target is one complete discovery pass over the frozen
 digest. A remediation review closes existing findings and inspects the
@@ -285,7 +319,12 @@ points converges one leftover per pass
 (`sdlc/policy/preparation-artifact-quality`). The re-derivation begins at the
 criterion the failing invariant serves: it is traced to the authorized intent
 before the mechanism is rebuilt, and a criterion the intent does not carry is
-taken out rather than defended by further mechanism. A second edit to the same
+taken out rather than defended by further mechanism. On a second failure in the
+same mechanism or invariant, pruning precedes patching: before requesting
+another pass that adds rules, state, or coordination, establish whether a
+simpler policy-compliant boundary satisfies every approved criterion and
+eliminates the failing interaction; if so, cut the mechanism back to that
+boundary instead of adding machinery to defend it. A second edit to the same
 region establishes neither by itself.
 
 Review passes are counted within a review cycle. A valid substantive-drift stamp
@@ -323,11 +362,19 @@ carries it to the human, and neither does the round count.
 Neither elapsed rounds nor stopping authorizes approval, scope growth, or a
 weakened finding.
 
-Findings and their dispositions persist with the reviewed work. A fresh reviewer
-derives independently before reading prior dispositions, then reconciles; a
-continuing reviewer works from its own ledger. A disposition reopens only on
-changed substrate or material new evidence; re-filing it otherwise is reviewer
-incompleteness.
+Review is bidirectionally adversarial. Findings and their dispositions persist
+with the reviewed work. A fresh reviewer derives independently before reading
+prior dispositions, then reconciles; a continuing reviewer works from its own
+ledger. When the producer records a grounded rejection — including that a
+finding omits `Method:` or that its disclosed `Method:` fails admissibility
+(including `sdlc/concept/defect-evidence` for defect claims) — the reviewer
+adjudicates the rejection on its merits and withdraws the finding unless
+admissible evidence for the claim or changed substrate overturns it. An
+orchestrator may audit findings and raise an evidence-backed challenge to guide
+remediation or continuation, while formal finding dispositions remain the
+producer's and verdicts remain the reviewer's. A disposition reopens only on
+changed substrate or material new evidence; re-filing an unrefuted rejected
+finding is reviewer incompleteness.
 
 ## Outputs
 

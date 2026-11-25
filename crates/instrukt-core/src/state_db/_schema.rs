@@ -43,7 +43,213 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V30),
     Step(v31),
     Step(v32),
+    Step(v33),
+    Step(v34),
+    Step(v35),
+    Sql(V36),
+    Sql(V37),
 ];
+
+/// Version 36: a stored Antigravity reservation holding `thinking_level` carries it as T3's `thought_level`.
+const V36: &str = "
+UPDATE manual_standing_reservations SET request=json_remove(json_set(request,'$.selection.options.thought_level',json_extract(request,'$.selection.options.thinking_level')),'$.selection.options.thinking_level') WHERE json_extract(request,'$.selection.kind')='antigravity' AND json_type(request,'$.selection.options.thinking_level') IS NOT NULL;
+";
+
+/// Version 37: `withdrawal_intents`, the durable intent of a withdrawal
+/// whose working resources are being released (`state-database`, "Work
+/// tables"). Local-only; never reflected.
+const V37: &str = "
+CREATE TABLE IF NOT EXISTS withdrawal_intents (
+    todo_id     TEXT PRIMARY KEY REFERENCES todos(id) ON DELETE CASCADE,
+    branch      TEXT,
+    branch_head TEXT,
+    worktrees   TEXT NOT NULL,
+    workspace_path TEXT NOT NULL,
+    workspace   TEXT NOT NULL CHECK (workspace IN ('absent', 'present', 'released')),
+    branch_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK (branch_state IN ('pending', 'partial_marker', 'deleted')),
+    started_at  TEXT NOT NULL
+);
+";
+
+/// Version 35: pin `reply_mode` on `connected_conversations` at binding
+/// creation and record connector-supplied `thread` on `conversation_messages`
+/// so opaque conversation IDs are never parsed in generic company logic.
+fn v35(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for (table, column, ddl) in [
+        (
+            "connected_conversations",
+            "reply_mode",
+            "ALTER TABLE connected_conversations ADD COLUMN reply_mode TEXT NOT NULL DEFAULT 'turn_output';",
+        ),
+        (
+            "conversation_messages",
+            "thread",
+            "ALTER TABLE conversation_messages ADD COLUMN thread TEXT;",
+        ),
+    ] {
+        let present: bool = tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    Ok(())
+}
+
+/// Version 34: named company connectors (`role`, `session_scope`,
+/// `opening_conversation` on `connected_conversations`; `conversation_display`
+/// on `conversation_messages`; `'not_admin'` refusal reason on
+/// `conversation_refusals`).
+fn v34(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for (table, column, ddl) in [
+        (
+            "connected_conversations",
+            "role",
+            "ALTER TABLE connected_conversations ADD COLUMN role TEXT NOT NULL DEFAULT 'company-agent';",
+        ),
+        (
+            "connected_conversations",
+            "session_scope",
+            "ALTER TABLE connected_conversations ADD COLUMN session_scope TEXT NOT NULL DEFAULT 'conversation';",
+        ),
+        (
+            "connected_conversations",
+            "opening_conversation",
+            "ALTER TABLE connected_conversations ADD COLUMN opening_conversation TEXT;",
+        ),
+        (
+            "conversation_messages",
+            "conversation_display",
+            "ALTER TABLE conversation_messages ADD COLUMN conversation_display TEXT;",
+        ),
+    ] {
+        let present: bool = tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE TABLE conversation_refusals_v34 (
+            company TEXT NOT NULL, connector TEXT NOT NULL, conversation TEXT NOT NULL,
+            sender TEXT NOT NULL, reason TEXT NOT NULL CHECK(reason IN ('not_own','not_admin','unavailable')),
+            received_at TEXT NOT NULL, replied_at TEXT, failure TEXT, attempted_at TEXT,
+            PRIMARY KEY(company,connector,conversation,sender,reason)
+        );
+        INSERT INTO conversation_refusals_v34(rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,attempted_at)
+            SELECT rowid,company,connector,conversation,sender,reason,received_at,replied_at,failure,attempted_at
+            FROM conversation_refusals;
+        DROP TABLE conversation_refusals;
+        ALTER TABLE conversation_refusals_v34 RENAME TO conversation_refusals;",
+    )
+}
+
+/// Version 33: company-admin DM self-service columns on `conversation_messages`,
+/// MCP sign-in tables (including host-scoped `mcp_registrations`), and built-in
+/// per-company OIDC issuers (`company_issuers`).
+fn v33(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    for column in ["sender_is_admin", "is_direct"] {
+        let present: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('conversation_messages') WHERE name=?1)",
+            [column],
+            |row| row.get(0),
+        )?;
+        if !present {
+            tx.execute_batch(&format!(
+                "ALTER TABLE conversation_messages ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0;"
+            ))?;
+        }
+    }
+    tx.execute_batch(
+        "CREATE TABLE IF NOT EXISTS mcp_registrations (
+            return_id      TEXT PRIMARY KEY NOT NULL,
+            company        TEXT,
+            server         TEXT,
+            host_client    TEXT,
+            issuer         TEXT NOT NULL,
+            declared       INTEGER NOT NULL,
+            client_id      TEXT NOT NULL,
+            client_secret  TEXT,
+            secret_digest  TEXT,
+            return_address TEXT NOT NULL,
+            registered_at  TEXT NOT NULL,
+            retired_at     TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_host_client
+            ON mcp_registrations(host_client)
+            WHERE host_client IS NOT NULL AND retired_at IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS mcp_registrations_company_server
+            ON mcp_registrations(company, server, declared)
+            WHERE company IS NOT NULL AND server IS NOT NULL AND retired_at IS NULL;
+        CREATE TABLE IF NOT EXISTS company_issuers (
+            company          TEXT PRIMARY KEY NOT NULL,
+            issuer_id        TEXT NOT NULL UNIQUE,
+            public_jwks_json TEXT NOT NULL,
+            updated_at       TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS mcp_generations (
+            company    TEXT NOT NULL,
+            person     TEXT NOT NULL,
+            server     TEXT NOT NULL,
+            generation INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (company, person, server)
+        );
+        CREATE TABLE IF NOT EXISTS mcp_logins (
+            company        TEXT NOT NULL,
+            person         TEXT NOT NULL,
+            server         TEXT NOT NULL,
+            resource       TEXT NOT NULL,
+            subject        TEXT,
+            return_id      TEXT NOT NULL,
+            access_token   TEXT NOT NULL,
+            expires_at     TEXT,
+            checked        INTEGER NOT NULL DEFAULT 1,
+            refresh_token  TEXT,
+            scopes         TEXT,
+            signed_in_at   TEXT NOT NULL,
+            renewed_at     TEXT,
+            renewing_until TEXT,
+            PRIMARY KEY (company, person, server)
+        );
+        CREATE TABLE IF NOT EXISTS mcp_sign_ins (
+            state_digest   TEXT PRIMARY KEY NOT NULL,
+            company        TEXT NOT NULL,
+            person         TEXT NOT NULL,
+            server         TEXT NOT NULL,
+            return_id      TEXT NOT NULL,
+            resource       TEXT NOT NULL,
+            scopes         TEXT,
+            generation     INTEGER NOT NULL,
+            connector      TEXT NOT NULL,
+            conversation   TEXT NOT NULL,
+            message        TEXT NOT NULL,
+            recipient      TEXT NOT NULL,
+            code_verifier  TEXT,
+            nonce          TEXT,
+            link           TEXT,
+            created_at     TEXT NOT NULL,
+            expires_at     TEXT NOT NULL,
+            state          TEXT NOT NULL CHECK (state IN ('open','exchanging','completed','declined','refused','failed','undelivered','expired','cancelled')),
+            link_sent_at   TEXT,
+            told_at        TEXT,
+            closed_at      TEXT,
+            failure        TEXT
+        );
+        CREATE TABLE IF NOT EXISTS mcp_sign_in_waiters (
+            state_digest   TEXT NOT NULL,
+            waiter         TEXT NOT NULL,
+            waiting_until  TEXT NOT NULL,
+            PRIMARY KEY (state_digest, waiter)
+        );",
+    )
+}
 
 /// Drops every history table earlier versions created; the history store
 /// owns retained history (`project/instrukt/spec/feature/runner/history`).

@@ -168,7 +168,12 @@ pub struct GeneralIndex {
 #[serde(deny_unknown_fields)]
 pub struct DomainIndex {
     /// The one line saying what the domain is about.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    // The editor schema requires it as text; parsing still reads an index
+    // without one, which validation reports as `index-description-missing`.
+    // Serde reads a missing `Option` as `None` without `default`, which the
+    // schema's `required` needs absent.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(required)]
     pub description: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expanded: Vec<SnippetId>,
@@ -441,6 +446,21 @@ mod tests {
             assert_eq!(names, wanted);
             assert!(!open, "{wanted:?} admits no other key");
         }
+    }
+
+    #[test]
+    fn the_domain_index_schema_requires_its_description_as_text() {
+        let schema = DomainIndex::editor_schema();
+        assert_eq!(schema["required"], serde_json::json!(["description"]));
+        assert_eq!(schema["properties"]["description"]["type"], "string");
+        // Parsing still reads an index without one; validation reports it.
+        assert!(
+            PositionIndex::parse(
+                &Position::of_domain(&DomainName::parse("sdlc").unwrap()),
+                "expanded: []\n"
+            )
+            .is_ok()
+        );
     }
 
     #[test]

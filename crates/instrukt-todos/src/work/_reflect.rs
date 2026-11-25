@@ -77,15 +77,53 @@ pub(crate) fn check_compatible(gh: &GitHub, item: &LocalItem) -> Result<(), GitH
     Ok(())
 }
 
-/// What a pull found.
+/// What a pull found: the read of an issue's revision chain, before any of
+/// it is committed ([`judgment`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Pulled {
-    /// Nothing reflected yet, or GitHub holds what this computer knows.
+    /// Nothing reflected yet, the issue did not change, or its head is the
+    /// revision this computer recorded: nothing to judge.
     Current,
-    /// A newer remote revision entered the local record.
+    /// A head this computer has not recorded holds the local record: this
+    /// computer's own revision, whose answer never arrived.
+    Landed,
+    /// A newer remote revision entered the local record, which had nothing
+    /// pending.
     Adopted,
-    /// A newer remote revision met pending local changes.
+    /// A head this computer has not recorded met pending local changes.
     Conflicted,
+}
+
+/// Whether what a pull found may be committed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Judgment {
+    /// Commit what the pull found: the refreshed row, a confirmation, an
+    /// adoption or the conflict mark.
+    Commit,
+    /// Commit nothing about the head: it may be this computer's own post,
+    /// which a reflection in progress has not recorded yet, or another
+    /// computer's, and only the holder of the reflection lock, with no
+    /// reflection of this computer posting, can judge it.
+    Unjudged,
+}
+
+/// Whether a pull that found `pulled` for a row with `pending` local
+/// changes may commit it, `held` telling whether the puller holds the
+/// reflection lock. Every reflection on this computer posts and records
+/// under that lock, so its holder judges with no other reflection of this
+/// computer posting meanwhile. The lock does not prove that an earlier
+/// holder recorded every post: one whose answer was lost leaves a head this
+/// computer has not recorded, which the pull recognizes as
+/// [`Pulled::Landed`] while it holds the local record; once the record has
+/// changed since, it meets it as any other unrecorded head does. A row with
+/// nothing pending has nothing a head could conflict with, and a head this
+/// computer recorded needs no judgment.
+pub(crate) fn judgment(pending: bool, held: bool, pulled: Pulled) -> Judgment {
+    match pulled {
+        Pulled::Current | Pulled::Adopted => Judgment::Commit,
+        Pulled::Landed | Pulled::Conflicted if !pending || held => Judgment::Commit,
+        Pulled::Landed | Pulled::Conflicted => Judgment::Unjudged,
+    }
 }
 
 /// The committed record on an issue: the head of its revision chain.
@@ -217,7 +255,7 @@ pub(crate) fn pull(gh: &GitHub, item: &mut LocalItem) -> Result<Pulled, GitHubEr
         item.reflection.record_comment = Some(head.comment);
         item.reflection.remote_revision = Some(item.record.revision);
         item.reflection.etag = etag;
-        return Ok(Pulled::Current);
+        return Ok(Pulled::Landed);
     }
     if item.reflection.pending {
         item.reflection.conflicted = true;
@@ -379,7 +417,7 @@ fn reflect_board(
                 path: format!("/issues/{}", issue.number),
                 message: "an issue without a node id".to_owned(),
             })?;
-        let account = gh.for_role(None, instrukt_core::github::Operation::Board)?;
+        let account = gh.for_role(None, instrukt_core::github::Operation::Board);
         super::_board::reflect(&account, board, &content, status, needs_you)
     })();
     match attempt {
@@ -765,7 +803,7 @@ fn reflect_pull_request(
         .iter()
         .find(|binding| binding.attempt.branch.as_ref() == Some(&branch))
         .map(|binding| binding.role.as_str());
-    let author = gh.for_role(role, instrukt_core::github::Operation::Author)?;
+    let author = gh.for_role(role, instrukt_core::github::Operation::Author);
     if item.reflection.pull.is_none() {
         let owner = gh.repository().split('/').next().unwrap_or_default();
         let head = encode(&format!("{owner}:{branch}"));
@@ -813,11 +851,11 @@ fn reflect_pull_request(
     item.reflection.pull_outstanding = Some(format!("pull request #{pull} is not up to date"));
     let verdicts = build_verdicts(&item.record);
     for (verdict, commit, report, role) in verdicts.iter().skip(item.reflection.reviews_reflected) {
-        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review)?;
+        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review);
         let bot = reviewer.bot()?;
         let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
         if bot.matches(&pull_actor["user"]) {
-            return Err(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into()).into());
+            return Err(reviewer.app_failure(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into())));
         }
         let body = format!(
             "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"
@@ -928,25 +966,7 @@ fn with_contents(
                 continue;
             };
             if served.is_none() {
-                served = Some(
-                    match gh.read(&format!("/issues/{number}/artifacts/{address}")) {
-                        Ok(read) => read["versions"]
-                            .as_array()
-                            .map(|list| {
-                                list.iter()
-                                    .filter_map(|v| {
-                                        Some((
-                                            v["version"].as_u64()?,
-                                            v["body"].as_str()?.to_owned(),
-                                        ))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default(),
-                        Err(GitHubError::NotFound { .. }) => BTreeMap::new(),
-                        Err(err) => return Err(err),
-                    },
-                );
+                served = Some(served_versions(gh, number, address)?);
             }
             let content = served.as_ref().and_then(|s| s.get(&n));
             if let Some(content) = content
@@ -965,6 +985,29 @@ fn with_contents(
         }
     }
     Ok(remote)
+}
+
+/// The bodies GitHub serves now for the artifact at `address` on issue
+/// `number`, by remote version number; none when GitHub holds no such
+/// artifact. Any other failure is the request's, never an answer about the
+/// versions.
+pub(crate) fn served_versions(
+    gh: &GitHub,
+    number: u64,
+    address: u64,
+) -> Result<BTreeMap<u64, String>, GitHubError> {
+    match gh.read(&format!("/issues/{number}/artifacts/{address}")) {
+        Ok(read) => Ok(read["versions"]
+            .as_array()
+            .map(|list| {
+                list.iter()
+                    .filter_map(|v| Some((v["version"].as_u64()?, v["body"].as_str()?.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default()),
+        Err(GitHubError::NotFound { .. }) => Ok(BTreeMap::new()),
+        Err(err) => Err(err),
+    }
 }
 
 /// `text` percent-encoded for a URL path or query, keeping unreserved
@@ -1057,6 +1100,29 @@ mod tests {
         ];
         let head = committed(&comments, &first.id, &[]).unwrap().unwrap();
         assert_eq!((head.comment, head.record), (11, theirs));
+    }
+
+    #[test]
+    fn a_conflicting_head_found_under_the_reflection_lock_is_committed() {
+        assert_eq!(judgment(true, true, Pulled::Conflicted), Judgment::Commit);
+    }
+
+    #[test]
+    fn a_conflicting_head_found_while_another_reflection_holds_the_lock_is_left_unjudged() {
+        assert_eq!(
+            judgment(true, false, Pulled::Conflicted),
+            Judgment::Unjudged
+        );
+    }
+
+    #[test]
+    fn a_landed_own_post_with_nothing_pending_is_committed_without_the_lock() {
+        assert_eq!(judgment(false, false, Pulled::Landed), Judgment::Commit);
+    }
+
+    #[test]
+    fn a_recorded_head_meeting_a_pending_change_is_committed_without_the_lock() {
+        assert_eq!(judgment(true, false, Pulled::Current), Judgment::Commit);
     }
 
     #[test]

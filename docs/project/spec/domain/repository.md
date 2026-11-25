@@ -7,7 +7,7 @@ description: "Repository — instrukt's git integration in a project: adopting a
 
 The repository context is where instrukt meets a project's git repository. It
 adopts a repository (`instrukt init`): the project layer, `docs/project/`
-with its index and starting schema, a purpose-only root master, the ignore
+with its index and starting schema, the ignore
 lines, the editor schemas with their modelines (generated through
 publication's operation) and the hook sections, and it reports what the
 repository's first sync will claim on the computer. It owns instrukt's
@@ -48,7 +48,7 @@ commands.
 **Adoption**
 :  The state `instrukt init` establishes in a repository: project layer,
    `docs/project/` with its `index.yaml` and, when sdlc is published, its
-   `schema.yaml`, the root master, the ignore line for `.instrukt/`, the
+   `schema.yaml`, the ignore line for `.instrukt/`, the
    editor schemas and modelines publication generates, and the hook sections.
 
 **Claims report**
@@ -150,7 +150,7 @@ commands.
 
 - **Root:** the adopted repository.
 - **Contains:** the project layer `instrukt.yaml`, `docs/project/` with its
-  `index.yaml` and `schema.yaml`, the root `AGENTS.master.md`, the ignore
+  `index.yaml` and `schema.yaml`, the ignore
   line for `.instrukt/`, `.instrukt/schemas/` and the modelines, the hook
   sections.
 - **Invariants:**

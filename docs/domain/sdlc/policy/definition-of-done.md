@@ -19,6 +19,7 @@ Before considering ANY work complete, verify ALL criteria are met:
 - [ ] Edge cases handled: every reachable condition (`sdlc/concept/defect-evidence`)
 - [ ] Error paths handled and reviewed
 - [ ] No debug/temp code remains
+- [ ] Bug fixes stop at the verified cause: smallest change that removes the root cause, no "while I'm here" hardening beyond it; unrelated findings surfaced during investigation are reported separately (`sdlc/policy/todo-creation-discipline`)
 
 ### 2. Code Quality
 
@@ -42,7 +43,7 @@ deferral. No delivery may introduce or worsen a principle violation.
 ### 3. Testing
 
 - [ ] Pre-commit hooks pass
-- [ ] Browser-based frontend or web UI changes pass a Playwright smoke test
+- [ ] Browser-based frontend or web UI changes pass live browser verification (`sdlc/policy/live-verification` — or an applicable build/CI browser smoke check on `HOTFIX_DEFERRED` or ad-hoc commits)
 
 Apply the scenario-binding and test-quality checks below only where the project
 opts into test authorship. Existing tests in a project that keeps a frozen
@@ -111,11 +112,15 @@ corpus still run under that project's ruling.
 
 ### After Review
 
-- [ ] All review findings addressed
+- [ ] All static review findings addressed
 - [ ] Verdict is APPROVE
 - [ ] No critical issues remain
-- [ ] Applicable tests still pass
-- [ ] Browser-based frontend or web UI changes are re-verified during review, or a verification gap is recorded as a finding
+- [ ] For browser-based frontend or web UI changes carrying no downstream live verification pass (ad-hoc commits or `HOTFIX_DEFERRED` hotfixes), behavior is independently verified via CI or review smoke, or a verification gap is recorded as a finding
+
+### After Live Verification
+
+- [ ] Live behavioral verification disposition recorded for the exact committed candidate HEAD on lifecycle todos (`sdlc/policy/live-verification`, `sdlc/procedure/lifecycle/work/verify`)
+- [ ] Applicable tests pass at the integration gate (CI or documented local suite)
 
 ### Before Finalize
 
@@ -146,7 +151,7 @@ Work is NOT done if ANY of these are true:
 
 ## Enforcement
 
-- CI executes suite checks; reviewers confirm the remaining DoD evidence before approval.
+- Static reviewers confirm the remaining DoD evidence before approval (with independent browser verification when no downstream live verification pass runs); independent live verification (`sdlc/policy/live-verification`) proves real-surface behavior before finalization; CI (`sdlc/procedure/lifecycle/integrate`) executes test suites.
 - Work items are not marked delivered until DoD is satisfied.
 
 ## Exceptions

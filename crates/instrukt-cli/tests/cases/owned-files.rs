@@ -172,7 +172,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     assert_eq!(repo.git(["status", "--porcelain"]), "");
     insta::assert_snapshot!(pre_commit_status(&env, &repo), @r"
     pre-commit: current
-      last run: staged in committed form: instrukt.yaml
+      last run: staged in committed form: instrukt.yaml, AGENTS.md
     ");
 
     // A commit that bypasses the hook keeps the older layer, and validation

@@ -1,7 +1,8 @@
 ---
 eval: true
-description: Commitizen format, attribution, when to commit. Atomic commits, hooks
-  verify quality.
+description: 'Worktree-only authoring (main has one writer: the integrator), committing
+  via `instrukt repo commit` with Commitizen format and provenance, commit-first autonomy,
+  and author-decided post-commit independent review routing.'
 visibility: public
 ---
 
@@ -74,8 +75,10 @@ All Committizen types are allowed.
   between components, concurrency, security, or what a governed snippet
   directs other agents to do. The author dispatches that
   reviewer and waits for the verdict. Every other commit owes no review, and
-  the author asks no one: removal of dead code or files, a merge of work already reviewed where it was written, a
-  validation or mechanical repair, a rename or move, formatting, and wording or
+  the author asks no one: removal of dead code, files, or obsolete snippets, a merge of work already reviewed where it was written, a
+  validation or mechanical repair, a rename or move (including snippet relocation),
+  documentation curation that leaves rule semantics unchanged and adds nothing to an always-on set (demoting an `index.yaml` entry from `expanded` to `listed`, reordering index entries, or wiring `Required reads` on non-expanded snippets, where `instrukt docs validate` checks structural validity),
+  formatting, and wording or
   prompt prose whose effect is presentation. Presentation wording its owner
   judged while it was being written — wording a human shaped with the authoring
   session — is already reviewed where it was written. A change carrying one of
@@ -84,7 +87,7 @@ All Committizen types are allowed.
   the diff touches never decides that review is owed. Review is technical
   stewardship, never a human ratification step. Removing a live check or branch
   changes logic and owes review. Mechanical changes require green CI only.
-  This author-decided routing is always loaded through the general baseline;
+  This author-decided routing is listed in the general baseline (loaded on demand or through procedure required reads);
   it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 

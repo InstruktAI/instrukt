@@ -260,7 +260,8 @@ fn a_companys_secrets_stay_out_of_its_repository() {
     std::fs::write(dir.join("projects/erp/README.md"), "a checkout\n").unwrap();
     std::fs::create_dir_all(dir.join(".instrukt")).unwrap();
     std::fs::write(dir.join(".instrukt/state"), "local\n").unwrap();
-    std::fs::write(dir.join("AGENTS.master.md"), "# Acme\n").unwrap();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(dir.join("docs/index.yaml"), "expanded: []\n").unwrap();
     env.git(&dir, ["init", "--quiet", "--initial-branch=main"]);
     env.run(&env.path(""), ["config", "init", "--company", "acme"])
         .success();
@@ -274,7 +275,7 @@ fn a_companys_secrets_stay_out_of_its_repository() {
     env.git(&dir, ["add", "-A"]);
     insta::assert_snapshot!(env.git(&dir, ["diff", "--cached", "--name-only"]), @r"
     .gitignore
-    AGENTS.master.md
+    docs/index.yaml
     ");
     // The secrets file tracked anyway: validating the company names it.
     env.git(&dir, ["add", "-f", "secrets.env"]);

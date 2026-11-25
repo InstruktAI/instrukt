@@ -151,14 +151,14 @@ pub(super) fn is_runtime(path: &str) -> bool {
 /// Everything a rendering resolves outside the text itself.
 #[derive(Debug, Clone)]
 pub struct RenderContext<'a> {
-    /// The home whose user directory a master's absolute path references
+    /// The home whose user directory a source's absolute path references
     /// into the published tree are read against; `None` for a rendering
     /// that reads nothing from the computer, where only the `~/` form
     /// names a published file.
     pub home: Option<&'a Home>,
     /// How `@config` directives resolve.
     pub values: &'a Values<'a>,
-    /// The slug the text's repository declares, which a master's
+    /// The slug the text's repository declares, which a source's
     /// `docs/project/…` path references name.
     pub project: Option<&'a ProjectSlug>,
 }
@@ -194,8 +194,8 @@ impl Version {
 }
 
 /// Renders a whole source text — a snippet file, or a non-snippet source
-/// such as an `AGENTS.master.md` — through `lens`: its frontmatter, when it
-/// has one, is stripped, then every other step runs.
+/// such as a third-party doc — through `lens`: its frontmatter, when it has
+/// one, is stripped, then every other step runs.
 pub fn render(text: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
     render_body(_text::split_frontmatter(text).body, lens, cx)
 }

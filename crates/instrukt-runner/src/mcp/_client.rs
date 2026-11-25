@@ -269,6 +269,12 @@ impl<'a> Session<'a> {
             .to_ascii_lowercase();
         if !(200..300).contains(&status) {
             let text = bounded_text(&mut response).unwrap_or_default();
+            if status == 401 {
+                return Err(McpError::Unauthorized {
+                    server: self.target.name.to_owned(),
+                    cause: format!("HTTP 401 to {method}: {}", text.trim()),
+                });
+            }
             return Err(self.failure(format!("HTTP {status} to {method}: {}", text.trim())));
         }
         let answer = if kind.starts_with("text/event-stream") {
@@ -316,6 +322,12 @@ impl<'a> Session<'a> {
         let status = response.status().as_u16();
         if !(200..300).contains(&status) {
             let text = bounded_text(&mut response).unwrap_or_default();
+            if status == 401 {
+                return Err(McpError::Unauthorized {
+                    server: self.target.name.to_owned(),
+                    cause: format!("HTTP 401 to {method}: {}", text.trim()),
+                });
+            }
             return Err(self.failure(format!("HTTP {status} to {method}: {}", text.trim())));
         }
         Ok(())

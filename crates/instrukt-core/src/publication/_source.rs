@@ -17,14 +17,54 @@ use crate::fsx::atomic_write;
 use crate::git;
 use crate::ids::{CommitSha, ProjectSlug};
 
-/// The file name of a project master.
-pub(super) const MASTER_FILE_NAME: &str = "AGENTS.master.md";
-
 /// The mode git records a symbolic link with.
 const LINK_MODE: &str = "120000";
 
-/// The file a master renders into, and the file Codex reads in its place.
+/// The file instrukt renders, and the file Codex reads in its place.
 const ENTRYPOINT_FILE_NAMES: [&str; 2] = ["AGENTS.md", "AGENTS.override.md"];
+
+/// What a view holds at the place of an entry index
+/// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "One
+/// file, at the root").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum EntryIndex<'a> {
+    /// No file there, and no link at or above it.
+    Absent,
+    /// The index's bytes.
+    Present(&'a [u8]),
+    /// The index is, or lies behind, a symbolic link: nothing is read.
+    Linked,
+}
+
+/// The root `instrukt.yaml` of the working tree at `root` as a view of it
+/// holds it: its bytes when it is a regular file; `None` when it is absent or
+/// a symbolic link, through which nothing is read.
+pub(super) fn root_document_on_disk(root: &Path) -> Result<Option<Vec<u8>>, std::io::Error> {
+    let path = root.join(CONFIG_FILE_NAME);
+    match std::fs::symlink_metadata(&path) {
+        Ok(meta) if meta.is_file() => std::fs::read(&path).map(Some),
+        Ok(_) => Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
+/// Whether the working tree at `root` holds nothing at `rel`, the place of an
+/// entry index: no file there and no link at or above it, as
+/// [`EntryIndex::Absent`] states for a view.
+pub(super) fn entry_index_absent_on_disk(root: &Path, rel: &str) -> Result<bool, std::io::Error> {
+    let mut at = root.to_path_buf();
+    for part in rel.split('/') {
+        at.push(part);
+        match std::fs::symlink_metadata(&at) {
+            Ok(meta) if meta.file_type().is_symlink() => return Ok(false),
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(!std::fs::symlink_metadata(&at)?.is_file())
+}
 
 /// The project a sync publishes.
 #[derive(Debug, Clone)]
@@ -103,9 +143,9 @@ pub(super) fn canonical_main(primary: &Path) -> Result<(String, CommitSha), Publ
     Ok((branch, commit))
 }
 
-/// The files of one view of a repository that publication reads: the
-/// documentation, the root `instrukt.yaml`, every master and every
-/// `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
+/// The files of one view of a repository that publication reads: every
+/// file below `docs/`, by its place and whatever its name, the root
+/// `instrukt.yaml`, and every `AGENTS.md` and `AGENTS.override.md`. Regular files only; symbolic links
 /// and submodules are never followed. A symbolic link is recorded by its
 /// path and nothing is read through it, itself or a folder above a file,
 /// so what names a file through one can say so.
@@ -305,8 +345,27 @@ impl Committed {
         }
     }
 
+    /// This view with a symbolic link recorded at `path`.
+    #[cfg(test)]
+    pub(super) fn with_link(mut self, path: &str) -> Self {
+        self.links.insert(path.to_owned());
+        self
+    }
+
     pub(super) fn file(&self, path: &str) -> Option<&[u8]> {
         self.files.get(path).map(Vec::as_slice)
+    }
+
+    /// What the view holds at `path`, the place of an entry index: no file
+    /// and no link at or above it, its bytes, or a link at or above it,
+    /// through which nothing is read.
+    pub(super) fn entry_index(&self, path: &str) -> EntryIndex<'_> {
+        if self.is_link(path) {
+            EntryIndex::Linked
+        } else {
+            self.file(path)
+                .map_or(EntryIndex::Absent, EntryIndex::Present)
+        }
     }
 
     /// Whether `path`, or a folder above it, is a symbolic link, through
@@ -344,15 +403,6 @@ impl Committed {
                 path: format!("docs/{rel}"),
                 text: String::from_utf8_lossy(bytes).into_owned(),
             })
-            .collect()
-    }
-
-    /// The repository-relative paths of every committed master.
-    pub(super) fn masters(&self) -> Vec<&str> {
-        self.files
-            .keys()
-            .filter(|path| is_master(path))
-            .map(String::as_str)
             .collect()
     }
 
@@ -416,14 +466,9 @@ pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {
     Ok(rel)
 }
 
-fn is_master(path: &str) -> bool {
-    path.rsplit('/').next() == Some(MASTER_FILE_NAME)
-}
-
 fn is_read(path: &str) -> bool {
     path == CONFIG_FILE_NAME
         || path.starts_with("docs/")
-        || is_master(path)
         || path
             .rsplit('/')
             .next()

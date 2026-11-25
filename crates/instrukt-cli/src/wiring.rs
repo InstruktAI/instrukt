@@ -32,7 +32,8 @@ use crate::context::Ctx;
 pub fn caller_lookup(
     ctx: &Ctx,
 ) -> anyhow::Result<Option<Arc<dyn instrukt_core::interfaces::CallerIdentityLookup>>> {
-    let config = instrukt_core::config::Configuration::load_global(&ctx.home)?;
+    let inspection = ctx.home.for_inspection();
+    let config = instrukt_core::config::Configuration::load_global(&inspection)?;
     match config.runner_runtime() {
         Ok(runtime) => {
             let adapter: Arc<dyn instrukt_runner::runtime::RuntimeAdapter> =
@@ -133,6 +134,7 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
     let evidence = _work::evidence(ctx)?;
     Ok(RunnerWiring {
         github_credentials: Some(ctx.github.clone()),
+        review: Some(_work::review(ctx)?),
         work: _work::ports(ctx)?,
         workflow: _workflow::assignments(ctx, evidence)?,
         company: Some(company()),

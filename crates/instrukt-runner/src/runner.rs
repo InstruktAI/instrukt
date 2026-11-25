@@ -152,6 +152,9 @@ pub struct Considered {
     pub config: Configuration,
     pub todos: bool,
     pub events: bool,
+    /// Admitted for automatic review here, as far as nothing but GitHub
+    /// decides; readiness is asked once per pass.
+    pub review: bool,
 }
 
 /// The published projects that switch on `todos` or `events`. A project
@@ -171,6 +174,7 @@ pub fn considered(admitted: &Admitted) -> Vec<Considered> {
             config: project.config.clone(),
             todos: project.todos,
             events: project.events,
+            review: project.review,
         })
         .collect()
 }
@@ -189,13 +193,16 @@ pub enum TickOutcome {
     Busy,
 }
 
-/// One wake-up at `now`; exits at once when the runner lock is held. Its
-/// configuration is admitted at its start: an invalid machine layer or
-/// `agents.yaml` refuses it, and what was not admitted is left out.
+/// One wake-up at the moment it is invoked; exits at once when the runner
+/// lock is held. Its configuration is admitted at its start: an invalid
+/// machine layer or `agents.yaml` refuses it, and what was not admitted is
+/// left out. `clock` is read again only where an answer's own time matters.
 pub fn tick(
     cx: &RunnerContext<'_>,
-    clock: &dyn Fn() -> Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
 ) -> Result<TickOutcome, RunnerError> {
+    // The scheduler's moment is the tick's arrival: the locking, admission
+    // and readiness work below never make an on-time occurrence late.
     let now = clock();
     let state = RunnerState::new(cx.home);
     let Some(_runner) = _holder::tick(cx.home)? else {
@@ -229,6 +236,7 @@ pub fn tick(
             cx,
             &state,
             now,
+            clock,
             &considered,
             platform.as_ref(),
             true,
@@ -485,6 +493,7 @@ pub fn run(
                     cx,
                     &state,
                     clock(),
+                    &*clock,
                     &considered,
                     enabled_platform,
                     false,
@@ -570,10 +579,18 @@ fn event_platform(
     }))
 }
 
+/// One wake at `now`, the moment it began; `clock` is read again only by
+/// the GitHub pass's credential issuance and its failure records.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the tick and the run loop each borrow these independent inputs from their own \
+              state; a struct built only to call `wake` would rename the list, not shorten it"
+)]
 fn wake(
     cx: &RunnerContext<'_>,
     state: &RunnerState,
     now: Timestamp,
+    clock: &(dyn Fn() -> Timestamp + Sync),
     considered: &[Considered],
     platform: Option<&EventPlatform>,
     drain: bool,
@@ -612,6 +629,7 @@ fn wake(
             EventWake {
                 cx,
                 state,
+                clock,
                 now,
                 considered,
                 mains: &mains,
@@ -656,6 +674,8 @@ fn wake(
 struct EventWake<'a, 'cx> {
     cx: &'a RunnerContext<'cx>,
     state: &'a RunnerState,
+    /// The operator's clock, read again where an answer's time matters.
+    clock: &'a (dyn Fn() -> Timestamp + Sync),
     now: Timestamp,
     considered: &'a [Considered],
     mains:
@@ -669,6 +689,7 @@ impl EventWake<'_, '_> {
         let Self {
             cx,
             state,
+            clock,
             now,
             considered,
             mains,
@@ -685,6 +706,7 @@ impl EventWake<'_, '_> {
                 &log,
                 project,
                 mains.get(&project.project.slug),
+                clock,
                 now,
             );
         }
@@ -736,16 +758,18 @@ fn read_sources(
     log: &DbEventLog,
     considered: &Considered,
     observed: Option<&sources::MainObservation>,
+    clock: &dyn Fn() -> Timestamp,
     now: Timestamp,
 ) {
+    read_upstream(state, log, considered, now);
+    if let Some(observed) = observed {
+        github_pass(cx, state, log, considered, observed, clock, now);
+    }
+}
+
+/// Reads the project's watched upstream repositories.
+fn read_upstream(state: &RunnerState, log: &DbEventLog, considered: &Considered, now: Timestamp) {
     let project = &considered.project;
-    let append = |event: &Event| match log.log(event) {
-        Ok(_) => true,
-        Err(err) => {
-            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
-            false
-        }
-    };
     match considered.config.events_watch() {
         Ok(watched) if !watched.is_empty() => {
             if let Err(err) =
@@ -759,14 +783,23 @@ fn read_sources(
             tracing::warn!(event = "events_watch_unreadable", project = %project.slug, error = %err)
         }
     }
-    let Some(observed) = observed else {
-        return;
-    };
+}
 
-    // Canonical, candidate and selected dependency heads share one conditional
-    // pass and the same source deferral and credential boundary.
-    let candidate = observed.candidate.clone();
-    let head = observed.remote_main.clone();
+/// The project's GitHub pass: canonical, candidate and dependency heads read
+/// in one conditional pass, and what they found appended.
+fn github_pass(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    observed: &sources::MainObservation,
+    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    // Canonical, candidate and selected dependency heads, and an opted-in
+    // project's pull requests, share one conditional pass and the same
+    // source deferral and credential boundary.
     let api_url = match github::api_url(cx.home) {
         Ok(url) => url,
         Err(err) => {
@@ -792,6 +825,97 @@ fn read_sources(
             return;
         }
     }
+    // An opted-in project's admission is asked once, before CI is read: a
+    // project not admitted here has its CI read as one that did not opt in
+    // (`layered-configuration`, Automatic review enablement).
+    let readiness = match (considered.review, &cx.wiring.review) {
+        // Readiness issues credentials, so it reads the clock as CI
+        // issuance does: discovery above may have spent seconds.
+        (true, Some(port)) => Some(port.readiness(&repository, clock())),
+        (true, None) => {
+            tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
+            None
+        }
+        (false, _) => None,
+    };
+    ci_read(
+        cx,
+        state,
+        log,
+        considered,
+        observed,
+        readiness.as_ref().is_some_and(gates_ci),
+        &api_url,
+        &repository,
+        clock,
+        now,
+    );
+    match readiness {
+        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => review_pass(
+            cx,
+            state,
+            log,
+            considered,
+            observed.candidate.as_ref(),
+            observation.token(),
+            &api_url,
+            &repository,
+            clock,
+            now,
+        ),
+        Some(instrukt_core::interfaces::ReviewReadiness::Unmet(finding)) => {
+            tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
+        }
+        Some(instrukt_core::interfaces::ReviewReadiness::CannotAsk(cause)) => {
+            // Recorded after the CI read, which would otherwise clear it.
+            if let Err(error) = ci::record_source_cause(state, &project.slug, &cause, clock()) {
+                tracing::warn!(event = "ci_observation_state_failed", error = %error);
+            }
+            tracing::warn!(event = "review_readiness_unavailable", project = %project.slug, cause = %cause);
+        }
+        None => {}
+    }
+}
+
+/// Whether the CI read sets the review status apart and holds the candidate
+/// for its review: on a project admitted for automatic review, and while
+/// GitHub cannot be asked, since admission then waits and nothing completes
+/// unreviewed. A project not admitted here has its CI read as before.
+fn gates_ci(readiness: &instrukt_core::interfaces::ReviewReadiness) -> bool {
+    !matches!(
+        readiness,
+        instrukt_core::interfaces::ReviewReadiness::Unmet(_)
+    )
+}
+
+/// The CI read of the GitHub pass: canonical, candidate and selected
+/// dependency heads.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
+fn ci_read(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    observed: &sources::MainObservation,
+    review_gate: bool,
+    api_url: &str,
+    repository: &str,
+    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let append = |event: &Event| match log.log(event) {
+        Ok(_) => true,
+        Err(err) => {
+            tracing::warn!(event = "event_not_logged", name = event.name(), project = %project.slug, error = %err);
+            false
+        }
+    };
+    let candidate = observed.candidate.clone();
+    let head = observed.remote_main.clone();
     let dependencies = match considered
         .config
         .dependency_branch_prefixes()
@@ -813,23 +937,48 @@ fn read_sources(
         tracing::warn!(event="ci_app_unavailable",project=%project.slug,cause="work credential capability unavailable");
         return;
     };
-    let credential = match credentials.credential(&repository, github::Operation::Observe, now) {
+    // Issuance dates GitHub's answers from the moment it begins, so it reads
+    // the clock then, not when this wake began: discovery above may have
+    // spent seconds on the network.
+    let credential = match credentials.credential(repository, github::Operation::Observe, clock()) {
         Ok(credential) => credential,
         Err(error) => {
-            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, now) {
+            if let Err(save) = ci::record_credential_failure(state, &project.slug, &error, clock())
+            {
                 tracing::warn!(event="ci_observation_state_failed",error=%save);
             }
             tracing::warn!(event="ci_app_unavailable",project=%project.slug,error=%error);
             return;
         }
     };
-    let client = CiClient::new(
-        &api_url,
-        &repository,
+    let mut client = CiClient::new(
+        api_url,
+        repository,
         credential.token().to_owned(),
         state,
         &project.slug,
     );
+    // On a project admitted for automatic review, the reviewer bot's review
+    // status is no CI result: classification must tell it apart, or the
+    // read waits.
+    let review = if review_gate {
+        let Some(port) = &cx.wiring.review else {
+            tracing::warn!(event = "review_unavailable", project = %project.slug, cause = "work's automatic review capability unavailable");
+            return;
+        };
+        match port.identities() {
+            Ok(identities) => {
+                client = client.with_reviewer(identities.reviewer);
+                Some(port)
+            }
+            Err(error) => {
+                tracing::warn!(event = "review_identities_unreadable", project = %project.slug, error = %error);
+                return;
+            }
+        }
+    } else {
+        None
+    };
     let commits: Vec<&CommitSha> = candidate
         .iter()
         .chain(head.iter())
@@ -838,10 +987,23 @@ fn read_sources(
     match client.read(&commits, now) {
         Ok(CiRead::States(states)) => {
             let mut states = states.into_iter();
-            let candidate_state = candidate
-                .as_ref()
-                .and_then(|_| states.next())
-                .map(|read| read.state);
+            let candidate_read = candidate.as_ref().and_then(|_| states.next());
+            let candidate_state = candidate_read.as_ref().map(|read| read.state);
+            let gate = match (review, candidate.as_ref(), candidate_read.as_ref()) {
+                (Some(port), Some(candidate), Some(read)) => {
+                    match port.needs_work(&project.slug, candidate) {
+                        Ok(needs_work) => Some(ci::ReviewGate {
+                            needs_work,
+                            status: read.review_status.clone(),
+                        }),
+                        Err(error) => {
+                            tracing::warn!(event = "review_verdict_unreadable", project = %project.slug, error = %error);
+                            return;
+                        }
+                    }
+                }
+                _ => None,
+            };
             let head_state = head
                 .as_ref()
                 .and_then(|_| states.next())
@@ -850,6 +1012,7 @@ fn read_sources(
                 &project.slug,
                 candidate.as_ref(),
                 candidate_state,
+                gate.as_ref(),
                 head.as_ref(),
                 head_state,
             ) {
@@ -872,5 +1035,65 @@ fn read_sources(
             tracing::debug!(event = "ci_poll_deferred", project = %project.slug, until = %until);
         }
         Err(err) => tracing::warn!(event = "ci_unreadable", project = %project.slug, error = %err),
+    }
+}
+
+/// Automatic review's part of the GitHub pass, on a project this pass
+/// admitted: its pull requests are observed with the observation
+/// credential readiness issued, and publication issues its own credential
+/// on `clock`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
+fn review_pass(
+    cx: &RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &Considered,
+    candidate: Option<&CommitSha>,
+    token: &str,
+    api_url: &str,
+    repository: &str,
+    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let Some(port) = &cx.wiring.review else {
+        return;
+    };
+    let pass = crate::review::ReviewPass {
+        home: cx.home,
+        candidate,
+        state,
+        log,
+        project,
+        api_url,
+        repository,
+        token,
+        port: port.as_ref(),
+        now,
+        clock,
+    };
+    if let Err(error) = crate::review::observe(&pass) {
+        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::interfaces::ReviewReadiness;
+
+    #[test]
+    fn a_project_not_admitted_here_has_its_ci_read_as_one_that_did_not_opt_in() {
+        assert!(!gates_ci(&ReviewReadiness::Unmet(
+            "the reviewer App lacks statuses: write".into()
+        )));
+    }
+
+    #[test]
+    fn while_github_cannot_be_asked_the_candidate_still_waits_for_its_review() {
+        assert!(gates_ci(&ReviewReadiness::CannotAsk("unreachable".into())));
     }
 }

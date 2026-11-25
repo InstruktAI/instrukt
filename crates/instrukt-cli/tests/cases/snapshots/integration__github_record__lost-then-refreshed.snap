@@ -12,7 +12,7 @@ created: <time> by Test Developer
 revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: conflicted with a newer GitHub revision; refresh with `instrukt todo refresh <slug>`
+reflection: conflicted with a newer GitHub revision; refresh with `instrukt todo refresh nested-lists`
 issue: #1
 claim: not held
 hold: none

@@ -415,6 +415,33 @@ impl Configuration {
         super::_mcp::servers(self.value.get("mcp"), layer)
     }
 
+    /// Reusable host-level OAuth clients declared under global `mcp_clients`.
+    pub fn mcp_clients(
+        &self,
+    ) -> Result<std::collections::BTreeMap<ProjectSlug, super::McpClient>, ConfigError> {
+        super::_mcp::clients(self.value.get("mcp_clients"))
+    }
+
+    /// A company home's built-in OIDC issuer configuration (`issuer:`), if declared.
+    pub fn company_issuer(&self) -> Result<Option<super::CompanyIssuerConfig>, ConfigError> {
+        super::_mcp::company_issuer(self.value.get("issuer"))
+    }
+
+    /// The configured `ingress.url`, trimmed without a trailing slash.
+    pub fn ingress_url(&self) -> Result<Option<String>, ConfigError> {
+        let Some(url) = self.str_at(&["ingress", "url"])? else {
+            return Ok(None);
+        };
+        let trimmed = url.trim().trim_end_matches('/');
+        if !super::_webhooks::ingress_url_admitted(trimmed) {
+            return Err(invalid(
+                "ingress.url",
+                "expected an absolute https address (or loopback http address) without credentials, query or fragment",
+            ));
+        }
+        Ok(Some(trimmed.to_owned()))
+    }
+
     /// The connectors a company document declares, each as declared,
     /// references unresolved; none when it declares none.
     pub fn connectors(&self) -> Result<Vec<super::DeclaredConnector>, ConfigError> {
@@ -616,6 +643,15 @@ impl Configuration {
                 }
             })
             .collect()
+    }
+
+    /// Whether the project opted in to automatic review (`review.automatic`).
+    pub fn review_automatic(&self) -> Result<bool, ConfigError> {
+        match self.at(&["review", "automatic"]) {
+            None | Some(Value::Null) => Ok(false),
+            Some(Value::Bool(on)) => Ok(*on),
+            Some(_) => Err(invalid("review.automatic", "is not a boolean")),
+        }
     }
 
     /// Project-selected remote branch prefixes for dependency CI observation.

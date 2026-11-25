@@ -109,6 +109,10 @@ pub struct AdmittedProject {
     /// History switched on and admitted: no finding against
     /// `modules.history`, and the layer validates otherwise.
     pub history: bool,
+    /// Automatic review switched on with event responses admitted and no
+    /// finding at `review.automatic` that needs no GitHub. Whether the two
+    /// identities are ready is asked where review is done.
+    pub review: bool,
 }
 
 /// A generation as built from the files, with what was not admitted.
@@ -198,7 +202,6 @@ impl Admitted {
         let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
-        let mut procedure_available = None;
         for (name, unreadable_folder) in super::company_folders(home)? {
             let admitted = match unreadable_folder {
                 Some(error) => Err(vec![unreadable(home.company_dir(&name), &error)]),
@@ -206,14 +209,21 @@ impl Admitted {
             };
             match admitted {
                 Ok(Some(mut company)) => {
-                    if !company.connectors.is_empty()
-                        && !*procedure_available.get_or_insert_with(|| {
-                            super::_validate::company_procedure_available(home)
-                        })
-                    {
-                        findings.push(super::_validate::missing_company_procedure(home, &name));
-                        company.connectors.clear();
+                    let mut retained = Vec::with_capacity(company.connectors.len());
+                    for connector in company.connectors {
+                        if let Some(finding) = super::_validate::connector_role_procedure_finding(
+                            home,
+                            &name,
+                            &connector.key,
+                            connector.role.as_str(),
+                            Some(&agents),
+                        ) {
+                            findings.push(finding);
+                        } else {
+                            retained.push(connector);
+                        }
                     }
+                    company.connectors = retained;
                     companies.push(company);
                 }
                 Ok(None) => {}
@@ -448,6 +458,13 @@ fn admit_project(
         events,
         history,
     } = switched.admitted(&findings);
+    let review = events
+        && config
+            .review_automatic()
+            .map_err(|error| unreadable(document.clone(), &error))?
+        && !findings
+            .iter()
+            .any(|f| f.key == super::_review::REVIEW_AUTOMATIC_KEY);
     Ok((
         AdmittedProject {
             slug: record.project.clone(),
@@ -457,6 +474,7 @@ fn admit_project(
             todos,
             events,
             history,
+            review,
         },
         findings,
     ))
@@ -473,8 +491,9 @@ struct Modules {
 impl Modules {
     /// What is admitted of these switches, given the layer's findings: a
     /// finding against a module (`modules.<module>`) withholds that module
-    /// alone; a layer that does not validate for any other reason withholds
-    /// history, which reads every adopted project, and nothing else.
+    /// alone; a finding at `review.*` withholds automatic review alone; a
+    /// layer that does not validate for any other reason withholds history,
+    /// which reads every adopted project, and nothing else.
     fn admitted(self, findings: &[Finding]) -> Self {
         let against = |module: &str| {
             let key = format!("modules.{module}");
@@ -482,7 +501,9 @@ impl Modules {
                 .iter()
                 .any(|f| f.key == key || f.key.starts_with(&format!("{key}.")))
         };
-        let invalid = findings.iter().any(|f| !f.key.starts_with("modules."));
+        let invalid = findings
+            .iter()
+            .any(|f| !f.key.starts_with("modules.") && !f.key.starts_with("review."));
         Self {
             todos: self.todos && !against("todos"),
             events: self.events && !against("events"),
@@ -632,6 +653,8 @@ mod tests {
                 history: false,
             }
         );
+        // A finding at automatic review withholds no module.
+        assert_eq!(switched.admitted(&[finding("review.automatic")]), switched);
         assert_eq!(
             switched.admitted(&[finding("modules.todos")]),
             Modules {

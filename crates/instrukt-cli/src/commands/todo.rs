@@ -52,7 +52,7 @@ enum TodoCommand {
     /// Change a todo's metadata, relationships, hold or claim.
     Update(UpdateArgs),
     /// Refresh a conflicted todo from GitHub.
-    Refresh(SlugArg),
+    Refresh(AddressArg),
     /// Park a todo in the icebox.
     Freeze(SlugArg),
     /// Return a parked todo to active consideration.
@@ -454,11 +454,47 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         project: &project,
         cwd: ctx.cwd.clone(),
     };
+    // A local read closes no work transaction, so no approval attention
+    // is owed after it, and it waits on no writer.
+    let writes = command.can_change_the_record();
     let result = session.dispatch(command, ctx);
-    if let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now()) {
+    if writes
+        && let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now())
+    {
         tracing::warn!(event="approval_attention_pending",error=%error);
     }
     result
+}
+
+impl TodoCommand {
+    /// Whether the command can change the work record, and so be followed
+    /// by approval attention: every command but the reads of the local
+    /// record alone. `show` refreshes from GitHub, where an approver's
+    /// command can be recorded.
+    fn can_change_the_record(&self) -> bool {
+        match self {
+            TodoCommand::List(_) => false,
+            TodoCommand::Artifacts(args) => match &args.command {
+                ArtifactsCommand::List { .. }
+                | ArtifactsCommand::Read { .. }
+                | ArtifactsCommand::Diff { .. } => false,
+                ArtifactsCommand::Write { .. } => true,
+            },
+            TodoCommand::Create(_)
+            | TodoCommand::Show(_)
+            | TodoCommand::Update(_)
+            | TodoCommand::Refresh(_)
+            | TodoCommand::Freeze(_)
+            | TodoCommand::Unfreeze(_)
+            | TodoCommand::Remove(_)
+            | TodoCommand::Reactivate(_)
+            | TodoCommand::Deliver(_)
+            | TodoCommand::Attempt(_)
+            | TodoCommand::Bind(_)
+            | TodoCommand::Stamp(_)
+            | TodoCommand::Flow(_) => true,
+        }
+    }
 }
 
 struct Session<'a> {
@@ -528,7 +564,7 @@ impl Session<'_> {
             }
             TodoCommand::Update(args) => self.update(args, ctx),
             TodoCommand::Refresh(args) => {
-                let outcome = work.refresh(project, &args.slug)?;
+                let outcome = work.refresh(project, &args.todo)?;
                 ctx.out.line(&format!(
                     "refreshed {} to revision {}",
                     outcome.value.slug, outcome.value.revision
@@ -792,22 +828,16 @@ impl Session<'_> {
         let (work, project) = (self.work, self.project);
         match command {
             ArtifactsCommand::List { slug } => {
-                let view = work.show(project, &slug)?;
-                if view.record.artifacts.is_empty() {
+                let artifacts = work.list_artifacts(project, &slug)?;
+                if artifacts.is_empty() {
                     ctx.out.line("no artifacts")?;
                 }
-                for artifact in &view.record.artifacts {
+                for artifact in &artifacts {
                     ctx.out.text(&render_artifact(artifact))?;
                 }
             }
             ArtifactsCommand::Read { slug, name } => {
-                let version = work.read_artifact(project, &slug, &name)?;
-                let Some(content) = version.content else {
-                    bail!(
-                        "this computer does not hold the content of `{name}` version {}, and GitHub no longer serves it",
-                        version.digest
-                    );
-                };
+                let content = work.read_artifact(project, &slug, &name)?;
                 ctx.out.text(&content)?;
                 if !content.ends_with('\n') {
                     ctx.out.line("")?;
@@ -1033,9 +1063,10 @@ fn reflection_word(status: &ReflectionStatus) -> String {
     match status {
         ReflectionStatus::Reflected => "reflected to GitHub".to_owned(),
         ReflectionStatus::Pending(reason) => format!("pending: {}", describe(reason)),
-        ReflectionStatus::Conflicted => {
-            "conflicted with a newer GitHub revision; refresh with `instrukt todo refresh <slug>`"
-                .to_owned()
+        ReflectionStatus::Conflicted { door } => {
+            format!(
+                "conflicted with a newer GitHub revision; refresh with `instrukt todo refresh {door}`"
+            )
         }
     }
 }
@@ -1081,7 +1112,7 @@ fn list_line(entry: &ListEntry, now: Timestamp) -> String {
     if let Some(ReflectionStatus::Pending(_)) = &entry.reflection {
         parts.push("reflection pending".to_owned());
     }
-    if let Some(ReflectionStatus::Conflicted) = &entry.reflection {
+    if let Some(ReflectionStatus::Conflicted { .. }) = &entry.reflection {
         parts.push("conflicted".to_owned());
     }
     parts.join(" · ")
@@ -1126,6 +1157,12 @@ fn render_view(
         Some(status) => format!("reflection: {}", reflection_word(status)),
         None => "reflection: read from GitHub; not on this computer".to_owned(),
     });
+    if let instrukt_todos::work::GitHubRead::Unjudged = &view.refresh {
+        out.push(
+            "GitHub holds a revision of this todo that this computer has not recorded; shown as this computer records it. A reflection is in progress on this computer, so that revision is judged by the next refresh or reflection of this todo that holds the reflection lock"
+                .to_owned(),
+        );
+    }
     if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.refresh {
         out.push(format!(
             "not refreshed from GitHub ({}); shown as this computer last knew it",

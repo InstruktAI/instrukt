@@ -1,7 +1,5 @@
 //! Slack history traversal with a restartable, depth-first page position.
-use super::{
-    Incoming, Me, SLACK, Slack, SlackError, newly_written, own_message, ts_micros, ts_time,
-};
+use super::{Incoming, Me, Slack, SlackError, newly_written, own_message, ts_micros, ts_time};
 use instrukt_connector::{ReadBackCoverage, ReadBackError, ReadBackGap, ReadBackPage};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -209,7 +207,9 @@ impl Slack {
                     }
                 }
                 Listing::History { channel, direct } => {
-                    if let Some(message) = recover(&me, channel, None, *direct, item, from)? {
+                    if let Some(message) =
+                        recover(&self.api.connector, &me, channel, None, *direct, item, from)?
+                    {
                         items.push(message);
                     }
                     let ts = field(item, "ts")?;
@@ -240,8 +240,15 @@ impl Slack {
                     direct,
                 } => {
                     if item["ts"].as_str() != Some(parent)
-                        && let Some(message) =
-                            recover(&me, channel, Some(parent), *direct, item, from)?
+                        && let Some(message) = recover(
+                            &self.api.connector,
+                            &me,
+                            channel,
+                            Some(parent),
+                            *direct,
+                            item,
+                            from,
+                        )?
                     {
                         items.push(message);
                     }
@@ -305,6 +312,7 @@ fn field<'a>(value: &'a Value, name: &str) -> Result<&'a str, ReadBackError> {
 }
 
 fn recover(
+    connector: &str,
     me: &Me,
     channel: &str,
     parent: Option<&str>,
@@ -333,7 +341,7 @@ fn recover(
     let thread = message["thread_ts"].as_str().or(parent).unwrap_or(ts);
     Ok(Some((
         Incoming {
-            connector: SLACK.into(),
+            connector: connector.to_owned(),
             conversation: if direct {
                 channel.to_owned()
             } else {
@@ -343,6 +351,8 @@ fn recover(
             sender: sender.to_owned(),
             written_at,
             text: text.to_owned(),
+            is_direct: direct,
+            thread: (!direct).then(|| thread.to_owned()),
         },
         format!("https://app.slack.com/archives/{channel}/p{timestamp}"),
     )))

@@ -21,9 +21,7 @@ use super::_error::RepositoryError;
 use super::_git;
 use super::_hooks::{self, HooksReport, SectionChange};
 
-/// The master instruction file at the repository root.
-pub const MASTER_FILE: &str = "AGENTS.master.md";
-/// The generated instruction file a master renders into.
+/// The root instruction file instrukt renders from the project's index.
 pub const GENERATED_FILE: &str = "AGENTS.md";
 /// The project position adoption creates; a repository publishes
 /// `docs/general/` or a `docs/domain/<x>/` by holding it.
@@ -50,8 +48,6 @@ pub enum InitPart {
     ProjectIndex,
     /// `docs/project/schema.yaml`, a copy of the published sdlc schema.
     ProjectSchema,
-    /// `AGENTS.master.md` at the repository root.
-    Master,
     /// `.instrukt/adopted/AGENTS.md`, the hand-written root `AGENTS.md`.
     KeptInstructions,
     /// `.instrukt/schemas/` and the modelines of the files they describe.
@@ -125,14 +121,23 @@ pub fn init(
     let docs = bounds.resolve(&root.join(PROJECT_DOCS))?;
     let index = bounds.resolve(&root.join(PROJECT_DOCS).join(INDEX_FILE))?;
     let schema = bounds.resolve(&root.join(PROJECT_DOCS).join(SCHEMA_FILE))?;
-    let master_path = bounds.resolve(&root.join(MASTER_FILE))?;
     let generated = bounds.resolve(&root.join(GENERATED_FILE))?;
     let kept_path = bounds.resolve(&root.join(KEPT_INSTRUCTIONS))?;
     let ignore = bounds.resolve(&root.join(".gitignore"))?;
     let hooks_plan = _hooks::plan_install_at(home, &root)?;
-    // Read before the master is seeded: a root `AGENTS.md` beside no
-    // master, which instrukt did not write, is the developer's own.
-    let had_master = exists(&master_path)?;
+    // Read before anything is written: a root `AGENTS.md` that is not
+    // instrukt's rendering is the developer's own, whether or not the
+    // project's index already exists.
+    let own_instructions = match std::fs::read(&generated) {
+        Ok(bytes) => (!publication::is_rendering(&bytes)).then_some(bytes),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(source) => {
+            return Err(RepositoryError::Read {
+                path: generated,
+                source,
+            });
+        }
+    };
 
     let mut parts = Vec::new();
     // An existing project layer is committed to the repository: it is checked
@@ -156,21 +161,11 @@ pub fn init(
         create(&index, EMPTY_INDEX.as_bytes())?,
     ));
     parts.push((InitPart::ProjectSchema, project_schema(home, &schema)?));
-    let hand_written = !had_master
-        && exists(&generated)?
-        && !std::fs::read(&generated)
-            .map(|bytes| publication::is_rendering(&bytes))
-            .map_err(|source| RepositoryError::Read {
-                path: generated.clone(),
-                source,
-            })?;
-    parts.push((InitPart::Master, master(&project, &master_path)?));
-    if hand_written {
-        let bytes = std::fs::read(&generated).map_err(|source| RepositoryError::Read {
-            path: generated.clone(),
-            source,
-        })?;
-        parts.push((InitPart::KeptInstructions, create(&kept_path, &bytes)?));
+    // The copy is kept whenever none has been: on a first adoption, and on
+    // the retry of one interrupted before the copy was written. Once a copy
+    // exists it is never written again.
+    if let Some(bytes) = &own_instructions {
+        parts.push((InitPart::KeptInstructions, create(&kept_path, bytes)?));
     } else if exists(&kept_path)? {
         parts.push((InitPart::KeptInstructions, PartOutcome::AlreadyPresent));
     }
@@ -259,12 +254,6 @@ fn project_schema(home: &Home, path: &Path) -> Result<PartOutcome, RepositoryErr
             Ok(PartOutcome::Created)
         }
     }
-}
-
-/// Seeds the master at `path` (resolved) with only its purpose: what the
-/// project's `AGENTS.md` includes comes from `docs/project/index.yaml`.
-fn master(project: &ProjectSlug, path: &Path) -> Result<PartOutcome, RepositoryError> {
-    create(path, format!("## Purpose\n\n{project}\n").as_bytes())
 }
 
 fn editor_outcome(schemas_existed: bool, changes: &[EditorChange]) -> PartOutcome {

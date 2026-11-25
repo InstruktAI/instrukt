@@ -15,6 +15,27 @@ through the services the company works with, each person under their own login
 at each service. The company's repository holds its final knowledge, and the
 operator holds the proof. You are the operator's agent setting the company up.
 
+### Platform onboarding vs. company onboarding
+
+Keep the two onboarding layers distinct:
+
+- **Platform onboarding** (the `instrukt` cockpit skill): sets up the host
+  computer itself — installing `instrukt`, adopting documentation and project
+  repositories, configuring the runtime, model profiles, and GitHub Apps, and
+  enabling host modules. Run and re-open the cockpit skill for host-level
+  changes.
+- **Company onboarding** (this procedure): runs on a computer where platform
+  onboarding already stands — creating one company's private repository and
+  home, declaring its members, messaging connector, and company knowledge,
+  wiring its business services through
+  `general/procedure/company-onboarding/service-connection`, and proving
+  baseline business assistance (`general/procedure/company-assistance`).
+  Technical coordination for a company (`general/procedure/technical-coordinator`)
+  is a separate downstream workflow run from a direct operator session (or
+  another session whose role grants repository, MCP, and todo actions and that
+  did not start from `general/procedure/company-assistance`) rather than inside
+  a company conversation started from `general/procedure/company-assistance`.
+
 A service the company works with may need setting up for the company before
 it can be connected — its accounts, its roles, its records. That is the
 service's own procedure; you run it where the company uses that service, and
@@ -22,6 +43,11 @@ this procedure names none.
 
 ## Preconditions
 
+- Platform onboarding stands on this computer: `instrukt status --json`
+  reports `machine.configured: true` with no `machine.findings`, a selected
+  `runtime`, and `modules.features.standing_agents.available: true` (no host
+  module switch under `modules` is required for company onboarding);
+  `instrukt agents list` reports the configured agent profiles.
 - You work on the computer that is to hold the company's home.
 - The operator is at hand to run, at their own terminal, the commands this
   procedure gives them, and to give you their output back.
@@ -37,8 +63,32 @@ the steps in order, skipping what already stands. Connecting or repairing an
 onboarded company's services runs step 6, then steps 7 and 8, then step 9 for
 the services it touched, then step 10.
 
-1. **Take the intake.** Ask these, and take the answers as the company's
-   facts:
+1. **Surface upfront caveats and take the intake.** Before creating a company
+   home or connecting channels, orient the operator on three operational
+   boundaries (`general/policy/leadership`, `general/policy/human-contract`):
+   - **Compute and token budget:** every addressed company conversation turn
+     runs against the configured model profiles and provider usage budget
+     (company-specific profiles are scoped in step 4). Confirm budget
+     expectations and account ownership before enabling active channels.
+   - **Host isolation boundary:** on a single shared host without per-company
+     containers, company homes are separate folders under one operating-system
+     user rather than OS-isolated sandboxes; multi-tenant filesystem and
+     runtime isolation requires per-company containers on a Linux host (macOS
+     is not a multi-tenant company host). State the computer's current
+     isolation topology explicitly before placing the company on it.
+   - **Technical coordination and deployment infrastructure stay opt-in and
+     downstream:** baseline company onboarding delivers business assistance
+     (`general/procedure/company-assistance`) and connected business MCP
+     services only. Technical coordination for the company
+     (`general/procedure/technical-coordinator`) — and any deployment-host,
+     container-runtime, or GitOps setup — is handled separately downstream in
+     a direct operator session (or another session whose role grants
+     repository, MCP, and todo actions and that did not start from
+     `general/procedure/company-assistance`) after baseline onboarding stands,
+     never inside baseline business onboarding or a company conversation
+     started from `general/procedure/company-assistance`.
+
+   Then ask these, and take the answers as the company's facts:
    - What is the company called, and what key names it on this computer — a
      slug, the same as its repository's name?
    - What does it do, and how do its people work?
@@ -46,15 +96,33 @@ the services it touched, then step 10.
    - Where do its people talk to each other: which messaging provider and
      which workspace there?
    - Which services does its work run on, and what for?
+   - Does this company stay on business assistance only, or does the operator
+     also plan downstream technical coordination
+     (`general/procedure/technical-coordinator`) for the company's repositories
+     after baseline onboarding?
 
    The name and key lead to step 2, what it does and who leads it to step 3,
-   the messaging to step 5, and the services to step 6.
+   the messaging to step 5, and the services to step 6. Any downstream
+   technical-coordination, deployment-host, or GitOps setup is recorded in the
+   step 10 handoff as separate post-onboarding work after baseline onboarding
+   is proven.
 2. **Give the company its repository and its home.** Create the company's
    private repository, one per company, and check it out at
    `~/.instrukt/companies/<name>/`, where `<name>` is the company's key.
    Protect its default branch under `general/policy/commits` so human and agent
    changes land through reviewed worktree heads and integration rather than
-   direct pushes. Automated skill publication must use a route compatible with
+   direct pushes. Enable host-side branch protection or rulesets where the
+   hosting plan supports them for the repository (on GitHub, public
+   repositories, private personal repositories on GitHub Pro, or private
+   organization repositories on GitHub Team and above; restricting push actors
+   requires a plan feature that supports push restrictions or rulesets). Where
+   the hosting plan does not support host-side branch protection — such as a
+   private organization repository on GitHub Free — agent delivery still routes
+   through reviewed worktree heads and instrukt's integration gate, while
+   host-side push prevention is unavailable and a collaborator with write access
+   can still push directly to the default branch unless repository permissions
+   and operational discipline prevent it; upgrade the hosting plan when
+   host-side push enforcement is required. Automated skill publication must use a route compatible with
    `general/policy/commits`'s single-writer rule rather than granting a second
    direct writer on the default branch; where the repository's skill publisher
    still requires pushing directly to the default branch, leave that part of
@@ -66,10 +134,12 @@ the services it touched, then step 10.
    separate worktree rather than in the serving checkout at
    `~/.instrukt/companies/<name>/`, so the serving home stays on the reviewed
    default branch throughout authoring and review (`general/policy/commits`).
-   Create `AGENTS.master.md` for the company's purpose and top-level required
-   reads, and place the company's knowledge — what it does, how its people
-   work, who owns and organizes it, and where people reach the agent — in
-   documents under `docs/` referenced by relative path. Follow the company home
+   Place the company's knowledge — what it is for, what it does, how its
+   people work, who owns and organizes it, and where people reach the agent —
+   in documents under `docs/`, and create `docs/index.yaml` naming under
+   `expanded` the documents every agent of the company starts with and under
+   `listed` the ones an agent reads when they apply, each by its path
+   relative to `docs/`. Follow the company home
    knowledge rules in `general/procedure/doc-snippet-authoring` and
    `general/policy/snippet-value-contract` (present-tense current truth without
    historical narration; self-contained with no references outside the
@@ -150,8 +220,11 @@ the services it touched, then step 10.
 10. **Report to the operator.** Give the home and its repository with the
     revision pushed, the connector and its state, each service's outcome from
     `general/procedure/company-onboarding/service-connection`, each outcome
-    of step 9,
-    and every step still open with what it waits on.
+    of step 9, and every step still open with what it waits on. On the full
+    onboarding route (when step 1 ran), also report the isolation topology
+    confirmed in step 1 and whether downstream technical coordination
+    (`general/procedure/technical-coordinator`) or deployment-host/GitOps
+    follow-up was planned as separate post-onboarding work.
 
 ## Outputs
 
@@ -183,3 +256,9 @@ the services it touched, then step 10.
   fails; report it to the operator with the words the person was given.
 - **The rendering check fails.** It names the file and the reference; correct
   it, commit, and run step 8 again.
+
+## See Also
+
+- [general/procedure/company-onboarding/service-connection](service-connection.md)
+- [general/procedure/company-assistance](../company-assistance.md)
+- [general/procedure/technical-coordinator](../technical-coordinator.md)

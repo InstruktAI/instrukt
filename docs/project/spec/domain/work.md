@@ -66,6 +66,46 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
 
+**Head verdict**
+: An independent review's recorded outcome for one exact commit that no todo's
+  record carries: a judgment of the commits from its pinned base up to that
+  commit, delivered to GitHub as the reviewer bot's review status on it and as
+  a review on each pull request it heads.
+
+**Pinned base**
+: The commit a review starts from, fixed by instrukt and never chosen by the
+  reviewer. A head verdict covers the whole range from it, and covers the
+  canonical branch only when its pinned base lies on that branch. A review
+  request carries the pinned base the runner selected
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Review
+  requests).
+
+**Exemption**
+: The recorded decision that a commit owes no independent review under
+  `general/policy/commits`, made by its author. It is a fact of its own beside
+  a commit's verdict.
+
+**Derived approval**
+: The record that an integration candidate's content is covered, from
+  workflow's finding and with no review of its own. Until GitHub shows it as
+  the candidate's review status it stands only while that finding is found
+  again.
+
+**Revision**
+: A later version of a commit's head verdict, recorded by the session that
+  recorded the current one in a turn that no review request for that commit
+  opened.
+
+**Handed-over approval**
+: A head verdict its reviewing session returned and did not record, entered by
+  another session that states it is that session's standing result and adds
+  no judgment of the reviewed change.
+
+**Export**
+: One snapshot of the review evidence that stands on a computer for a project,
+  written to a file for another computer to import. The exported verdicts are
+  handed off: they stand again where the file is imported.
+
 ## Ownership boundary
 
 - **Owns:** todo identity and record mutations; artifact versions; stamp
@@ -98,6 +138,17 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Implementation roots:** the `instrukt-todos` crate.
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
+
+Work also owns review evidence for exact commits that no todo's record
+carries: head verdicts, exemptions and derived approvals, their admission,
+which of them is current for a commit, their publication as the reviewer
+bot's pull-request review and review status, and their transfer to another
+computer. `instrukt review record`, `exempt`, `show`, `export` and `import`
+are their published contract
+(`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
+review and which review requests exist is the runner's decision, whether a
+candidate's content is covered is workflow's, and how a head is reviewed is its
+review procedure's.
 
 ## Canonical fields
 
@@ -150,6 +201,39 @@ and issues installation credentials under
 - **Identifier:** project identity; relationships address durable todo identities.
 - **Lifecycle:** grows and changes as work is filed, grouped, reordered and
   retired; it preserves the context needed to read retained work.
+
+#### Review evidence
+
+- **Root entity:** the review evidence of one exact commit of a project's
+  repository.
+- **Contains:** its head verdict with its versions, each with verdict, pinned
+  base, report, reviewing session, the request it answers and its moment, and
+  with whether it stands on this computer, was handed off by an export or was
+  set aside by an import; its exemption; for an integration candidate its
+  derived approval with the coverage it rests on; and what GitHub shows of the
+  current verdict at each destination.
+- **Invariants:** evidence is recorded before anything of it is published; a
+  verdict names one commit and no other commit inherits it; a verdict covers
+  the whole range from a pinned base its reviewer cannot narrow; no reviewed
+  commit names the verdict's reviewing session as its author; a commit's
+  review is settled by the first verdict admitted for it, and only its
+  settling session revises it; a verdict and an exemption of one commit never
+  replace each other; each publication follows the current verdict; a
+  derived approval is first published as the commit's status, by a tick that
+  found its coverage again; a verdict an export carried is handed off where
+  it was exported and stands where its file is imported; an import never
+  changes which verdict of a commit is current where another one stands
+  here, unless its operator states which stands; a current version carries
+  its own report and moment and rests on no earlier one; only the reviewer
+  identity publishes. Admission, publication,
+  storage, transfer and readiness belong to
+  `project/instrukt/spec/feature/work/github-apps`.
+- **Identifier:** project and commit.
+- **Lifecycle:** recorded by the reviewing session, by the commit's author for
+  an exemption, or by the runner through work's command contract for a derived
+  approval; published on ticks by a computer the project is admitted on;
+  moved to another computer by an export and an import; kept while current and
+  retired as history under the same contract.
 
 ### Domain events emitted
 
@@ -224,6 +308,25 @@ owning design snippet or decision record is declared.
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence
   through the core-declared interface wired by the CLI when todos is enabled.
+
+- **Work → runner (automatic review)** — customer-supplier. Work answers whether
+  a pull request is a todo's, whether a commit carries a verdict and which
+  review evidence is current for it, and whether both identities are ready.
+  Through its command contract it records a derived approval, carrying the
+  coverage finding the runner read from workflow, withdraws one that a later
+  finding no longer covers, and publishes what is outstanding to the pull
+  requests the runner observed.
+- **Runner → work (automatic review)** — customer-supplier. The runner supplies
+  a commit's review requests with their standing and pinned base, which input
+  opened the turn a session has in progress when it offers a revision, and a
+  named session's conversation; work consults them when it admits a head
+  verdict.
+- **Work → workflow (review coverage)** — customer-supplier. Work answers which
+  evidence is current for a commit and whether a candidate's derived
+  approval is one GitHub does not show yet;
+  workflow reads approval of a head that is not a todo's, and exemptions, from
+  that answer alone, and reads a candidate's result from it together with the
+  review status.
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.

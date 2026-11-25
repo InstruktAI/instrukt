@@ -2,8 +2,8 @@
 activation_trigger: >-
   Use as soon as you consider creating, changing or retiring a taxonomy snippet
   under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
-  included, or company home knowledge (`AGENTS.master.md` and documents under
-  `docs/`). Ordinary README or website prose never activates it. Changes to
+  included, or company home knowledge (a company repository's documents under
+  `docs/` and the file that selects them). Ordinary README or website prose never activates it. Changes to
   directive text for agents elsewhere still require an update to the owning
   snippet and independent review of the commit under
   `general/policy/documentation-discipline`.
@@ -17,6 +17,7 @@ visibility: public
 ## Required reads
 
 - [general/policy/agent-facing-text](../policy/agent-facing-text.md)
+- [general/policy/documentation-discipline](../policy/documentation-discipline.md)
 - [sdlc/principle/documentation-first-development](../../domain/sdlc/principle/documentation-first-development.md)
 - [general/policy/snippet-value-contract](../policy/snippet-value-contract.md)
 - [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
@@ -35,7 +36,7 @@ tooling.
 
 ## Steps
 
-For taxonomy snippets, authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing taxonomy snippets, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed. For company home knowledge (`AGENTS.master.md` and documents anywhere under `docs/` in a company repository), follow Step 0 and **Company home knowledge** below, and verify with `instrukt docs render --check` instead of `instrukt docs validate`.
+For taxonomy snippets, authoring reads and edits the snippet's source file in the repository. `instrukt docs get` is for knowledge: it renders the snippet, filters pending content and resolves references, so its output is not the file you are changing. Before committing taxonomy snippets, run `instrukt docs validate` on the authored docs. Sync refuses committed docs with findings and retains the previous publication; no pre-commit hook is installed. For company home knowledge (the documents anywhere under `docs/` in a company repository and the `docs/index.yaml` that selects them), follow Step 0 and **Company home knowledge** below, and verify with `instrukt docs render --check` instead of `instrukt docs validate`.
 
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
@@ -129,12 +130,13 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
 
 12. **Give a procedure an `activation_trigger` only when an agent must
     recognize on its own that the procedure applies**, from what a user asks
-    or from a situation it meets. Every trigger is a line in every agent's
-    context on every computer that adopts its domain
-    (`general/policy/snippet-value-contract`, Manual in the always-on set),
-    so it names that moment and nothing wider. A procedure reached only
-    through a workflow, a dispatcher or another procedure is reached through
-    that starter and carries no trigger.
+    or from a situation it meets. Every trigger is a line in every session that
+    loads its position — for `docs/general/`, every session on every adopting
+    computer; for a domain, every session that loads that domain; for a project,
+    every session in that project (`general/policy/snippet-value-contract`,
+    Manual in the always-on set), so it names that moment and nothing wider. A
+    procedure reached only through a workflow, a dispatcher or another procedure
+    is reached through that starter and carries no trigger.
 13. **Changing an existing snippet — bounded, wholesale, or retired.** For tracked repository todos, author these pending carriers in `<slug>/work`. Before delivery, `--target <slug>` reads `<slug>/work` (falling back to a legacy prepare branch during upgrade); when the todo delivers, `integrate` folds the pending carriers into the current contract on `main` (clearing `binding_reservations` once attached tests are present). A live snippet is never overwritten or deleted in place to describe a change before it is delivered. Match the pending carrier to the shape of the change: bounded additions, replacements, and removals stay in body markers; wholesale reworks use a companion; retiring the whole snippet uses an empty companion. The pending carrier names the delivering `<slug>`.
 
             - **Present-tense body (governs both forms).** Author the wrapped or companion body as the **future live contract**, in present tense, exactly as it must read once delivered. On delivery the marker lines vanish (ADD) or the companion replaces the parent (REPLACE) and the body stays **verbatim** — so it must already read as correct current-state contract with nothing stripped. The delivering `<slug>` is carried by the planned marker or the companion filename. A slug names work and a snippet body states contract, so **no slug appears in body prose**. Do not write "Pending `<slug>`, …", "the new surface is …", "will", "is planned", or any history/rationale narration inside the body (see the Narration anti-pattern in `general/policy/snippet-value-contract`). DON'T: `Pending <slug>, the manual-parking surface is: …`. DO: `The manual-parking surface is: …` — wrapped in `<!-- planned:<slug> -->`, which is the only place the slug appears.
@@ -242,18 +244,25 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     enters its awareness only when that event arrives
     (`general/principle/priming`).
 
-18. **Company home knowledge.** A company repository's `AGENTS.master.md` and
-    documents anywhere under `docs/` carry no taxonomy ID and reference nothing
-    outside the company's own documents, so taxonomy placement, snippet
-    schemas, `index.yaml`, `instrukt docs validate`, and pending markers do not
-    apply; retain ordinary Markdown and relative required reads. Give each
+18. **Company home knowledge.** A company repository's documents anywhere
+    under `docs/` carry no taxonomy ID and reference nothing outside the
+    company's own documents, so taxonomy placement, snippet schemas,
+    `instrukt docs validate`, and pending markers do not apply; retain
+    ordinary Markdown and relative required reads. The repository's
+    `docs/index.yaml` selects what the company's rendered `AGENTS.md` holds,
+    each entry a document's path relative to `docs/`: `expanded` names the
+    documents every agent of the company acts on in ordinary work, held in
+    full; `listed` names the documents an agent fetches when they apply, each
+    shown as one line with its `description`. Keep a `listed` document out of
+    the required reads of the `expanded` ones. Give each
     document under `docs/` frontmatter with a non-empty `description` (and
     optional `visibility: internal` or `public`, defaulting to `internal`, so
     the company skill publisher accepts it alongside `AGENTS.md` rendering).
     Apply Step 0, `general/policy/snippet-value-contract`, and
     `general/policy/agent-facing-text`. Author routine knowledge updates in
-    documents under `docs/` inside a separate worktree (keeping the serving
-    company home checkout on the reviewed default branch), render with
+    documents under `docs/` and in that index inside a separate worktree
+    (keeping the serving company home checkout on the reviewed default
+    branch), render with
     `instrukt docs render` (or commit through the installed pre-commit hook)
     and verify the committed worktree with `instrukt docs render --check`, then
     route the committed worktree head through independent review before

@@ -1,6 +1,6 @@
 //! Native database notifications drive the runner's independent relay reader.
 use super::{_targets::Targets, LinkError, failure, status};
-use crate::interfaces::CompanyRelayPass;
+use crate::{interfaces::CompanyRelayPass, runtime::conversations::SourceWake};
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -162,10 +162,12 @@ fn serve(
             tracing::debug!(event = "conversation_link_retry_processed");
         }
         // Retained connector work that is not yet done is retried within a
-        // bound; otherwise only a native change or new intake wakes the relay.
+        // bound; an out-of-process `instrukt company reply` can also enqueue
+        // pending answers while idle, so check read-only SQLite on the same
+        // 2-second cadence without touching the native conversation source.
         let retry = destinations
             .is_some_and(|destinations| destinations.company.outstanding(home).unwrap_or(true));
-        let until = std::time::Instant::now() + Duration::from_secs(2);
+        let mut until = std::time::Instant::now() + Duration::from_secs(2);
         pass = loop {
             if stopping.try_recv().is_ok() {
                 return Ok(());
@@ -181,15 +183,24 @@ fn serve(
             }) {
                 break CompanyRelayPass::Retry;
             }
-            if retry && std::time::Instant::now() >= until {
-                break CompanyRelayPass::Retry;
+            if std::time::Instant::now() >= until {
+                if retry
+                    || destinations.is_some_and(|d| d.company.outstanding(home).unwrap_or(false))
+                {
+                    break CompanyRelayPass::Retry;
+                }
+                until = std::time::Instant::now() + Duration::from_secs(2);
             }
             match notifications.wait(Duration::from_millis(100)) {
-                Ok(true) => {
+                Ok(SourceWake::Changed) => {
                     links_due = true;
                     break CompanyRelayPass::CatchUp;
                 }
-                Ok(false) => {}
+                Ok(SourceWake::ReadAgain) => {
+                    state.targets.read_again(home);
+                    break CompanyRelayPass::Retry;
+                }
+                Ok(SourceWake::Timeout) => {}
                 Err(error) => return Err(LinkError::Source(error)),
             }
         };

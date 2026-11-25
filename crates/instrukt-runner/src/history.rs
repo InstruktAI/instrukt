@@ -262,6 +262,18 @@ pub fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, Hist
     _store::show(home, source, conversation)
 }
 
+/// The normalized records the history store retained of conversation
+/// `thread` from `source`, read without the history lock from a store that
+/// is opened read-only and migrated by nothing here; `None` when no current
+/// store exists.
+pub(crate) fn retained_records(
+    home: &Home,
+    source: &str,
+    thread: &str,
+) -> Result<Option<Vec<crate::runtime::conversations::ConversationRecord>>, HistoryError> {
+    _db::retained_records(home, source, thread)
+}
+
 pub(super) fn source(
     home: &Home,
     env: &Env,

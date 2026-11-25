@@ -98,6 +98,8 @@ mod progressive_retrieval;
 mod project_initialization;
 #[path = "cases/project-publication.rs"]
 mod project_publication;
+#[path = "cases/pull-request-review.rs"]
+mod pull_request_review;
 #[path = "cases/release-installer.rs"]
 mod release_installer;
 #[path = "cases/roles-and-capabilities.rs"]

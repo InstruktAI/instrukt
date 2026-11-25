@@ -15,7 +15,7 @@ use instrukt_core::publication::{
 use instrukt_core::repository::{
     self, CommitRequest, GENERATED_FILE, GenerationOutcome, Hook, HookChange, HookInvocation,
     HookRunRecord, HooksDir, HooksReport, InitPart, KEPT_INSTRUCTIONS, KeptInstructions,
-    MASTER_FILE, NotWritten, PROJECT_DOCS, PartOutcome, SectionChange, SectionStatus, SyncOutcome,
+    NotWritten, PROJECT_DOCS, PartOutcome, SectionChange, SectionStatus, SyncOutcome,
 };
 
 use crate::context::Ctx;
@@ -68,7 +68,6 @@ fn part_label(part: InitPart) -> String {
         InitPart::ProjectDocs => format!("project docs ({PROJECT_DOCS}/)"),
         InitPart::ProjectIndex => format!("project index ({PROJECT_DOCS}/index.yaml)"),
         InitPart::ProjectSchema => format!("project schema ({PROJECT_DOCS}/schema.yaml)"),
-        InitPart::Master => format!("master ({MASTER_FILE})"),
         InitPart::KeptInstructions => format!("kept instructions ({KEPT_INSTRUCTIONS})"),
         InitPart::EditorSchemas => format!("editor schemas ({SCHEMAS_DIR}/)"),
         InitPart::Ignores => "ignores of .instrukt/ (.gitignore)".to_owned(),
@@ -117,7 +116,7 @@ pub(crate) fn editor_lines(changes: &[EditorChange]) -> Vec<String> {
 
 fn kept_lines(_kept: KeptInstructions) -> Vec<String> {
     vec![format!(
-        "{GENERATED_FILE} is generated from now on: the next commit through instrukt's hook writes its rendering from {MASTER_FILE} and {PROJECT_DOCS}/index.yaml over it"
+        "{GENERATED_FILE} is generated from now on: the next commit through instrukt's hook writes its rendering from {PROJECT_DOCS}/index.yaml over it"
     )]
 }
 
@@ -195,7 +194,8 @@ enum HooksCommand {
     /// last run's outcome.
     Status,
     /// What a section calls: pre-commit stages the repository's generated
-    /// `AGENTS.md` files and a project layer converted to the current schema
+    /// root `AGENTS.md`, the removal of renderings left below it, and a
+    /// project layer converted to the current schema
     /// into the commit; post-commit keeps the index in step with what was
     /// committed; checkout in the primary checkout starts publication
     /// detached; other publication triggers run detached. Never fails the git

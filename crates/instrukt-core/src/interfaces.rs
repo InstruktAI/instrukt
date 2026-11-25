@@ -240,6 +240,27 @@ impl std::fmt::Debug for CoreWiring {
     }
 }
 
+/// Whether the two identities automatic review needs can do their part on a
+/// repository (`github-apps`, "Readiness for automatic review").
+pub enum ReviewReadiness {
+    /// Both credentials were issued with exactly their permissions; the
+    /// observation credential is kept for the caller's reads.
+    Met {
+        observation: Arc<crate::github::Credential>,
+    },
+    /// An identity cannot do its part: the App, the repository, what it
+    /// lacks and the repair, in plain words.
+    Unmet(String),
+    /// GitHub could not be asked; nothing is decided.
+    CannotAsk(String),
+}
+
+/// Work's readiness answer for automatic review. It requests the two
+/// credentials and writes no state.
+pub trait AutomaticReviewReadiness: Send + Sync {
+    fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
 /// Setup-verified stable actor facts for local author attribution. No repository
 /// or installation authorization is implied by this capability.
 pub trait GitHubActors: Send + Sync {

@@ -1,0 +1,41 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: shipped
+---
+# instrukt docs get: acme/procedure/conclude
+
+---
+id: acme/procedure/conclude
+type: procedure
+domain: acme
+scope: global
+description: Settle a resting conversation or retire a finished one.
+source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
+---
+# Conclude — Procedure
+
+## Goal
+
+```
+Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling.
+```
+
+```
+Use native archiving (t3_thread_organize with action 'archive') for the addressed terminal todo orchestrator thread once its todo is delivered or withdrawn, removing it from active and settled thread lists and normal wake paths while retaining transcripts for audit and history extraction. Settling already clears PR watches and does not by itself block storage cleanup; archiving removes terminal threads from active and settled views and leaves qualified workspace cleanup eligible. On replay, inspect or recognize an already-archived thread per binding as converged and distinguish it from a failed observation; complete any remaining handoff or record writes before archiving this session itself because archiving detaches the provider session immediately. Preserve unfinished human and worker obligations before retiring, and never archive standing agent threads.
+```
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

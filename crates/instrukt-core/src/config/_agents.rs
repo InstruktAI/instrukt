@@ -85,6 +85,25 @@ impl Profile {
 /// The role the runner gives a conversation session.
 pub const COMPANY_AGENT_ROLE: &str = "company-agent";
 
+/// The role that drives a todo through preparation and work.
+pub const TODO_ORCHESTRATOR_ROLE: &str = "todo-orchestrator";
+
+/// The split orchestrator roles [`TODO_ORCHESTRATOR_ROLE`] replaced, in the
+/// order agents migration prefers their settings when neither file entry is
+/// unified yet: work's first.
+pub const RETIRED_ORCHESTRATOR_ROLES: [&str; 2] = ["work-orchestrator", "prepare-orchestrator"];
+
+/// The role whose `agents.yaml` entry governs work recorded under `role`: a
+/// retired split orchestrator's is [`TODO_ORCHESTRATOR_ROLE`]'s, because
+/// agents migration removes the split entries; any other role is its own.
+pub fn current_role(role: &str) -> &str {
+    if RETIRED_ORCHESTRATOR_ROLES.contains(&role) {
+        TODO_ORCHESTRATOR_ROLE
+    } else {
+        role
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Agents {
@@ -605,7 +624,9 @@ impl Effort {
                 self,
                 Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max | Self::Ultrathink
             ),
-            HarnessKind::Antigravity => matches!(self, Self::Low | Self::Medium | Self::High),
+            HarnessKind::Antigravity => {
+                matches!(self, Self::Low | Self::Medium | Self::High | Self::Xhigh)
+            }
             HarnessKind::Kiro | HarnessKind::Grok => matches!(
                 self,
                 Self::None | Self::Low | Self::Medium | Self::High | Self::Xhigh | Self::Max
@@ -909,5 +930,18 @@ mod tests {
             .capabilities("builder")
             .unwrap();
         assert_eq!(role.scope(Action::DocsWrite), None);
+    }
+
+    #[test]
+    fn an_antigravity_effort_outside_its_vocabulary_is_refused() {
+        let edited = SHIPPED_AGENTS.replacen(
+            "standard: [{model: gemini-3.8-flash-high, effort: high}]",
+            "standard: [{model: gemini-3.8-flash-high, effort: max}]",
+            1,
+        );
+        assert!(matches!(
+            Agents::parse(&edited),
+            Err(ConfigError::InvalidValue { .. })
+        ));
     }
 }

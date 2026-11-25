@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/publication/_company.rs
+expression: "listed_line(\"docs/people.md\", one)"
+---
+- docs/people.md: Who works at Acme.

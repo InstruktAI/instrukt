@@ -292,6 +292,42 @@ need App setup before remote work reflection and CI observation:
    integration. Local bot-attributed commits consume configured verified actor
    facts and require no installation access to the current repository.
 
+### Automatic review of pull requests and integration candidates
+
+Nothing changes until a project opts in: `review.automatic` is absent, so its
+pull requests are not observed, no review is asked for and nothing is
+published. To switch it on for a project, in this order:
+
+1. Install this release on the computer that serves the project.
+2. On the repository's App installations, grant the reviewer App (the one the
+   `commit-reviewer` role selects) write access to pull requests and to commit
+   statuses, and the project App read access to pull requests. No other
+   credential changes.
+3. Publish the documentation that holds the delivered
+   `sdlc/procedure/lifecycle/work/review-commits`, which subscribes to
+   `runner.review_needed` under the `commit-reviewer` role and is the only
+   procedure subscribed to it. Admission requires that route.
+4. Record the approval of every head reviewed before the cutover that is not
+   on the canonical branch yet: its reviewing session with `instrukt review
+   record`, or another session with `instrukt review record --reviewer
+   <session>`. A head whose approval is not recorded is reviewed as part of its
+   candidate.
+5. Set `review: {automatic: true}` in the project layer through a reviewed
+   commit. `instrukt config patch` refuses it while a finding stands, and
+   `instrukt install --check` reports any readiness finding of the two
+   identities.
+6. Observe that an integration candidate carries the reviewer bot's
+   `instrukt/review` status.
+7. Only then require `instrukt/review` on the canonical branch, with the
+   reviewer App as its expected source. Requiring it earlier blocks the
+   integrator's fast-forward until candidates carry the status.
+
+Review evidence is kept on the serving computer in `state/review.db`. When
+another computer starts serving the project, move it with `instrukt review
+export --to <file>` there and `instrukt review import <file>` here; a computer
+that starts without an import recognises what the reviewer bot already
+published and asks for every other owed head.
+
 ### Conversations without a switch, people known from Slack
 
 A company that declares a connector has conversations. The machine's
@@ -495,3 +531,48 @@ deployment. One you edited keeps working as it is, without them: a
 `can`, and roles using your own `record` bundle report into their own project
 once you add `{action: bug-report, scope: own}` to it. A role naming `report`
 in a file that defines no such bundle receives the shipped one.
+
+### One root AGENTS.md, rendered from an index.yaml
+
+No entrypoint is rendered from an `AGENTS.master.md` any more. A repository
+carries one rendered instruction file, the `AGENTS.md` at its root, rendered
+from its entry index: `docs/project/index.yaml` in a project,
+`docs/index.yaml` in a company home. Nothing below the root is rendered. This
+replaces every step above that puts content in a master. A former master is
+an `AGENTS.master.md` kept at a repository's root or in a subfolder as the
+source of the `AGENTS.md` beside it; a document under `docs/` that the entry
+index selects is not one, whatever its name, and is left where it is. In this
+order:
+
+1. Before the first commit through the new hook, in each project, move the
+   root master's purpose into a project snippet (a `concept` is the usual
+   type) and name it first in `expanded` in `docs/project/index.yaml`; move
+   each nested master's content into project snippets the index selects. What
+   stays in a master reaches no agent once the new release renders, and
+   instrukt never deletes a master, so nothing is lost if this step comes
+   later — but the commit made before it carries a root `AGENTS.md` without
+   that content.
+2. Install the release. The next commit through the hook carries the one root
+   `AGENTS.md`, opening with the new generated line, and removes every
+   `AGENTS.md` an earlier release rendered in a subfolder; an `AGENTS.md`
+   there that you wrote stays. A project without `docs/project/index.yaml`
+   has no rendering, and an earlier rendering at its root is removed. Once
+   nothing reads a former master as a source, delete it.
+3. In each company repository, create `docs/index.yaml` with `expanded` and
+   `listed`, each a list of document paths relative to `docs/` ending in
+   `.md`, and move the master's own text into a document it selects. A
+   `listed` document needs a `description` in its frontmatter: the rendering
+   names it by one line with that description. Run
+   `instrukt config validate --company <name>` until it reports no finding.
+   The company's workflow publishes its `AGENTS.md` and skill with the shared
+   workflows repository's publisher (`InstruktAI/workflows`,
+   `scripts/company-skill/render.py`), which still reads `AGENTS.master.md`
+   at its released version: in the same change, take a publisher release
+   that reads `docs/index.yaml` (`expanded` in full with their required
+   reads, `listed` as one line with the description) and delete the master.
+   Until that release exists, keep the master for the publisher; it means
+   nothing to instrukt.
+4. The editor schema for a company index is `company-index.schema.json` in
+   any project's `.instrukt/schemas/`. Nothing writes schemas or a modeline in
+   a company home; point an editor there at it by hand. The domain index
+   schema now requires `description`, as validation already did.

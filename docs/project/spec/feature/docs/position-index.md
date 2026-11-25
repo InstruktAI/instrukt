@@ -48,6 +48,18 @@ the project's index name only snippets of their own position.
 An index is the only one in its position. Depth comes from required reads — a
 listed overview's closure — never from nested indexes.
 
+### The company index
+
+A company home's `docs/index.yaml` is no position's index. What makes a
+repository a company home, the company index's shape, its findings and what
+is rendered from it are publication's
+(`project/instrukt/spec/feature/publication/agent-entrypoints`) and are not
+stated here. `instrukt docs validate` asks publication whether a
+`docs/index.yaml` is the repository's company index before reading it, and
+neither reads nor reports one that is. Any other `docs/index.yaml`, in a
+project among them, sits at no position's root and is the finding below,
+reported from its path.
+
 ### Findings
 
 Reported by `instrukt docs validate` and, through validation, by the sync that
@@ -95,6 +107,17 @@ Given a developer publishes a domain that has no index
 When they validate the project's documentation
 Then they are told the domain has no index and is reachable only by listing its snippets
 And the run does not fail on that alone
+```
+
+### UC-PI3: An operator validating a company's repository is told nothing about its index
+
+```gherkin
+Given an operator's clone of a company's repository, whose documents are selected by its index
+When they validate the repository's documentation
+Then nothing is reported about the company's index, whatever that file holds
+Given a developer's project that holds an index at that same place
+When they validate the project's documentation
+Then that index is reported as sitting at no position's root
 ```
 
 ## Known caveats

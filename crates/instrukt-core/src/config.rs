@@ -25,6 +25,7 @@ mod _migrate;
 mod _module;
 mod _redis;
 mod _render;
+mod _review;
 mod _root;
 mod _runtime;
 mod _schema;
@@ -35,8 +36,9 @@ mod _webhooks;
 use std::path::Path;
 
 pub use _agents::{
-    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile, RoleSelection,
-    SHIPPED_AGENTS,
+    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile,
+    RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
+    current_role,
 };
 
 pub use _admitted::{
@@ -44,35 +46,48 @@ pub use _admitted::{
     Current, Offer, serve,
 };
 pub use _company::{Member, Members};
-pub use _connectors::{DeclaredConnector, install_connector_declarations};
+pub use _connectors::{
+    ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
+    install_connector_declarations,
+};
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
-    revision, unloadable_machine_layer,
+    review_switch, review_target, revision, unloadable_machine_layer,
 };
-pub use _mcp::{McpServer, admitted_address as mcp_address_admitted};
+pub use _mcp::{
+    CompanyIssuerConfig, DEFAULT_ISSUER_SIGNING_KEY_NAME, McpClient, McpServer, McpSignIn,
+    SignInClient, SignInIdentity, SignInMode, SpeakerLogin,
+    admitted_address as mcp_address_admitted,
+};
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
 pub use _render::render_yaml;
+pub use _review::{REVIEW_AUTOMATIC_KEY, REVIEW_NEEDED_EVENT, REVIEW_PROCEDURE, REVIEW_ROLE};
 pub use _root::{RootDocument, classify_root};
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};
-pub use _schema::{CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, editor_schema};
-pub use _validate::{connector_procedure_finding, validate, validate_local};
+pub use _schema::{
+    CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema,
+    layer_json_schema,
+};
+pub use _validate::{
+    connector_procedure_finding, connector_role_procedure_finding, validate, validate_local,
+};
 pub use _webhooks::{
-    Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, webhook_domain,
-    webhook_name,
+    Ingress, SigningSecrets, WebhookProtocol, WebhookSource, WebhookSources, ingress_url_admitted,
+    webhook_domain, webhook_name,
 };
 
 use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
-    set_secret, set_secret_in,
+    SecretSource, generate_secret, generate_secret_in, readable_secret_values, resolve_secret,
+    resolve_secret_from, set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its

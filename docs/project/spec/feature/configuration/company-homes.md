@@ -24,7 +24,7 @@ no authorization.
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
 | Settings document | `instrukt.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
-| Company knowledge | `AGENTS.master.md` in the home folder, and the company's documents in its `docs/` folder | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md`. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
+| Company knowledge | The company's documents in the home's `docs/` folder, and the index `docs/index.yaml` that selects from them | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md`. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
 | Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
 
 - A folder under `companies/` without a valid settings document is not a
@@ -80,8 +80,12 @@ admission findings, including provider permission checks
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters, never discovered by the running runner):
 
-- a published procedure declaring the role `company-agent` on that computer —
-  publishing it is part of setting the company up;
+- a valid `role` (default `company-agent`) that is configured in `agents.yaml`
+  or declared by a delivered published procedure on that computer, together with
+  a delivered published procedure declaring that role (or declaring
+  `company-agent` when the role is configured in `agents.yaml` without a
+  dedicated procedure of its own) — publishing it is part of setting the company
+  up;
 - a value in the home's secrets file for each secret the declaration references,
   not blank;
 - at admission, the provider permissions the connector requires, as the provider

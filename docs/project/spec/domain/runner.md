@@ -365,6 +365,15 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 | `runner.dependency_failing` | A check run on a current configured dependency-update head fails | Project, branch, head SHA, check run ID/name/conclusion | Project, branch, head, run ID and conclusion | Workflow's subscribed integrator, assessing and deduplicating bug work under its procedure |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
 
+`runner.review_needed` is a state: a newer request for the same subject takes
+the place of an older one that delivery has not selected for handover. Its subject is
+the pull request, or the integration branch for a candidate; the commit stays
+in data.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
+
 ### Event-platform facts emitted
 
 `instrukt.system.event.dead_lettered` ports
@@ -422,6 +431,9 @@ has no origin, as declared in Canonical fields.
 - **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
   — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
+- **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
+  — have trusted authors' pull-request heads reviewed independently without anyone asking.
+
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
 - **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
@@ -453,6 +465,18 @@ has no origin, as declared in Canonical fields.
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+
+For automatic review the runner asks its suppliers and derives none of their
+answers: work says whether a pull request is a todo's, whether a commit carries
+a verdict and whether both identities are ready, and workflow says whether the
+active candidate's content is covered. Through work's command contract the
+runner records or withdraws a derived approval and has outstanding verdicts published,
+handing over the eligible pull requests it observed at each head. It supplies
+work with a commit's review requests, each with its number, standing, the
+session it reached and pinned base, with the input that opened the turn a
+session has in progress when it offers a revision, and with a named session's
+conversation
+(`project/instrukt/spec/domain/context-map`).
 
 The runtime adapter and the event-source boundary form an
 **Anti-corruption layer (ACL)** translating session operations and external

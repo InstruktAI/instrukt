@@ -1,7 +1,5 @@
 ---
 description: '`instrukt.yaml` in a global and a project layer, and a company home''s own document — which key lives where, how the layers combine, validation, schema versions and migration.'
-binding_reservations:
-  UC-CL8: archive-terminal-todo-sessions
 ---
 
 # Layered Configuration — Spec
@@ -44,6 +42,49 @@ produces a plain validation finding naming that switch. An empty map adds no rec
 enable events. Installation and withdrawal are owned by
 `project/instrukt/spec/feature/runner/module-installation`; these schema rules install nothing.
 
+### Automatic review enablement
+
+`review.automatic` is a boolean allowed in the project layer only and defaults
+off. On, it opts that project in to automatic independent review: the runner
+observes its pull requests and the integration candidate carries the review
+status (`project/instrukt/spec/feature/runner/pull-request-review`,
+`project/instrukt/spec/feature/workflow/integration-gate`). A global value is a
+finding: no machine setting opts a repository in. The setting is independent of
+`modules.todos`.
+
+Each of these is a finding at `review.automatic`, in plain words naming what is
+missing:
+
+- the project's effective `modules.events` is off, since a review request is
+  an event response;
+- the project's code is not on GitHub
+  (`project/instrukt/spec/feature/work/github-record`);
+- the active published set for the project does not route
+  `runner.review_needed` to `sdlc/procedure/lifecycle/work/review-commits` and
+  to nothing else: that procedure is active in the set, subscribes by that
+  exact type and declares the `commit-reviewer` role, the role whose App
+  publishes the verdict, and it is the only procedure subscribed to the type
+  (`project/instrukt/spec/feature/runner/procedure-subscription-routing`,
+  `project/instrukt/spec/feature/work/github-apps`). A pattern that merely
+  matches the type, another procedure in its place whatever role it declares,
+  that procedure under another role, and a second subscribed procedure each
+  leave the finding standing;
+- work's readiness for automatic review reports an unmet finding for the
+  project identity or the reviewer identity on the repository
+  (`project/instrukt/spec/feature/work/github-apps`, Readiness for automatic
+  review).
+
+`config patch` refuses a write that would switch it on with such a finding,
+under its revision check and whole-document validation
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+`config validate` and `install --check` report it without changing anything
+(`project/instrukt/spec/feature/runner/module-installation`). A project layer
+that arrives with it through a commit is not admitted for automatic review on
+that computer; its other capabilities are unaffected
+(`project/instrukt/policy/checks-and-guards`). The readiness findings need
+GitHub; while GitHub cannot be asked, admission waits and retries rather than
+refusing or admitting.
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |
@@ -57,8 +98,10 @@ enable events. Installation and withdrawal are owned by
 | `company` | company home only; equals the home folder's name | configuration |
 | `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
 | `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
-| `connectors.<kind>` (the fields the connector of that kind declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
-| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` scopes, client references and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), optional `reply_mode` (`turn_output` \| `explicit`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
 | `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
 | `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
 | `ticks` | global only | the runner |

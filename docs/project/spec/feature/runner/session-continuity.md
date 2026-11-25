@@ -2,7 +2,6 @@
 description: Unattended runtime adapter operations, native agent delegation and record bindings, native keyed launch, automatic succession and settled-thread inspection.
 visibility: public
 binding_reservations:
-  UC-SS26: fix-antigravity-thought-level
   UC-SS27: fix-false-recovery-on-released-executions
 ---
 # Session Continuity — Spec

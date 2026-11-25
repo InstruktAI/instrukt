@@ -31,10 +31,21 @@ prose (`sdlc/procedure/lifecycle/overview`).
 - **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, handed to `integrate` via `--finalize-ready`.
 
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+
 ## Ownership boundary
 
 - **Owns:** flavor manifest schema (`workflow/workflow.yaml`), pure factual ledger derivation (`TodoLedger`), repository observations (worktree cleanliness, heads, grounding drift), exact-SHA independent review readiness check, and runner `WorkflowAssignments` dispatch selection.
 - **Does not own:** activity micro-routing (owned by prose procedures), work-record storage/reflection (owned by `work`), or session/process execution (owned by `runner`).
+
+Workflow also derives the active candidate's review coverage on request, from
+the repository, the independent approvals todo records bind to exact commits,
+work's answer on each other commit's current review evidence and the runner's
+red observation of the canonical head. It is a derived fact and
+workflow stores it nowhere. Its rule belongs to
+`project/instrukt/spec/feature/workflow/integration-gate`; the approval it
+earns is work's record and the review it otherwise owes is the runner's
+request.
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -55,6 +66,9 @@ the same derivation. The runner consumes both for execution observation
 - **Work → workflow:** work supplies `WorkEvidence` and invokes workflow's gate checks on attempt reservation, completion stamps, and `--finalize-ready`.
 - **Runner → workflow:** runner calls `WorkflowAssignments::assignment` on each tick, tracks progress via the factual progress fingerprint, and routes `workflow.finalized` and `runner.ci_completed` to the standing `integrator`.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
+
+- **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
+- **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
 
 ## Governing designs and decisions
 

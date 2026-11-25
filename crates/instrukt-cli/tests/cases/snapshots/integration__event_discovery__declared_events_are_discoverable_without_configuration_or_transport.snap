@@ -10,6 +10,8 @@ runner.dependency_failing v1 — A check run on a current dependency-update head
   instrukt events schema runner.dependency_failing
 runner.main_failing v1 — Remote canonical main head completed CI red. (subject: repository_ref, delivery: state)
   instrukt events schema runner.main_failing
+runner.review_needed v1 — A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate. (subject: any reference, delivery: state)
+  instrukt events schema runner.review_needed
 runner.upstream_changed v1 — A watched upstream ref changed. (subject: repository_ref, delivery: state)
   instrukt events schema runner.upstream_changed
 workflow.finalized v1 — A finalize-ready todo was handed off to integration. (subject: todo, delivery: occurrence)

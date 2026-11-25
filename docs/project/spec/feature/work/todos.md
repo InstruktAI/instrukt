@@ -252,7 +252,10 @@ window. Working resources (worktree, branch and workspace) are released
 immediately. A todo's workspace is `<project>/workspace/<slug>/`, the
 directory run-task writes to; an empty workspace is removed. Withdrawal never
 deletes a worktree holding uncommitted changes or a workspace holding files:
-it is refused and names that location. The next runner tick or todo command after the window expires
+it is refused and names that location. The withdrawal records what it is about to
+release before it releases anything; until it ends, other changes to the todo
+are refused, and a withdrawal interrupted part-way is completed by running
+`instrukt todo remove <slug>` again. The next runner tick or todo command after the window expires
 purges the retained local record; recovery after that window is not promised.
 `instrukt todo reactivate` restores retained work by identity or an unambiguous
 slug; a live same-slug entry prevents ambiguous restoration. Removal does not

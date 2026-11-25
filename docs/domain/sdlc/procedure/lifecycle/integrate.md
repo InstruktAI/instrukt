@@ -1,5 +1,5 @@
 ---
-description: 'Integrate exact verified candidates carrying independent exact-SHA review approval, restore a red main before repair, and assess failed dependency updates.'
+description: 'Integrate verified candidates (with independent exact-SHA review approval where required by `general/policy/commits`), restore a red main before repair, and assess failed dependency updates.'
 visibility: 'public'
 role: integrator
 parameters:
@@ -17,12 +17,13 @@ interruptible: false
 
 ## Required reads
 
+- [general/policy/commits](../../../../general/policy/commits.md)
 - [general/principle/session-lifecycle](../../../../general/principle/session-lifecycle.md)
 - [general/procedure/event-handling/overview](../../../../general/procedure/event-handling/overview.md)
 
 ## Goal
 
-Merge finalized work and reviewed one-off worktree heads into a verified candidate,
+Merge finalized work and ready one-off worktree heads into a verified candidate,
 advance canonical main to exactly that commit, recover a red baseline
 before repairing its cause, and assess failed dependency updates for bug work.
 The standing integrator owns composition,
@@ -39,10 +40,12 @@ failure interpretation, promotion and recovery.
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
   `trees/_integration/`, separately from the project checkout and todo worktrees.
-- Every work or ad hoc candidate MUST carry an independent reviewer's `APPROVE`
-  stamp (or digest-bound cross-model review report for human-directed ad hoc
-  branches) bound to that **exact commit SHA** plus green CI before advancing
-  `main`. Only `integrate` writes `main`.
+- Every todo candidate — and every ad hoc candidate that owes independent review
+  under `general/policy/commits` — MUST carry an independent reviewer's `APPROVE`
+  stamp (or digest-bound review report for ad hoc branches) bound to that
+  **exact commit SHA** plus green CI before advancing `main`. An ad hoc candidate
+  exempt from review under `general/policy/commits` advances on green CI alone.
+  Only `integrate` writes `main`.
 - Project CI and required checks, or the documented project test command when CI is
   absent, provide verification. GitHub branch protection guards main where CI exists.
 
@@ -59,6 +62,8 @@ Apply these configured action values to the identified assignment and session.
 <!-- @config: runtime.read_thread -->
 
 <!-- @config: runtime.inspect_thread -->
+
+<!-- @config: runtime.retire_thread -->
 
 ### 1. Route the activating event
 
@@ -88,10 +93,12 @@ or promote whatever commit now occupies the integration branch.
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
 2. Compose from accepted upstream main in the integration worktree. Merge the
-   finalized `<slug>/work` branch or reviewed one-off branch.
-   Match independent approval to that exact branch head and complete report.
-   A changed or unreviewed head waits for current review; no per-commit git-note
-   verdict admits a candidate.
+   finalized `<slug>/work` branch or ready one-off branch.
+   Where `general/policy/commits` requires independent review, match independent
+   approval to that exact branch head and complete report; a changed or
+   unreviewed head waits for current review, and no per-commit git-note verdict
+   admits a candidate. Ad hoc branches exempt under `general/policy/commits`
+   require no review report.
    Uncommitted project-root files are outside the candidate and remain untouched.
 3. Read the delivery context, diff and branch history. Where integration needs
    a commit, compose it around the delivery intent and record it through
@@ -99,8 +106,14 @@ or promote whatever commit now occupies the integration branch.
 4. Fold pending documentation at delivery: run `instrukt docs fold <slug>` to
    reconcile the todo's pending documentation (clearing `binding_reservations`
    once their attached tests are present) under the owning documentation
-   contract before freezing the candidate. Include the resulting content in the
-   commit verified.
+   contract before freezing the candidate. Where the reviewed delivery
+   introduces new project extension-point fills whose `delivered_by` markers
+   this fold clears, add those newly delivered fill IDs under `listed` in
+   `docs/project/index.yaml` when not yet listed, regenerate entrypoints with
+   `instrukt docs render`, and verify with `instrukt docs validate` and
+   `instrukt docs render --check`. Include the folded snippets, updated
+   `docs/project/index.yaml`, and regenerated entrypoints in the exact commit
+   verified.
 5. The integrator may batch finalized candidates according to its judgment.
    Retain the work and commits represented by the batch so a failure can be
    attributed to its responsible todo.
@@ -202,15 +215,25 @@ with `instrukt todo deliver <slug> --commit <sha>`, supplying the confirmed deli
 commit under the work-record contract. Remove the clean `<slug>/work` worktree and
 delete `<slug>/work` locally and on `origin`; keep any failed cleanup owed.
 
-Inspect `instrukt todo show <slug> --json` after delivery: while the ledger's
-`workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
-(`git worktree remove <workspace.worktree_path>`). Select only the todo's one
-shared worktree; retained role-attempt rows refer to that same path. A dirty or
-in-use worktree or failed removal remains owed. Then delete `<slug>/work`
-locally (`git branch -D <workspace.branch>`) and on `origin`
-(`git push origin --delete <workspace.branch>`) until both refs are absent.
-Preserve the runtime thread record and retained attempt evidence; todo cleanup
-is separate from the persistent integration workspace.
+After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json`:
+
+1. **Retire terminal orchestrator threads.** Read the delivered todo's recorded
+   orchestrator bindings (`todo-orchestrator`, plus any legacy
+   phase-orchestrator bindings) and retire each non-standing orchestrator thread
+   through the configured `runtime.retire_thread` action. Converge idempotently on already-retired threads (distinguishing an
+   already-retired thread from a failed observation), preserve any unfinished
+   human or worker obligations, and never retire standing agents (including this
+   integrator session). Unrelated worktree or branch cleanup failures do not
+   gate retiring the delivered todo's orchestrator threads, and vice versa.
+2. **Clean up the worktree and branch.** While the ledger's
+   `workspace.worktree_exists` is true, remove the clean `<slug>/work` worktree
+   (`git worktree remove <workspace.worktree_path>`). Select only the todo's one
+   shared worktree; retained role-attempt rows refer to that same path. A dirty or
+   in-use worktree or failed removal remains owed. Then delete `<slug>/work`
+   locally (`git branch -D <workspace.branch>`) and on `origin`
+   (`git push origin --delete <workspace.branch>`) until both refs are absent.
+   Preserve the runtime thread record and retained attempt evidence; todo cleanup
+   is separate from the persistent integration workspace.
 
 When all current work is settled, park as the standing integrator. The next
 `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
@@ -220,7 +243,7 @@ binding.
 
 - Exact verified candidates promoted and confirmed on remote main (with pending
   docs folded at delivery and `<slug>/work` worktree and local/origin branch
-  cleanup); reviewed one-off work integrated through the same gate.
+  cleanup); ready one-off work integrated through the same gate.
 - Durable delivery evidence, or findings and `--kickback` returned to the responsible todo.
 - A failing main restored by a verified revert before separate repair work.
 
@@ -233,7 +256,11 @@ binding.
 - An unresolved conflict stays with the integrator and its governing contracts.
   Only missing human intent or a human-owned exposure is asked in the thread.
 - A candidate already promoted needs delivery-record reconciliation, not
-  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`)
-  and `<slug>/work` worktree/branch cleanup directly. Release an owed claim with `instrukt todo update <slug> --unclaim`
-  and confirm the released claim. Record the handoff and remaining cleanup;
+  another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
+  then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`,
+  retire the delivered todo's recorded non-standing phase orchestrator thread(s)
+  through `runtime.retire_thread`, and remove the clean `<slug>/work` worktree
+  and local/origin branch (neither gating the other). Release an owed claim with
+  `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
+  the handoff and remaining cleanup; apart from terminal orchestrator retirement,
   the runtime owns session ending. A failed cleanup remains unresolved.

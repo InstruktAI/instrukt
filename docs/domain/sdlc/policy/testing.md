@@ -31,8 +31,9 @@ forbids.**
 The default, and any project ruling under it, reaches checks where the agent
 that wrote the code also wrote down what the correct result is. Post-activation
 operational inspection follows the integration procedure and creates no
-per-change proof obligation. The builder and reviewer browser smoke required
-by the Definition of Done is a delivery check, not test authorship. A committed
+per-change proof obligation. The build smoke and downstream live behavioral
+verification (`sdlc/policy/live-verification`) required by the Definition of
+Done are delivery checks, not test authorship. A committed
 screenshot-regression harness with baselines captured from the rendered system
 and approved outside the authoring session may survive a test ban. Baselines
 are updated only with approval from outside the authoring session; an agent

@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Judge what a build left outside its plan: decide each deferred item, file only the observations that meet the filing standard, and mark deferrals as processed.'
+description: 'Judge out-of-scope entries recorded during build or live verification: decide each item, file only the observations that meet the filing standard, and mark deferrals as processed.'
 visibility: 'public'
 role: deferrer
 parameters:
@@ -17,7 +17,8 @@ parameters:
 
 ## Goal
 
-- Decide every entry a build recorded outside its plan, create or file only
+- Decide every out-of-scope entry recorded by build or appended from live
+  verification (`sdlc/procedure/lifecycle/work/verify`), create or file only
   what the creation policy admits, and record completion.
 
 ## Preconditions
@@ -27,11 +28,14 @@ parameters:
 
 ## Steps
 
-1. Read `instrukt todo artifacts read {slug} deferrals`. Each entry has a heading
-   naming it and these fields:
+1. Read `instrukt todo artifacts read {slug} deferrals` (carrying entries
+   recorded during build and any `Pre-existing Observations` appended from
+   `verification-findings`). Each entry has a heading naming it and these
+   fields:
    - `Kind` — `deferred-task` (a plan task the build did not deliver),
      `ratchet-candidate` (a structural deepening the build did not perform), or
-     `observation` (a possible defect noticed outside the build's tasks).
+     `observation` (a possible defect noticed outside scope during build or
+     live verification).
    - `What` — the task, the deepening, or what was seen and where.
    - `Basis` — why a task or deepening stayed outside this build, or, for an
      observation, how it was noticed.
@@ -51,7 +55,8 @@ parameters:
      todo that is already mid-flight or finalizing. Add `--after {slug}` only
      when the deferred item has a genuine technical dependency on this todo;
      otherwise it stands on its own. Otherwise close the entry.
-   - **An observation** — the builder's notice is a lead, not evidence. File
+   - **An observation** — the recorded notice (from build or live verification)
+     is a lead, not evidence. File
      it only when you can cite the occurrence or dangerous path the policy
      requires: a defect as a new todo through
      `general/procedure/bug-reporting` under the slug `<new_slug>`, carrying the occurrence or

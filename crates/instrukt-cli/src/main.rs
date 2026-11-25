@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, bugs, config, discuss, docs, eval, events, history, mcp, repository, runner,
-    secrets, specs, sync, todo, webhooks,
+    agents, blueprint, bugs, company, config, discuss, docs, eval, events, history, mcp,
+    repository, review, runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -54,6 +54,8 @@ enum Command {
     /// Reach the MCP servers declared for this caller: list them, list one's
     /// tools, call a tool.
     Mcp(mcp::McpArgs),
+    /// Queue explicit replies to company conversations.
+    Company(company::CompanyArgs),
     /// Store or generate protected machine-local secrets.
     Secrets(secrets::SecretsArgs),
     /// Read, edit, initialize and validate `instrukt.yaml`.
@@ -76,6 +78,8 @@ enum Command {
     Todo(todo::TodoArgs),
     /// Evaluation reports from the work record.
     Eval(eval::EvalArgs),
+    /// Independent review evidence of exact commits, and moving it between computers.
+    Review(review::ReviewArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
     /// Extract, import and search retained conversations across computers.
@@ -271,6 +275,7 @@ fn run() -> ExitCode {
         Command::Status(args) => commands::status::run(&args, &mut ctx, None),
         Command::DevSeed => seed_development(&mut ctx),
         Command::Discuss(args) => discuss::run(args, &mut ctx),
+        Command::Company(args) => company::run(args, &mut ctx),
         Command::Mcp(args) => mcp::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
         Command::Secrets(args) => secrets::run(args, &mut ctx),
@@ -284,6 +289,7 @@ fn run() -> ExitCode {
         Command::Blueprint(args) => blueprint::run(args, &mut ctx),
         Command::Todo(args) => todo::run(args, &mut ctx),
         Command::Eval(args) => eval::run(args, &mut ctx),
+        Command::Review(args) => review::run(args, &mut ctx),
         Command::Events(args) => events::run(args, &mut ctx),
         Command::History(args) => history::run(args, &mut ctx),
         Command::Webhooks(args) => webhooks::run(args, &mut ctx),
@@ -401,6 +407,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Status(_) => "status",
         Command::Bugs(_) => "bugs",
         Command::Discuss(_) => "discuss",
+        Command::Company(_) => "company",
         Command::Mcp(_) => "mcp",
         Command::Agents(_) => "agents",
         Command::Secrets(_) => "secrets",
@@ -414,6 +421,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::Blueprint(_) => "blueprint",
         Command::Todo(_) => "todo",
         Command::Eval(_) => "eval",
+        Command::Review(_) => "review",
         Command::Events(_) => "events",
         Command::History(_) => "history",
         Command::Webhooks(_) => "webhooks",

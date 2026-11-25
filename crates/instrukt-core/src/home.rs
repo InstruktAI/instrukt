@@ -240,6 +240,22 @@ impl Home {
         self.state_dir().join("writer.lock")
     }
 
+    /// `~/.instrukt/state/reflection.lock` — the per-computer reflection
+    /// lock: GitHub reflection holds it across its requests and takes the
+    /// writer lock only for each local transaction recording what it learned
+    /// (lock order reflection → writer).
+    pub fn reflection_lock_file(&self) -> PathBuf {
+        self.state_dir().join("reflection.lock")
+    }
+
+    /// `~/.instrukt/state/withdrawal.lock` — held by a withdrawal while its
+    /// recorded intent is open, so a withdrawal in progress is told apart
+    /// from an interrupted one; taken before the writer lock and never while
+    /// it is held.
+    pub fn withdrawal_lock_file(&self) -> PathBuf {
+        self.state_dir().join("withdrawal.lock")
+    }
+
     /// `~/.instrukt/state/runner.lock` — serializes runner invocations; it
     /// guards no data.
     pub fn runner_lock_file(&self) -> PathBuf {
@@ -272,6 +288,49 @@ impl Home {
     /// the state database (`project/instrukt/spec/feature/runner/history`).
     pub fn history_db_file(&self) -> PathBuf {
         self.state_dir().join("history.db")
+    }
+
+    /// `~/.instrukt/state/review.lock` — the write-isolation unit of the
+    /// review evidence store, taken only by the commands that write it
+    /// (`project/instrukt/spec/feature/work/github-apps`, Review evidence
+    /// storage).
+    pub fn review_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review.lock")
+    }
+
+    /// `~/.instrukt/state/review.db` — the review evidence store: head
+    /// verdicts with their versions, exemptions and imported derived
+    /// approvals.
+    pub fn review_db_file(&self) -> PathBuf {
+        self.state_dir().join("review.db")
+    }
+
+    /// `~/.instrukt/state/review-publication.lock` — the write-isolation unit
+    /// of the review publication store, taken by the tick alone
+    /// (`project/instrukt/spec/feature/work/github-apps`, Review evidence
+    /// storage).
+    pub fn review_publication_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review-publication.lock")
+    }
+
+    /// `~/.instrukt/state/review-publication.db` — what GitHub shows of each
+    /// verdict, recognised verdicts and derived approvals.
+    pub fn review_publication_db_file(&self) -> PathBuf {
+        self.state_dir().join("review-publication.db")
+    }
+
+    /// `~/.instrukt/state/review-observation.lock` — the write-isolation unit
+    /// of the pull-request observation store, taken by the tick alone
+    /// (`project/instrukt/spec/feature/runner/pull-request-review`,
+    /// Observation store).
+    pub fn review_observation_lock_file(&self) -> PathBuf {
+        self.state_dir().join("review-observation.lock")
+    }
+
+    /// `~/.instrukt/state/review-observation.db` — the pages of each opted-in
+    /// project's pull-request listing with their conditional validators.
+    pub fn review_observation_db_file(&self) -> PathBuf {
+        self.state_dir().join("review-observation.db")
     }
 
     /// `~/.instrukt/state/eval-fingerprint/` — per published commit.
@@ -332,6 +391,8 @@ mod tests {
             home.retired_hook_records_dir(),
             home.state_db_file(),
             home.writer_lock_file(),
+            home.reflection_lock_file(),
+            home.withdrawal_lock_file(),
             home.runner_lock_file(),
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),

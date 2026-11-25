@@ -24,6 +24,7 @@ mod _diff;
 mod _envelope;
 mod _error;
 mod _github;
+mod _graph;
 pub(crate) mod _grounding;
 mod _inbound;
 mod _model;
@@ -33,6 +34,7 @@ mod _reflect;
 mod _session;
 mod _stamps;
 mod _store;
+mod _withdrawal;
 
 use std::sync::Arc;
 
@@ -49,7 +51,7 @@ pub use _attempts::{
 };
 pub use _diff::DiffLine;
 pub use _error::WorkError;
-pub use _github::GitHubError;
+pub use _github::{GitHubError, OperationAppError};
 pub use _model::{
     AddressError, Artifact, Attempt, Binding, Claim, Delivery, ReleasedHold, Removal, TodoAddress,
     TodoId, TodoRecord, TodoRef, Version,
@@ -113,4 +115,5 @@ impl Work {
     }
 }
 
+pub mod review;
 pub mod suppressions;

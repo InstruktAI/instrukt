@@ -95,6 +95,11 @@ impl Event {
             Self::WorkflowFinalized { todo, .. } => {
                 EventRef::new(ReferenceKind::Todo, todo.as_str())?
             }
+            Self::ReviewNeeded {
+                project,
+                pull_request,
+                ..
+            } => review_subject(project, *pull_request)?,
         };
         let Value::Object(mut data) = serde_json::to_value(self)? else {
             return Err(EnvelopeError::Declaration(
@@ -110,6 +115,22 @@ impl Event {
         );
         producer.id = Some(self.occurrence_id());
         producer.emit(context, || self.occurrence_id())
+    }
+}
+
+/// A review request's subject: the pull request it is addressed to, or the
+/// integration branch for a candidate (`pull-request-review`, "Review
+/// requests", "Candidate requests").
+fn review_subject(
+    project: &instrukt_core::ids::ProjectSlug,
+    pull_request: Option<u64>,
+) -> Result<EventRef, EnvelopeError> {
+    match pull_request {
+        Some(number) => EventRef::new(ReferenceKind::PullRequest, &format!("{project}/{number}")),
+        None => EventRef::new(
+            ReferenceKind::RepositoryRef,
+            &format!("{project}/origin/integrate"),
+        ),
     }
 }
 

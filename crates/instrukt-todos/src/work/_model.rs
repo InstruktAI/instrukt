@@ -62,6 +62,20 @@ pub(crate) const SHOWN_PREFIX: usize = 8;
 
 impl TodoAddress {
     /// The address of `record`'s exact entry.
+    /// The address an action on `record` takes: its plain slug for a live
+    /// todo, since a plain slug always means the live item, else its exact
+    /// address.
+    pub fn door(record: &TodoRecord) -> Self {
+        if record.is_live() {
+            Self {
+                slug: record.slug.clone(),
+                identity: None,
+            }
+        } else {
+            Self::exact(record)
+        }
+    }
+
     pub fn exact(record: &TodoRecord) -> Self {
         Self {
             slug: record.slug.clone(),
@@ -321,6 +335,49 @@ impl TodoRecord {
         }
         copy
     }
+
+    /// The record without what reflection learns of its artifact versions:
+    /// the provider's artifact address, the remote version number and the
+    /// content.
+    pub(crate) fn unlearned(&self) -> Self {
+        let mut bare = self.without_contents();
+        for artifact in &mut bare.artifacts {
+            artifact.address = None;
+            for version in &mut artifact.versions {
+                version.remote = None;
+            }
+        }
+        bare
+    }
+
+    /// Whether `other` holds the same record as this one, apart from what
+    /// reflection learns of artifact versions ([`TodoRecord::unlearned`]):
+    /// the one comparison a local change's admission, the merge of a
+    /// reflection's receipt and an explicit refresh's recheck use. A
+    /// revision number does not stand for a record; its content does.
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        self.unlearned() == other.unlearned()
+    }
+
+    /// Withdraws the todo at `at`: its status becomes `removed`, its claim
+    /// is cleared, and `removal` records the status restoration returns to
+    /// with the working resources the withdrawal released (`todos`,
+    /// "Parking, withdrawal and delivery").
+    pub(crate) fn withdraw(
+        &mut self,
+        at: Timestamp,
+        branch: Option<ReleasedBranch>,
+        worktrees: Vec<PathBuf>,
+    ) {
+        self.removal = Some(Removal {
+            at,
+            from: self.status,
+            branch,
+            worktrees,
+        });
+        self.status = TodoStatus::Removed;
+        self.claim = None;
+    }
 }
 
 /// Named work evidence with its retained versions, oldest first.
@@ -482,6 +539,82 @@ mod tests {
         let stamps: Vec<u64> = record.stamps.iter().map(|s| s.sequence).collect();
         assert_eq!((versions, stamps), (vec![2, 4], vec![3, 1]));
         assert_eq!(record.next_sequence(), 5);
+    }
+
+    /// An active, claimed todo `depth` at `revision` with one reflected
+    /// `log` version, its learned coordinates as given.
+    fn reflected(revision: u64, address: Option<u64>, remote: Option<u64>) -> TodoRecord {
+        let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
+            "schema": 1, "id": "ab".repeat(16), "project": "demo", "slug": "depth",
+            "kind": "change", "status": "active", "created": "2026-01-01T00:00:00Z",
+            "created_by": {"person": {"name": "dev"}}, "revision": revision,
+            "claim": {"machine": "cd".repeat(16), "at": "2026-01-02T00:00:00Z"},
+        }))
+        .unwrap();
+        record.artifacts.push(Artifact {
+            name: ArtifactName::new("log"),
+            address,
+            versions: vec![Version {
+                digest: digest_of("started"),
+                writer: Actor::Person { name: "dev".into() },
+                created: Timestamp::from_second(5).unwrap(),
+                derived_from: Vec::new(),
+                sequence: 1,
+                grounding: Grounding::default(),
+                remote,
+                content: Some("started".into()),
+            }],
+        });
+        record
+    }
+
+    #[test]
+    fn a_record_is_the_same_whatever_reflection_learned_of_its_artifacts() {
+        let read = reflected(2, None, None);
+        let mut learned = reflected(2, Some(7), Some(1));
+        learned.artifacts[0].versions[0].content = None;
+        assert!(learned.same_as(&read));
+    }
+
+    #[test]
+    fn a_different_change_at_the_same_revision_is_not_the_same_record() {
+        let read = reflected(2, Some(7), Some(1));
+        let mut other = read.clone();
+        other.artifacts[0].versions[0].digest = digest_of("joined");
+        assert!(!other.same_as(&read));
+    }
+
+    #[test]
+    fn a_renamed_record_is_not_the_same_record() {
+        let read = reflected(2, Some(7), Some(1));
+        let mut renamed = read.clone();
+        renamed.slug = TodoSlug::parse("depth-two").unwrap();
+        assert!(!renamed.same_as(&read));
+    }
+
+    #[test]
+    fn withdrawing_records_what_was_released_and_the_status_it_came_from_and_drops_the_claim() {
+        let mut record = reflected(2, None, None);
+        let at = Timestamp::from_second(9).unwrap();
+        let branch = ReleasedBranch {
+            name: "depth/work".into(),
+            head: CommitSha::parse(&"e".repeat(40)).unwrap(),
+        };
+        let worktrees = vec![PathBuf::from("/work/depth")];
+        record.withdraw(at, Some(branch.clone()), worktrees.clone());
+        assert_eq!(
+            (record.status, record.claim, record.removal),
+            (
+                TodoStatus::Removed,
+                None,
+                Some(Removal {
+                    at,
+                    from: TodoStatus::Active,
+                    branch: Some(branch),
+                    worktrees,
+                })
+            )
+        );
     }
 
     #[test]

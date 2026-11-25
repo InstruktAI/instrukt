@@ -6,21 +6,27 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
-use instrukt_core::git;
+use instrukt_core::config::Configuration;
 use instrukt_core::ids::{CommitSha, TodoSlug};
 use instrukt_core::machine;
 use instrukt_core::publication::EvalFingerprint;
+use instrukt_core::{git, github};
 use instrukt_runner::events::{Event, EventLog};
 use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSchedule, TodoKind};
 
 use super::_diff::{DiffLine, diff_lines};
 use super::_error::WorkError;
 use super::_model::{
-    Artifact, Delivery, ReleasedHold, Removal, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef,
-    Version, digest_of, valid_artifact_name,
+    Artifact, Delivery, ReleasedHold, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef, Version,
+    digest_of, valid_artifact_name,
 };
-use super::_session::{GitHubRead, Located, ReflectionStatus, Session};
+use super::_session::{
+    GitHubRead, Located, ReflectionStatus, Session, Unrestored, exact_local, find_in,
+    live_or_exact, past_recovery, status_of,
+};
 use super::_stamps::{self, StampInputs, StampRequest};
+use super::_store::{BranchRelease, Completed, LocalItem, Store, WithdrawalIntent};
+use super::_withdrawal::{WithdrawalLock, plan_release, release};
 use super::Work;
 use crate::evidence::{
     Actor, ArtifactName, DependencyDigest, HoldRecord, HoldSource, StampFact, StampRecord,
@@ -247,6 +253,10 @@ impl Work {
             delivery: None,
             removal: None,
         };
+        // The todo created is the command's target, whatever todo its
+        // checks entered first: a refusal of a change to its group or a
+        // prerequisite sends the caller back to creating it.
+        s.set_target(&record.id);
         let index = s.commit("created", |s| {
             s.items.push(super::_store::LocalItem {
                 record,
@@ -283,7 +293,7 @@ impl Work {
                     reflection: Some(s.status(index)),
                     issue: item.reflection.issue.map(|i| i.number),
                     pull: item.reflection.pull,
-                    refresh: s.github_read(),
+                    refresh: s.refresh_of(index),
                     ..view
                 })
             }
@@ -291,8 +301,9 @@ impl Work {
                 item,
                 refreshed,
                 copied_at,
+                issue_number,
             } => {
-                let issue = item.reflection.issue.map(|i| i.number);
+                let issue = Some(issue_number);
                 let view = view(&mut s, item.record, false);
                 let refresh = if refreshed {
                     GitHubRead::Read
@@ -325,7 +336,7 @@ impl Work {
         let mut s = Session::open(self, project)?;
         s.pull_all()?;
         let conflicted: Vec<TodoSlug> = (0..s.items.len())
-            .filter(|&index| s.status(index) == ReflectionStatus::Conflicted)
+            .filter(|&index| matches!(s.status(index), ReflectionStatus::Conflicted { .. }))
             .map(|index| s.items[index].record.slug.clone())
             .collect();
         let mut records: Vec<TodoRecord> = s.items.iter().map(|it| it.record.clone()).collect();
@@ -361,8 +372,19 @@ impl Work {
     /// the local record; every other todo as last known, labelled with the
     /// computer its claim names and the copy's age.
     pub fn list(&self, project: &ProjectRef, selection: Selection) -> Result<Listing, WorkError> {
-        let s = Session::open(self, project)?;
-        let machine = s.machine()?;
+        // A local read: no GitHub request, and no lock on a current schema;
+        // a database behind this build's schema migrates once under the
+        // writer lock (`state-database`, "Writing"). Withdrawn work past its
+        // recovery window is left out; a writing command purges it.
+        let store = self.local_store_checked(project)?;
+        let (items, copies, provider) = store.existence()?;
+        let now = self.now();
+        let items: Vec<LocalItem> = items
+            .into_iter()
+            .filter(|it| !past_recovery(&it.record, now))
+            .collect();
+        let unread = super::_session::unavailable(self, &provider, now);
+        let machine = machine::machine_id(&self.home)?;
         let wanted = match selection {
             Selection::Active => vec![TodoStatus::Active, TodoStatus::StructuralHolder],
             Selection::Iceboxed => vec![TodoStatus::Iceboxed],
@@ -370,17 +392,15 @@ impl Work {
             Selection::Delivered => vec![TodoStatus::Delivered],
         };
         let runs_on = |record: &TodoRecord| record.claim.as_ref().map(|c| c.machine.clone());
-        let mut entries: Vec<ListEntry> = s
-            .items
+        let mut entries: Vec<ListEntry> = items
             .iter()
-            .enumerate()
-            .filter(|(_, it)| wanted.contains(&it.record.status))
-            .map(|(index, it)| {
+            .filter(|it| wanted.contains(&it.record.status))
+            .map(|it| {
                 let here = runs_on(&it.record).as_ref() == Some(&machine);
                 ListEntry {
                     record: it.record.clone(),
                     local: true,
-                    reflection: Some(s.status(index)),
+                    reflection: Some(status_of(it, unread.clone())),
                     ready: false,
                     last_known: (!here).then(|| LastKnown {
                         runs_on: runs_on(&it.record),
@@ -389,8 +409,8 @@ impl Work {
                 }
             })
             .collect();
-        let local_ids: BTreeSet<TodoId> = s.items.iter().map(|it| it.record.id.clone()).collect();
-        for copy in &s.copies {
+        let local_ids: BTreeSet<TodoId> = items.iter().map(|it| it.record.id.clone()).collect();
+        for copy in &copies {
             if !local_ids.contains(&copy.record.id) && wanted.contains(&copy.record.status) {
                 entries.push(ListEntry {
                     last_known: Some(LastKnown {
@@ -404,12 +424,13 @@ impl Work {
                 });
             }
         }
-        let delivered: BTreeSet<TodoId> = s
-            .known_records()
-            .into_iter()
-            .chain(entries.iter().map(|e| e.record.clone()))
+        let delivered: BTreeSet<TodoId> = items
+            .iter()
+            .map(|it| &it.record)
+            .chain(copies.iter().map(|copy| &copy.record))
+            .chain(entries.iter().map(|e| &e.record))
             .filter(|r| r.status == TodoStatus::Delivered)
-            .map(|r| r.id)
+            .map(|r| r.id.clone())
             .collect();
         for entry in &mut entries {
             entry.ready = entry.record.after.iter().all(|r| delivered.contains(&r.id));
@@ -444,13 +465,19 @@ impl Work {
         })
     }
 
+    /// `instrukt todo refresh`: replaces the local item `address` names
+    /// with GitHub's committed record. It is the door a conflicted todo
+    /// names. A plain slug means the live item only (`todos`, "Identity and
+    /// creation"): with no live item of that name, retained work is left as
+    /// it is and the refusal names each retained entry's exact address,
+    /// which a conflicted withdrawn or delivered todo's door gives.
     pub fn refresh(
         &self,
         project: &ProjectRef,
-        slug: &TodoSlug,
+        address: &TodoAddress,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = s.find(slug, false).ok_or_else(|| unknown(&s, slug))?;
+        let index = live_or_exact(&s.items, address)?.ok_or_else(|| unknown(&s, &address.slug))?;
         s.refresh(index)?;
         s.flush()?;
         Ok(Outcome {
@@ -495,30 +522,129 @@ impl Work {
         })
     }
 
+    /// `instrukt todo remove`: withdraws the live todo `slug` and releases
+    /// its working resources (`todos`, "Parking, withdrawal and delivery").
+    ///
+    /// 1. The entry reads GitHub, with no lock beyond what a point refresh
+    ///    takes; a conflict or a head this computer could not judge refuses
+    ///    with nothing done. No GitHub request follows until the flush.
+    /// 2. Under the withdrawal lock, the todo's worktrees, workspace and
+    ///    work branch are checked; work that would be lost refuses with
+    ///    nothing done. Then one writer transaction records the intent
+    ///    (`withdrawal_intents`) while the live todo under `slug` is still
+    ///    the one entered, unchanged. The todo's own row is not written: it
+    ///    stays live with its claim as it was, or unclaimed when it had
+    ///    none, and nothing withdrawn reaches GitHub before its resources
+    ///    are released. While the intent is open no other command changes
+    ///    the record and nothing read from GitHub replaces it.
+    /// 3. The resources are released outside the writer lock, the intent
+    ///    recording each outcome that must be recognized afterwards
+    ///    ([`release`]). A refusal git or the filesystem positively shows —
+    ///    a resource that must be kept, or an attempted release proven to
+    ///    have changed nothing or taken back — closes the intent and leaves
+    ///    the todo as it was while the intent records nothing released and
+    ///    nothing under way (a worktree the withdrawal moved or is moving, a partial
+    ///    marker) and the command attempted no other release. An
+    ///    observation or effect whose outcome was not established keeps the
+    ///    intent even when it records nothing released, and so does a branch
+    ///    update that left only its marker, whether or not the marker was
+    ///    taken back. A kept intent names what is recorded released and
+    ///    under way, for the withdrawal run again to complete.
+    /// 4. One writer transaction commits the withdrawn record, with
+    ///    `removal` naming exactly what was released, and closes the intent.
+    /// 5. The withdrawal lock is released and the change flushed under the
+    ///    reflection lock.
+    ///
+    /// A withdrawal interrupted with its intent recorded is completed by
+    /// running it again, which continues from the intent without reading
+    /// GitHub first, after recognizing what the interrupted run did: an
+    /// action that arrived there meanwhile stays outstanding until the
+    /// first pull after the withdrawal commits.
     pub fn remove(
         &self,
         project: &ProjectRef,
         slug: &TodoSlug,
     ) -> Result<Outcome<TodoRecord>, WorkError> {
         let mut s = Session::open(self, project)?;
-        let index = s.enter(slug)?;
-        writable(&s.items[index].record)?;
-        // Release the working resources first; a worktree holding
-        // uncommitted work refuses the withdrawal rather than losing it.
-        let (worktrees, branch) = release_resources(&project.root, &s.items[index].record)?;
-        let now = s.now;
-        s.commit("removed", |s| {
-            let record = &mut s.items[index].record;
-            record.removal = Some(Removal {
-                at: now,
-                from: record.status,
-                branch,
-                worktrees,
-            });
-            record.status = TodoStatus::Removed;
-            record.claim = None;
-            Ok(())
+        let store = Store::new(&self.home, &project.slug);
+        // A withdrawal already admitted resumes on the record it was
+        // admitted on, before anything is read from GitHub: what arrived
+        // there since — a hold label, a command, a newer head — cannot
+        // commit while the intent is open, and waits for the first pull
+        // after the withdrawal commits.
+        let resuming = match s.find(slug, false) {
+            Some(index)
+                if store
+                    .withdrawal_intent(&s.items[index].record.id)?
+                    .is_some() =>
+            {
+                Some(index)
+            }
+            _ => None,
+        };
+        let index = match resuming {
+            Some(index) => index,
+            None => {
+                let index = s.enter_judged(slug)?;
+                writable(&s.items[index].record)?;
+                index
+            }
+        };
+        let base = s.base(index).ok_or_else(|| {
+            WorkError::refused(format!("`{slug}` has no stored record to withdraw"))
         })?;
+        let id = base.record.id.clone();
+        let withdrawing = WithdrawalLock::acquire(&self.home)?;
+        let (intent, fresh) = match store.withdrawal_intent(&id)? {
+            None if resuming.is_some() => {
+                return Err(WorkError::refused(format!(
+                    "`{slug}`'s withdrawal ended while this command waited for it; nothing was done. See where it stands with `instrukt todo show {slug}`"
+                )));
+            }
+            Some(intent) => {
+                tracing::info!(
+                    event = "work_withdrawal_resumed",
+                    project = %project.slug,
+                    todo = %slug,
+                    started = %intent.started_at,
+                    "continuing an interrupted withdrawal from its recorded intent"
+                );
+                (intent, false)
+            }
+            None => {
+                let checked = plan_release(&project.root, &base.record)?;
+                let intent = WithdrawalIntent {
+                    todo: id.clone(),
+                    branch: checked.branch,
+                    branch_head: checked.head,
+                    worktrees: checked.worktrees,
+                    workspace_path: checked.workspace_path,
+                    workspace: checked.workspace,
+                    branch_state: BranchRelease::Pending,
+                    started_at: s.now,
+                };
+                if let Err(refusal) = store.open_withdrawal(&base, slug, &intent)? {
+                    return Err(s.refusal(index, refusal));
+                }
+                (intent, true)
+            }
+        };
+        let released = release(&project.root, slug, &store, intent, fresh)?;
+        match store.complete_withdrawal(&id, s.now, released.branch, released.worktrees)? {
+            Completed::Withdrawn(row) => s.take_written(index, *row, "removed"),
+            Completed::NotLive(row) => {
+                let status = status_word(row.record.status);
+                return Err(WorkError::refused(format!(
+                    "`{slug}` became {status} while its working resources were released; its record is left as it is"
+                )));
+            }
+            Completed::Gone => {
+                return Err(WorkError::refused(format!(
+                    "`{slug}` left this computer's record while its working resources were released"
+                )));
+            }
+        }
+        drop(withdrawing);
         s.flush()?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
@@ -587,6 +713,11 @@ impl Work {
             )));
         }
         s.pull_through(index)?;
+        if s.items[index].record.status != TodoStatus::Removed {
+            return Err(WorkError::refused(format!(
+                "`{slug}` is no longer withdrawn: it changed while this command ran; nothing was restored"
+            )));
+        }
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record
@@ -979,20 +1110,174 @@ impl Work {
         })
     }
 
-    /// The current version of artifact `name`.
+    /// The project's local store, for a read of the local record alone: its
+    /// configuration loaded and its code checked to be on GitHub, with no
+    /// lock taken and no GitHub request.
+    fn local_store_checked(&self, project: &ProjectRef) -> Result<Store, WorkError> {
+        let config = Configuration::load(&self.home, Some(&project.root))?;
+        let api_url = github::api_url(&self.home)?;
+        if let github::CodeHost::Elsewhere { reason } =
+            github::code_host(&config, &api_url, &project.root)?
+        {
+            return Err(WorkError::CodeNotOnGitHub { reason });
+        }
+        Ok(Store::new(&self.home, &project.slug))
+    }
+
+    /// The record `address` names as this computer holds it (`github-record`,
+    /// "Artifacts and stamps"), from one snapshot of the local items and the
+    /// listing copies, with no GitHub request and, on a current schema, no
+    /// lock (an older one migrates once under the writer lock). It resolves
+    /// as [`Session::locate`] does: a plain slug is the live local item, else
+    /// the live listing copy; `<slug>@<identity-prefix>` an exact local
+    /// entry, retained ones included, else the one listing copy it names.
+    /// `None` when neither answers the address.
+    fn local_record(
+        &self,
+        project: &ProjectRef,
+        address: &TodoAddress,
+    ) -> Result<Option<Held>, WorkError> {
+        let store = self.local_store_checked(project)?;
+        let (items, copies, _) = store.existence()?;
+        let now = self.now();
+        let items: Vec<LocalItem> = items
+            .into_iter()
+            .filter(|it| !past_recovery(&it.record, now))
+            .collect();
+        let found = match address.identity {
+            None => find_in(&items, &address.slug, false),
+            Some(_) => exact_local(&items, address)?,
+        };
+        if let Some(index) = found {
+            return Ok(Some(Held::Item(items[index].record.clone())));
+        }
+        let mut copied =
+            copies
+                .into_iter()
+                .map(|copy| copy.record)
+                .filter(|r| match address.identity {
+                    None => r.slug == address.slug && r.is_live(),
+                    Some(_) => address.names(r),
+                });
+        Ok(match (address.identity.is_some(), copied.next()) {
+            (true, Some(record)) => copied.next().is_none().then_some(record),
+            (_, found) => found,
+        }
+        .map(Held::Copy))
+    }
+
+    /// The record `address` names for a read of artifact `name`, with why
+    /// each version `wanted` asks for still has no content. A record this
+    /// computer holds answers alone when it settles the read
+    /// ([`Held::answers`]). Otherwise the todo is located and refreshed as
+    /// [`Work::show`] does; each version still without content is then asked
+    /// of GitHub and verified against its digest, and content restored onto a
+    /// local item is committed to its row before the read returns it. A todo
+    /// GitHub could not be read for is answered from its last known copy,
+    /// which says why it is unverified ([`Answer::unverified`]).
+    fn artifact_record(
+        &self,
+        project: &ProjectRef,
+        address: &TodoAddress,
+        name: &str,
+        wanted: &Wanted<'_>,
+    ) -> Result<Answer, WorkError> {
+        let lacking = |record: &TodoRecord| -> Vec<String> {
+            record
+                .artifact(name)
+                .map_or_else(Vec::new, |artifact| wanted.lacking(artifact))
+        };
+        if let Some(held) = self.local_record(project, address)?
+            && held.answers(name, wanted)
+        {
+            return Ok(Answer {
+                record: held.into_record(),
+                missing: BTreeMap::new(),
+                unverified: None,
+            });
+        }
+        let mut s = Session::open(self, project)?;
+        let (mut record, issue, local, unverified) = match s.locate(address)? {
+            Located::Local(index) => {
+                match s.pull_through(index) {
+                    Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+                    Err(err) => return Err(err),
+                }
+                let item = &s.items[index];
+                let issue = item.reflection.issue.map(|issue| issue.number);
+                (item.record.clone(), issue, Some(index), None)
+            }
+            Located::Remote {
+                item,
+                refreshed,
+                copied_at,
+                issue_number,
+            } => {
+                let unverified = (!refreshed).then(|| {
+                    let why = match s.github_read() {
+                        GitHubRead::NotRead(reason) => super::_session::describe(&reason),
+                        GitHubRead::Read | GitHubRead::Unjudged => {
+                            "GitHub's answer was not read".to_owned()
+                        }
+                    };
+                    format!(
+                        "the last known copy of `{}`, read at {}, may be behind GitHub, which cannot verify it now: {why}",
+                        item.record.slug,
+                        copied_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+                    )
+                });
+                (item.record, Some(issue_number), None, unverified)
+            }
+        };
+        let wanted = lacking(&record);
+        let missing = s.restore_contents(issue, &mut record, name, &wanted);
+        if let Some(index) = local {
+            s.keep_restored(index, &record, name)?;
+        }
+        Ok(Answer {
+            record,
+            missing,
+            unverified,
+        })
+    }
+
+    /// A todo's artifacts and their retained versions: from the record this
+    /// computer holds ([`Work::local_record`]), else as [`Work::show`] finds
+    /// the todo.
+    pub fn list_artifacts(
+        &self,
+        project: &ProjectRef,
+        address: &TodoAddress,
+    ) -> Result<Vec<Artifact>, WorkError> {
+        if let Some(held) = self.local_record(project, address)? {
+            return Ok(held.into_record().artifacts);
+        }
+        Ok(self.show(project, address)?.record.artifacts)
+    }
+
+    /// The content of the current version of artifact `name`.
     pub fn read_artifact(
         &self,
         project: &ProjectRef,
         address: &TodoAddress,
         name: &str,
-    ) -> Result<Version, WorkError> {
-        let view = self.show(project, address)?;
-        let slug = &address.slug;
-        view.record
+    ) -> Result<String, WorkError> {
+        let answer = self.artifact_record(project, address, name, &Wanted::Current)?;
+        let version = answer
+            .record
             .artifact(name)
             .and_then(|a| a.versions.last())
-            .cloned()
-            .ok_or_else(|| no_artifact(slug, name))
+            .ok_or_else(|| {
+                answer.absent(
+                    no_artifact(&address.slug, name),
+                    &format!("holds no artifact `{name}`"),
+                )
+            })?;
+        let digest = version.digest.as_str();
+        version
+            .content
+            .clone()
+            .ok_or_else(|| content_missing(name, digest, answer.missing.get(digest)))
     }
 
     /// The line diff between two retained versions of artifact `name`.
@@ -1004,27 +1289,27 @@ impl Work {
         old: &str,
         new: &str,
     ) -> Result<Vec<DiffLine>, WorkError> {
-        let view = self.show(project, address)?;
+        let answer = self.artifact_record(project, address, name, &Wanted::Digests(&[old, new]))?;
         let slug = &address.slug;
-        let artifact = view
-            .record
-            .artifact(name)
-            .ok_or_else(|| no_artifact(slug, name))?;
+        let artifact = answer.record.artifact(name).ok_or_else(|| {
+            answer.absent(
+                no_artifact(slug, name),
+                &format!("holds no artifact `{name}`"),
+            )
+        })?;
         let content = |digest: &str| -> Result<String, WorkError> {
-            let version = artifact
-                .versions
-                .iter()
-                .find(|v| v.digest.as_str() == digest)
-                .ok_or_else(|| {
+            let version = Wanted::version(artifact, digest).ok_or_else(|| {
+                answer.absent(
                     WorkError::refused(format!(
                         "`{name}` of `{slug}` retains no version {digest}; `instrukt todo artifacts list {slug}` shows its versions"
-                    ))
-                })?;
-            version.content.clone().ok_or_else(|| {
-                WorkError::refused(format!(
-                    "this computer does not hold the content of `{name}` version {digest}, and GitHub no longer serves it"
-                ))
-            })
+                    )),
+                    &format!("retains no version {digest} of `{name}`"),
+                )
+            })?;
+            version
+                .content
+                .clone()
+                .ok_or_else(|| content_missing(name, digest, answer.missing.get(digest)))
         };
         Ok(diff_lines(&content(old)?, &content(new)?))
     }
@@ -1194,138 +1479,6 @@ fn apply_update(
         record.claim = None;
     }
     Ok(warnings)
-}
-
-/// Releases the working resources a withdrawn todo owns (`todos`,
-/// "Parking, withdrawal and delivery"): each worktree its session bindings
-/// returned that is a worktree of this project, then its work branch.
-/// Only git's own worktree list and the recorded branch are acted on; a
-/// path that is not one of the project's worktrees is left alone. A
-/// worktree with uncommitted work refuses the withdrawal. Returns what was
-/// released, as recovery evidence.
-fn release_resources(
-    root: &Path,
-    record: &TodoRecord,
-) -> Result<
-    (
-        Vec<std::path::PathBuf>,
-        Option<super::_model::ReleasedBranch>,
-    ),
-    WorkError,
-> {
-    let listed = git::run(root, ["worktree", "list", "--porcelain"])?;
-    // Each worktree with the branch it has checked out.
-    let mut checked_out: Vec<(std::path::PathBuf, Option<String>)> = Vec::new();
-    for line in listed.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            checked_out.push((std::path::PathBuf::from(path), None));
-        } else if let Some(branch) = line.strip_prefix("branch refs/heads/")
-            && let Some(last) = checked_out.last_mut()
-        {
-            last.1 = Some(branch.to_owned());
-        }
-    }
-    let main = checked_out.first().map(|(path, _)| path.clone());
-    // The todo's working copies: worktrees its sessions returned, and any
-    // other worktree with its work branch checked out.
-    let mut owned: Vec<std::path::PathBuf> = Vec::new();
-    for (path, branch) in &checked_out {
-        let bound = record
-            .bindings
-            .iter()
-            .any(|b| b.worktree.as_ref() == Some(path));
-        let on_branch = branch.is_some() && branch.as_ref() == record.branch.as_ref();
-        if (bound || on_branch) && main.as_ref() != Some(path) && !owned.contains(path) {
-            owned.push(path.clone());
-        }
-    }
-    // Check everything before releasing anything: work that would be lost
-    // refuses the withdrawal and names where it is.
-    for path in &owned {
-        let changes = git::run(path, ["status", "--porcelain"])?;
-        if !changes.trim().is_empty() {
-            return Err(WorkError::refused(format!(
-                "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
-                path.display()
-            )));
-        }
-    }
-    let workspace = root.join("workspace").join(record.slug.as_str());
-    let workspace_present = match std::fs::symlink_metadata(&workspace) {
-        Ok(meta) if meta.file_type().is_symlink() => {
-            return Err(WorkError::Symlink { path: workspace });
-        }
-        Ok(meta) if meta.is_dir() => true,
-        Ok(_) => false,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
-        Err(source) => {
-            return Err(WorkError::Io {
-                path: workspace,
-                source,
-            });
-        }
-    };
-    if workspace_present {
-        let mut entries = std::fs::read_dir(&workspace).map_err(|source| WorkError::Io {
-            path: workspace.clone(),
-            source,
-        })?;
-        if entries.next().is_some() {
-            return Err(WorkError::refused(format!(
-                "the workspace {} still holds files; keep or remove them, then withdraw again",
-                workspace.display()
-            )));
-        }
-        instrukt_core::fsx::remove_dir(&workspace).map_err(|source| WorkError::Io {
-            path: workspace.clone(),
-            source,
-        })?;
-    }
-    let mut released = Vec::new();
-    for path in &owned {
-        let target = path.to_string_lossy().into_owned();
-        match git::run(root, ["worktree", "remove", target.as_str()]) {
-            Ok(_) => released.push(path.clone()),
-            Err(git::GitError::Failed { stderr, .. }) => {
-                return Err(WorkError::refused(format!(
-                    "the worktree {} holds work git would lose ({}); commit or discard it, then withdraw again",
-                    path.display(),
-                    stderr.trim()
-                )));
-            }
-            Err(err) => return Err(err.into()),
-        }
-    }
-    let mut branch = None;
-    if let Some(name) = &record.branch {
-        let reference = format!("refs/heads/{name}");
-        let head = match git::run(
-            root,
-            ["rev-parse", "--verify", "--quiet", reference.as_str()],
-        ) {
-            Ok(sha) => CommitSha::parse(sha.trim()).ok(),
-            Err(git::GitError::Failed { .. }) => None,
-            Err(err) => return Err(err.into()),
-        };
-        let current = match git::run(root, ["symbolic-ref", "--quiet", "--short", "HEAD"]) {
-            Ok(current) => Some(current.trim().to_owned()),
-            Err(git::GitError::Failed { .. }) => None,
-            Err(err) => return Err(err.into()),
-        };
-        if let Some(head) = head {
-            if current.as_deref() == Some(name.as_str()) {
-                return Err(WorkError::refused(format!(
-                    "the work branch `{name}` is checked out in the project; switch away from it, then withdraw again"
-                )));
-            }
-            git::run(root, ["branch", "-D", name.as_str()])?;
-            branch = Some(super::_model::ReleasedBranch {
-                name: name.clone(),
-                head,
-            });
-        }
-    }
-    Ok((released, branch))
 }
 
 fn change_kind(record: &mut TodoRecord, kind: TodoKind, force: bool) -> Result<(), WorkError> {
@@ -1646,68 +1799,44 @@ fn check_prerequisites(s: &mut Session<'_>, index: usize) -> Result<Vec<String>,
     Ok(warnings)
 }
 
-/// What a todo waits on: its prerequisites, and for a structural holder
-/// its children (a holder's milestone is every child's).
-fn waits_on(s: &mut Session<'_>, id: &TodoId) -> Vec<TodoRef> {
-    let Some(record) = s.record_current(id) else {
-        return Vec::new();
-    };
-    let mut next = record.after.clone();
-    if record.status == TodoStatus::StructuralHolder {
-        let mut children: Vec<TodoRef> = s
-            .items
-            .iter()
-            .map(|it| &it.record)
-            .filter(|r| r.group.as_ref().is_some_and(|g| &g.id == id))
-            .map(TodoRecord::reference)
+/// A cycle of waiting through `record`, if the project graph has one: the
+/// slugs from `record` back to itself ([`super::_graph::first_cycle`]). Every
+/// todo the waiting from `record` reaches is consulted once per command
+/// ([`Session::record_current`]): refreshed from GitHub when GitHub answers,
+/// otherwise judged by the last record this computer holds of it, so the
+/// graph is the most current one this command can read, not necessarily
+/// GitHub's. The transaction that commits the change judges the graph it
+/// holds again.
+fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
+    loop {
+        let graph = wait_graph(s);
+        let unrefreshed: Vec<TodoId> = super::_graph::reached(&graph, &record.id)
+            .into_iter()
+            .filter(|id| !s.consulted(id))
             .collect();
-        for copy in &s.copies {
-            let remote = &copy.record;
-            if remote.group.as_ref().is_some_and(|g| &g.id == id)
-                && remote.is_live()
-                && !children.iter().any(|c| c.id == remote.id)
-            {
-                children.push(remote.reference());
-            }
+        if unrefreshed.is_empty() {
+            return super::_graph::first_cycle(&graph, std::slice::from_ref(&record.id));
         }
-        next.extend(children);
+        for id in &unrefreshed {
+            s.record_current(id);
+        }
     }
-    next
 }
 
-/// A cycle of waiting through `record`, if the project graph has one: the
-/// slugs from `record` back to itself. A holder waits on its children, so
-/// reaching one of `record`'s holders closes the cycle through its group.
-fn cycle_through(s: &mut Session<'_>, record: &TodoRecord) -> Option<Vec<TodoSlug>> {
-    let above = ancestors(s, &record.id);
-    let mut stack: Vec<(TodoRef, Vec<TodoSlug>)> = waits_on(s, &record.id)
-        .into_iter()
-        .map(|next| {
-            let path = vec![record.slug.clone(), next.slug.clone()];
-            (next, path)
-        })
+/// The waiting graph as the session holds it: every local item, and the
+/// listing copy of every todo that is not one.
+fn wait_graph(s: &Session<'_>) -> Vec<super::_graph::WaitNode> {
+    let mut graph: Vec<super::_graph::WaitNode> = s
+        .items
+        .iter()
+        .map(|it| super::_graph::WaitNode::of(&it.record, true))
         .collect();
-    let mut seen: BTreeSet<TodoId> = BTreeSet::new();
-    while let Some((current, path)) = stack.pop() {
-        if current.id == record.id {
-            return Some(path);
-        }
-        if above.contains(&current.id) {
-            // The holder waits on its children down to `record`.
-            let mut path = path;
-            path.push(record.slug.clone());
-            return Some(path);
-        }
-        if !seen.insert(current.id.clone()) {
-            continue;
-        }
-        for next in waits_on(s, &current.id) {
-            let mut longer = path.clone();
-            longer.push(next.slug.clone());
-            stack.push((next, longer));
+    for copy in &s.copies {
+        if !graph.iter().any(|n| n.id == copy.record.id) {
+            graph.push(super::_graph::WaitNode::of(&copy.record, false));
         }
     }
-    None
+    graph
 }
 
 fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>, WorkError> {
@@ -1719,6 +1848,141 @@ fn resolve_refs(s: &mut Session<'_>, slugs: &[TodoSlug]) -> Result<Vec<TodoRef>,
         }
     }
     Ok(refs)
+}
+
+/// What an artifact read is answered from: the record, why each version it
+/// asks for still lacks content, and, for a todo GitHub could not be read
+/// for, why its last known copy is unverified.
+struct Answer {
+    record: TodoRecord,
+    missing: BTreeMap<String, Unrestored>,
+    unverified: Option<String>,
+}
+
+impl Answer {
+    /// The refusal of a read whose record lacks what it asks for:
+    /// `absence` when the record is current, and from an unverified copy only
+    /// what that copy lacks (`lacking`), never established absence.
+    fn absent(&self, absence: WorkError, lacking: &str) -> WorkError {
+        match &self.unverified {
+            Some(why) => WorkError::refused(format!("{why}; that copy {lacking}")),
+            None => absence,
+        }
+    }
+}
+
+enum Held {
+    /// A local item's: the local record it reads.
+    Item(TodoRecord),
+    /// A listing copy's: the last-known reflected record, without artifact
+    /// contents.
+    Copy(TodoRecord),
+}
+
+impl Held {
+    /// Whether this record settles a read of artifact `name` for `wanted`
+    /// on its own. A local item's does when it lacks none of the content
+    /// asked for, an artifact or version it does not carry answering that
+    /// there is none. A listing copy's is only last known: something
+    /// written after it was read is missing from it, so it settles a read
+    /// only by holding every version asked for with its content.
+    fn answers(&self, name: &str, wanted: &Wanted<'_>) -> bool {
+        match self {
+            Held::Item(record) => record
+                .artifact(name)
+                .is_none_or(|artifact| wanted.lacking(artifact).is_empty()),
+            Held::Copy(record) => record
+                .artifact(name)
+                .is_some_and(|artifact| wanted.holds(artifact)),
+        }
+    }
+
+    fn into_record(self) -> TodoRecord {
+        match self {
+            Held::Item(record) | Held::Copy(record) => record,
+        }
+    }
+}
+
+/// What a read of an artifact's content asks for.
+enum Wanted<'d> {
+    /// Its current version: the last one written.
+    Current,
+    /// The versions with these digests. Writing appends a version even when
+    /// its content repeats an earlier one, so a digest can name several;
+    /// any of them holding its content answers.
+    Digests(&'d [&'d str]),
+}
+
+impl Wanted<'_> {
+    /// The digests of the versions asked for whose content `artifact`
+    /// lacks: the current version's when it is held without content; a
+    /// digest whose versions all lack it. A digest no version carries lacks
+    /// nothing: there is no content to restore.
+    fn lacking(&self, artifact: &Artifact) -> Vec<String> {
+        match self {
+            Wanted::Current => artifact
+                .versions
+                .last()
+                .filter(|v| v.content.is_none())
+                .map(|v| v.digest.as_str().to_owned())
+                .into_iter()
+                .collect(),
+            Wanted::Digests(digests) => digests
+                .iter()
+                .filter(|digest| {
+                    Wanted::version(artifact, digest).is_some_and(|v| v.content.is_none())
+                })
+                .map(|digest| (*digest).to_owned())
+                .collect(),
+        }
+    }
+
+    /// Whether `artifact` holds every version asked for with its content.
+    fn holds(&self, artifact: &Artifact) -> bool {
+        match self {
+            Wanted::Current => artifact
+                .versions
+                .last()
+                .is_some_and(|v| v.content.is_some()),
+            Wanted::Digests(digests) => digests.iter().all(|digest| {
+                Wanted::version(artifact, digest).is_some_and(|v| v.content.is_some())
+            }),
+        }
+    }
+
+    /// The version of `artifact` with `digest` a read takes: one holding
+    /// its content, else the first.
+    fn version<'a>(artifact: &'a Artifact, digest: &str) -> Option<&'a Version> {
+        let mut matching = artifact
+            .versions
+            .iter()
+            .filter(|v| v.digest.as_str() == digest);
+        let first = matching.next()?;
+        Some(
+            std::iter::once(first)
+                .chain(matching)
+                .find(|v| v.content.is_some())
+                .unwrap_or(first),
+        )
+    }
+}
+
+/// The refusal for an artifact version whose content this computer does
+/// not hold, saying why restoring it failed ([`Unrestored`]).
+fn content_missing(name: &str, digest: &str, why: Option<&Unrestored>) -> WorkError {
+    let held = format!("this computer does not hold the content of `{name}` version {digest}");
+    WorkError::refused(match why {
+        Some(Unrestored::NotServed) => format!("{held}, and GitHub no longer serves it"),
+        Some(Unrestored::NotReflected) => {
+            format!("{held}, and it records no GitHub copy of it to restore it from")
+        }
+        Some(Unrestored::Unread(reason)) => format!(
+            "{held}, and GitHub could not be read for it: {}",
+            super::_session::describe(reason)
+        ),
+        None => format!("{held}, and GitHub was not asked for it"),
+    })
 }
 
 fn ensure_slug_free(
@@ -1893,6 +2157,67 @@ mod tests {
             delivery: None,
             removal: None,
         }
+    }
+
+    /// An artifact whose versions repeat `text`, holding content only where
+    /// `held` says so, oldest first.
+    fn repeated(text: &str, held: &[bool]) -> Artifact {
+        Artifact {
+            name: ArtifactName::new("log"),
+            address: None,
+            versions: held
+                .iter()
+                .enumerate()
+                .map(|(i, held)| Version {
+                    digest: digest_of(text),
+                    writer: Actor::Person { name: "dev".into() },
+                    created: jiff::Timestamp::UNIX_EPOCH,
+                    derived_from: Vec::new(),
+                    sequence: i as u64 + 1,
+                    grounding: Default::default(),
+                    remote: None,
+                    content: held.then(|| text.to_owned()),
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn a_held_current_version_lacks_nothing_though_an_earlier_repeat_of_it_does() {
+        let artifact = repeated("same", &[false, true]);
+        assert!(Wanted::Current.lacking(&artifact).is_empty());
+        assert_eq!(
+            Wanted::Current.lacking(&repeated("same", &[true, false])),
+            vec![digest_of("same").as_str().to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_listing_copy_settles_no_read_of_content_it_does_not_hold() {
+        let mut record = record("depth", 1, &[]);
+        let copy = Held::Copy(record.clone());
+        assert!(!copy.answers("log", &Wanted::Current));
+        assert!(Held::Item(record.clone()).answers("log", &Wanted::Current));
+        record.artifacts.push(repeated("same", &[false]));
+        let unknown = Wanted::Digests(&["sha256:other"]);
+        assert!(!Held::Copy(record.clone()).answers("log", &unknown));
+        assert!(Held::Item(record).answers("log", &unknown));
+    }
+
+    #[test]
+    fn a_digest_any_of_whose_versions_holds_its_content_is_answered_by_that_version() {
+        let artifact = repeated("same", &[false, true]);
+        let digest = digest_of("same");
+        assert!(
+            Wanted::Digests(&[digest.as_str()])
+                .lacking(&artifact)
+                .is_empty()
+        );
+        // The version that holds the content, whole: not the earlier repeat.
+        assert_eq!(
+            Wanted::version(&artifact, digest.as_str()),
+            Some(&artifact.versions[1])
+        );
     }
 
     fn entry(record: TodoRecord, ready: bool) -> ListEntry {

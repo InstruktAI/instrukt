@@ -116,11 +116,10 @@ pub enum GenerationError {
         path: PathBuf,
         source: serde_json::Error,
     },
-    #[error("cannot check out {sha}: `git {args}` {detail}")]
+    #[error("cannot check out {sha}: {source}")]
     Checkout {
         sha: CommitSha,
-        args: String,
-        detail: String,
+        source: instrukt_core::git::GitError,
     },
     #[error("cannot start the generation worker {program}: {source}")]
     Spawn { program: PathBuf, source: io::Error },
@@ -521,7 +520,16 @@ fn map(
                 source,
             })?;
             let tree = scratch.path().join("tree");
-            check_out(&queued.project_root, &queued.sha, scratch.path(), &tree)?;
+            instrukt_core::git::check_out_tree(
+                &queued.project_root,
+                queued.sha.as_str(),
+                &scratch.path().join("index"),
+                &tree,
+            )
+            .map_err(|source| GenerationError::Checkout {
+                sha: queued.sha.clone(),
+                source,
+            })?;
             // The engine may start only once its group is durably recorded:
             // an engine the record does not name could run beside the next.
             engine.generate(&tree, scratch.path(), ENGINE_TIMEOUT, &mut |group| {
@@ -548,52 +556,6 @@ fn map(
             path = %failure.path.display(),
             error = %failure.error,
         );
-    }
-    Ok(())
-}
-
-/// Writes the committed tree of `sha` to `tree` through a private index:
-/// the repository's index, working tree and hooks are untouched.
-fn check_out(
-    root: &Path,
-    sha: &CommitSha,
-    scratch: &Path,
-    tree: &Path,
-) -> Result<(), GenerationError> {
-    let index = scratch.join("index");
-    let prefix = format!("{}/", tree.display());
-    let tree_ish = format!("{sha}^{{tree}}");
-    let steps: [Vec<&str>; 2] = [
-        vec!["read-tree", tree_ish.as_str()],
-        vec![
-            "checkout-index",
-            "--all",
-            "--force",
-            "--prefix",
-            prefix.as_str(),
-        ],
-    ];
-    for args in steps {
-        let mut command = Command::new("git");
-        git::strip_repository_env(&mut command)
-            .args(&args)
-            .env("GIT_INDEX_FILE", &index)
-            .current_dir(root)
-            .stdin(Stdio::null());
-        let failed = |detail: String| GenerationError::Checkout {
-            sha: sha.clone(),
-            args: args.join(" "),
-            detail,
-        };
-        let output = command
-            .output()
-            .map_err(|err| failed(format!("could not run: {err}")))?;
-        if !output.status.success() {
-            return Err(failed(format!(
-                "failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            )));
-        }
     }
     Ok(())
 }

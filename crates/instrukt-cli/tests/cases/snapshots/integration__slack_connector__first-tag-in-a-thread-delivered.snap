@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/slack-connector.rs
-assertion_line: 195
 expression: "c.input(&second, 0)"
 ---
 [Instrukt Conversation Context ([BOUNDARY])]
@@ -11,6 +10,6 @@ More talk.
 --- Steven · 2023-11-14 22:13 UTC · said · 1
 More talk.
 [/Instrukt Conversation Context ([BOUNDARY])]
-[Member (slack · C2/1700000005.000100 · Anna · 2023-11-14 22:13 UTC · [BOUNDARY])]
+[Member (slack · C2/1700000005.000100 · Anna · admin=false · direct=false · 2023-11-14 22:13 UTC · [BOUNDARY])]
 @agent Where are we?
-[/Member (slack · C2/1700000005.000100 · Anna · 2023-11-14 22:13 UTC · [BOUNDARY])]
+[/Member (slack · C2/1700000005.000100 · Anna · admin=false · direct=false · 2023-11-14 22:13 UTC · [BOUNDARY])]

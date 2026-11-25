@@ -1,5 +1,5 @@
 ---
-description: Free disk space is shared by every process on the machine; whoever creates a checkout or build output keeps it bounded, removes it when its work ends, and keeps a floor of headroom before starting a build.
+description: Disk space, CPU and memory are shared by every process on the machine; whoever creates a checkout, build output or ephemeral process keeps it bounded, removes or reaps it when its work ends, and keeps a floor of headroom before starting a build.
 visibility: 'public'
 ---
 
@@ -41,6 +41,11 @@ visibility: 'public'
 - **Clean what you own.** A session removes only output it or its delegates
   created, never another live session's checkout or build output. Output of a
   session that has ended is the delegating session's to remove.
+- **Reap ephemeral processes you spawn.** Any temporary server, container,
+  background load or reproduction process a session starts is spawned in a
+  tracked group and torn down in a guaranteed-cleanup path (`trap` / `finally`
+  / process-group kill) the instant its evidence is captured — never left as a
+  detached child leaking CPU or memory across the host.
 
 ## Rationale
 
@@ -50,7 +55,10 @@ regenerable output to fill a volume. When the volume fills, writes fail in
 unrelated applications and their virtual machines stop. That harm lands
 outside the session that caused it, where restoring the files repairs nothing.
 Output is regenerable, so removing it costs only a rebuild; keeping it costs
-everyone on the machine.
+everyone on the machine. The same holds for ephemeral processes: a detached
+reproduction server, container or load generator left running after a session
+moves on steals CPU and memory from every other agent and application on the
+host until someone hunts it down.
 
 <!-- planned:reduce-worktree-disk-usage -->
 Once a todo's work checkout hands off to integration or parks on an external
@@ -68,11 +76,12 @@ All agents, all sessions, all projects, on every machine they run on.
 ## Enforcement
 
 <!-- planned-change:reduce-worktree-disk-usage -->
-Reviewers treat a finished checkout left with its build output as a
-process miss.
+Reviewers treat a finished checkout left with its build output, or an ephemeral
+process left orphaned after its work ends, as a process miss.
 <!-- change:reduce-worktree-disk-usage -->
 Reviewers treat a checkout left with build output that the rules above require
-removed as a process miss.
+removed, or an ephemeral process left orphaned after its work ends, as a process
+miss.
 <!-- /planned-change:reduce-worktree-disk-usage -->
 
 ## Exceptions

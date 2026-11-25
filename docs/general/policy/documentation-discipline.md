@@ -87,10 +87,18 @@ restart, then check the logs` is directive. One string reaching a human and an
     lighter depth for the security lane's repository-privacy check and the
     doc-hygiene lane.
 
-  Every check is reviewer judgment, never prose scanning. A typo, formatting or
-  link repair changes neither, and its author stamps it
-  (`general/policy/commits`). Company home knowledge (`AGENTS.master.md` and
-  documents anywhere under `docs/` in a company repository) is governed
+  Every check is reviewer judgment, never prose scanning. Documentation curation
+  and mechanical edits that leave rule semantics unchanged and add nothing to an
+  always-on set — demoting an `index.yaml` entry from `expanded` to `listed`,
+  reordering index entries, relocating snippets, removing dead or obsolete
+  snippets, wiring `Required reads` on non-expanded snippets, typos, formatting,
+  and link repairs — change neither what a snippet establishes nor what it
+  directs; `instrukt docs validate` checks structural validity (references,
+  schema, and closure overlap) and they owe no independent review
+  (`general/policy/commits`). Promoting a snippet into an always-on set
+  (`expanded`, `agents`, or a `Required read` on an `expanded` snippet) remains
+  subject to independent review (`sdlc/policy/definition-of-done-lanes`). Company home knowledge (the documents anywhere under `docs/` in a company
+  repository and the `docs/index.yaml` that selects them) is governed
   content: it renders into the company's committed `AGENTS.md` and published
   skills, so its content follows `general/policy/snippet-value-contract` and
   `general/policy/agent-facing-text`, and its changes are authored in a

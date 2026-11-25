@@ -12,8 +12,8 @@ use std::time::Duration;
 
 use instrukt_connector::{
     Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, Connector,
-    ConnectorError, Declaration, Declared, Earlier, Field, Inbox, Incoming, Kind, Place, Rule,
-    SecretResolver, Sender, Status,
+    ConnectorError, Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier,
+    Field, Inbox, Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
 };
 use jiff::Timestamp;
 use serde_json::Value;
@@ -28,6 +28,11 @@ pub const SLACK: &str = "slack";
 /// The one fixed reply a sender who is not one of the company's own
 /// receives, in a channel and in a direct message alike.
 pub const TURN_AWAY: &str = "I only answer members of this workspace.";
+
+/// The one fixed reply a sender who is not a workspace administrator
+/// receives on an `admins_only` connector, in a channel and in a direct
+/// message alike.
+pub const TURN_AWAY_NOT_ADMIN: &str = "I only answer workspace administrators.";
 
 /// The one notice's sentence, after the waiting person's mention.
 pub const NOTICE: &str = "The assistant is temporarily unavailable. Your message is saved and you'll get the answer here when it's back — no need to send it again.";
@@ -83,6 +88,7 @@ const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that acco
 /// The fields a `connectors.slack` entry takes.
 pub static SLACK_DECLARATION: Declaration = Declaration {
     key: SLACK,
+    message_chars: SLACK_MESSAGE_LIMIT,
     fields: &[
         Field {
             name: "app_token",
@@ -118,15 +124,19 @@ pub const API_URL_SETTING: &str = "INSTRUKT_SLACK_API_URL";
 /// Slack's Web API.
 const SLACK_API: &str = "https://slack.com/api";
 
-/// Until when Slack limited each method for each company's workspace, as
+/// Until when Slack limited each method for each `(company, connector)`, as
 /// its `Retry-After` said, on the runner's clock. The runner owns one and
 /// every client of its connectors shares it, so no call of a limited method
-/// for that workspace is made before its wait is over while the runner runs.
+/// for that connector is made before its wait is over while the runner runs,
+/// while separate Slack apps in one company home never collide.
 /// A wait that has passed is retired.
+type LimitKey = (String, String, String);
+type LimitWaits = Arc<std::sync::Mutex<HashMap<LimitKey, Timestamp>>>;
+
 #[derive(Clone)]
 pub struct Limits {
     clock: Clock,
-    waits: Arc<std::sync::Mutex<HashMap<(String, String), Timestamp>>>,
+    waits: LimitWaits,
 }
 
 impl std::fmt::Debug for Limits {
@@ -144,23 +154,26 @@ impl Limits {
     }
 
     /// How many whole seconds, rounded up, `method` stays limited for
-    /// `company`'s workspace, if it is.
-    fn remaining(&self, company: &str, method: &str) -> Option<u64> {
+    /// `(company, connector)`, if it is.
+    fn remaining(&self, company: &str, connector: &str, method: &str) -> Option<u64> {
         let mut waits = self.waits.lock().ok()?;
         let now = (self.clock)();
         waits.retain(|_, until| *until > now);
-        let until = waits.get(&(company.to_owned(), method.to_owned()))?;
+        let until = waits.get(&(company.to_owned(), connector.to_owned(), method.to_owned()))?;
         let left = until.duration_since(now);
         let seconds = u64::try_from(left.as_secs()).unwrap_or(0);
         Some(seconds + u64::from(left.subsec_nanos() > 0))
     }
 
-    /// Keeps the wait of `seconds` Slack named for `method`.
-    fn limit(&self, company: &str, method: &str, seconds: u64) {
+    /// Keeps the wait of `seconds` Slack named for `method` on `(company, connector)`.
+    fn limit(&self, company: &str, connector: &str, method: &str, seconds: u64) {
         let wait = jiff::SignedDuration::from_secs(i64::try_from(seconds).unwrap_or(i64::MAX));
         let until = (self.clock)().checked_add(wait).unwrap_or(Timestamp::MAX);
         if let Ok(mut waits) = self.waits.lock() {
-            waits.insert((company.to_owned(), method.to_owned()), until);
+            waits.insert(
+                (company.to_owned(), connector.to_owned(), method.to_owned()),
+                until,
+            );
         }
     }
 }
@@ -171,6 +184,9 @@ pub enum SlackError {
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
+    /// A transport failure or HTTP 5xx response from Slack (retryable).
+    #[error("Slack {method}: {cause}")]
+    Transient { method: String, cause: String },
     /// A Slack response confirms the post was rejected.
     #[error("Slack {method}: {cause}")]
     RejectedPost { method: String, cause: String },
@@ -254,10 +270,11 @@ impl SlackEndpoint {
     }
 }
 
-/// One company's Slack Web API, with the tokens its admitted generation
+/// One company's named Slack Web API, with the tokens its admitted generation
 /// resolved, as its connector's opening drew them through the resolver.
 pub struct SlackApi {
     company: String,
+    connector: String,
     endpoint: SlackEndpoint,
     app_token: String,
     bot_token: String,
@@ -281,10 +298,17 @@ fn message_ts(m: &Value) -> Option<i64> {
 }
 
 impl SlackApi {
-    /// The Web API of `company`'s Slack connector, with its two tokens.
-    fn new(company: &str, endpoint: &SlackEndpoint, app_token: String, bot_token: String) -> Self {
+    /// The Web API of `(company, connector)`, with its two tokens.
+    fn new(
+        company: &str,
+        connector: &str,
+        endpoint: &SlackEndpoint,
+        app_token: String,
+        bot_token: String,
+    ) -> Self {
         Self {
             company: company.to_owned(),
+            connector: connector.to_owned(),
             endpoint: endpoint.clone(),
             app_token,
             bot_token,
@@ -322,7 +346,8 @@ impl SlackApi {
         timeout: Option<Duration>,
     ) -> Result<(Value, Option<String>), SlackError> {
         let company = self.company.clone();
-        if let Some(seconds) = self.endpoint.limits.remaining(&company, method) {
+        let connector = self.connector.clone();
+        if let Some(seconds) = self.endpoint.limits.remaining(&company, &connector, method) {
             return Err(SlackError::Limited {
                 method: method.into(),
                 seconds,
@@ -344,9 +369,13 @@ impl SlackApi {
         if let Some(timeout) = timeout {
             request = request.config().timeout_global(Some(timeout)).build();
         }
-        let mut response = request
-            .send_form(form.iter().copied())
-            .map_err(|e| fail(e.to_string()))?;
+        let mut response =
+            request
+                .send_form(form.iter().copied())
+                .map_err(|e| SlackError::Transient {
+                    method: method.into(),
+                    cause: e.to_string(),
+                })?;
         let status = response.status();
         if status.as_u16() == 429 {
             let seconds = response
@@ -355,17 +384,28 @@ impl SlackApi {
                 .and_then(|value| value.to_str().ok())
                 .and_then(|value| value.trim().parse::<u64>().ok())
                 .unwrap_or(1);
-            self.endpoint.limits.limit(&company, method, seconds);
-            tracing::warn!(target: LOG_TARGET, event = "connector_rate_limited", company = %self.company, method, seconds);
+            self.endpoint
+                .limits
+                .limit(&company, &connector, method, seconds);
+            tracing::warn!(target: LOG_TARGET, event = "connector_rate_limited", company = %self.company, connector = %self.connector, method, seconds);
             return Err(SlackError::Limited {
                 method: method.into(),
                 seconds,
             });
         }
+        if status.as_u16() >= 500 {
+            return Err(SlackError::Transient {
+                method: method.into(),
+                cause: format!("HTTP {status}"),
+            });
+        }
         let text = response
             .body_mut()
             .read_to_string()
-            .map_err(|_| fail(format!("HTTP {status} without an answer")))?;
+            .map_err(|_| SlackError::Transient {
+                method: method.into(),
+                cause: format!("HTTP {status} without an answer"),
+            })?;
         let body: Value = serde_json::from_str(&text)
             .map_err(|_| fail(format!("HTTP {status} without a JSON answer")))?;
         if body.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -499,6 +539,39 @@ impl SlackApi {
         }
         self.call("chat.postMessage", false, &form).map(drop)
     }
+
+    /// Post a private direct message directly to a user's Slack ID using `chat.postMessage`
+    /// (`chat:write` scope only, never `conversations.open`), tagged with `instrukt_private`
+    /// metadata so it is excluded from every context read.
+    pub fn post_private_dm(
+        &self,
+        recipient: &str,
+        text: &str,
+    ) -> Result<DirectMessageReceipt, SlackError> {
+        const PRIVATE_METADATA: &str = r#"{"event_type":"instrukt_private","event_payload":{}}"#;
+        let form = [
+            ("channel", recipient),
+            ("text", text),
+            ("metadata", PRIVATE_METADATA),
+        ];
+        self.call("chat.postMessage", false, &form)
+            .map(|post| DirectMessageReceipt {
+                channel: post
+                    .get("channel")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                message_id: post.get("ts").and_then(Value::as_str).map(str::to_owned),
+            })
+    }
+}
+
+/// Whether `message` carries Slack metadata `event_type: "instrukt_private"`,
+/// marking a private platform DM that must never accompany any turn to the agent.
+fn is_instrukt_private(message: &Value) -> bool {
+    message
+        .pointer("/metadata/event_type")
+        .and_then(Value::as_str)
+        == Some("instrukt_private")
 }
 
 /// The connector's own identity in its workspace.
@@ -557,6 +630,9 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
         && flag("is_restricted") == Some(false)
         && flag("is_ultra_restricted") == Some(false)
         && in_workspace;
+    let is_admin = flag("is_admin") == Some(true)
+        || flag("is_owner") == Some(true)
+        || flag("is_primary_owner") == Some(true);
     own.then(|| Sender {
         name: name(record).unwrap_or_else(|| id.to_owned()),
         email: record
@@ -565,6 +641,7 @@ fn admission(record: &Value, me: &Me) -> Option<Sender> {
             .and_then(Value::as_str)
             .filter(|email| !email.is_empty())
             .map(str::to_owned),
+        is_admin,
     })
 }
 
@@ -652,11 +729,14 @@ fn split_conversation(conversation: &str) -> (&str, Option<&str>) {
 }
 
 /// The Slack kind of this process: its endpoint, built once when the runner
-/// starts, and the bot identity each company's tokens answered with, asked
-/// of Slack once while those tokens stay.
+/// starts, and the bot identity each `(company, connector)`'s tokens answered
+/// with, asked of Slack once while those tokens stay.
+type IdentityKey = (String, String);
+type IdentityCache = Arc<Mutex<HashMap<IdentityKey, (String, Me)>>>;
+
 pub struct SlackKind {
     endpoint: SlackEndpoint,
-    identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
+    identities: IdentityCache,
 }
 
 impl SlackKind {
@@ -690,17 +770,19 @@ impl Kind for SlackKind {
     fn open(
         &self,
         company: &str,
+        connector: &str,
         declared: &Declared,
         secrets: &dyn SecretResolver,
     ) -> Result<Box<dyn Connector>, ConnectorError> {
         let token = |field: &str| -> Result<String, ConnectorError> {
             let reference = declared.text(field).ok_or_else(|| ConnectorError {
-                cause: format!("the slack connector declares no {field}"),
+                cause: format!("the slack connector `{connector}` declares no {field}"),
             })?;
             secrets.resolve(reference)
         };
         let api = SlackApi::new(
             company,
+            connector,
             &self.endpoint,
             token("app_token")?,
             token("bot_token")?,
@@ -716,19 +798,23 @@ impl Kind for SlackKind {
     }
 }
 
-/// One company's Slack connector.
+/// One company's named Slack connector.
 struct Slack {
     api: SlackApi,
     context_messages: u64,
-    identities: Arc<Mutex<HashMap<String, (String, Me)>>>,
+    identities: IdentityCache,
     /// The people's names asked of Slack while this connector is open.
     names: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl Slack {
+    fn identity_key(&self) -> (String, String) {
+        (self.api.company.clone(), self.api.connector.clone())
+    }
+
     fn cached_identity(&self) -> Option<Me> {
         let identities = self.identities.lock().ok()?;
-        let (token, me) = identities.get(&self.api.company)?;
+        let (token, me) = identities.get(&self.identity_key())?;
         (token == &self.api.bot_token).then(|| me.clone())
     }
 
@@ -738,10 +824,10 @@ impl Slack {
         if let Some(me) = self.cached_identity() {
             return Ok(me);
         }
-        let company = self.api.company.clone();
+        let key = self.identity_key();
         let me = self.api.identity()?;
         if let Ok(mut identities) = self.identities.lock() {
-            identities.insert(company, (self.api.bot_token.clone(), me.clone()));
+            identities.insert(key, (self.api.bot_token.clone(), me.clone()));
         }
         Ok(me)
     }
@@ -933,14 +1019,45 @@ impl Connector for Slack {
             })
     }
 
-    fn turn_away(&self, conversation: &str) -> Result<(), ConnectorError> {
-        self.api.post(conversation, TURN_AWAY).map_err(failed)
+    fn turn_away(&self, conversation: &str, reason: RefusalReason) -> Result<(), ConnectorError> {
+        let text = match reason {
+            RefusalReason::NotOwn => TURN_AWAY,
+            RefusalReason::NotAdmin => TURN_AWAY_NOT_ADMIN,
+        };
+        self.api.post(conversation, text).map_err(failed)
     }
 
     fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError> {
         self.api
             .post(conversation, &format!("<@{member}> {NOTICE}"))
             .map_err(failed)
+    }
+
+    fn direct_message(
+        &self,
+        recipient: &str,
+        text: &str,
+    ) -> Result<DirectMessageReceipt, DirectMessageError> {
+        self.api
+            .post_private_dm(recipient, text)
+            .map_err(|error| match error {
+                SlackError::Limited { .. } | SlackError::Transient { .. } => {
+                    DirectMessageError::Retryable(error.to_string())
+                }
+                SlackError::Api { ref cause, .. }
+                    if matches!(
+                        cause.as_str(),
+                        "ratelimited"
+                            | "request_timeout"
+                            | "internal_error"
+                            | "service_unavailable"
+                            | "fatal_error"
+                    ) =>
+                {
+                    DirectMessageError::Retryable(error.to_string())
+                }
+                other => DirectMessageError::Final(other.to_string()),
+            })
     }
 
     /// A channel conversation's thread; a direct message's addressed message.
@@ -980,7 +1097,7 @@ fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result
     }
     .map_err(|e| format!("Socket Mode connection: {e}"))?;
     inbox.connected();
-    tracing::info!(target: LOG_TARGET, event = "connector_connected", company = %company, connector = SLACK);
+    tracing::info!(target: LOG_TARGET, event = "connector_connected", company = %company, connector = %api.connector);
     let mut unretained = false;
     while !quit() {
         let message = match socket.read() {
@@ -1017,10 +1134,11 @@ fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result
         // Acknowledge only once what the envelope carries is retained, so
         // Slack retries what instrukt could not keep; reading the
         // accompanying messages and posting refusals come after.
-        let retained = receive(&me, &envelope).and_then(|incoming| match incoming {
-            Some(incoming) => inbox.retain(incoming).map_err(|error| error.cause),
-            None => Ok(()),
-        });
+        let retained =
+            receive(&api.connector, &me, &envelope).and_then(|incoming| match incoming {
+                Some(incoming) => inbox.retain(incoming).map_err(|error| error.cause),
+                None => Ok(()),
+            });
         match retained {
             Ok(()) => {
                 socket
@@ -1034,7 +1152,7 @@ fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result
                 }
             }
             Err(error) => {
-                tracing::warn!(target: LOG_TARGET, event = "connector_message_unretained", company = %company, connector = SLACK, error = %error);
+                tracing::warn!(target: LOG_TARGET, event = "connector_message_unretained", company = %company, connector = %api.connector, error = %error);
                 inbox.unretained(&format!(
                     "a message could not be retained and awaits Slack's retry: {error}"
                 ));
@@ -1049,7 +1167,7 @@ fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result
 /// The addressed message one Events API envelope carries: a mention in a
 /// channel or a direct message; none for anything else. Nothing here waits
 /// on the network.
-fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
+fn receive(connector: &str, me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
     if envelope.get("type").and_then(Value::as_str) != Some("events_api") {
         return Ok(None);
     }
@@ -1075,8 +1193,9 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         }
         _ => return Ok(None),
     };
+    let is_direct = thread.is_none();
     let incoming = Incoming {
-        connector: SLACK.into(),
+        connector: connector.to_owned(),
         conversation: match thread {
             Some(thread) => format!("{channel}/{thread}"),
             None => channel.to_owned(),
@@ -1085,6 +1204,8 @@ fn receive(me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
         sender: sender.to_owned(),
         written_at: ts_time(ts).ok_or("message without a valid time")?,
         text: text("text").unwrap_or_default().to_owned(),
+        is_direct,
+        thread: thread.map(str::to_owned),
     };
     Ok(Some(incoming))
 }
@@ -1133,6 +1254,7 @@ fn read_context(
             ("channel", channel),
             ("latest", latest.as_str()),
             ("inclusive", "false"),
+            ("include_all_metadata", "true"),
             ("limit", "200"),
         ];
         if let Some(oldest) = &oldest {
@@ -1164,7 +1286,7 @@ fn read_context(
             else {
                 continue;
             };
-            if notice(message) || messages.contains_key(&at) {
+            if notice(message) || is_instrukt_private(message) || messages.contains_key(&at) {
                 continue;
             }
             messages.insert(at, message.clone());
@@ -1376,5 +1498,80 @@ mod tests {
         let local = at("http://127.0.0.1:9/api").unwrap();
         assert!(local.admits_socket("ws://127.0.0.1:10/"));
         assert!(!local.admits_socket("ws://example.com/"));
+    }
+
+    #[test]
+    fn admission_marks_workspace_admin_owner_and_primary_owner_flags() {
+        let me = Me {
+            user: "UAGENT".into(),
+            bot: Some("BAGENT".into()),
+            team: "T1".into(),
+        };
+        let base = |extra: (&str, bool)| {
+            let mut rec = json!({
+                "id": "U1",
+                "team_id": "T1",
+                "deleted": false,
+                "is_bot": false,
+                "is_restricted": false,
+                "is_ultra_restricted": false,
+                "profile": {"display_name": "Steven", "email": "steven@example.com"},
+            });
+            rec[extra.0] = json!(extra.1);
+            admission(&rec, &me).unwrap()
+        };
+        assert!(!base(("is_admin", false)).is_admin);
+        assert!(base(("is_admin", true)).is_admin);
+        assert!(base(("is_owner", true)).is_admin);
+        assert!(base(("is_primary_owner", true)).is_admin);
+    }
+
+    #[test]
+    fn rate_limits_are_isolated_per_company_and_connector() {
+        use super::Limits;
+        let now = std::sync::Arc::new(std::sync::Mutex::new(
+            "2026-11-20T10:00:00Z".parse::<jiff::Timestamp>().unwrap(),
+        ));
+        let clock_ref = std::sync::Arc::clone(&now);
+        let limits = Limits::new(std::sync::Arc::new(move || *clock_ref.lock().unwrap()));
+
+        limits.limit("acme", "alpha", "chat.postMessage", 60);
+
+        // Same company, different named connector: unaffected.
+        assert_eq!(limits.remaining("acme", "beta", "chat.postMessage"), None);
+        // Different company, same connector name: unaffected.
+        assert_eq!(limits.remaining("other", "alpha", "chat.postMessage"), None);
+        // Same company & connector, different method: unaffected.
+        assert_eq!(limits.remaining("acme", "alpha", "users.info"), None);
+        // Same (company, connector, method): rate-limited.
+        assert_eq!(
+            limits.remaining("acme", "alpha", "chat.postMessage"),
+            Some(60)
+        );
+
+        // Once the clock advances past the Retry-After window, the limit clears.
+        *now.lock().unwrap() = "2026-11-20T10:01:01Z".parse::<jiff::Timestamp>().unwrap();
+        assert_eq!(limits.remaining("acme", "alpha", "chat.postMessage"), None);
+    }
+
+    #[test]
+    fn receive_carries_the_declared_connector_name() {
+        use super::receive;
+        let envelope = json!({
+            "type": "events_api",
+            "payload": {
+                "event": {
+                    "type": "app_mention",
+                    "channel": "C1",
+                    "user": "U1",
+                    "text": "<@UAGENT> hello",
+                    "ts": "1700000001.000100"
+                }
+            }
+        });
+        let incoming = receive("assistant-two", &me(), &envelope).unwrap().unwrap();
+        assert_eq!(incoming.connector, "assistant-two");
+        assert_eq!(incoming.conversation, "C1/1700000001.000100");
+        assert_eq!(incoming.sender, "U1");
     }
 }

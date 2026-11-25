@@ -36,7 +36,10 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
-The role of conversation sessions is `company-agent`. An agents file of schema
+The default role of conversation sessions is `company-agent`; a named connector
+may declare a different `role` in its company home's `instrukt.yaml`, which is
+recorded on the session's `connected_conversations` binding and returned by
+caller assignment lookup. An agents file of schema
 version 2 converts to version 3 on the owned migration path
 (`project/instrukt/spec/feature/configuration/owned-files`): its
 `roles.conversation` entry becomes `roles.company-agent` with every field as
@@ -71,7 +74,20 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
 | Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
+| Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+
+Review evidence belongs to the Evidence family: `instrukt review record` and
+`instrukt review exempt` are `stamp`, and `instrukt review show` is
+`artifact-read`, addressing the review evidence of the project the caller
+stands in. The grant reaches the command; what a caller may record is decided
+by the evidence's own admission invariants, which bind every caller alike
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence). `instrukt review export` and `instrukt review import` move a
+computer's review evidence for a project and are `installation-write`,
+addressing this computer's installation
+(`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
+computer changes).
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
@@ -135,8 +151,21 @@ composition is:
 | `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
-| `tools` | `mcp-access` at `own`. |
+| `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
+
+A company connector may declare `role: technical-coordinator`; its sessions
+then start from `general/procedure/technical-coordinator`, the procedure
+declaring that role, rather than from company assistance. Its shipped entry
+carries the `read` bundle (every read surface in that bundle, excluding
+`history-read`), `worker` and `record` (documentation, commits, artifacts,
+stamps and todo writes scoped to `own`), `report` (defect reports into any
+project at `any`), and `tools` (`mcp-access` and `company-reply` at `own`,
+bound to the session's company). Because a company conversation binding carries
+no bound project or todo, `own`-scoped work-record grants do not match a target
+project on their own; as a `standing` role, the session carries these grants as
+declared focus and relies on object-level checks rather than focused-class
+command refusals.
 
 A company's agent reports defects of the system it works through
 (`general/procedure/bug-reporting`) into the project that owns the defect on its
@@ -149,8 +178,10 @@ report files is the work context's
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
 the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-They share the model `order`/`tier` defaults of agent-selection; the table's App
-column names the identity reference, not another model/provider choice.
+They share the model `order`/`tier` defaults of agent-selection, except
+`technical-coordinator`, which ships `order: [antigravity, claude]` at tier
+`premium`; the table's App column names the identity reference, not another
+model/provider choice.
 
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
@@ -164,6 +195,7 @@ column names the identity reference, not another model/provider choice.
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
+| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
 
 A subscribed procedure with no explicit `role` receives `event-handler` at

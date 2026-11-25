@@ -4,6 +4,7 @@
 
 pub mod agents;
 pub mod blueprint;
+pub mod company;
 pub mod config;
 pub mod discuss;
 pub mod docs;
@@ -12,6 +13,7 @@ pub mod events;
 pub mod history;
 pub mod mcp;
 pub mod repository;
+pub mod review;
 pub mod runner;
 pub mod specs;
 pub mod specs_trace;

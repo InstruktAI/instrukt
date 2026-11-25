@@ -23,7 +23,7 @@ actions! {
     RepositoryRead => "repository-read", RepositoryWrite => "repository-write", CodeCommit => "code-commit",
     Publication => "publication", CodeCheck => "code-check", EvalRead => "eval-read", EventsRead => "events-read",
     InstallationRead => "installation-read", InstallationWrite => "installation-write", RunnerExecute => "runner-execute",
-    McpAccess => "mcp-access",
+    McpAccess => "mcp-access", CompanyReply => "company-reply",
 }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

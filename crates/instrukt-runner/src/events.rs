@@ -23,6 +23,7 @@ pub use _reference::{EventHome, EventHomeOwner, EventRef, HomeKind, ReferenceKin
 pub use instrukt_core::event_type::{TypePattern, TypePatternError};
 
 // One declaration defines the producer's Rust fields, wire name and catalog.
+// A subject named `Any` declares any reference kind.
 macro_rules! acquisition_events {
     ($($variant:ident, $name:literal, $description:literal, $delivery:ident, $subject:ident {
         $($field:ident: $ty:ty),* $(,)?
@@ -54,11 +55,13 @@ macro_rules! acquisition_events {
     (@declaration $name:literal, $description:literal, $delivery:ident, $subject:ident, $($field:ident: $ty:ty),*) => {
         EventDeclaration {
             name: $name.into(), delivery_kind: instrukt_core::event_type::DeliveryKind::$delivery, version: 1, description: $description.into(),
-            subject_kind: Some(ReferenceKind::$subject), home_kinds: vec![HomeKind::Project],
+            subject_kind: acquisition_events!(@subject $subject), home_kinds: vec![HomeKind::Project],
             data_fields: vec![$(DataField::of::<$ty>(stringify!($field).trim_start_matches("r#"))),*],
             related_kinds: vec![ReferenceKind::Session], state: None,
         }
     };
+    (@subject Any) => { None };
+    (@subject $subject:ident) => { Some(ReferenceKind::$subject) };
 }
 
 acquisition_events! {
@@ -77,6 +80,9 @@ acquisition_events! {
     WorkflowFinalized, "workflow.finalized", "A finalize-ready todo was handed off to integration.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, revision: CommitSha
     };
+    ReviewNeeded, "runner.review_needed", "A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate.", State, Any {
+        project: ProjectSlug, pull_request: Option<u64>, head_branch: Option<String>, base_branch: Option<String>, head: CommitSha, base: CommitSha, request: u64
+    };
 }
 
 impl Event {
@@ -86,7 +92,8 @@ impl Event {
             | Self::CiCompleted { project, .. }
             | Self::MainFailing { project, .. }
             | Self::DependencyFailing { project, .. }
-            | Self::WorkflowFinalized { project, .. } => project,
+            | Self::WorkflowFinalized { project, .. }
+            | Self::ReviewNeeded { project, .. } => project,
         }
     }
 
@@ -124,9 +131,24 @@ impl Event {
             Self::WorkflowFinalized { todo, revision, .. } => {
                 key.extend([todo.as_str(), revision.as_str()])
             }
+            Self::ReviewNeeded { head, request, .. } => {
+                return review_request_id(self.project(), head, *request);
+            }
         }
         occurrence_id(&key)
     }
+}
+
+/// The occurrence identity of review request `request` for `head` of
+/// `project`: the project, the commit and the request number
+/// (`pull-request-review`, "Review requests").
+pub fn review_request_id(project: &ProjectSlug, head: &CommitSha, request: u64) -> String {
+    occurrence_id(&[
+        "runner.review_needed",
+        project.as_str(),
+        head.as_str(),
+        &request.to_string(),
+    ])
 }
 
 /// A completed CI result for one candidate commit. How GitHub's combined

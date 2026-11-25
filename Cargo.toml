@@ -21,6 +21,8 @@ repository = "https://github.com/InstruktAI/instrukt"
 [workspace.dependencies]
 darwin-libproc = "=0.1.2"
 jsonwebtoken = "=9.3.1"
+pem = "=3.0.6"
+ring = "=0.17.14"
 instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
@@ -64,6 +66,7 @@ assert_cmd = "2"
 insta = { version = "1", features = ["yaml", "json", "filters"] }
 predicates = "3"
 proptest = "1"
+regress = "0.12"
 tiny_http = "=0.12.0"
 
 [workspace.lints.rust]
@@ -77,3 +80,10 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+# Third-party dependencies of the dev profile (and the test profile, which
+# inherits it) compile optimized: the CLI's integration tests start the debug
+# program as a subprocess, and its time goes largely to unoptimized
+# dependencies. Workspace crates keep the fast-compiling default.
+[profile.dev.package."*"]
+opt-level = 2

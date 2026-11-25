@@ -612,7 +612,9 @@ fn refuse_database_links(store: &'static str, path: &Path) -> Result<(), StoreEr
     Ok(())
 }
 
-fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
+/// Refuses a symbolic link at `path`, a file of `store`: a link would put
+/// one store, or one lock, under two lock domains. A missing file is fine.
+pub fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
     match std::fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Err(StoreError::Symlink { path: path.into() }),
         Ok(_) => Ok(()),
@@ -624,6 +626,8 @@ fn refuse_link(store: &'static str, path: &Path) -> Result<(), StoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{AgentSelection, Effort, HarnessKind};
+    use crate::ids::{ProfileName, ProviderInstanceId};
 
     #[test]
     fn every_migration_applies_in_order_to_an_empty_database() {
@@ -859,6 +863,100 @@ mod tests {
         let mut empty = at_31();
         migrate(&mut empty, path).unwrap();
         assert_eq!(history(&empty), [false; 5]);
+    }
+
+    #[test]
+    fn version_36_carries_a_stored_antigravity_effort_as_thought_level_and_keeps_other_reservations()
+     {
+        let path = Path::new(":memory:");
+        let mut conn = Connection::open_in_memory().unwrap();
+        let at_35 = Store {
+            file: path.to_path_buf(),
+            migrations: &_schema::MIGRATIONS[..35],
+            ..Store::state(&Home::at_user_home(PathBuf::from("/")))
+        };
+        migrate_store(&mut conn, &at_35).unwrap();
+        assert_eq!(user_version(&conn, path).unwrap(), 35);
+        let request = |key: &str, selection: serde_json::Value| {
+            serde_json::json!({
+                "preferences": [{"agent": "antigravity", "tier": "strong"}],
+                "selection": selection,
+                "title": format!("standing · {key}"),
+                "reservation": format!("token-{key}"),
+                "key": key,
+                "brief": "retained-input",
+                "checkout": "/checkout",
+                "start_allowed": true,
+            })
+        };
+        let stored = [
+            request(
+                "antigravity-effort",
+                serde_json::json!({"profile": "antigravity", "kind": "antigravity", "instance": "antigravity", "model": "gemini-pro-agent", "effort": "high", "options": {"thinking_level": "high"}}),
+            ),
+            request(
+                "codex-effort",
+                serde_json::json!({"profile": "codex", "kind": "codex", "instance": "codex", "model": "gpt-6-astra", "effort": "high", "options": {"reasoningEffort": "high", "serviceTier": "flex"}}),
+            ),
+            request(
+                "antigravity-plain",
+                serde_json::json!({"profile": "antigravity", "kind": "antigravity", "instance": "antigravity", "model": "gemini-pro-agent", "effort": null, "options": {}}),
+            ),
+            // An ACP agent may carry its own scalar `thinking_level`; only Antigravity's is renamed.
+            request(
+                "acp-thinking-level",
+                serde_json::json!({"profile": "acp", "kind": "acpRegistry", "instance": "acp", "model": "acp-model", "effort": null, "options": {"thinking_level": "high"}}),
+            ),
+        ];
+        for row in &stored {
+            conn.execute(
+                "INSERT INTO manual_standing_reservations(responsibility,token,caller,home,declaration,request) VALUES (?1,?2,'caller','/home','{}',?3)",
+                rusqlite::params![row["key"].as_str().unwrap(), row["reservation"].as_str().unwrap(), row.to_string()],
+            )
+            .unwrap();
+        }
+        migrate(&mut conn, path).unwrap();
+        assert_eq!(user_version(&conn, path).unwrap(), schema_version());
+        let loaded = |key: &str| -> serde_json::Value {
+            let text: String = conn
+                .query_row(
+                    "SELECT request FROM manual_standing_reservations WHERE responsibility=?1",
+                    [key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            serde_json::from_str(&text).unwrap()
+        };
+        let selection = |value: &serde_json::Value| -> AgentSelection {
+            serde_json::from_value(value["selection"].clone()).unwrap()
+        };
+        let without_selection = |value: &serde_json::Value| {
+            let mut rest = value.clone();
+            rest.as_object_mut().unwrap().remove("selection");
+            rest
+        };
+        let converted = loaded("antigravity-effort");
+        assert_eq!(
+            selection(&converted),
+            AgentSelection {
+                profile: ProfileName::parse("antigravity").unwrap(),
+                kind: HarnessKind::Antigravity,
+                instance: ProviderInstanceId::parse("antigravity").unwrap(),
+                model: "gemini-pro-agent".into(),
+                effort: Some(Effort::High),
+                options: [("thought_level".to_string(), serde_json::json!("high"))].into(),
+            }
+        );
+        assert_eq!(without_selection(&converted), without_selection(&stored[0]));
+        for (key, original) in [
+            ("codex-effort", &stored[1]),
+            ("antigravity-plain", &stored[2]),
+            ("acp-thinking-level", &stored[3]),
+        ] {
+            let kept = loaded(key);
+            assert_eq!(selection(&kept), selection(original));
+            assert_eq!(without_selection(&kept), without_selection(original));
+        }
     }
 
     #[test]
@@ -1331,6 +1429,115 @@ mod tests {
             })
             .unwrap();
         assert_eq!(rows, 2);
+    }
+
+    #[test]
+    fn version_34_upgrades_v33_conversations_and_refusals_without_loss() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(33) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 33).unwrap();
+        conn.execute_batch(
+            "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,opening,session,source_identity,display_title)
+             VALUES ('acme','slack','C1/1.1','instrukt:conversation:acme:slack:C1/1.1','1.1','t3:sess-1','src-1','acme — #general');
+             INSERT INTO conversation_messages(company,connector,conversation,message,sender,sender_name,sender_email,written_us,written_at,arrived_at,state,text,admission_position)
+             VALUES ('acme','slack','C1/1.1','1.1','U1','Alex','alex@example.com',1,'2026-11-20T10:00:00Z','2026-11-20T10:00:01Z','answered','Hello',1);
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at,admission_position)
+             VALUES ('acme','slack','C1/1.1','t1',0,'Hi there','2026-11-20T10:00:02Z',1);
+             INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at,replied_at)
+             VALUES ('acme','slack','C1/1.1','UGUEST','not_own','2026-11-20T10:00:00Z','2026-11-20T10:00:01Z'),
+                    ('acme','slack','C1/1.1','U1','unavailable','2026-11-20T10:01:00Z',NULL);",
+        )
+        .unwrap();
+
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, schema_version());
+
+        let conv: (String, String, String, Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT role, session_scope, reply_mode, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            conv,
+            (
+                "company-agent".to_owned(),
+                "conversation".to_owned(),
+                "turn_output".to_owned(),
+                None,
+                Some("acme — #general".to_owned()),
+            )
+        );
+
+        let display_and_thread: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT conversation_display, thread FROM conversation_messages WHERE message='1.1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(display_and_thread, (None, None));
+
+        let refusals: Vec<(String, String, Option<String>)> = conn
+            .prepare("SELECT sender, reason, replied_at FROM conversation_refusals ORDER BY sender, reason")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            refusals,
+            vec![
+                ("U1".into(), "unavailable".into(), None),
+                (
+                    "UGUEST".into(),
+                    "not_own".into(),
+                    Some("2026-11-20T10:00:01Z".into())
+                ),
+            ]
+        );
+
+        // `not_admin` is now admitted by the CHECK constraint; invalid reasons are rejected.
+        conn.execute(
+            "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1.1','UNONADMIN','not_admin','2026-11-20T10:02:00Z')",
+            [],
+        )
+        .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO conversation_refusals(company,connector,conversation,sender,reason,received_at) VALUES('acme','slack','C1/1.1','UBAD','bogus','2026-11-20T10:02:00Z')",
+                [],
+            )
+            .is_err()
+        );
+
+        // Re-running v34 and v35 is idempotent and preserves every row.
+        let tx = conn.transaction().unwrap();
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(33) {
+            step(&tx).unwrap();
+        }
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(34) {
+            step(&tx).unwrap();
+        }
+        tx.commit().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT count(*) FROM conversation_refusals", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 3);
     }
 
     #[test]

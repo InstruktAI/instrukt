@@ -21,6 +21,7 @@ use crate::state::RunnerState;
 use crate::transport::{EventScope, ScopedTransport, TransportError};
 
 pub(crate) use _activation::consumer as activation_consumer;
+pub(crate) use _activation::{ACTIVATION_CONSUMER, REPLACEABLE, end_replaceable};
 pub const MAX_HANDLING_ATTEMPTS: u32 = 3;
 pub const STALE_PENDING_MS: u64 = 30_000;
 pub const RECOVERY_SWEEP: Duration = Duration::from_millis(5_000);

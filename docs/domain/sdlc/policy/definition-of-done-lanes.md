@@ -151,6 +151,7 @@ Findings:
 - In a project that opts into tests, the named test would pass on a broken
   implementation → **Requirement-Violation**.
 - Unrequested feature (no criterion drives it) → **Critical**.
+- Policy-amplified gold-plating — a supporting mechanism introduced for a global policy whose state, rules, or coordination grow disproportionate to any criterion in the approved intent → **Critical**. When a proposed mechanism fails an internal consistency check, verify that the mechanism itself is warranted by the approved intent before demanding further state or rules to harden its edge cases.
 - For a change/bug, a behavioral delta the intent does not call for — including one introduced alongside a necessary change, or one resolving a forced decision by new behavior where established behavior or human escalation was the path → **Critical**.
 - Directive text authored where the intent called only for its removal or correction → **Critical**. Replacing an instruction the intent condemned with a different instruction of the author's own devising is a behavioral delta wearing the shape of the requested edit; the one-line diff and the honest commit subject are what let it pass. `general/policy/documentation-discipline` owns which text is directive.
 - Gold-plating (scope creep beyond the authorized intent) → Important.
@@ -331,7 +332,7 @@ Apply the policy, not a per-function reflex:
 - **A scenario added or widened in a build range is a finding.** Scenarios are authored and frozen in preparation; a build pass that adds a use case or broadens one, including to justify a test, breaks the author/binder separation (`sdlc/policy/testing`, rule 2).
 - **Spec-delivered test specs:** every assertion from the spec-delivery commit must still exist; a removed or weakened assertion is a **Critical** finding (diff the spec-delivery commit against the final state).
 - **Weak tests are findings even when coverage exists.** Apply every weak-test anti-pattern the testing policy enumerates — the policy owns the full list; do not re-list it here.
-- **Browser / web UI changes** must include Playwright smoke evidence from build.
+- **Browser / web UI changes without downstream live verification:** verify observable behavior independently via review browser smoke, CI browser verification, or a separate `verifier` pass per `sdlc/procedure/lifecycle/review`.
 
 Before crediting any test as meaningful coverage, name the concrete production-code mutation it kills: a single plausible wrong implementation of the behavior under test — a flipped condition, a dropped branch, a stubbed-out value — that turns this test red. State it explicitly; a vacuous or unnameable answer ("it covers the feature") is itself the weak-test finding. A test that stays green on the broken implementation does not count, no matter what it asserts — the assertion is observing a projection of the output that cannot see the property the behavior actually changed.
 
@@ -373,7 +374,7 @@ Severity guidance:
 - A `functional`-marked test that drives an internal non-boundary symbol or fakes in-process collaborators so the real chain never runs -> **Important** (the coverage is illusory; **Critical** when it replaces or weakens a prepare-delivered spec assertion).
 - Supplemental cleanup observations where a strong behavioral test already exists -> **drop the observation; it is not a finding**.
 
-Missing browser-smoke verification for browser-based frontend changes is an **Important** finding.
+- Missing browser-smoke verification on a browser/UI change carrying no downstream `verifier` pass (a `HOTFIX_DEFERRED` hotfix or an ad-hoc commit) -> **Important** (on standard lifecycle builds, downstream `sdlc/procedure/lifecycle/work/verify` owns live browser verification).
 
 #### Error handling review
 
@@ -521,8 +522,9 @@ Missing documentation updates are **Important** findings. Missing config surface
 **Authority:** `general/principle/intent-first-documentation` + `general/policy/adr-discipline` + `general/policy/snippet-value-contract` (full anti-pattern list, not Narration alone) + `general/policy/referencing-doc-snippets` (citation form) + `general/policy/agent-facing-text` (reader framing) + `sdlc/policy/process-change-authority` + `sdlc/policy/language-policy-ownership`.
 
 Conditional lane — fires whenever the diff touches a `docs/**` snippet,
-company home knowledge (`AGENTS.master.md` or any document anywhere under
-`docs/` in a company repository), **or any directive-text surface** (below).
+company home knowledge (any document anywhere under `docs/` in a company
+repository, or the `docs/index.yaml` that selects them), **or any
+directive-text surface** (below).
 The DoD docs lane above checks that docs _exist and reflect the change_; this
 lane checks that the changed prose is _clean_ and _the author's to write_. A
 snippet or company knowledge body states present-tense intent, facts, or
@@ -536,7 +538,7 @@ literals on the surfaces named below; it never grades what those literals say.
 section), the snippet's **frontmatter**, and any **newly-added or delivered**
 planned block (`&lt;!-- planned:slug --&gt;`), planned-change block
 (`&lt;!-- planned-change:slug --&gt;`), or companion (`<stem>.<slug>.md`). For
-company home knowledge — including purely descriptive documents or master-only
+company home knowledge — including purely descriptive documents or index-only
 changes — audit the changed regions and frontmatter under the full
 `general/policy/snippet-value-contract` (including Narration) and
 `general/policy/agent-facing-text` checks without requiring taxonomy placement
@@ -796,14 +798,14 @@ Simplification findings are **Important** severity. The simplify lane only flags
 
 #### Bug-fix review
 
-**Authority:** DoD §3 (Testing) + `debugging`. Conditional lane — fires when `kind == "bug"`.
+**Authority:** DoD §3 (Testing) + `sdlc/procedure/lifecycle/prepare/diagnose-peer`. Conditional lane — fires when `kind == "bug"`.
 
 When `kind == "bug"`, the `input` artifact is the bug report and the intent source (no `prd`),
 sharpened by the `diagnosis` root cause. Verify:
 
-1. Fix addresses the evidenced concern in `input`. Independently apply the debugging
-   procedure's operation-outcome and failure-handling distinction to the diagnosis, then
-   verify that the delivered behavior satisfies that concern under the diagnosed conditions.
+1. Fix addresses the evidenced concern in `input`. Independently apply the
+   operation-outcome and failure-handling distinction (`sdlc/procedure/lifecycle/prepare/diagnose-peer`)
+   to the diagnosis, then verify that the delivered behavior satisfies that concern under the diagnosed conditions.
    A recorded disposition or named follow-up does not establish delivery.
 2. Root cause analysis is sound.
 3. Fix is minimal and targeted: the smallest change that removes the diagnosed

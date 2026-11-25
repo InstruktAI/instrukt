@@ -13,7 +13,7 @@ parameters:
 ## Required reads
 
 - [general/policy/human-involvement-recording](../../../../../general/policy/human-involvement-recording.md)
-- [sdlc/procedure/debugging](../../debugging.md)
+- [general/concept/failure-modes](../../../../../general/concept/failure-modes.md)
 
 ## Goal
 
@@ -39,11 +39,31 @@ another session, prescribe a fix, stamp the diagnosis, or drive preparation.
    the organic trigger and its evidence surface. `human_involved` records participation, not
    authorship or ratification of every detail. Treat agent-added causes, remedies, numeric
    bounds, and adjacent scope as hypotheses.
-2. Treat the symptom as a real defect until evidence proves otherwise. Follow the debugging
-   procedure: reproduce where possible, perform the unconditional provenance check, bisect
-   the failing path, and isolate one falsifiable causal mechanism. Label synthetic
-   reproduction and state any gap from the organic path.
-3. Apply the debugging procedure's operation-outcome and failure-handling distinction.
+2. Treat the symptom as a real defect until evidence proves otherwise. Reproduce where
+   possible, run the bounded provenance check below, bisect the failing path, and isolate
+   one falsifiable causal mechanism. Label synthetic reproduction and state any gap from
+   the organic path.
+   - **Provenance check (bounded lane — unconditional for every bug):** determine _since
+     when this is reachable_. Identify the files on the failing path and anchor on the
+     mechanism (`git log --oneline -S<symbol> -- <files>` or `-G<pattern>`). If the anchor
+     does not settle it, run at most one range scan (`git log --oneline -- <files>`) over
+     the plausible window and inspect candidate commit diffs. Supplied commits are
+     candidates, not the boundary of the search. Record exactly one verdict:
+     - **Regression** — name the commit and quote the diff hunk that broke working behavior.
+     - **Latent** — name both the introducing commit and the change that made it reachable,
+       with diff hunks.
+     - **Provenance not established** — record the files, commit range, pathspecs, and
+       `-S`/`-G` terms searched and move on. Reaching this exit after the anchor and one
+       range scan completes the lane; do not keep widening the search.
+     - What a named commit touched beyond the mechanism is evidence for separate triage
+       (`sdlc/policy/todo-creation-discipline`), never scope for this bug.
+3. Apply the **operation-outcome and failure-handling distinction**: establish the
+   operation's expected outcome under the observed conditions from its applicable contract,
+   and separate a failure to meet that outcome from a defect in reporting or handling it.
+   Handling that controls execution, recovery, or resulting state participates in the
+   causal chain; a presentation-only cause is sufficient only when evidence establishes
+   that the underlying outcome conforms to contract, and a shared error signature does not
+   establish a shared cause.
    Record the operation, the source and applicability of its expected outcome, and the
    evidence supporting the investigation boundary. Trace backward to the earliest violated
    contract inside that boundary. Record the complete minimal causal set, including
@@ -61,19 +81,24 @@ another session, prescribe a fix, stamp the diagnosis, or drive preparation.
      applicability to the observed conditions, organic trigger, reproduction status, and
      any synthetic-to-organic gap.
    - **Provenance** — exactly `Regression`, `Latent`, or `Provenance not established`, with
-     the evidence required by the debugging procedure.
+     the evidence required by step 2.
    - **Observations** — what was seen, how it was obtained, and why it was inspected.
    - **Causal trace** — every transition, its carrying observations, its falsifier, comparable
      near misses, occurrence coverage, and the implementation census when the root is shared.
    - **Alternatives** — the strongest credible rival and the discriminating check actually
      run, or the reason no credible rival survives statement.
    - **Root cause** — the minimal causal set and its counterfactual, with no fix.
-   - **Mechanism** — the code shape behind the root cause, stated as the debugging
-     procedure requires: decidable at one site by reading it. When a governing design or
-     decision record prescribes it, that contract by id, and whether its design's
-     `Failure modes` already record this failure.
-   - **Family census** — the two searches the debugging procedure bounds this lane to,
-     and every site they found, each marked matching, not matching, or undecided.
+   - **Mechanism** — state the root cause twice: the failing instance and the code shape
+     that produced it, narrow enough that a reader can confirm or reject it at one site by
+     reading that site. When a governing design or decision record prescribes it, name that
+     contract by id, and state whether its design's `Failure modes` already record this
+     failure.
+   - **Family census (bounded lane)** — at most two searches: the diff of the introducing
+     commit (when provenance named one) and one search of the codebase for the mechanism's
+     shape. Record the searches run and every site found, each marked `matching`,
+     `not matching`, or `undecided`. Do not investigate a family site's reachability,
+     likelihood, or impact: a match is a lead, not evidence of a defect there
+     (`sdlc/concept/defect-evidence`, family site).
    - **Attack record** — initially empty or marked pending; the peer updates it when the
      prepare-driving session later challenges the written mechanism.
 5. Write the `diagnosis` artifact, then go idle for the prepare-driving session's response. If the prepare-driving session returns an evidence gap or

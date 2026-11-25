@@ -70,6 +70,10 @@ readers retain unfamiliar kinds and identities unchanged.
 | `install` | Computer and installation number |
 | `release` | Repository and release version |
 
+| Kind | Identity |
+| --- | --- |
+| `pull_request` | Project and pull-request number, e.g. `acme/108` |
+
 Vocabulary support creates no subsystem for signals, companies, people,
 operations, channels or memory. A relayed subject names its declaring source,
 including domain. The `inbound_source` kind is reserved to facts the ingress
@@ -109,6 +113,10 @@ The shipped `runner.upstream_changed`, `runner.ci_completed`, and
 `runner.dependency_failing`, `workflow.finalized` and `instrukt.system.event.dead_lettered` are occurrence. Dependency failures identify the exact check run and retain its branch and commit evidence.
 External names default to occurrence. A webhook source may explicitly declare
 state names and a payload field supplying the subject under inbound-webhook-endpoint-framework.
+
+`runner.review_needed` is state. Its subject names the pull request, or the
+integration branch for a candidate, and the commit and request number stay in
+data.
 
 ### Platform lifecycle states
 

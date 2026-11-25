@@ -173,7 +173,7 @@ execution evidence, not this self-review.
    `quality-checklist` when present, or in the build report on the fast track).
 6. Record applicable project quality obligations; hooks and CI own their checks.
 7. User-facing verification:
-   - For browser-based frontend or web UI changes, run a browser-automation smoke check in a real browser that exercises the changed path. Record the path exercised and the observed result in `quality-checklist` when present, or in your build report on the fast track.
+   - For browser-based frontend or web UI changes when the build environment hosts the live app/browser locally (or when preparing an emergency hotfix that defers downstream `verifier` under `sdlc/policy/live-verification`), run a browser-automation smoke check exercising the changed path and record the path and observed result in `quality-checklist` (or in your build report on the fast track). When the project's live stack runs on CI (`execution_host: ci`) and downstream `verifier` (`sdlc/procedure/lifecycle/work/verify`) covers the build, note that explicitly rather than attempting nested container/browser workarounds.
    - For other user-facing changes (CLI output, TUI, interactive behavior), verify the change is observable and record what was checked and the result in `quality-checklist` when present, or in your build report on the fast track.
    - If verification is not possible in the build environment, note the gap explicitly in `quality-checklist` (or in your build report on the fast track).
 8. Working tree is clean: `git status`.

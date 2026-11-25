@@ -420,7 +420,8 @@ to pre-satisfy:
 - **Config surface**: name the config key, the wizard entry, the sample line,
   and the spec section — each with the task that delivers it.
 - **Browser-based frontend or web UI**: name the task that delivers the changed
-  flow; the project's browser review runs during delivery review.
+  flow; live browser verification runs in the downstream `verifier` stage
+  (`sdlc/policy/live-verification`).
 - **Reuse / duplication** (`code` Duplication item 4, `paradigm` Component reuse item 2,
   `simplify`): these produce no deliverable artifact, so verdict them against the
   plan's `referenced-paths` — does any task re-derive, mirror, or re-implement

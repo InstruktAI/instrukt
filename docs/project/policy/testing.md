@@ -93,13 +93,9 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     tagged release publication, not pull requests.
   - A pull request runs, of the checks above, only those its changed files
     reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
-    release runs every check. While the sharded Linux and scoped macOS platform
-    placement above remains the prepared contract of `speed-up-pr-ci`, a pull
-    request that selects Rust currently runs the unsharded workspace test suite,
-    doctests, and commit, document, configuration, use-case coverage and
-    instruction-file checks on both Linux and macOS. A change to documents and
-    configuration alone, root `instrukt.yaml` and `AGENTS.master.md` among them,
-    reaches no Rust input: Linux builds the CLI binary and runs the document,
+    release runs every check. A change to documents and configuration alone,
+    root `instrukt.yaml` among them, reaches no Rust input: Linux builds the
+    CLI binary and runs the document,
     configuration, use-case coverage and instruction-file checks with it,
     without the workspace test suite, doctests, macOS, the dependency audit,
     the pinned contracts, or the commit checks whose inputs did not change.
