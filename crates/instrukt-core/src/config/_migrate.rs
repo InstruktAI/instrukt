@@ -26,8 +26,9 @@ pub(super) fn selection(
     }
     // A migrated machine-wide order or tier leaves the file naming no role,
     // so every shipped role keeps its shipped order and tier and the
-    // migrated ones reach only roles without a shipped entry. Profile chains
-    // migrated below reach every role that selects that profile.
+    // migrated ones reach only roles without a shipped entry. A profile
+    // chain migrated below reaches every role that selects that profile and
+    // tier.
     if changed {
         next["roles"] = Value::Mapping(Default::default());
     }
