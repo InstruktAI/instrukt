@@ -279,7 +279,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let repo = project(&env, "kept", layer);
 
     let validated = env.run(repo.path(), ["config", "validate"]).success();
-    assert_eq!(stdout(&env, &validated), "", "no finding");
+    insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
     instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
