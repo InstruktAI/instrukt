@@ -65,20 +65,23 @@ A session starts in its execution root only where the selected runtime holds a
 project rooted exactly at that root
 (`project/instrukt/spec/feature/runner/session-continuity`, `execution_root`).
 
-- A company home whose responsibilities start runtime sessions on this
-  computer — a declared connector, or event sources while this computer reacts
-  to them — demands a runtime project rooted at the home. `instrukt install`
-  reuses one that exists and creates a missing one; `install --check` reports a
-  missing one as unmet and creates nothing. An unreachable runtime leaves the
-  resource unmet with its cause, and the next `install` completes it.
-  `--module conversations` includes these projects. A company home's runtime
-  project is never withdrawn, whatever the demand: the sessions it holds stay
-  with it.
-- An adopted project whose effective settings start runtime sessions on this
-  computer — todos, or events with procedure activation — needs a runtime
-  project rooted at its registered checkout. Installation and `install --check`
-  report a missing one as an unmet prerequisite naming the checkout and the
-  runtime's door for adding it, and create none.
+| Sessions start in | Module whose dependency set holds the runtime project | Installation |
+| --- | --- | --- |
+| A company home with a declared connector | `conversations` | Reused or created |
+| A company home where this computer activates standing procedures: events on, and not a computer that only receives | `events` | Reused or created |
+| An adopted project's registered checkout with todos effective | `todos` | Reported when missing |
+| An adopted project's registered checkout with events effective, where this computer activates its procedures | `events` | Reported when missing |
+
+- `instrukt install` reuses a company home's runtime project that exists and
+  creates a missing one; `install --check` reports a missing one as unmet and
+  creates nothing. An unreachable runtime leaves the resource unmet with its
+  cause, and the next `install` completes it. A company home's runtime project
+  is never withdrawn, whatever the demand: the sessions it holds stay with it.
+- For an adopted project's checkout, installation and `install --check` report
+  a missing runtime project as an unmet prerequisite naming the checkout and
+  the runtime's door for adding it, and create none.
+- Unfiltered installation and its check cover every row; a module filter
+  converges or checks only the rows of its module.
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
 ### Installation and inspection commands

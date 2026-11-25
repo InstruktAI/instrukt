@@ -299,11 +299,15 @@ IDs and roots. Exclude deleted projects, compare canonical paths when available
 and otherwise resolved original paths, and select the one live project whose
 root is exactly the checkout. A project rooted at an ancestor or a descendant of
 the checkout never stands in for it: `root` placement would run the session in
-that other folder and `worktree` placement would branch another repository. No
-exact match, or malformed/unavailable metadata, leaves work pending before
-launch with a cause naming the checkout, retried on later passes. The launch
-path registers no project; installation owns where a checkout's project comes
-from (`project/instrukt/spec/feature/runner/module-installation`).
+that other folder and `worktree` placement would branch another repository. A
+retry of a generation replays its captured project; a successor generation
+never inherits a retired generation's project and resolves its checkout's
+project afresh. No exact match leaves work pending before launch with
+instrukt's own cause, which names the checkout and its door and reaches
+operator surfaces unchanged; malformed/unavailable metadata leaves it pending
+with that cause. Both are retried on later passes. The launch path registers no
+project; installation owns where a checkout's project comes from
+(`project/instrukt/spec/feature/runner/module-installation`).
 <!-- /planned-change:fix-company-session-starts-outside-company-home -->
 
 After model preparation, `server.getConfig` supplies normalized settings,
@@ -328,15 +332,21 @@ worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
 
 <!-- planned:fix-company-session-starts-outside-company-home -->
-Every placement runs in the checkout's own project. Before an instrukt-owned
-bound or recovered thread is adopted, woken or sent input, the adapter resolves
-the checkout's project exactly, as for launch, and compares it with the thread's
-native project. A thread in any other project is contradictory binding/project
-evidence: it is not adopted and is sent nothing, and the failure names the
-thread and its door — archive that thread, after which outstanding work starts
-the next generation at the checkout under the succession rules above. No
-project root is retained beside the binding; T3's project snapshot is read
-where the comparison is made.
+Every placement runs in the checkout's own project. Whenever instrukt adopts,
+wakes or succeeds an instrukt-owned thread, and before every input it delivers
+to one — event, approval, recovery and conversation input alike, for every
+binding kind — the adapter resolves the checkout's project exactly, as for
+launch, and compares it with the thread's native project. The binding's
+recorded project is not proof of that match, and a thread a project listing
+returns as a candidate meets the same comparison before it is adopted. A
+thread in any other project is contradictory binding/project evidence: it is
+not adopted and is sent nothing. The failure is instrukt's own outcome, not a
+native diagnostic: operator surfaces carry the thread, the checkout and its
+door — archive that thread — while a person writing to a company's agent is
+told only that the assistant is unavailable for a while. Once it is archived,
+outstanding work starts the next generation at the checkout under the
+succession rules above. No project root is retained beside the binding; T3's
+project snapshot is read where the comparison is made.
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
 Service failures retain the captured request and actual cause for retry/status.
