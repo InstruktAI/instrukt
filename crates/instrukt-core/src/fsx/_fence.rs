@@ -395,9 +395,17 @@ fn same_ignoring_case(a: &OsStr, b: &OsStr) -> bool {
 /// `path` made absolute and resolved as the file system stands: each
 /// existing component in the file system's own spelling, every symbolic
 /// link followed (a dangling one included), and parts that do not exist
-/// taken as written.
+/// taken as written. A path that exists whole is resolved by the operating
+/// system in one step, with the same result as the walk below; any other
+/// path is walked a component at a time.
 pub(super) fn resolved(path: &Path) -> Resolved {
     let mut pending = absolute(path);
+    if let Ok(path) = std::fs::canonicalize(&pending) {
+        return Resolved {
+            existing: path.components().count(),
+            path,
+        };
+    }
     let mut links = 0;
     loop {
         let mut out = PathBuf::new();
@@ -492,6 +500,30 @@ mod tests {
         assert_eq!(
             resolved(&base.join("live/dir/../../to-live/./dir")).path,
             fenced.join("dir")
+        );
+    }
+
+    #[test]
+    fn a_path_counts_as_existing_as_far_as_the_file_system_holds_it() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        let dir = base.join("live/dir");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::os::unix::fs::symlink(base.join("live"), base.join("to-live")).unwrap();
+        let depth = dir.components().count();
+        assert_eq!(
+            resolved(&base.join("to-live/dir/../dir")),
+            Resolved {
+                path: dir.clone(),
+                existing: depth,
+            }
+        );
+        assert_eq!(
+            resolved(&base.join("to-live/dir/../dir/new/file.yaml")),
+            Resolved {
+                path: dir.join("new/file.yaml"),
+                existing: depth,
+            }
         );
     }
 
