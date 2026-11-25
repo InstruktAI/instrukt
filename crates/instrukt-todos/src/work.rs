@@ -61,6 +61,7 @@ pub use _ops::{
     Selection, TodoView, UpdateReport, UpdateRequest,
 };
 pub use _ports::WorkExistence;
+pub(crate) use _ports::waits_on_person;
 pub use _session::{GitHubRead, PendingReason, ReflectionStatus, describe};
 pub use _stamps::StampRequest;
 
