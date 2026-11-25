@@ -7,6 +7,8 @@
 use crate::fixtures::documented;
 use crate::fixtures::flavor::Tracked;
 use crate::fixtures::runtime::{self, FakeT3};
+use instrukt_core::ids::{SessionRef, TodoSlug};
+use instrukt_runner::events::{Event, EventEnvelope, EventRef, ReferenceKind};
 
 const PROCEDURE: &str = "docs/domain/acme/procedure/attend.md";
 
@@ -54,7 +56,7 @@ fn db(project: &Tracked) -> instrukt_core::state_db::rusqlite::Connection {
 }
 
 /// Every logged fleet-attention envelope, oldest first.
-fn attention(project: &Tracked) -> Vec<serde_json::Value> {
+fn attention(project: &Tracked) -> Vec<EventEnvelope> {
     let db = db(project);
     let mut statement = db
         .prepare("SELECT envelope FROM events WHERE name LIKE 'runner.attention.%' ORDER BY seq")
@@ -62,8 +64,16 @@ fn attention(project: &Tracked) -> Vec<serde_json::Value> {
     statement
         .query_map([], |row| row.get::<_, String>(0))
         .unwrap()
-        .map(|envelope| serde_json::from_str(&envelope.unwrap()).unwrap())
+        .map(|envelope| EventEnvelope::decode(&envelope.unwrap()).unwrap())
         .collect()
+}
+
+/// The typed producer event an envelope carries: its type selects the
+/// variant and its data fills the fields.
+fn typed(envelope: &EventEnvelope) -> Event {
+    let mut data = envelope.data.clone();
+    data.insert("event".into(), envelope.event_type.clone().into());
+    serde_json::from_value(serde_json::Value::Object(data)).unwrap()
 }
 
 /// A developer's own session takes `todo` up in its retained worktree,
@@ -196,19 +206,21 @@ fn a_developers_stuck_work_is_attended_to_without_their_watching() {
     assert_eq!(events.len(), 1);
     let event = &events[0];
     assert_eq!(
+        event.subject,
+        EventRef::new(ReferenceKind::Todo, "tokens").unwrap()
+    );
+    let Event::AttentionInputWaiting { todo, session, .. } = typed(event) else {
+        panic!("not an input wait: {event:?}");
+    };
+    assert_eq!(
+        (todo, session),
         (
-            event["type"].as_str(),
-            event["subject"].as_str(),
-            event["data"]["session"].as_str(),
-        ),
-        (
-            Some("runner.attention.input_waiting"),
-            Some("todo:tokens"),
-            Some(waiting.as_str()),
+            TodoSlug::parse("tokens").unwrap(),
+            SessionRef::parse(&waiting).unwrap()
         )
     );
     assert_eq!(delivered.len(), 1);
-    assert_eq!(delivered[0].0, event["id"].as_str().unwrap());
+    assert_eq!(delivered[0].0, event.id);
     assert_eq!(fake.threads().len(), started + 1);
     assert_eq!(again, (1, 1));
 }
