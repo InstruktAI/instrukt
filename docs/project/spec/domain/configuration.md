@@ -47,6 +47,7 @@ standing in a project; the global layer alone elsewhere.
 : Which layer a key may live in: global-only, project-only, or both (the
 project overriding).
 
+<!-- planned-change:decouple-layer-schema-upcycling -->
 **Schema version**
 : The `schema_version` every layer document carries, naming the schema it was
 written against.
@@ -54,6 +55,16 @@ written against.
 **Migration**
 : Rewriting a document of an older schema version into the current one,
 preserving its settings.
+<!-- change:decouple-layer-schema-upcycling -->
+**Schema version**
+: The `schema_version` every layer document carries, naming the version of its
+own kind's schema — the global layer's, the project layer's or a company
+home's — that it was written against.
+
+**Migration**
+: Rewriting a document of an older schema version into its kind's current one,
+preserving its settings.
+<!-- /planned-change:decouple-layer-schema-upcycling -->
 
 **Revision**
 : An opaque digest of a layer document's content, used to refuse a patch made
