@@ -295,17 +295,19 @@ pub(super) fn render(
         _ => {}
     }
     let folder = folder(key);
-    let selection = match _company::read(tree, Path::new(&folder)) {
-        None => return Ok(Rendered::Findings(vec![PluginFinding::NoIndex])),
-        Some(Err(findings)) => {
-            return Ok(Rendered::Findings(
-                findings.into_iter().map(PluginFinding::Reading).collect(),
-            ));
-        }
-        Some(Ok(selection)) => selection,
+    let Some(reading) = _company::read(tree, Path::new(&folder)) else {
+        return Ok(Rendered::Findings(vec![PluginFinding::NoIndex]));
     };
+    let selection = reading.selection;
     let carried = Carried::of(&selection);
-    let findings = carried.findings(tree, &selection);
+    // The documents the shared reading could read are judged by the
+    // plugin's own rules too, so one call reports every finding.
+    let mut findings: Vec<PluginFinding> = reading
+        .findings
+        .into_iter()
+        .map(PluginFinding::Reading)
+        .collect();
+    findings.extend(carried.findings(tree, &selection));
     if !findings.is_empty() {
         return Ok(Rendered::Findings(findings));
     }
@@ -609,17 +611,18 @@ pub(super) fn plan(
             path: link.to_owned(),
         })
         .collect();
-    // Nothing behind a link is read, so neither the manifest nor the
-    // catalog is judged while one stands on the way.
-    let linked = !findings.is_empty();
     let rendered = render(tree, key, name)?;
+    // Nothing behind a link is read: the manifest and the catalog are each
+    // judged unless a link stands at or above that file.
     let mut held = None;
     let mut entry = None;
-    if !linked {
+    if !tree.is_link(&manifest_path) {
         match held_version(tree, &manifest_path) {
             Ok(version) => held = version,
             Err(finding) => findings.push(finding),
         }
+    }
+    if !tree.is_link(CATALOG) {
         match catalog(tree, key, name)? {
             Ok(file) => entry = file,
             Err(finding) => findings.push(finding),
@@ -1192,6 +1195,46 @@ mod tests {
                 .unwrap()
                 .findings
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_link_inside_the_plugin_leaves_the_catalog_judged() {
+        let tree = repository(None, &[]).with_link("plugins/acme/skills/acme/x.md");
+        assert_eq!(
+            plan(&tree, &key(), &name()).unwrap().findings,
+            [
+                PluginFinding::Link {
+                    path: "plugins/acme/skills/acme/x.md".to_owned()
+                },
+                PluginFinding::NoCatalog,
+            ]
+        );
+    }
+
+    #[test]
+    fn the_shared_readings_findings_and_the_plugins_own_are_reported_together() {
+        let tree = Committed::of(&[
+            (INDEX, "expanded: [company.md, people.md]\n"),
+            (
+                "docs/company.md",
+                "# Company\n\nSee [notes](../notes.md).\n",
+            ),
+            (
+                "docs/people.md",
+                "---\nvisibility: secret\n---\n\n# People\n",
+            ),
+        ]);
+        let found = findings(&tree);
+        assert!(
+            matches!(
+                found.as_slice(),
+                [
+                    PluginFinding::Reading(_),
+                    PluginFinding::UnknownVisibility { document, .. },
+                ] if document == "docs/people.md"
+            ),
+            "{found:?}"
         );
     }
 }

@@ -287,8 +287,17 @@ pub(super) const COMPANY_PASSAGE: &str = concat!(
     "The company's own documents name any live agents and messaging channels the company operates, what each one handles, and who may reach it. A cloud agent reading this knowledge cannot invoke those agents or relay to them, and does not push the company's software directly: when a person needs a live company service or software built, it helps them frame the request clearly and follows the company's documented routing and access rules — directing them to address a documented agent only when that agent handles the work and admits them, or otherwise routing them as the company's documents say or noting that no live agent is documented for it.",
 );
 
+/// What reading a company's index found: the documents it selects, as far
+/// as they could be read, and the findings that leave every rendering of
+/// them as it is.
+pub(super) struct Reading {
+    pub selection: Selection,
+    pub findings: Vec<RenderFinding>,
+}
+
 /// What the company index and the documents it selects say, read once for
 /// every rendering of a company's knowledge.
+#[derive(Default)]
 pub(super) struct Selection {
     /// Each document held in full, by its repository-relative path, in
     /// traversal order: each `expanded` document after its required reads,
@@ -321,18 +330,23 @@ impl Selection {
 }
 
 /// Reads the company index of `tree` and the documents it selects: `None`
-/// without an index, else the selection, or the findings, each naming
-/// `path`, the rendering they leave as it is. With a linked index, nothing
+/// without an index, else the documents as far as they could be read, with
+/// the findings, each naming `path`, the rendering they leave as it is. An
+/// index that cannot be read selects nothing; with a linked index, nothing
 /// is read through it.
-pub(super) fn read(tree: &Committed, path: &Path) -> Option<Result<Selection, Vec<RenderFinding>>> {
+pub(super) fn read(tree: &Committed, path: &Path) -> Option<Reading> {
     let found = |kind| RenderFinding {
         path: path.to_path_buf(),
         kind,
     };
+    let unread = |findings| Reading {
+        selection: Selection::default(),
+        findings,
+    };
     let text = match tree.entry_index(COMPANY_INDEX) {
         EntryIndex::Absent => return None,
         EntryIndex::Linked => {
-            return Some(Err(vec![found(RenderFindingKind::LinkedIndex {
+            return Some(unread(vec![found(RenderFindingKind::LinkedIndex {
                 index: COMPANY_INDEX.to_owned(),
             })]));
         }
@@ -341,15 +355,17 @@ pub(super) fn read(tree: &Committed, path: &Path) -> Option<Result<Selection, Ve
     let index = match read_index(&text) {
         Ok(index) => index,
         Err(problems) => {
-            return Some(Err(problems
-                .into_iter()
-                .map(|problem| {
-                    found(RenderFindingKind::CompanyIndex {
-                        index: COMPANY_INDEX.to_owned(),
-                        problem,
+            return Some(unread(
+                problems
+                    .into_iter()
+                    .map(|problem| {
+                        found(RenderFindingKind::CompanyIndex {
+                            index: COMPANY_INDEX.to_owned(),
+                            problem,
+                        })
                     })
-                })
-                .collect()));
+                    .collect(),
+            ));
         }
     };
     let mut walk = Walk {
@@ -402,14 +418,14 @@ pub(super) fn read(tree: &Committed, path: &Path) -> Option<Result<Selection, Ve
         }
         walk.bring(&document, Traversal::Checked);
     }
-    if !walk.findings.is_empty() {
-        return Some(Err(walk.findings));
-    }
-    Some(Ok(Selection {
-        held: walk.held,
-        listed,
-        documents: walk.documents,
-    }))
+    Some(Reading {
+        selection: Selection {
+            held: walk.held,
+            listed,
+            documents: walk.documents,
+        },
+        findings: walk.findings,
+    })
 }
 
 /// Renders the company home in `tree` into `plan`: its root `AGENTS.md`
@@ -427,13 +443,11 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
             kind: RenderFindingKind::OverrideBesideRoot,
         });
     }
-    let selection = match reading {
-        Ok(selection) => selection,
-        Err(findings) => {
-            plan.findings.extend(findings);
-            return;
-        }
-    };
+    if !reading.findings.is_empty() {
+        plan.findings.extend(reading.findings);
+        return;
+    }
+    let selection = reading.selection;
     let mut blocks = vec![COMPANY_PASSAGE.to_owned()];
     blocks.extend(selection.held_bodies().map(|body| body.trim().to_owned()));
     let lines: Vec<String> = selection
