@@ -38,8 +38,8 @@ use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, SessionRef, TodoId};
 
 use crate::interfaces::{
-    DeliveredRelease, ProjectRef, RunnerWiring, SectionAdmission, SectionOutcome,
-    WorkInterfaceError, WorktreeHolder, WorktreeReclamation, WorktreeStanding, WorktreeStandings,
+    DeliveredRelease, ProjectRef, RunnerWiring, SectionAdmission, SectionOutcome, TodoWorktree,
+    WorkInterfaceError, WorktreeHolder, WorktreeReclamation, WorktreeStanding,
 };
 use crate::runner::Considered;
 
@@ -321,13 +321,59 @@ impl Reported {
     }
 }
 
+/// Each work-tracked considered project's worktree standing, read once for
+/// a wake and shared by its staging and its deferred pass.
+#[derive(Default)]
+pub struct Standings(Vec<(ProjectRef, Vec<TodoWorktree>)>);
+
+impl Standings {
+    fn of(&self, project: &ProjectSlug) -> Option<&[TodoWorktree]> {
+        self.0
+            .iter()
+            .find(|(read, _)| &read.slug == project)
+            .map(|(_, worktrees)| worktrees.as_slice())
+    }
+}
+
+/// Reads, once for this wake, the worktree standing of each considered
+/// project whose work tracking is admitted. A failed read is reported as
+/// owed when it appears or changes, and settled by the next one that
+/// succeeds; its project is left out of this wake's reclamation.
+pub fn read_standings(
+    considered: &[Considered],
+    wiring: &RunnerWiring,
+    reported: &mut Reported,
+) -> Standings {
+    let Some(standings) = &wiring.standings else {
+        return Standings::default();
+    };
+    let mut read = Vec::new();
+    for project in considered.iter().filter(|project| project.todos) {
+        let slug = &project.project.slug;
+        match standings.worktree_standings(&project.project) {
+            Ok(worktrees) => {
+                reported.settled(slug, "worktree standing");
+                read.push((project.project.clone(), worktrees));
+            }
+            Err(error) => reported.owed(slug, "worktree standing", &error.to_string()),
+        }
+    }
+    Standings(read)
+}
+
 /// In the wake, after dispatch and the event pass: moves the declared
 /// regenerable output of each idle or delivered todo worktree out to its
 /// staging locations, for each considered project whose work tracking and
-/// reclamation are admitted. A worktree under way is not touched; one
+/// reclamation are admitted and whose standing this wake read. A worktree
+/// under way is not touched, and what was reported of it is settled; one
 /// worktree's failure is logged and the pass goes on.
-pub fn stage_idle(considered: &[Considered], wiring: &RunnerWiring, reported: &mut Reported) {
-    let (Some(standings), Some(work)) = (&wiring.standings, &wiring.work) else {
+pub fn stage_idle(
+    considered: &[Considered],
+    standings: &Standings,
+    wiring: &RunnerWiring,
+    reported: &mut Reported,
+) {
+    let Some(work) = &wiring.work else {
         return;
     };
     for project in considered
@@ -335,23 +381,19 @@ pub fn stage_idle(considered: &[Considered], wiring: &RunnerWiring, reported: &m
         .filter(|project| project.todos && project.reclamation && !project.regenerable.is_empty())
     {
         let slug = &project.project.slug;
-        let worktrees = match standings.worktree_standings(&project.project) {
-            Ok(worktrees) => worktrees,
-            Err(error) => {
-                // The deferred pass reads standing for every project and
-                // reports its failure; one failure gets one notice.
-                tracing::debug!(event = "worktree_standing_unread", project = %slug, %error);
-                continue;
-            }
+        let Some(worktrees) = standings.of(slug) else {
+            continue;
         };
         for todo in worktrees {
             let Some(worktree) = &todo.worktree else {
                 continue;
             };
+            let what = worktree.display().to_string();
             if todo.standing == WorktreeStanding::UnderWay {
+                reported.settled(slug, &what);
+                reported.settled(slug, &kept_key(&what));
                 continue;
             }
-            let what = worktree.display().to_string();
             let target = Target {
                 project: &project.project,
                 todo: &todo.identity,
@@ -429,43 +471,25 @@ fn kept_key(worktree: &str) -> String {
 /// considered projects and asks work to release each delivered todo's
 /// worktree and branches.
 pub struct Deferred {
-    projects: Vec<ProjectRef>,
-    standings: Arc<dyn WorktreeStandings>,
+    projects: Vec<(ProjectRef, Vec<TodoWorktree>)>,
     reclamation: Arc<dyn WorktreeReclamation>,
 }
 
 impl Deferred {
-    /// The deferred work for the considered projects whose work tracking is
-    /// admitted, whatever stands at their declaration; `None` when there is
-    /// none or workflow and work are not wired.
-    pub fn prepare(considered: &[Considered], wiring: &RunnerWiring) -> Option<Self> {
-        let standings = wiring.standings.clone()?;
+    /// The deferred work for the projects whose standing the wake read,
+    /// whatever stands at their declaration; `None` when there is none or
+    /// work is not wired.
+    pub fn prepare(standings: Standings, wiring: &RunnerWiring) -> Option<Self> {
         let reclamation = wiring.work.as_ref()?.reclamation.clone();
-        let projects: Vec<ProjectRef> = considered
-            .iter()
-            .filter(|project| project.todos)
-            .map(|project| project.project.clone())
-            .collect();
-        (!projects.is_empty()).then_some(Self {
-            projects,
-            standings,
+        (!standings.0.is_empty()).then_some(Self {
+            projects: standings.0,
             reclamation,
         })
     }
 
     /// Runs it, holding no lock of the runner's.
     pub fn run(self, reported: &mut Reported) {
-        for project in &self.projects {
-            let worktrees = match self.standings.worktree_standings(project) {
-                Ok(worktrees) => {
-                    reported.settled(&project.slug, "worktree standing");
-                    worktrees
-                }
-                Err(error) => {
-                    reported.owed(&project.slug, "worktree standing", &error.to_string());
-                    continue;
-                }
-            };
+        for (project, worktrees) in &self.projects {
             let beside: BTreeSet<PathBuf> = worktrees
                 .iter()
                 .filter_map(|todo| todo.worktree.as_ref()?.parent().map(Path::to_path_buf))
@@ -474,7 +498,7 @@ impl Deferred {
             for dir in beside {
                 self.sweep(project, &dir, reported, &mut swept);
             }
-            for todo in &worktrees {
+            for todo in worktrees {
                 let WorktreeStanding::Delivered(remains) = todo.standing else {
                     continue;
                 };

@@ -262,8 +262,9 @@ pub fn tick(
     }
     drop(invocation);
     let mut staged = crate::reclamation::Reported::default();
-    crate::reclamation::stage_idle(&considered, cx.wiring, &mut staged);
-    let deferred = crate::reclamation::Deferred::prepare(&considered, cx.wiring);
+    let standings = crate::reclamation::read_standings(&considered, cx.wiring, &mut staged);
+    crate::reclamation::stage_idle(&considered, &standings, cx.wiring, &mut staged);
+    let deferred = crate::reclamation::Deferred::prepare(standings, cx.wiring);
     // Deleting staged output and releasing delivered worktrees runs once the
     // runner lock is released, so the next invocation and every command are
     // not held up by it; this tick itself returns only once it is done.
@@ -593,7 +594,8 @@ fn reclaim(
     staged: &mut crate::reclamation::Reported,
     pass: DeferredPass,
 ) -> DeferredPass {
-    crate::reclamation::stage_idle(considered, wiring, staged);
+    let standings = crate::reclamation::read_standings(considered, wiring, staged);
+    crate::reclamation::stage_idle(considered, &standings, wiring, staged);
     let reported = match pass {
         DeferredPass::Running(thread) if !thread.is_finished() => {
             return DeferredPass::Running(thread);
@@ -604,7 +606,7 @@ fn reclaim(
         }),
         DeferredPass::Idle(reported) => reported,
     };
-    let Some(deferred) = crate::reclamation::Deferred::prepare(considered, wiring) else {
+    let Some(deferred) = crate::reclamation::Deferred::prepare(standings, wiring) else {
         return DeferredPass::Idle(reported);
     };
     let mut carried = reported;
