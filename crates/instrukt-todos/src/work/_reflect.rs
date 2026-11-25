@@ -969,10 +969,12 @@ mod tests {
     #[test]
     fn a_review_states_its_verdict_commit_and_findings_and_links_them() {
         let link = "https://github.test/acme/demo/issues/1/artifacts/4";
-        let body = review_body("approve", "abc123", "No findings.\n", link);
-        assert!(body.starts_with("**Build review: approved** · reviewed commit `abc123`"));
-        assert!(body.contains("No findings."));
-        assert!(body.contains(link));
+        assert_eq!(
+            review_body("approve", "abc123", "No findings.\n", link),
+            format!(
+                "**Build review: approved** · reviewed commit `abc123`\n\nNo findings.\n\n[Complete review findings]({link})"
+            )
+        );
     }
 
     #[test]
@@ -981,8 +983,10 @@ mod tests {
         let findings = "a finding\n".repeat(20_000);
         let body = review_body("changes_requested", "abc123", &findings, link);
         assert!(body.chars().count() <= 60_000);
-        assert!(body.contains("changes requested"));
-        assert!(body.contains("shortened") && body.contains(link));
+        assert!(body.starts_with("**Build review: changes requested** · reviewed commit `abc123`"));
+        assert!(body.ends_with(&format!(
+            "(shortened; [the complete review findings]({link}) give them whole)\n"
+        )));
     }
 
     #[test]
