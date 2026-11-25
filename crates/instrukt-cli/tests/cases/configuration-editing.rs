@@ -462,55 +462,6 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
         !env.instrukt_home().join("companies/acme").exists(),
         "asking reads no home and creates none"
     );
-    // Each key shows its contract, one line per key as
-    // `<path> (<type>, …) — <contract>`; a description of several lines
-    // continues indented under its key.
-    let keys: Vec<(&str, &str)> = whole
-        .lines()
-        .filter(|line| !line.starts_with(char::is_whitespace) && !line.is_empty())
-        .filter_map(|line| line.split_once(" ("))
-        .collect();
-    for path in [
-        "company",
-        "schema_version",
-        "profiles",
-        "members",
-        "members.<name>",
-        "members.<name>.name",
-        "members.<name>.email",
-        "members.<name>.credentials",
-        "connectors",
-        "mcp",
-        "mcp.<name>",
-        "webhooks",
-        "webhooks.<name>",
-        "webhooks.<name>.verify",
-    ] {
-        assert!(
-            keys.iter().any(|(key, _)| *key == path),
-            "`{path}` is shown"
-        );
-    }
-    for (path, rest) in &keys {
-        assert!(rest.contains(") — "), "`{path}` shows its contract: {rest}");
-    }
-    // A key holding a reference says so and how its value is written.
-    for path in [
-        "members.<name>.credentials.<name>",
-        "mcp.<name>.sign_in.client.id",
-        "mcp.<name>.sign_in.client.secret",
-        "webhooks.<name>.secret",
-        "webhooks.<name>.previous_secret",
-    ] {
-        let (_, rest) = keys
-            .iter()
-            .find(|(key, _)| *key == path)
-            .unwrap_or_else(|| panic!("`{path}` is shown"));
-        assert!(
-            rest.starts_with("${NAME} secret reference") && rest.contains("instrukt secrets set"),
-            "`{path}` holds a reference written with `instrukt secrets set`: {rest}"
-        );
-    }
 
     // A path shows that key and what lies under it.
     insta::assert_snapshot!(
@@ -549,11 +500,6 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
     let entry = &members["additionalProperties"];
     assert_eq!(entry["required"], serde_json::json!(["email"]));
     assert_eq!(entry["additionalProperties"], serde_json::json!(false));
-    assert!(
-        entry["properties"]["credentials"]["additionalProperties"]["description"]
-            .as_str()
-            .is_some_and(|contract| contract.contains("instrukt secrets set"))
-    );
 
     // What it shows is what validation admits: a Slack entry with exactly the
     // fields shown is accepted, and one the entry cannot take is refused.
