@@ -671,7 +671,7 @@ impl Session<'_> {
                     let env = crate::wiring::environment(ctx)?;
                     let dispatch = configuration.get_str("runtime.dispatch", &env)?;
                     let continuation = configuration.get_str("runtime.message_child", &env)?;
-                    let assignment = work.prepare_attempt(
+                    let reserved = work.prepare_attempt(
                         project,
                         &instrukt_todos::work::AttemptRequest {
                             todo: &args.slug,
@@ -681,7 +681,7 @@ impl Session<'_> {
                             brief: &message,
                         },
                     )?;
-                    let mut reply = serde_json::to_value(&assignment)?;
+                    let mut reply = serde_json::to_value(&reserved)?;
                     if let Some(reply) = reply.as_object_mut() {
                         reply.insert("dispatch_instruction".into(), dispatch.into());
                         reply.insert("continuation_instruction".into(), continuation.into());

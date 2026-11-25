@@ -7,7 +7,10 @@
     reason = "test: a failed step fails the test"
 )]
 
+use crate::common;
 use crate::fixtures::work as support;
+use crate::fixtures::workflow::Crew;
+use instrukt_todos::evidence::artifact_names;
 use support::{Project, redact, stdout};
 
 /// The identity a `create` reported (its last word).
@@ -522,4 +525,115 @@ fn a_bug_filed_as_ordinary_work_is_sent_to_the_front_door() {
         }
     }
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");
+}
+
+// spec: project/instrukt/spec/feature/work/todos UC-TD13
+#[test]
+fn a_retained_worker_carries_its_roles_next_attempt_on_the_same_session() {
+    let crew = Crew::new();
+    let slug = "retained-planner";
+    common::agent_profiles(
+        &crew.project.env,
+        "default: {order: [claude], tier: standard}\nprofiles:\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high}]\n",
+    );
+    crew.project
+        .create(slug, "change", "Keep list depth inside block quotes.");
+    crew.next("prepare", slug);
+    let first = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let session = first["session"].as_str().unwrap();
+    let tree = std::path::Path::new(first["worktree"].as_str().unwrap());
+    let as_worker = |args: &[&str]| {
+        crew.project
+            .env
+            .instrukt(tree)
+            .env("T3CODE_THREAD_ID", session.strip_prefix("t3:").unwrap())
+            .args(args)
+            .assert()
+            .success();
+    };
+    as_worker(&[
+        "todo",
+        "artifacts",
+        "write",
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "1. Parse quotes first.",
+    ]);
+    as_worker(&["todo", "stamp", slug, "--role-complete"]);
+    crew.write(
+        slug,
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "Nested quotes are unplanned.",
+    );
+    crew.stamp(slug, &["--verdict", "needs_work", "--phase", "plan_review"]);
+
+    // The planner's next round is reserved and names the retained session.
+    crew.next("prepare", slug);
+    let reserved = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "planner",
+            "--procedure",
+            "crew/procedure/plan",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Answer the plan review findings.")
+        .assert()
+        .success();
+    let second: serde_json::Value = serde_json::from_slice(&reserved.get_output().stdout).unwrap();
+    assert_eq!(second["prior_session"]["session"], first["session"]);
+    assert_eq!(second["prior_session"]["attempt"], first["attempt"]);
+    assert_eq!(second["prior_session"]["selection"], first["selection"]);
+
+    // Binding the new attempt to that session records it without the runtime.
+    let calls = crew.runtime.calls();
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "bind",
+            slug,
+            "--role",
+            "planner",
+            "--attempt",
+            &second["attempt"].to_string(),
+            "--session",
+            session,
+            "--worktree",
+            second["worktree"].as_str().unwrap(),
+            "--branch",
+            second["branch"].as_str().unwrap(),
+            "--base",
+            second["base"].as_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(crew.runtime.calls(), calls);
+
+    // The worker's evidence lands on the new attempt; the first keeps its
+    // own completion and release.
+    as_worker(&[
+        "todo",
+        "artifacts",
+        "write",
+        slug,
+        artifact_names::IMPLEMENTATION_PLAN,
+        "1. Parse quotes first, nested quotes included.",
+    ]);
+    as_worker(&["todo", "stamp", slug, "--role-complete"]);
+    insta::assert_snapshot!(
+        "continued-worker-record",
+        redact(&crew.todo(["show", slug]))
+    );
 }
