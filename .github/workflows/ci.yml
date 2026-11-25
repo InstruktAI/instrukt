@@ -193,8 +193,9 @@ jobs:
           compression-level: 0
           if-no-files-found: error
 
-  # Runs the archive the archive job built in eight partitions
-  # (scripts/ci-ubuntu-shard.sh), from the matrix's own index and total. Each
+  # Runs the archive the archive job built in partitions
+  # (scripts/ci-ubuntu-shard.sh), one per matrix entry, from the matrix's own
+  # index and total; the matrix owns the partition count. Each
   # leg writes its completion record under its own output only after its
   # partition passed. Adding or removing a matrix
   # entry changes the partition count; the outputs below and the aggregate's
