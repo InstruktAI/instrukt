@@ -510,18 +510,21 @@ pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
 }
 
+/// What binds a session to the todo worktree `instrukt repo reclaim` acts on;
+/// the command's refusals and its admission name it.
+pub(crate) const RECLAIM_BINDING_DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree>`)";
+
 /// `instrukt repo reclaim`: what the runner removes from a todo worktree,
 /// removed from the worktree the calling session's assignment records
 /// (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     use instrukt_runner::reclamation::{OnRequest, Request, on_request};
-    const DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree>`)";
     let env = crate::wiring::environment(ctx)?;
     let session = instrukt_core::config::Configuration::load_global(&ctx.home.for_inspection())?
         .caller(&env)?;
     let assignment = crate::authorization::caller(ctx)?.map(|(assignment, _)| assignment);
     let (Some(session), Some(assignment)) = (session, assignment) else {
-        anyhow::bail!("no todo assignment binds this caller to a worktree; {DOOR}");
+        anyhow::bail!("no todo assignment binds this caller to a worktree; {RECLAIM_BINDING_DOOR}");
     };
     let (Some(project), Some(todo), Some(worktree)) = (
         assignment.project.as_ref(),
@@ -529,7 +532,7 @@ fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         assignment.workspace.as_deref(),
     ) else {
         anyhow::bail!(
-            "the assignment {} binds this session to no todo worktree; {DOOR}",
+            "the assignment {} binds this session to no todo worktree; {RECLAIM_BINDING_DOOR}",
             assignment.key
         );
     };

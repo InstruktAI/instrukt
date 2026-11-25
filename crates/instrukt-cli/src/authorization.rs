@@ -354,15 +354,21 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         _ => false,
     };
     if !grants.admits(action, owned) {
-        return Err(PermissionRefused(grants.refusal(
+        let mut refusal = grants.refusal(
             action,
             &format!(
                 "{}{}",
                 path.join(" "),
                 target.map(|s| format!(" ({s})")).unwrap_or_default()
             ),
-        ))
-        .into());
+        );
+        if reclaim && assignment.workspace.is_none() {
+            refusal.push_str(&format!(
+                "; reclaiming acts on the todo worktree an assignment records, and this session's assignment records none: {}",
+                crate::commands::repository::RECLAIM_BINDING_DOOR
+            ));
+        }
+        return Err(PermissionRefused(refusal).into());
     }
     Ok(())
 }
