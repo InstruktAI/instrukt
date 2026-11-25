@@ -619,7 +619,7 @@ fn policy(title: &str, rule: &str) -> String {
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP4
 #[test]
-fn a_focused_authors_commit_carries_what_instrukts_hooks_generate() {
+fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
     let mut crew = workflow::Crew::new();
     // The hook sections call `instrukt` by name, as an installed one would.
     let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
@@ -691,4 +691,32 @@ fn a_focused_authors_commit_carries_what_instrukts_hooks_generate() {
             .replace(base.trim_end_matches('/'), "[TMP]")
             .replace(&head, "[SHA]")
     );
+
+    // Outside its worktree, in the primary checkout, the same run is refused
+    // before it runs: a staged selection change would otherwise have the
+    // rendered `AGENTS.md` staged beside it.
+    let root = crew.root();
+    std::fs::create_dir_all(root.join("docs/project/policy")).unwrap();
+    std::fs::write(
+        root.join("docs/project/policy/house.md"),
+        policy("House", "Be kind."),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("docs/project/index.yaml"),
+        "expanded:\n  - project/demo/policy/house\n",
+    )
+    .unwrap();
+    env.git(root, ["add", "docs/project"]);
+    let refused = env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", session)
+        .args(["hooks", "run", "pre-commit"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(String::from_utf8_lossy(&refused.get_output().stderr), @"instrukt: role `builder` (focused) cannot perform code-commit on hooks run with its own scope; return the required action to the dispatcher in your own output or assigned artifact");
+    insta::assert_snapshot!(env.git(root, ["status", "--porcelain"]), @r"
+    A  docs/project/index.yaml
+    A  docs/project/policy/house.md
+    ");
 }
