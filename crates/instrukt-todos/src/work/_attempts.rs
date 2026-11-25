@@ -1230,9 +1230,46 @@ pub struct WorkspaceEntry {
     pub worktree: Option<PathBuf>,
     pub admitted: bool,
 }
+fn claimed_elsewhere() -> WorkError {
+    WorkError::refused(
+        "work is already claimed; await its verified startup binding or resume its current orchestrator",
+    )
+}
+
+/// The todo's recorded orchestrator: its latest driver binding for `role`
+/// that has not failed, released or not. A later binding, including an
+/// unbound runner reservation, supersedes an earlier session's.
+fn recorded_driver<'a>(record: &'a TodoRecord, role: &RoleName) -> Option<&'a Binding> {
+    record.bindings.iter().rev().find(|b| {
+        super::_ports::matches_driver_role(&b.role, role)
+            && b.attempt.assignment == AssignmentKind::Driver
+            && b.attempt.failed_at.is_none()
+    })
+}
+
+/// Whether `b` is `caller`'s own placement: bound to that session, in the
+/// registered worktree `path` (compared canonically, so a symlinked stored
+/// path matches) on `branch`.
+fn own_placement(
+    b: &Binding,
+    caller: Option<&SessionRef>,
+    path: Option<&Path>,
+    branch: &str,
+) -> Result<bool, WorkError> {
+    let (Some(caller), Some(path), Some(tree)) = (caller, path, b.worktree.as_deref()) else {
+        return Ok(false);
+    };
+    Ok(b.session.as_ref() == Some(caller)
+        && b.attempt.branch.as_deref() == Some(branch)
+        && tree.is_dir()
+        && canonical(tree)? == canonical(path)?)
+}
+
 impl Work {
     /// Describe a derived phase branch without creating it or switching the canonical checkout. A caller
-    /// is admitted only in that branch's registered linked worktree.
+    /// is admitted only in that branch's registered linked worktree: with native placement evidence,
+    /// as the session already bound there, or as the todo's recorded orchestrator resuming its own
+    /// released binding (which also takes up this computer's unassigned runner claim).
     pub fn workspace_entry(
         &self,
         project: &ProjectRef,
@@ -1263,23 +1300,31 @@ impl Work {
         if record.hold.is_some() {
             return Err(WorkError::refused("held work admits no orchestrator entry"));
         }
-        if record.claim.as_ref().is_some_and(|claim| {
-            claim.machine != machine
-                || claim.session.is_none()
-                || caller.is_none()
-                || claim.session != caller
-        }) {
-            return Err(WorkError::refused(
-                "work is already claimed; await its verified startup binding or resume its current orchestrator",
-            ));
-        }
+        // A claim admits its own session on its computer. This computer's
+        // unassigned claim — the runner's pickup — admits only the todo's
+        // recorded orchestrator, decided once its placement is known below.
+        let takeover = match &record.claim {
+            None => false,
+            Some(claim) if claim.machine == machine && caller.is_some() => {
+                if claim.session == caller {
+                    false
+                } else if claim.session.is_none() {
+                    true
+                } else {
+                    return Err(claimed_elsewhere());
+                }
+            }
+            Some(_) => return Err(claimed_elsewhere()),
+        };
         let lane = instrukt_runner::interfaces::Lane::Work;
         let existing = record.bindings.iter().rev().find(|b| {
             super::_ports::matches_driver_role(&b.role, role)
                 && b.attempt.assignment == AssignmentKind::Driver
                 && b.attempt.released_at.is_none()
         });
+        let recorded = recorded_driver(record, role);
         let branch = existing
+            .or(recorded)
             .and_then(|b| b.attempt.branch.clone())
             .unwrap_or_else(|| format!("{todo}/work"));
         let default = instrukt_core::github::default_branch(&project.root)?;
@@ -1303,6 +1348,24 @@ impl Work {
             Some(path) => canonical(path)? == canonical(&root)?,
             None => false,
         };
+        // The recorded orchestrator resumes in its own placement: its
+        // binding was bound from verified native placement, so the same
+        // session in the same worktree, branch and runtime needs no new proof.
+        let resumable = match recorded {
+            Some(b)
+                if in_workspace && own_placement(b, caller.as_ref(), path.as_deref(), &branch)? =>
+            {
+                b.attempt.runtime == Some(s.config.runner_runtime()?)
+            }
+            _ => false,
+        };
+        if takeover && !resumable {
+            return Err(claimed_elsewhere());
+        }
+        // Without evidence, a released recorded binding is reopened rather
+        // than followed by a new attempt, as dispatch resumes a retained driver.
+        let reopen = evidence.is_none() && existing.is_none() && resumable;
+        let existing = if reopen { recorded } else { existing };
         let number = existing.map(|b| b.attempt.number).unwrap_or_else(|| {
             record
                 .bindings
@@ -1330,12 +1393,10 @@ impl Work {
                 instrukt_runner::runtime::thread_title(&format!("{role} · {todo}"), &key)
             });
         let already_bound = in_workspace
-            && existing.is_some_and(|b| {
-                b.session.is_some()
-                    && b.session == caller
-                    && b.worktree.as_ref() == path.as_ref()
-                    && b.attempt.branch.as_ref() == Some(&branch)
-            });
+            && match existing {
+                Some(b) => own_placement(b, caller.as_ref(), path.as_deref(), &branch)?,
+                None => false,
+            };
         let admitted = if let Some(proof) = evidence {
             let caller = caller.as_ref().ok_or_else(|| {
                 WorkError::refused(
@@ -1400,6 +1461,19 @@ impl Work {
                 },
             )
         };
+        if reopen {
+            s.commit("resume recorded driver", |s| {
+                let binding = s.items[index]
+                    .record
+                    .bindings
+                    .iter_mut()
+                    .find(|b| b.attempt.semantic_key == key)
+                    .ok_or_else(|| WorkError::refused("recorded phase disappeared"))?;
+                binding.attempt.released_at = None;
+                Ok(())
+            })?;
+            s.flush()?;
+        }
         if admitted && !already_bound {
             let runtime = s.config.runner_runtime()?;
             let now = s.now;
