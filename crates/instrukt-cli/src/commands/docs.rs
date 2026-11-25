@@ -280,8 +280,8 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         let (writes, removals) = plan.drift.as_ref().map_or((&[][..], &[][..]), |drift| {
             (drift.writes.as_slice(), drift.removals.as_slice())
         });
-        let writes: Vec<PlannedFile> = writes.iter().chain(&plan.catalog).cloned().collect();
-        for line in check_lines(&writes, removals, "instrukt docs plugin") {
+        let writes = writes.iter().chain(&plan.catalog);
+        for line in check_lines(writes, removals, "instrukt docs plugin") {
             ctx.out.line(&line)?;
             failed = true;
         }
@@ -318,9 +318,13 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 /// One line per file whose content differs from its rendering or is
 /// missing, and per file no longer rendered, each naming `command`, which
 /// writes or removes it.
-fn check_lines(writes: &[PlannedFile], removals: &[PathBuf], command: &str) -> Vec<String> {
+fn check_lines<'a>(
+    writes: impl IntoIterator<Item = &'a PlannedFile>,
+    removals: &[PathBuf],
+    command: &str,
+) -> Vec<String> {
     let mut lines = Vec::new();
-    for file in writes.iter().filter(|file| file.differs()) {
+    for file in writes.into_iter().filter(|file| file.differs()) {
         let what = if file.current.is_some() {
             format!("differs from its rendering; `{command}` writes it")
         } else {
