@@ -85,13 +85,13 @@ Record them in the `architecture` delivery-reasoning artifact for the planner;
 the approved PRD is not rewritten — they're scaffolding, not contract.
 
 The `architecture` workflow.artifact carries the delivery reasoning named in
-step 2 and ephemeral tactical choices, with no hand-maintained snippet table
-and no commit pin — the todo's documentation diff in `<slug>/work` establishes
-which snippets changed (`sdlc/principle/documentation-first-development`). Cite
-the todo's own pending snippets freely, and name any worktree-only ADR by
-repository path rather than an `@` reference so provenance stays resolved. The
-design content itself lives in the snippets — the snippets are authoritative;
-the artifact never restates the contract they carry.
+step 2 and ephemeral tactical choices; the todo's documentation diff in
+`<slug>/work` establishes which snippets changed
+(`sdlc/principle/documentation-first-development`). Cite the todo's own pending
+snippets freely, and name any worktree-only ADR by repository path rather than
+an `@` reference so provenance stays resolved. The design content itself lives
+in the snippets — the snippets are authoritative; the artifact never restates
+the contract they carry.
 
 ### Outcome
 
@@ -236,9 +236,9 @@ instrukt todo artifacts write {slug} architecture <content>
 ```
 
 The artifact carries the delivery reasoning from step 2 and any ephemeral
-tactical decisions. It carries no hand-maintained snippet table, no commit pin,
-and no restatement of the design body — that lives in the snippets and is the
-authoritative record, discovered from the worktree's documentation diff.
+tactical decisions. Do not maintain a manual snippet table or recorded head SHA
+in it, and do not restate the design body — that lives in the snippets and is
+the authoritative record, discovered from the worktree's documentation diff.
 Snippets whose section doesn't apply (e.g., no "Event flow changes" for
 purely-UI work) simply aren't touched.
 
@@ -272,8 +272,7 @@ remediation, rewrite the `architecture` artifact before stamping
   each through a pending carrier naming this slug.
 - **`architecture` delivery-reasoning artifact** — written via
   `instrukt todo artifacts write {slug} architecture <content>`; carries the
-  delivery reasoning and ephemeral tactical choices, NOT the design body or a
-  manual snippet index.
+  delivery reasoning and ephemeral tactical choices, not the design body.
 - **`architecture_review` verdict `approve`** is stamped by the reviewer (not
   by this procedure).
 

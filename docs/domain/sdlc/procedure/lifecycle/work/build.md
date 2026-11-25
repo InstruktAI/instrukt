@@ -34,7 +34,7 @@ to the integration gate.
   is readable and guides task execution. On the fast track for bounded bugs or small
   localized changes, `input` (plus `diagnosis` when present) is the requirement source
   and no `implementation-plan` is required.
-- `architecture` (thin doc-edit log) is readable when present and not skipped; consult the domain/design snippets it points to for technical context.
+- `architecture` (delivery-reasoning artifact) is readable when present and not skipped; consult the pending domain/design snippets authored in `<slug>/work` for technical context.
 - When `quality-checklist` is present, record builder gate evidence under
   `## Build Gates (Builder)`. On the fast track, neither `quality-checklist` nor a
   separate `setup` child is required before implementation starts.
@@ -57,10 +57,10 @@ with the governing contract.
 1. Read `input` to confirm the checked intent and scope constraints. For a
    feature, also read `prd`; for a bug, read `diagnosis` when present. Derived artifacts
    carry no authority to widen the recorded intent.
-2. Read `architecture` when present and not skipped — it is the thin
-   doc-edit log; consult the domain/design snippets it points to for
-   technical context and intended invariants. The prepared success criteria are
-   the verification contract.
+2. Read `architecture` when present and not skipped — it carries delivery
+   reasoning; consult the pending domain/design snippets authored in
+   `<slug>/work` for technical context and intended invariants. The prepared
+   success criteria are the verification contract.
 3. When `implementation-plan` is present, read it via
    `instrukt todo artifacts read {slug} implementation-plan` and identify the tasks
    not yet delivered by commits in the worktree. When no `implementation-plan` is

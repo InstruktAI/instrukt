@@ -126,7 +126,7 @@ delivery in that capability fills naturally.
 - **Per-context architectural changes** (new aggregates, new events, refined invariants, internal model adjustments) → the affected domain spec snippet at `docs/project/spec/domain/<context>.md`
 - **Cross-cutting architectural changes** (new bounded context, communication patterns, transport rules, context-map shifts, deployment shape) → the architecture design docs at `docs/project/design/architecture/*.md`
 
-The doc-snippet updates ARE the design record — they are authoritative, and the todo's own documentation changes establish which snippets changed. The `architecture` workflow.artifact carries delivery reasoning and ephemeral tactical decisions (library selection, internal build sequencing) with no hand-maintained snippet list or commit pin; it carries no design body and is never the source of truth. There is no `architecture` snippet kind. The architecture phase routes per change: internal-to-context → domain spec; cross-cutting → design doc; or both when a change has both faces.
+The doc-snippet updates ARE the design record — they are authoritative, and the todo's own documentation changes establish which snippets changed. The `architecture` workflow.artifact carries delivery reasoning and ephemeral tactical decisions (library selection, internal build sequencing); it carries no design body and is never the source of truth. There is no `architecture` snippet kind. The architecture phase routes per change: internal-to-context → domain spec; cross-cutting → design doc; or both when a change has both faces.
 
 **PRDs do not survive as snippets.** The PRD captures work-guidance for one delivery (MoSCoW, Why, risks). It is scaffolding. It stays a workflow.artifact and retires after delivery. The behavioral contract (feature-spec prose and any admitted Gherkin use cases) and the design (updates in domain specs) become docs.
 
@@ -155,7 +155,7 @@ Grouping is an agent intelligence decision derived from the work's shape — the
 
 - **Pending snippets that never deliver.** The slug they point to may be deferred, frozen, or abandoned. The author must either revive the delivery path or remove the pending material so the snippet reflects current state — design that nobody is actually committing to deliver doesn't belong in the doc layer.
 
-- **Design churn during prepare.** The architecture phase authors snippets that own structural design decisions (domain specs, cross-cutting design docs, or a snippet owning a structural decision under `sdlc/policy/preparation-artifact-quality`) so architecture review judges the authoritative design directly, and leaves consequential reflection snippets (policies, principles, procedures, and consumer updates) to plan drafting once the design converges.
+- **Design churn during prepare.** Authoring structural design directly in pending snippets lets architecture review judge the authoritative design at the cost of revising those snippets if review rejects a premise; phase ownership between structural snippets and post-convergence reflection updates is governed by `sdlc/procedure/lifecycle/prepare/architecture`.
 
 - **Cross-context pending work.** A delivery spanning multiple bounded contexts updates multiple owner-local snippets, each through its own pending carrier. No behavioral or domain snippet spans ownership merely because the deliveries coordinate; cross-cutting design docs describe only the relationship among owners.
 
