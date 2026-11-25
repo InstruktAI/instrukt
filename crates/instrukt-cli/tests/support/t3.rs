@@ -104,7 +104,18 @@ if (root/'down').exists() or (command=='list' and (root/'list-failure').exists()
     print('connect ECONNREFUSED 127.0.0.1:3773',file=sys.stderr); sys.exit(1)
 def all_threads():
     return [json.loads(p.read_text()) for p in sorted(root.glob('*.json'))]
-def sync_inputs():
+# The projection and the thread files change together under this lock: a
+# thread's state is projected before its file shows it, as T3 publishes a run
+# before its thread reports it, and no projection reads a thread file that a
+# concurrent save has yet to project. No hold waits inside it.
+class state_lock:
+    def __enter__(self):
+        import fcntl
+        self.file=open(root/'state.lock','a'); fcntl.flock(self.file,fcntl.LOCK_EX)
+    def __exit__(self,*_): self.file.close()
+# Projects every thread, `updated` in place of its file when given. Callers
+# hold `state_lock`.
+def sync_inputs(updated=None):
     db=pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite'
     db.parent.mkdir(parents=True,exist_ok=True)
     with sqlite3.connect(db) as connection:
@@ -121,7 +132,9 @@ def sync_inputs():
         # finish_turn supplies a separate completed run. This mode removes
         # the fake active projection when the corresponding native turn ends.
         separate_completion=(root/'separate-completion').exists()
-        for thread in all_threads():
+        threads=[t for t in all_threads() if not updated or t['threadId']!=updated['threadId']]
+        if updated: threads.append(updated)
+        for thread in threads:
             if thread.get('commandId'):
                 connection.execute("INSERT OR IGNORE INTO orchestration_command_receipts(command_id,aggregate_kind,aggregate_id,command_type,status) VALUES (?,'thread',?,'thread.create','accepted')",(thread['commandId'],thread['threadId']))
             runs=set()
@@ -154,7 +167,9 @@ def sync_inputs():
                 connection.execute("DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE ?",('fake:'+thread+':input:%',))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
-    temporary.write_text(json.dumps(t)); temporary.replace(root/(t['threadId']+'.json')); sync_inputs()
+    temporary.write_text(json.dumps(t))
+    with state_lock():
+        sync_inputs(t); temporary.replace(root/(t['threadId']+'.json'))
 def find(id):
     file=root/(id+'.json')
     if not file.exists(): print('Thread '+id+' is no longer available.',file=sys.stderr); sys.exit(1)
@@ -182,7 +197,8 @@ if command=='list':
         copy=dict(threads[0]); copy['threadId']='duplicate'; threads.append(copy)
     print(json.dumps([{k:v for k,v in t.items() if k not in ['messages','checkout','worktreePath','branch']} for t in threads]))
 elif command=='start':
-    if not (pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite').exists(): sync_inputs()
+    if not (pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite').exists():
+        with state_lock(): sync_inputs()
     launch=json.loads(os.environ['T3_TEST_LAUNCH']) if 'T3_TEST_LAUNCH' in os.environ else None
     if launch and (root/(launch['threadId']+'.json')).exists(): print(launch['threadId']); sys.exit(0)
     if launch and (root/(launch['threadId']+'.deleted')).exists(): print('Thread not found.',file=sys.stderr); sys.exit(1)
@@ -328,7 +344,7 @@ elif command=='show':
             create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
             t['status']='running'; save(t); preparing.unlink()
         else: preparing.write_text(json.dumps(pending))
-    sync_inputs()
+    with state_lock(): sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=3:
