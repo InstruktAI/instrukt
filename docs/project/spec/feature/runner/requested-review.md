@@ -42,8 +42,9 @@ the commit bodies of the reviewed range or in the disposition file
 directs. A source pointer adds to what the reviewer reads and removes nothing
 from it (`sdlc/procedure/lifecycle/work/review-commits`).
 
-The pinned base is selected as for every review request
-(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests).
+The pinned base of a requested review is the head's merge base with the
+project's canonical branch, as its review procedure pins a one-off candidate
+(`sdlc/procedure/lifecycle/work/review-commits`).
 
 ### Admission
 
@@ -55,7 +56,7 @@ the candidate, read from the repository when the review is asked for.
 | Form | Every value has the form of its coordinate: a full commit id, a branch name, a path, a snippet id, or a `repo@commit:path` pointer. | The value and the form its coordinate takes. |
 | Placement | The worktree is a checkout of the project's repository, the named branch is checked out in it, and that branch's head is the named head. | What the repository shows instead. |
 | Cleanliness | The worktree holds no uncommitted change. | That the worktree is not clean. The door is committing or removing the change. |
-| Range | The head is a commit of the repository and has a pinned base, and the named base is that pinned base. | The pinned base, or that the head has none. |
+| Range | The head is a commit of the repository that shares history with the project's canonical branch, and the named base is the pinned base. | The pinned base, or that the head shares no history with the canonical branch. |
 
 A refused ask starts no reviewer and records nothing.
 
@@ -67,14 +68,13 @@ coordinates always render the same assignment, and it holds nothing the
 requester composed. The reviewer of a requested review is started on that
 rendering alone; the ask offers no way to add to it.
 
-A requested review differs from a review instrukt asks for on its own
-initiative only in who asked. The same procedure answers it, under the same
-role and reviewer identity
-(`project/instrukt/spec/feature/runner/pull-request-review`, Placement and
-consumer), and reviews from the pinned base up to the exact head. The reviewer
-is independent of the candidate's authors as its procedure and the admission of
-its verdict require (`project/instrukt/spec/feature/work/github-apps`,
-Admission of review evidence).
+A requested review is answered by the procedure that answers a review instrukt
+asks for on its own initiative, under the role that procedure declares
+(`sdlc/procedure/lifecycle/work/review-commits`), and covers the commits after
+the pinned base up to the exact head. The reviewer is independent of the
+candidate's authors as its procedure and the admission of its verdict require
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence).
 
 ### Verdict
 
