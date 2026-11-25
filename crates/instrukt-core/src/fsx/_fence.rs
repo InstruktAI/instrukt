@@ -767,47 +767,6 @@ mod tests {
         );
     }
 
-    /// Whether the fenced `root` holds `target`, as one check finds them.
-    fn holds(root: &Path, target: &Path) -> bool {
-        let target = resolved(target);
-        Root::at(root, &mut Parents::default()).holds(&mut Target::new(&target))
-    }
-
-    #[test]
-    fn a_fenced_link_holds_what_lies_where_it_leads() {
-        let scratch = tempfile::tempdir().unwrap();
-        let base = std::fs::canonicalize(scratch.path()).unwrap();
-        std::fs::create_dir(base.join("t")).unwrap();
-        std::fs::create_dir(base.join("u")).unwrap();
-        std::os::unix::fs::symlink(base.join("t"), base.join("l")).unwrap();
-        assert!(holds(&base.join("l"), &base.join("t/new")));
-        assert!(!holds(&base.join("l"), &base.join("u/new")));
-    }
-
-    #[test]
-    fn a_fenced_entry_holds_only_what_passes_through_that_entry() {
-        let scratch = tempfile::tempdir().unwrap();
-        let base = std::fs::canonicalize(scratch.path()).unwrap();
-        std::fs::write(base.join("b"), "").unwrap();
-        std::fs::hard_link(base.join("b"), base.join("a")).unwrap();
-        std::fs::create_dir(base.join("d")).unwrap();
-        std::fs::create_dir(base.join("e")).unwrap();
-        assert!(holds(&base.join("b"), &base.join("b")));
-        assert!(!holds(&base.join("b"), &base.join("a")));
-        assert!(holds(&base.join("d"), &base.join("d/new")));
-        assert!(!holds(&base.join("d"), &base.join("e/new")));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn a_fenced_root_spelled_otherwise_than_stored_holds_what_lies_inside_it() {
-        let scratch = tempfile::tempdir().unwrap();
-        let base = std::fs::canonicalize(scratch.path()).unwrap();
-        let composed = base.join("caf\u{e9}");
-        std::fs::create_dir(&composed).unwrap();
-        assert!(holds(&base.join("cafe\u{301}"), &composed.join("new")));
-    }
-
     #[test]
     fn names_that_do_not_exist_yet_compare_without_case_only_where_the_volume_folds_it() {
         let root = at("/home/person/.instrukt", 3);

@@ -211,6 +211,55 @@ fn a_write_through_a_symbolic_link_is_refused_before_it_lands() {
 }
 
 #[test]
+fn a_write_where_a_fenced_symbolic_link_leads_is_refused_before_it_lands() {
+    let live = Live::new();
+    let target = live.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::os::unix::fs::symlink(&target, live.path().join("link")).unwrap();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path().join("link"));
+    std::os::unix::fs::symlink(&target, env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/target/locks, under [LIVE]/link which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_write_to_a_hard_link_beside_a_fenced_file_is_admitted() {
+    let live = Live::new();
+    let mut env = TestEnv::new();
+    assert_eq!(initialize(&env, &live).0, Some(0));
+    // The lock every initialization takes, and a fenced second name for
+    // the same file in the same directory.
+    let lock = env.instrukt_home().join("locks/agents.lock");
+    let fenced = env.instrukt_home().join("locks/fenced");
+    std::fs::hard_link(&lock, &fenced).unwrap();
+    env.fence(&fenced);
+    assert_eq!(initialize(&env, &live).0, Some(0));
+    assert!(env.refusals().is_empty());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_write_inside_a_fenced_location_spelled_otherwise_than_stored_is_refused() {
+    let live = Live::new();
+    let composed = live.path().join("caf\u{e9}");
+    std::fs::create_dir(&composed).unwrap();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path().join("cafe\u{301}"));
+    std::os::unix::fs::symlink(&composed, env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/caf\u{e9}/locks, under [LIVE]/cafe\u{301} which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
 fn a_test_whose_temporary_directory_lies_under_a_fenced_location_runs() {
     let live = Live::new();
     let env = live.session();
