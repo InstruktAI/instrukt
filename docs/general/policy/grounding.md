@@ -17,12 +17,18 @@ it to one of three things:
   observed. Named specifically enough that another party can re-inspect it.
 - **The human's intent** — the human's own words in this session, or, past
   that session, the intent artifact its steward authored from them (a todo's
-  `input`, an approved `prd`).
+  `input`, an approved `prd`). This resolves what behavioral outcome is wanted;
+  factual or quantitative claims cited inside it still resolve through
+  inspected evidence (`general/policy/human-contract`).
 - **An inference or assumption** — labelled, with the premise it rests on
   visible.
 
 There is no fourth option. A claim that resolves to none of these is not
-withheld pending research; it is stated as the assumption it is.
+withheld pending research; it is stated as the assumption it is — except that a
+checkable factual or quantitative claim carried in `input` or `prd`, or
+entering a durable requirement or criterion, is inspected against current
+substrate first, and only what cannot be inspected now remains a labelled
+assumption.
 
 ### Provenance is not intent
 

@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Hunt for code that violates documented design principles. Surface structural issues that a surface review would miss.'
+description: 'Hunt for code, preparation artifacts, or pending contracts that violate documented design principles. Surface structural issues that a surface review would miss.'
 visibility: 'public'
 ---
 
@@ -8,20 +8,20 @@ visibility: 'public'
 
 ## Goal
 
-Hunt for code that violates documented design principles. Surface structural issues — silent degradation, coupling violations, responsibility sprawl — that a surface-level review would miss.
+Hunt for code, preparation artifacts, or pending contracts that violate documented design principles. Surface structural issues — silent degradation, coupling violations, responsibility sprawl — that a surface-level review would miss.
 
 ## Preconditions
 
-- Changed files are available (diff or worktree).
+- The reviewed target is available (changed files in a diff or worktree, or preparation artifacts and pending contracts).
 - The reviewer has loaded `sdlc/principle/design-fundamentals` for anti-pattern vocabulary.
 
 ## Steps
 
-Work through each category below against the changed code. For each violation found, report: location (file:line), severity, principle violated, and what the code should do instead.
+Work through each applicable category below against the reviewed target. For each violation found, report: location (file:line or artifact section), severity, principle violated, and what the target should do instead.
 
 ### 1. Fallback & Silent Degradation (Critical focus)
 
-This is the highest-priority category. Unjustified fallbacks are **Critical** findings.
+This is the highest-priority category. Unjustified fallbacks are **Critical** findings, including when named in an upstream work artifact (`general/policy/conflict-resolution`).
 
 **Patterns to detect:**
 
@@ -31,9 +31,9 @@ This is the highest-priority category. Unjustified fallbacks are **Critical** fi
 - **Log-and-continue** — Catching an error, logging it, and continuing execution without surfacing the failure to the caller.
 - **Silent default substitution** — A function receives `None` or missing data for a required parameter and substitutes a default instead of raising.
 
-**Severity:** Critical unless the code has an explicit comment explaining why UX requires the fallback.
+**Severity:** Critical unless justified by the standard below — documented in a code comment at the fallback site, or in the design during preparation.
 
-**Justification standard:** "The user experience literally dies without this fallback" — convenience, robustness-theater, and "just in case" are not justification. A code comment must explain the specific UX failure that the fallback prevents.
+**Justification standard:** "The user experience literally dies without this fallback" — convenience, robustness-theater, and "just in case" are not justification. A code comment (or the design during preparation) must explain the specific UX failure that the fallback prevents.
 
 **Aliases:** A fallback rarely names itself. "Hardening", "graceful degradation", "defensive default", "safety net", "best-effort recovery", and "tolerant parsing" are the usual labels — judge the mechanism (a substitute path taken when the primary fails or input is bad), not the label. A renamed fallback is still a fallback and carries the same severity.
 

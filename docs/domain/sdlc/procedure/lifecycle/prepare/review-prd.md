@@ -20,9 +20,11 @@ parameters:
 ## Goal
 
 Decide whether a drafted `prd` is a trustworthy product contract ready for
-the configured approval gate, and whether any recorded approval carries to it. Review the authority and reasoning that survived into the PRD,
-then independently probe for supported outcomes the draft may have omitted. Do
-not review architecture, implementation mechanism, or concrete proof.
+the configured approval gate, and whether any recorded approval carries to it.
+Review the authority, feasibility premises, standing-principle compliance, and
+reasoning that survived into the PRD, then independently probe for supported
+outcomes the draft may have omitted. Leave architectural decomposition,
+implementation mechanism, and concrete proof to downstream phases.
 
 ## Preconditions
 
@@ -50,7 +52,13 @@ Apply these configured action values to the identified assignment and session.
    interpretation returns to the human. If the originating conversation is permanently
    unavailable, return the intent to the human in the responsible thread; a new `input`
    version from that conversation becomes the checkable basis.
-   An author never checks their own input. Take the checked `input` as the authorized basis.
+   An author never checks their own input. Take the checked `input` as the
+   behavioral scope basis — fidelity to the conversation establishes neither
+   the soundness of factual or quantitative claims nor exemption from standing
+   principles (`general/policy/human-contract`, `general/policy/grounding`,
+   `general/policy/conflict-resolution`). Verify checkable premises against
+   substrate and reject self-inflicted failure modes left under Risks
+   (`sdlc/policy/preparation-artifact-quality`).
    Distinguish observable current behavior, credible intended state,
    implementation detail, prior art, and assumptions.
 2. Re-run the shaping questions from the preparation-artifact-quality policy
