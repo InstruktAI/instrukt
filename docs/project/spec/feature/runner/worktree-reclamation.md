@@ -48,12 +48,12 @@ same branch, with the same status git reported before.
 
 The runner reclaims the regenerable output of the idle todo worktrees on the
 computer it runs on, for each project whose work tracking is admitted there.
-Whether a todo's worktree is idle is workflow's answer, its standing: idle
-when the todo's candidate waits for integration, the todo is parked or held,
-or its work has gone back to preparation; delivered; or under way
-(`project/instrukt/spec/domain/workflow`). The runner derives none of it. A
-worktree whose todo is under way — between a build and its review, between a
-review and its fix — keeps its output for the role that works there next.
+A worktree is idle while its todo's candidate waits for integration, the todo
+is parked or held, or its work has gone back to preparation. Workflow answers
+each todo worktree's standing — delivered, idle or under way — and the runner
+derives none of it (`project/instrukt/spec/domain/workflow`). A worktree whose
+todo is under way — between a build and its review, between a review and its
+fix — keeps its output for the role that works there next.
 
 The runner reclaims nothing in a worktree where a role attempt is open
 (`general/principle/trust-and-guardrails`). It moves the output out of the
@@ -75,7 +75,8 @@ and work branch on each computer that holds them
 `project/instrukt/spec/feature/workflow/delivery-cycle` requires of a
 delivered todo. The worktree's regenerable output leaves with it. A worktree
 that holds uncommitted changes, is locked or has a role attempt open stays,
-and its cleanup stays owed until a later invocation finds it releasable.
+and its cleanup stays owed until a later invocation finds it releasable. A
+delivered worktree that stays is reclaimed as an idle one.
 
 A withdrawn todo's worktree is released by the withdrawal itself
 (`project/instrukt/spec/feature/work/todos`).
@@ -95,9 +96,9 @@ in the assigned authoring workspace
 the worktree's own state admits one writer: the session whose open role
 attempt holds the worktree, or, while no role attempt is open there, the
 session holding the todo's execution claim. Any other caller the assignment
-binds is refused, and the refusal names the open attempt whose release frees
-the worktree. A caller no todo assignment binds to a worktree is refused, and
-the refusal names the assignment that would bind it.
+binds is refused, and the refusal names who holds the worktree: the open
+attempt, or the claim's session. A caller no todo assignment binds to a
+worktree is refused, and the refusal names the assignment that would bind it.
 
 ### Mechanical work
 
