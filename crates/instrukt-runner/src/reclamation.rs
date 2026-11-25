@@ -11,9 +11,12 @@
 //!    directories only;
 //! 2. git, in that worktree, ignores it, tracks nothing beneath it and
 //!    reports nothing beneath it untracked;
-//! 3. inside work's section free of role attempts, each admitted path is
-//!    renamed, in one rename, to a staging location of its own beside the
-//!    worktree, under a fresh name;
+//! 3. inside work's section of the work record, in which no role attempt
+//!    opens on the worktree, each admitted path is renamed, in one rename,
+//!    to a staging location of its own beside the worktree, under a fresh
+//!    name. The runner is admitted there only while no role attempt is
+//!    open; a session only while no other session holds the worktree, its
+//!    own open attempt included;
 //! 4. outside the section, holding nothing, the staging locations are
 //!    deleted.
 //!
@@ -420,9 +423,11 @@ fn kept_key(worktree: &str) -> String {
     format!("{worktree} (kept paths)")
 }
 
-/// The work an invocation leaves for after its wake, which nothing waits
-/// on: deleting the staging locations beside the todo worktrees of the
-/// considered projects, and asking work to release each delivered todo's
+/// The work an invocation leaves for after its wake, run holding no lock
+/// of the runner's, so no pickup, event reaction or command waits on it: a
+/// one-shot tick runs it before it returns, the run loop on a thread of its
+/// own. It deletes the staging locations beside the todo worktrees of the
+/// considered projects and asks work to release each delivered todo's
 /// worktree and branches.
 pub struct Deferred {
     projects: Vec<ProjectRef>,

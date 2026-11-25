@@ -200,8 +200,8 @@ fn parse_worktrees(listing: &str) -> Vec<ListedWorktree> {
         .collect()
 }
 
-/// The todo's work branch: the one its record names, else the one its
-/// latest work-lane attempt was given.
+/// The todo's work branch: the one its record names, else the branch of
+/// its latest work- or preparation-lane attempt that was given one.
 fn work_branch(evidence: &TodoEvidence) -> Option<&str> {
     evidence.branch.as_deref().or_else(|| {
         evidence

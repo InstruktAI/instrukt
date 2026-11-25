@@ -264,8 +264,9 @@ pub fn tick(
     let mut staged = crate::reclamation::Reported::default();
     crate::reclamation::stage_idle(&considered, cx.wiring, &mut staged);
     let deferred = crate::reclamation::Deferred::prepare(&considered, cx.wiring);
-    // What reclamation deletes and releases waits for nothing and nothing
-    // waits for it: it runs once the runner lock is released.
+    // Deleting staged output and releasing delivered worktrees runs once the
+    // runner lock is released, so the next invocation and every command are
+    // not held up by it; this tick itself returns only once it is done.
     drop(runner);
     if let Some(deferred) = deferred {
         deferred.run(&mut crate::reclamation::Reported::default());

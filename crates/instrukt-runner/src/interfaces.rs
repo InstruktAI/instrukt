@@ -575,8 +575,9 @@ pub trait RetentionPurge: Send + Sync {
 // Worktree reclamation
 // ---------------------------------------------------------------------
 
-/// Who asks for a section of the work record free of role attempts on a
-/// todo's worktree, and what admits it there (`worktree-reclamation`).
+/// Who asks for a section of the work record in which no role attempt
+/// opens on a todo's worktree, and what admits it there
+/// (`worktree-reclamation`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SectionAdmission {
     /// The runner: admitted while no role attempt is open on the worktree
@@ -665,8 +666,8 @@ pub enum DeliveredRelease {
 }
 
 /// Work's part in worktree reclamation (`work` domain, "Work → runner
-/// (worktree reclamation)"): a section free of role attempts, and the
-/// release of a delivered todo's worktree and work branch.
+/// (worktree reclamation)"): a section in which no role attempt opens, and
+/// the release of a delivered todo's worktree and work branch.
 pub trait WorktreeReclamation: Send + Sync {
     /// Runs `action` inside one write transaction of the work record, under
     /// the writer lock, in which no role attempt opens on `todo`'s

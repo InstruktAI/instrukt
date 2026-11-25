@@ -1,10 +1,13 @@
 //! Work's part in worktree reclamation (`project/instrukt/spec/domain/work`,
 //! "Work → runner (worktree reclamation)").
 //!
-//! A section of the work record in which no role attempt is open on a
-//! todo's worktree and none opens: opening an attempt is a write under the
-//! same writer lock, so inside the section none can. The guard reads the
-//! record, never the caller's rank (`general/principle/trust-and-guardrails`).
+//! A section of the work record in which no role attempt opens on a todo's
+//! worktree: opening an attempt is a write under the same writer lock, so
+//! inside the section none can. The runner is admitted to it only while no
+//! role attempt is open; a session the assignment binds, while no other
+//! session holds the worktree, so its own open attempt does not refuse it.
+//! The guard reads the record, never the caller's rank
+//! (`general/principle/trust-and-guardrails`).
 //!
 //! The release of a delivered todo's worktree and work branch
 //! (`project/instrukt/spec/feature/work/todos`, "Parking, withdrawal and
@@ -435,8 +438,8 @@ fn worktree_command(verb: &str, path: &Path, to: Option<&Path>) -> Vec<std::ffi:
     args
 }
 
-/// The todo's work branch: the one its record names, else the one its
-/// latest work-lane attempt was given.
+/// The todo's work branch: the one its record names, else the branch of
+/// its latest work- or preparation-lane attempt that was given one.
 pub(super) fn work_branch(record: &TodoRecord) -> Option<String> {
     record.branch.clone().or_else(|| {
         record
