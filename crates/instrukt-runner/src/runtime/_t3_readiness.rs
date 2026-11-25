@@ -539,19 +539,24 @@ impl std::io::Write for FrameStream {
 
 use super::DispatchError::{self, AfterFrame, BeforeFrame};
 
+/// One `orchestration.dispatchCommand` of `payload`, over a token labelled
+/// `label` issued and revoked around it; T3's refusal is attributed to
+/// `operation`.
 pub(super) fn dispatch(
     home: &Home,
     env: &Env,
+    label: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<(), DispatchError> {
     let endpoint = server_endpoint(home, env).map_err(BeforeFrame)?;
-    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")
-        .map_err(BeforeFrame)?;
+    let mut token = Token::issue_scoped("orchestration:operate", label).map_err(BeforeFrame)?;
     let outcome = rpc(
         &endpoint,
         &token.secret,
         "orchestration.dispatchCommand",
+        operation,
         payload,
         before_write,
     )
@@ -568,10 +573,13 @@ pub(super) fn dispatch(
     outcome
 }
 
+/// One RPC `tag` with `payload`; a refusal of a command or launch carries
+/// T3's detail attributed to `operation`.
 fn rpc(
     endpoint: &url::Url,
     token: &str,
     tag: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<serde_json::Value, DispatchError> {
@@ -683,12 +691,7 @@ fn rpc(
                     .unwrap_or("T3 refused the WebSocket dispatch");
                 return Err(AfterFrame(SessionsError::Failed {
                     runtime: "t3".into(),
-                    operation: match tag {
-                        "orchestration.launchThread" => "launch",
-                        "orchestration.getThreadProjection" => "thread projection",
-                        _ => "send",
-                    }
-                    .into(),
+                    operation: operation.into(),
                     detail: detail.into(),
                 }));
             }
@@ -701,9 +704,14 @@ fn rpc(
 }
 
 fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
-    let value = rpc(endpoint, token, "server.getConfig", json!({}), &mut || {
-        Ok(())
-    })
+    let value = rpc(
+        endpoint,
+        token,
+        "server.getConfig",
+        "readiness",
+        json!({}),
+        &mut || Ok(()),
+    )
     .map_err(DispatchError::into_inner)?;
     let snapshot: Snapshot = serde_json::from_value(value)
         .map_err(|_| refused("unrecognized provider snapshot shape"))?;
@@ -1110,6 +1118,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "orchestration.getThreadProjection",
+                    "thread projection",
                     json!({"threadId": session.id}),
                     &mut || Ok(()),
                 )
@@ -1144,6 +1153,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "server.getConfig",
+                    "readiness",
                     json!({}),
                     &mut || Ok(()),
                 )
@@ -1246,6 +1256,7 @@ pub(super) fn launch(
         &endpoint,
         &token.secret,
         "orchestration.launchThread",
+        "launch",
         payload,
         &mut || Ok(()),
     )

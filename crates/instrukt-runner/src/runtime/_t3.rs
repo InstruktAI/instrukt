@@ -345,7 +345,93 @@ impl RuntimeAdapter for T3 {
                 | Capability::InputConsumption
                 | Capability::AssignmentEvidence
                 | Capability::ConfiguredRuntimes
+                | Capability::Archive
         )
+    }
+    fn finished_threads(
+        &self,
+        checkout: &Path,
+    ) -> Result<Vec<super::FinishedThread>, SessionsError> {
+        let out = self.call(
+            &[
+                "thread",
+                "list",
+                "--project",
+                &checkout.to_string_lossy(),
+                "--json",
+            ],
+            None,
+        )?;
+        let listed: Vec<serde_json::Value> =
+            serde_json::from_str(&out).map_err(|e| failure("list", e.to_string()))?;
+        let finished: Vec<ListedFinished> =
+            listed.iter().filter_map(ListedFinished::read).collect();
+        let ids: Vec<&str> = finished.iter().map(|thread| thread.id.as_str()).collect();
+        let rows =
+            super::_t3_conversations::retention_rows(&self.operation_home()?, &self.env, &ids)
+                .map_err(|error| failure("finished threads", error.to_string()))?;
+        finished
+            .into_iter()
+            .map(|thread| {
+                let row = rows.get(&thread.id);
+                thread.observed(row)
+            })
+            .collect()
+    }
+    fn archive(
+        &self,
+        observed: &super::FinishedThread,
+        now: jiff::Timestamp,
+    ) -> Result<super::ArchiveOutcome, SessionsError> {
+        use super::ArchiveOutcome;
+        let session = &observed.session;
+        if session.runtime.as_str() != "t3" {
+            return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
+        }
+        let Some(latest_activity) = observed.latest_activity else {
+            return Ok(ArchiveOutcome::Changed);
+        };
+        let home = self.operation_home()?;
+        let thread = session.id.as_str();
+        match super::_t3_conversations::archive_holds(
+            &home,
+            &self.env,
+            thread,
+            latest_activity,
+            now,
+        ) {
+            Ok(true) => {}
+            Ok(false) => return Ok(ArchiveOutcome::Changed),
+            Err(error) => {
+                tracing::debug!(event = "thread_archive_reread_failed", session = %session, error = %error);
+                return Ok(ArchiveOutcome::Changed);
+            }
+        }
+        let command_id = format!(
+            "instrukt:retention:{}",
+            instrukt_core::machine::random_hex(16)
+                .map_err(|error| failure("archive", error.to_string()))?
+        );
+        let dispatched = super::_t3_readiness::dispatch(
+            &home,
+            &self.env,
+            "instrukt-retention",
+            "archive",
+            serde_json::json!({
+                "type": "thread.archive",
+                "commandId": command_id,
+                "threadId": thread,
+            }),
+            &mut || Ok(()),
+        );
+        match dispatched {
+            Ok(()) => Ok(ArchiveOutcome::Archived),
+            // T3 refuses to archive an archived thread; its row shows which.
+            Err(error) => match super::_t3_conversations::archived(&home, &self.env, thread) {
+                Ok(true) => Ok(ArchiveOutcome::AlreadyArchived),
+                _ => Err(error.into_inner()),
+            },
+        }
     }
     fn observe_send(
         &self,
@@ -506,6 +592,8 @@ impl RuntimeAdapter for T3 {
         super::_t3_readiness::dispatch(
             &home,
             &self.env,
+            "instrukt-conversation-send",
+            "send",
             serde_json::json!({
                 "type": "message.dispatch",
                 "commandId": command_id,
@@ -813,6 +901,74 @@ impl NativeThread {
         })
     }
 }
+/// A thread `t3 thread list --json` reports settled with a readable
+/// settling time, read field by field so that one malformed field leaves
+/// only that thread not quiet or its activity unknown.
+struct ListedFinished {
+    id: String,
+    settled_at: jiff::Timestamp,
+    updated_at: Option<jiff::Timestamp>,
+    quiet: bool,
+}
+impl ListedFinished {
+    fn read(item: &serde_json::Value) -> Option<Self> {
+        let id = item["threadId"].as_str().filter(|id| !id.is_empty())?;
+        if item["settled"].as_bool() != Some(true) {
+            return None;
+        }
+        let instant = |value: &serde_json::Value| {
+            value
+                .as_str()
+                .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+        };
+        let settled_at = instant(&item["settledAt"])?;
+        let quiet = item["status"]
+            .as_str()
+            .and_then(ThreadStatus::parse)
+            .is_some_and(|status| {
+                matches!(
+                    status.state(),
+                    SessionState::InputReady | SessionState::EndedFailed
+                )
+            })
+            && item["snoozed"].as_bool() == Some(false)
+            // Releases that predate the field omit it, and report none.
+            && item.get("pendingBackgroundTasks").is_none_or(|tasks| {
+                tasks.as_array().is_some_and(Vec::is_empty)
+            });
+        Some(Self {
+            id: id.to_owned(),
+            settled_at,
+            updated_at: instant(&item["updatedAt"]),
+            quiet,
+        })
+    }
+    /// The observation, with the projection row `row` of the thread: a
+    /// thread without one is pinned, with unknown latest activity.
+    fn observed(
+        self,
+        row: Option<&super::_t3_conversations::RetentionRow>,
+    ) -> Result<super::FinishedThread, SessionsError> {
+        let opened_at = row.map_or(Err(()), |row| row.opened_at);
+        let latest_activity = match (self.updated_at, opened_at) {
+            (Some(updated_at), Ok(opened_at)) => Some(
+                updated_at
+                    .max(self.settled_at)
+                    .max(opened_at.unwrap_or(self.settled_at)),
+            ),
+            _ => None,
+        };
+        Ok(super::FinishedThread {
+            session: SessionRef::parse(&format!("t3:{}", self.id))
+                .map_err(|e| failure("decode", e.to_string()))?,
+            finished_at: Some(self.settled_at),
+            latest_activity,
+            quiet: self.quiet,
+            pinned: row.is_none_or(|row| row.pinned),
+        })
+    }
+}
+
 #[derive(Deserialize)]
 struct Shown {
     thread: NativeThread,
