@@ -22,6 +22,8 @@ use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
 pub use _moment::Moment;
+#[cfg(test)]
+pub(crate) use _publication::BODY_LIMIT;
 pub use _publication::Published;
 pub(crate) use _publication::shortened;
 pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};

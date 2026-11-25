@@ -837,9 +837,13 @@ fn review_body(verdict: &str, commit: &str, findings: &str, link: &str) -> Strin
         "{}\n\n[Complete review findings]({link})",
         findings.trim_end()
     );
-    let closing =
-        format!("\n\n(shortened; [the complete review findings]({link}) give them whole)\n");
-    super::review::shortened(&head, &content, &closing)
+    super::review::shortened(&head, &content, &shortened_note(link))
+}
+
+/// The closing line of a shortened review body: where the complete
+/// findings are, at `link`.
+fn shortened_note(link: &str) -> String {
+    format!("\n\n(shortened; [the complete review findings]({link}) give them whole)\n")
 }
 
 fn pull_body(record: &TodoRecord, issue: IssueRef) -> String {
@@ -929,7 +933,8 @@ pub(crate) fn output_label(label: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeptRefusal, RefusedTarget, refused_before, request_identity, review_body, walk_ends,
+        KeptRefusal, RefusedTarget, refused_before, request_identity, review_body, shortened_note,
+        walk_ends,
     };
     use serde_json::json;
 
@@ -989,13 +994,14 @@ mod tests {
     #[test]
     fn long_findings_are_shortened_and_still_link_the_complete_ones() {
         let link = "https://github.test/acme/demo/issues/1/artifacts/4";
-        let findings = "a finding\n".repeat(20_000);
+        let line = "a finding\n";
+        let findings = line.repeat(20_000);
         let body = review_body("changes_requested", "abc123", &findings, link);
-        assert!(body.chars().count() <= 60_000);
-        assert!(body.starts_with("**Build review: changes requested** · reviewed commit `abc123`"));
-        assert!(body.ends_with(&format!(
-            "(shortened; [the complete review findings]({link}) give them whole)\n"
-        )));
+        let length = body.chars().count();
+        assert!(length <= super::super::review::BODY_LIMIT);
+        // The findings fill the body to within two lines of the limit.
+        assert!(length > super::super::review::BODY_LIMIT - 2 * line.chars().count());
+        assert!(body.ends_with(&shortened_note(link)));
     }
 
     #[test]

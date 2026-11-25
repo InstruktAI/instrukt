@@ -15,7 +15,7 @@ pub(crate) const STATUS_CONTEXT: &str = "instrukt/review";
 const BODY_MARK: &str = "instrukt/review";
 
 /// The longest review body this computer writes.
-const BODY_LIMIT: usize = 60_000;
+pub(crate) const BODY_LIMIT: usize = 60_000;
 
 /// A verdict as GitHub carries it: its state, name and moment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,8 +213,9 @@ mod tests {
     }
 
     #[test]
-    fn a_long_report_is_shortened_within_the_body_limit() {
-        let report = "a line of findings\n".repeat(10_000);
+    fn a_long_report_is_shortened_within_the_body_limit_and_keeps_what_fits() {
+        let line = "a line of findings\n";
+        let report = line.repeat(10_000);
         let commit = CommitSha::parse(&"a".repeat(40)).unwrap();
         let body = body(
             &ContentDigest::of(&report),
@@ -223,6 +224,9 @@ mod tests {
             &commit,
         );
         assert!(body.chars().count() <= BODY_LIMIT);
+        // Whole lines are kept until the next would not fit: the body falls
+        // short of the limit by less than two lines, never by the report.
+        assert!(body.chars().count() > BODY_LIMIT - 2 * line.chars().count());
     }
 
     #[test]
