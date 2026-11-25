@@ -89,16 +89,11 @@ actually did the work recorded there.
    playbook in `sdlc/procedure/lifecycle/overview`.
 3. Reserve every new round through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
    preserving its rendered brief, role, attempt, semantic key, display title,
-   captured shared head, and any reported `prior_session`. Then apply
-   **Continuing vs. Starting Fresh** below under
-   `general/procedure/ai-to-ai-operations`: either continue a retained worker by
-   recording `instrukt todo bind` against `prior_session` before sending the new
-   brief through the configured child-messaging instruction, or start fresh
-   through the configured runtime delegation instruction and immediately record
-   `instrukt todo bind` with the new native child id and matching shared
-   workspace evidence. Continue an already-active attempt with native child
-   messaging. Yield while valid work continues; read the native result and
-   current factual ledger before choosing the next move.
+   captured shared head, and any reported `prior_session`. Then route the round
+   under **Continuing vs. Starting Fresh** below through the configured runtime
+   operations in `general/procedure/ai-to-ai-operations`. Yield while valid work
+   continues; read the native result and current factual ledger before choosing
+   the next move.
 4. Assess current session and work evidence. A step is complete only when the
    record carries its required artifact and stamp with current target bindings.
    A reply or ended run alone supplies neither.
@@ -115,35 +110,38 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 <!-- planned:reuse-retained-worker-sessions -->
 #### Continuing vs. Starting Fresh
 
-- **Always reserve first:** Every new round starts with `instrukt todo attempt`,
-  which reports any retained `prior_session` and the resolved model selection
-  for that role so continuation never bypasses attempt reservation or selection
-  checks.
+- **Reserve every new round first:** Start every new round with
+  `instrukt todo attempt`, which reports any retained `prior_session` and the
+  resolved model selection for that role.
 - **Continue (`attempt` → `bind` → configured child-messaging instruction):**
-  Use when `prior_session` is present, reachable on the same runtime, and
-  matches the resolved selection:
-  - **Producers** (`intaker`, `architect`, `planner`, `builder`, `fixer`,
-    `deferrer`, `finalizer`) on follow-up rounds (such as fixing review findings
-    or revising an artifact they authored), so the worker keeps its accumulated
-    codebase and reasoning context instead of re-reading from cold start.
-  - **Reviewers** (`prd-reviewer`, `architecture-reviewer`, `plan-reviewer`,
-    `build-reviewer`) on finding-closure re-checks when the configured runtime
-    allows continuing a reviewer session and the target did not undergo a
-    substantive scope or design rewrite, so the reviewer verifies closure
-    against its own prior context.
-  - Record `instrukt todo bind` against `prior_session` **before** sending the
-    new brief so write guards recognize the newly active attempt immediately on
-    wake and never race against the prior completed attempt.
-- **Start fresh (`attempt` → configured delegation instruction → `bind`):** Use
-  on attempt 1 (no `prior_session`), when `prior_session` is gone or unusable,
-  when the resolved selection changed (model or provider fallback), when a
-  reviewer faces a substantive scope or design rewrite or a deadlocked loop
-  needing fresh eyes, or when the configured runtime requires a fresh delegation
-  for that role.
+  Record `instrukt todo bind` for the new attempt against `prior_session` and
+  the recorded shared placement **before** sending the new brief through the
+  configured child-messaging instruction. Continuation applies only when
+  `prior_session` is present, reachable on the same runtime, matches the
+  resolved selection, and can be continued by the current orchestrator with
+  native result delivery back to this orchestrator (not bound to a former claim
+  holder), and the round is one of:
+  - A follow-up round of a producer (`intaker`, `architect`, `planner`,
+    `builder`, `fixer`, `deferrer`, `finalizer`).
+  - A finding-closure re-check of a reviewer (`prd-reviewer`,
+    `architecture-reviewer`, `plan-reviewer`, `build-reviewer`) when the
+    configured runtime permits continuing a reviewer session, **all** target
+    changes address only that reviewer's findings (no unrelated changes,
+    substantive scope rewrite, or design rewrite), and the review loop is not
+    deadlocked.
+- **Start fresh (`attempt` → configured delegation instruction → `bind`):**
+  Every other admitted new round starts fresh — delegate through the configured
+  delegation instruction and immediately record `instrukt todo bind` with the
+  new native child id and recorded shared placement. This is the default for
+  attempt 1, roles outside the continuation lists above (such as `diagnoser` or
+  `drift-analyzer`), a confirmed unusable or former-orchestrator `prior_session`
+  (chosen before binding), a changed selection, any mixed or substantive
+  reviewer target change, a deadlocked review loop, or a runtime requiring fresh
+  delegation for that role.
 - **Mid-attempt recovery:** While an attempt is still active (such as a missing
   stamp or bounded recovery on a stopped turn), continue directly on that active
   attempt through the configured child-messaging instruction without reserving a
-  new attempt, preserving the in-flight reservation.
+  new attempt.
 <!-- /planned:reuse-retained-worker-sessions -->
 
 ### Terminal Child Cleanup

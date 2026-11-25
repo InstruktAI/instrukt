@@ -46,20 +46,17 @@ lifecycle contract.
 2. For each required runtime action, use its configured value below. The selected runtime entry
    supplies a native instruction or an instrukt route for a missing native
    counterpart. Write the brief as the reality wanted from its role. For a todo worker,
-   execute the workflow's `instrukt todo attempt` action first, preserving its rendered
-   brief, role, attempt, semantic key, display title, captured shared head, and any
-   reported `prior_session`. Choose between starting fresh and continuing a retained child
-   under `general/procedure/orchestration`: to start fresh, delegate using the selected
-   runtime instruction below and then record `instrukt todo bind` with the new native
-   child id and matching shared workspace evidence before admitting work; to continue a
-   retained child for a new attempt, record `instrukt todo bind` against `prior_session`
-   before sending the new brief through the configured child-messaging instruction in
-   Step 3 so write guards admit the new attempt immediately on wake. Retain an interrupted
-   reservation and recover its existing native task before retrying. Repository todo
-   children (preparation writers, builders, reviewers, deferrer, finalizer) all inherit
-   `todo-orchestrator`'s single `<slug>/work` worktree and branch with shared isolation
-   (`task-preparer` on `kind: task` runs as a worktree-less child attempt). Bind the
-   recorded placement, not an incidental shell cwd.
+   reserve the round with `instrukt todo attempt` (preserving its rendered brief,
+   role, attempt, semantic key, display title, captured shared head, and any
+   reported `prior_session`) and route continue-versus-fresh rounds under
+   `general/procedure/orchestration`. When starting fresh, delegate using the
+   selected runtime instruction below and bind the recorded placement, not an
+   incidental shell cwd. Retain an interrupted reservation and recover its
+   existing native task before retrying. Repository todo children (preparation
+   writers, builders, reviewers, deferrer, finalizer) all inherit
+   `todo-orchestrator`'s single `<slug>/work` worktree and branch with shared
+   isolation (`task-preparer` on `kind: task` runs as a worktree-less child
+   attempt).
 <!-- /planned-change:reuse-retained-worker-sessions -->
 
    <!-- @config: runtime.dispatch -->
@@ -72,10 +69,10 @@ lifecycle contract.
 3. Continue your identified child using its retained native identity. Findings,
    reviewer follow-ups and recovery remain within that role's assignment:
 <!-- change:reuse-retained-worker-sessions -->
-3. Continue your identified child using its retained native identity — either
-   for mid-attempt follow-ups and recovery on the active attempt, or for a newly
-   reserved attempt after `instrukt todo bind` binds that attempt to the
-   retained child id (`general/procedure/orchestration`):
+3. Message your identified child using its retained native identity — for
+   mid-attempt follow-ups and recovery on an active attempt, or to deliver a
+   newly reserved continuation round already bound to that child id
+   (`general/procedure/orchestration`):
 <!-- /planned-change:reuse-retained-worker-sessions -->
 
    <!-- @config: runtime.message_child -->

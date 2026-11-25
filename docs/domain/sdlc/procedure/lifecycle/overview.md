@@ -265,22 +265,20 @@ apply to a checkout still in active build or awaiting review before handoff.
    `runtime.inspect_thread`) so the shared-workspace admission guarantee
    remains unbroken.
 <!-- change:reuse-retained-worker-sessions -->
-3. **Select and dispatch or continue the next primitive.** Every admitted role
-   that shares `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
+3. **Select and route the next primitive.** Every admitted role that shares
+   `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
-   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) starts by
-   reserving each attempt via
-   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`.
-   Apply the continue-versus-fresh rule (`general/procedure/orchestration`):
-   either continue a retained worker by binding the new attempt to
-   `prior_session` (`instrukt todo bind`) before sending its brief via
-   `runtime.message_child`, or start fresh via `runtime.dispatch` with shared
-   isolation in `<slug>/work` and immediately bind via `instrukt todo bind`.
-   Only one workspace attempt may be active at a time; completion stamps release
-   it atomically. Live verification (`verifier`) is not a shared `<slug>/work`
-   `runtime.dispatch` child; it runs per Step 4b in a separate one-off worktree
-   session (`runtime.start_thread` / `runtime.inspect_thread`) so the
-   shared-workspace admission guarantee remains unbroken.
+   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) reserves
+   each round with
+   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`
+   and either continues a retained worker (`runtime.message_child`) or starts a
+   fresh shared-isolation child in `<slug>/work` (`runtime.dispatch`) under
+   `general/procedure/orchestration`. Only one workspace attempt may be active
+   at a time; completion stamps release it atomically. Live verification
+   (`verifier`) is not a shared `<slug>/work` `runtime.dispatch` child; it runs
+   per Step 4b in a separate one-off worktree session (`runtime.start_thread` /
+   `runtime.inspect_thread`) so the shared-workspace admission guarantee remains
+   unbroken.
 <!-- /planned-change:reuse-retained-worker-sessions -->
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
