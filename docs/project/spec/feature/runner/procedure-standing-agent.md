@@ -378,12 +378,21 @@ Then that session retains its attended initialization for event delivery
 
 ### UC-PSA27: Keep unattended standing agents unsettled under automation
 
+<!-- planned-change:standing-sdlc-coordinator -->
 ```gherkin
 Given an unattended standing T3 agent finishes its current work
 When automation records that outcome
 Then its standing thread remains unsettled in the sidebar
 And a human may settle it without preventing later messages from waking it
 ```
+<!-- change:standing-sdlc-coordinator -->
+```gherkin
+Given an unattended standing T3 agent whose procedure names no rest condition finishes its current work
+When automation records that outcome
+Then its standing thread remains unsettled in the sidebar
+And a human may settle it without preventing later messages from waking it
+```
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ### UC-PSA29: Refuse an assignment with an unusable effective role
 

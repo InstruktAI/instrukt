@@ -49,10 +49,10 @@ refused with its source intact, naming both, until one is removed.
 <!-- planned:standing-sdlc-coordinator -->
 The standing project coordinator's role is `sdlc-coordinator`. A configured
 `roles.coordinator` entry converts to `roles.sdlc-coordinator` on the same
-owned migration path, with every field as it was, and nothing else changes. A
-file that holds both entries is refused with its source intact, naming both,
-until one is removed. A file that configures neither takes the shipped
-`sdlc-coordinator` entry.
+owned migration path. What the operator changed in the entry carries over; a
+field that still holds the shipped `coordinator` value takes the shipped
+`sdlc-coordinator` value. Nothing else changes. A file that holds both entries
+is refused with its source intact, naming both, until one is removed.
 <!-- /planned:standing-sdlc-coordinator -->
 
 Every effective entry has a class and grants; model inputs inherit from
@@ -211,10 +211,9 @@ model/provider choice.
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
 the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-They share the model `order`/`tier` defaults of agent-selection, except
-`technical-coordinator` and `sdlc-coordinator`, which ship
-`order: [antigravity, claude]` at tier `premium`; the table's App column names
-the identity reference, not another model/provider choice.
+Each role's model `order` and `tier` are the shipped data's, under
+`project/instrukt/spec/feature/configuration/agent-selection`; the table's App
+column names the identity reference, not another model/provider choice.
 
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
@@ -235,7 +234,10 @@ the identity reference, not another model/provider choice.
 `own` scope is the project home of its standing assignment: `record` reaches
 that project's todos and `orchestrate` its sessions, and `report` files a
 defect of the system it works through into the project that owns the defect,
-as it does for a company's agent.
+as it does for a company's agent. Those grants are its fleet-attention grants:
+`read` reaches the events and records a condition names, `orchestrate` the
+sessions it concerns, and `record` the holds and dependencies that answer it
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 <!-- /planned-change:standing-sdlc-coordinator -->
 
 A subscribed procedure with no explicit `role` receives `event-handler` at

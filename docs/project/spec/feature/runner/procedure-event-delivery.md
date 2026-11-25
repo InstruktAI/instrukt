@@ -120,12 +120,23 @@ have no shared transaction: a crash after external acceptance but before local
 confirmation can repeat input. Retained identities suppress confirmed repeats;
 the procedure reconciles its effects idempotently.
 
+<!-- planned-change:standing-sdlc-coordinator -->
 Human settling of a standing T3 thread suspends neither its responsibility nor
 delivery: later input wakes the same thread. Automation keeps it unsettled.
 Continuation resolves retained older work first; actual runtime record removal
 requires reconciliation under the standing-agent contract. Failed observation
 or send never authorizes a replacement. Cleanup retains pending input or a
 visible terminal failure; it never silently discards the responsibility's work.
+<!-- change:standing-sdlc-coordinator -->
+Settling a standing T3 thread suspends neither its responsibility nor
+delivery: later input wakes the same thread. Outside a rest its procedure
+names, automation keeps it unsettled
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`).
+Continuation resolves retained older work first; actual runtime record removal
+requires reconciliation under the standing-agent contract. Failed observation
+or send never authorizes a replacement. Cleanup retains pending input or a
+visible terminal failure; it never silently discards the responsibility's work.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ### Initialization-fixed settings
 
@@ -324,6 +335,7 @@ Examples:
 
 ## Known caveats
 
+<!-- planned-change:standing-sdlc-coordinator -->
 - T3 today is queue-only: ASAP can wait until the next turn. Queue-consumption
   evidence must come from the adapter's runtime observation, and is distinct
   from a successful send. instrukt implements neither provider hooks nor turn
@@ -341,6 +353,27 @@ Examples:
 - Only-at-entry work may defer later events for its whole run. Standing T3
   threads remain unsettled under automation and reachable after human settling
   under procedure-standing-agent; no revival or attendance-visibility gate applies.
+<!-- change:standing-sdlc-coordinator -->
+- T3 today is queue-only: ASAP can wait until the next turn. Queue-consumption
+  evidence must come from the adapter's runtime observation, and is distinct
+  from a successful send. instrukt implements neither provider hooks nor turn
+  cancellation to strengthen that capability. Only observed native interruption
+  can trigger batch replay; a terminal transition missed between observations
+  is not reconstructed from a later run ID.
+- A claim change during an unconfirmed mixed handover blocks retries of that
+  fixed batch while its original waiting reservation remains, until the input
+  bound releases it as unconfirmed. Runtime evidence
+  can reconcile an already supplied message; an obsolete approval is never
+  re-sent merely to clear the slot. T3's CLI supplies no atomic queue withdrawal.
+- Handover establishes supplied context, not successful domain execution.
+  Lost acknowledgement can repeat data; identities promise neither exactly-once
+  effects nor replay beyond retention.
+- Only-at-entry work may defer later events for its whole run. Outside a rest
+  their procedure names, standing T3 threads remain unsettled under automation,
+  and a settled one stays reachable, under
+  `project/instrukt/spec/feature/runner/procedure-standing-agent`; no revival
+  or attendance-visibility gate applies.
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 ## See Also
 

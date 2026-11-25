@@ -20,28 +20,39 @@ watching its sessions.
 
 ### Attention conditions
 
-Each condition is established by the party whose contract already decides the
-underlying fact. Fleet attention publishes that fact and decides none of it.
+Fleet attention decides which facts about a project's active work are
+attention conditions, and the point at which a fact counts as one. Each
+underlying fact is established by its owner; fleet attention reads it through
+that owner's contract and decides none of it again
+(`sdlc/policy/domain-ownership`).
 
-| Condition | Established by |
+| Condition | Underlying facts and their owner |
 | --- | --- |
-| A todo's session stopped, failed or could not be started, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). |
-| A todo's session waits for input while the todo does not wait on a person. | The runner's observation of the session, with the person wait work decides (`project/instrukt/spec/feature/work/github-record`). |
+| The session holding a todo's execution claim stopped or failed, or no session could be started for the todo, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). |
+| The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides (`project/instrukt/spec/feature/work/github-record`). |
 | A dispatch hold is placed on a todo. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). |
-| A role's attempts on one todo fail repeatedly. | Work's attempt evidence (`project/instrukt/spec/feature/work/todos`). |
+| A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). |
+| A worker waits for input its orchestrator cannot supply. | That orchestrator, by raising it. |
 | Two live todos of the project collide. | The agent that meets the collision, by raising it. |
 | An agent meets a decision owned by a person and has no conversation with that person to ask it in. | That agent, by raising it. |
 
-The threshold at which an observed fact counts as a condition belongs to the
-contract that establishes it.
+The runner observes the session holding a todo's execution claim and no worker
+that session delegated: a worker's failure, wait for input or absence reaches
+its orchestrator through the runtime
+(`project/instrukt/spec/feature/runner/session-continuity`). A failure the
+orchestrator records is work's attempt evidence
+(`project/instrukt/spec/feature/work/todos`); a wait it cannot answer is the
+raised condition above.
 
 ### Raised conditions
 
 A condition that only an agent's judgment can establish is raised by that agent
-through instrukt, from any session working in the project. A raise names the
-todos it concerns and the obligation at stake. It is recorded with the session
-that raised it. Raising needs no knowledge of which session, if any, answers
-the project's fleet attention.
+through instrukt (`general/principle/intelligence-boundaries`). A raise names
+the todos it concerns and the obligation at stake. It is recorded with the
+session that raised it. Raising needs no knowledge of which session, if any,
+answers the project's fleet attention. Which roles hold the raise, and what a
+role without it does, follow
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 ### What an attention event carries
 
@@ -60,14 +71,16 @@ the project's fleet attention.
 ### What produces no attention event
 
 - A running session, a turn that ended with its evidence recorded, a todo
-  waiting at a configured approval gate, and an execution whose claim was
-  released or transferred.
+  waiting on a person's approval as work decides that wait
+  (`project/instrukt/spec/feature/work/github-record`), and an execution whose
+  claim was released or transferred.
 - A project with no active todo. Every condition concerns an active todo, so a
   quiet project starts no standing agent for fleet attention
   (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
 
 A standing agent answering fleet attention is woken by these events alone. It
-inspects no sessions or records on a timer to find out whether anything changed.
+inspects no sessions or records on a timer to find out whether anything changed
+(`general/principle/session-lifecycle`).
 
 ### Boundaries
 
@@ -75,8 +88,8 @@ inspects no sessions or records on a timer to find out whether anything changed.
   agent that answers it per project, follow
   `project/instrukt/spec/feature/runner/procedure-subscription-routing` and
   `project/instrukt/spec/feature/runner/procedure-standing-agent`.
-- What is an anomaly, and how the operator is told of one, is unchanged
-  (`project/instrukt/spec/feature/runner/anomaly-notification`).
+- What is an anomaly, and how the operator is told of one, belongs to
+  `project/instrukt/spec/feature/runner/anomaly-notification`.
 - Fleet attention follows the events switch and is independent of todo pickup
   mode (`project/instrukt/spec/feature/runner/work-dispatch`).
 
@@ -89,19 +102,8 @@ Given a developer's project has active todos and event responses switched on
 And a standing procedure of that project subscribes to fleet attention
 When one of those todos meets an attention condition
 Then that procedure's standing agent receives the condition once, with the todo and the session it concerns
-And a second condition in that project reaches the same agent
-But while every todo progresses, waits at an approval gate or has released its execution
+But while every todo progresses, waits on a person's approval or has released its execution
 Then no attention event is produced
-And a project with no active todo has no standing agent started for fleet attention
-```
-
-### UC-FA2: An agent hands a collision to the project's fleet attention
-
-```gherkin
-Given a developer's agent, working one todo, meets a collision with another live todo of that project
-When it raises the collision, naming both todos and the obligation at stake
-Then the project's fleet attention carries that collision once, attributed to the raising session
-And the raise succeeds whether or not a standing agent for that project exists yet
 ```
 
 ## Known caveats
