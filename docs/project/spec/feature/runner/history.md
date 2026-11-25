@@ -247,13 +247,13 @@ how far moving earlier history in has progressed.
 | Table | Holds | Nature and loss cost |
 | --- | --- | --- |
 | `history_conversations` | one row per retained conversation: its source and native identity, the computer it came from, its title, parent, archive aliases and limitations, and its document without the texts its messages hold | authoritative; a conversation no source still holds cannot be extracted again |
-| `history_messages` | one row per retained text of a conversation: its native id, role, text, creation and update times, the source's record of the message without that text, and its place in the conversation's document | authoritative for the same reason |
+| `history_messages` | one row per retained text of a conversation: its native id, role, text, creation and update times, its place in the conversation's document and, for a runtime message, the source's record of the message without that text | authoritative for the same reason |
 | `history_fts` | the full-text index over each retained conversation's title and the text of its messages, one entry per conversation | derived from `history_conversations` and `history_messages` and written with them; rebuilt on this computer from the retained rows, without any source |
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
 | `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
 
-Each retained text is stored once, in its row of `history_messages`: the
-conversation's document does not hold it and no other table repeats it. The
+Nothing is stored twice: a text held in a row of `history_messages` is not in
+the conversation's document and no other table repeats it. The
 full-text index stores terms and reads the text it shows from the retained
 rows. A row already retained stays when a later read of its conversation no
 longer returns it, so messages a source has dropped stay in history.
@@ -263,7 +263,7 @@ A runtime message's creation time is stored in one fixed form whose text order
 is its time order. A text of an imported conversation has no creation time of
 its own in its row and a native id that encodes its position in the import's
 document, so its native id orders it; the time its source gave it stays in its
-record.
+document.
 
 A retained document is rebuilt by putting each text back at its place. A text
 with a record is that record with the text as `text`, appended to the list at
@@ -297,11 +297,14 @@ store held of it, by the kind of its source:
   record fails the migration.
 - **Any other conversation whose earlier document is a mirror document**, an
   object holding a mirror and its sources as the TeleClaude import writes it,
-  keeps that document, and every non-empty text in it becomes a message placed
-  where the document held it: the mirror's transcript text and each source's
-  archival text as texts without role or record, and each mirror message with
-  its role and with the rest of its entry as its record. The store does not
-  compare one of these texts with another.
+  keeps that document. Its texts are the texts it is searched by: the mirror's
+  transcript text where the mirror has one, and otherwise each source's
+  archival text and the text of each of that source's mirror messages, in the
+  document's order, a message's text under that message's role. Each of these
+  that is a non-empty string is taken out of the document and placed where
+  the document held it, without a record. Nothing else leaves the document:
+  every other member stays as it is, and every mirror message entry stays in
+  its list at its position, an entry whose text is empty or absent unchanged.
 - **Any other conversation** keeps its earlier document unchanged and its
   earlier searchable text, when it has any, as one text without role, record
   or place.
