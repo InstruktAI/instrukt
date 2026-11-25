@@ -438,13 +438,6 @@ settings:
   token_rotation_enabled: false
 "#;
 
-/// Whether `part`'s lines appear, in order and together, among `whole`'s.
-fn shown_within(part: &str, whole: &str) -> bool {
-    let part: Vec<&str> = part.lines().collect();
-    let whole: Vec<&str> = whole.lines().collect();
-    !part.is_empty() && whole.windows(part.len()).any(|run| run == part.as_slice())
-}
-
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE4
 #[test]
 fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() {
@@ -471,16 +464,14 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
         "asking reads no home and creates none"
     );
 
-    // A path shows that key and what lies under it, as the whole shows them.
-    let connectors = stdout(&schema(&["connectors"]).success());
-    let slack = stdout(&schema(&["connectors.slack"]).success());
-    assert!(
-        shown_within(&connectors, &whole),
-        "`connectors` as the whole shows it"
+    // A path shows that key and what lies under it.
+    insta::assert_snapshot!(
+        "company-connectors-schema",
+        stdout(&schema(&["connectors"]).success())
     );
-    assert!(
-        shown_within(&slack, &connectors),
-        "`connectors.slack` as `connectors` shows it"
+    insta::assert_snapshot!(
+        "company-slack-connector-schema",
+        stdout(&schema(&["connectors.slack"]).success())
     );
 
     // The JSON Schema carries the same setup, the specification's manifest in
