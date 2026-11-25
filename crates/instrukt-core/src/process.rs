@@ -628,12 +628,14 @@ mod limit_tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn a_passed_limit_has_nothing_left_and_a_fresh_one_no_more_than_given() {
+    fn a_limit_has_what_its_window_has_left_and_nothing_once_passed() {
         let limit = Duration::from_secs(10);
         let passed = Limit::from(limit, Instant::now() - limit * 2);
         assert_eq!(passed.remaining(), Duration::ZERO);
         assert_eq!(passed.judge(None::<()>), Look::Passed);
-        assert!(Limit::start(limit).remaining() <= limit);
+        let elapsed = Duration::from_secs(4);
+        let left = Limit::from(limit, Instant::now() - elapsed).remaining();
+        assert!(left > Duration::ZERO && left <= limit - elapsed, "{left:?}");
     }
 }
 
