@@ -7,6 +7,10 @@ visibility: public
 
 # Company Onboarding — Procedure
 
+## Required reads
+
+- [general/policy/onboarding](../../policy/onboarding.md)
+
 ## Goal
 
 After onboarding, the company's people address the company's agent where they
@@ -151,14 +155,17 @@ the services it touched, then step 10.
 5. **Connect the messaging.** Run `instrukt config schema --company <name>
    connectors`. It shows each connector kind instrukt has, with the fields its
    declaration takes and its setup at the provider. When the company's
-   messaging provider has a kind there, carry out that setup in the company's
-   workspace, declare the connector with `instrukt config patch --company
-   <name> --revision <rev>` from the revision `instrukt config get --company
-   <name> --revision` gives, and store each token it references through
-   `instrukt secrets set --company <name> <NAME>` from a file or redirected
-   standard input, never from the conversation
-   (`sdlc/policy/security-awareness`, secrets never enter version control,
-   logs or responses). For a Slack connector, the app's bot scopes include
+   messaging provider has a kind there, prepare that setup from its published
+   instructions. Where an action in the company's workspace requires its
+   administrator, give that person the prepared material and direct them to
+   the action. Their part is done when the provider shows the app installed
+   to the workspace and each token it issued has reached this computer's
+   secrets through a protected channel: `instrukt secrets set --company
+   <name> <NAME>` from a file or redirected standard input, never the
+   conversation (`sdlc/policy/security-awareness`, secrets never enter version
+   control, logs or responses). Then declare the connector with `instrukt
+   config patch --company <name> --revision <rev>` from the revision
+   `instrukt config get --company <name> --revision` gives. For a Slack connector, the app's bot scopes include
    `channels:read`, `groups:read` and `im:read`; when you add a scope to an
    app already installed, reinstall it to the workspace and store the bot
    token it then issues. Run `instrukt config validate --company <name>`; it

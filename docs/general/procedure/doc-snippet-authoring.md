@@ -81,7 +81,7 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     (`sdlc/policy/peer-invocation`).
 
 1.  Place the file at the correct path — the path determines `id`/`type`/`scope`/`domain` (publication derives and materializes them; you do not author them). Choose the position first (`general/policy/artifact-scope`): `docs/general/` for what every agent on every computer needs, `docs/domain/<x>/` for the body of knowledge one domain is the authority on, `docs/project/` for this project's own knowledge. Then choose the folder within the position whose overview the snippet belongs under. A new domain is named after what it is about, never after a category it belongs to, and never `general` or `project` (`general/spec/snippet-authoring-schema`). In a project whose domain specs follow `sdlc/spec/domain-spec`, a new design snippet is listed, in the same change, in the domain spec of the context it governs or in the context map when it is cross-cutting.
-2.  Author top-down: broader context should point to narrower details, not the other way around. Name the role of the reader this snippet's load path reaches, and write the reality wanted from that role (`general/policy/agent-facing-text`).
+2.  Author top-down: broader context should point to narrower details, not the other way around. Name the role of the reader this snippet's load path reaches, and write the reality wanted from that role (`general/policy/agent-facing-text`). When writing an onboarding procedure, require `general/policy/onboarding` under its Required reads and name the result that returns each human handoff to the agent.
 
 3.  Add frontmatter: `description` (required) and `visibility`; `id`/`type`/`scope`/`domain` are derived from the path and must NOT be authored. `visibility` has no behavior or classification guidance. Repository-local identity is not embedded: internal snippets also use semantic placeholders for computer, user, host, path, and topology values, then direct readers to the runtime discovery surface. Repository privacy is reviewed semantically; never create or request a prose scanner for it.
 
@@ -241,7 +241,7 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
 
 17. **Compose procedures by standing role.** A procedure a session is started
     into carries root frontmatter — `role`, `subscriptions`,
-    `activation_trigger` or `dispatch` (`general/spec/snippet-authoring-schema`).
+    or `activation_trigger` (`general/spec/snippet-authoring-schema`).
     Before authoring one, name the standing role whose responsibility the new
     work is. When a role already carries it, the new event or trigger becomes a
     route in that role's entry procedure: the entry procedure declares every
