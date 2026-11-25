@@ -69,12 +69,20 @@ differ only where each company's identity enters them.
 - **Ready when it ends.** The generated home holds a valid settings document
   naming the company, and instrukt's hook sections, so it is a company on the
   computer and a commit made in it carries its rendered `AGENTS.md`.
-- **From anywhere.** Adding a company answers the same from any working
-  directory on the computer, for an operator and for an agent session.
-- **The organisation is a prerequisite.** A missing `github.org`, or one that
-  names a personal account rather than an organisation, is refused where it is
-  set and when a company is added, naming the key and the prerequisite; no
-  repository and no home is created.
+- **From anywhere.** The operator, and an agent session acting for the
+  operator whose role grants adding a company, add one with the same result
+  from any working directory on the computer, a company's home included; the
+  working directory alone refuses no one. A session's role and a session's
+  binding to a company conversation still decide what it may do
+  (`project/instrukt/spec/feature/configuration/roles-and-capabilities`,
+  `project/instrukt/spec/feature/configuration/configuration-editing`).
+- **The organisation is a prerequisite where it is used.** `github.org` is
+  optional: a computer that adds no companies is valid without it. Setting it
+  to a value that names no GitHub organisation — a personal account, or an
+  empty value — is refused, naming the key and the prerequisite, and the
+  settings stay as they were. Adding a company on a computer whose `github.org`
+  is not declared, or names no organisation, is refused, naming the key and the
+  prerequisite; no repository and no home is created.
 - **Nothing of a company's is overwritten.** When the company's repository
   already exists, or its home folder already holds anything, adding the
   company changes none of it, and names what it found.
