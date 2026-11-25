@@ -316,9 +316,11 @@ earlier version. The TeleClaude import retains each mirror by the second rule.
 
 The same transaction rebuilds the full-text index from the retained titles and
 texts, leaves `history_source_positions` and `history_sources` as they
-are, and records that the freed space is to be reclaimed. No retained
-conversation and no retained text is discarded
-(`project/instrukt/policy/checks-and-guards`). Reclaiming follows the
+are, and records that the freed space is to be reclaimed. Every retained
+conversation survives with its messages and, for an imported conversation,
+its document and the texts it is searched by; the migration removes only what
+the rules above take out of the store, which history no longer retains.
+Reclaiming follows the
 migration under the same hold of the history lock: the rewrite and checkpoint
 `project/instrukt/spec/feature/work/state-database` describes for the state
 database, applied to this store, and recorded done once the rewrite has
@@ -396,9 +398,11 @@ and the state database then reclaims the freed space
 complete once that database has been rewritten without the freed pages. A move
 that stops after the copy finished continues with removal and reclamation
 whether or not the tables are already gone, so space freed by a drop is
-reclaimed even when the process stopped between the two. No retained
-conversation and no retained text is discarded
-(`project/instrukt/policy/checks-and-guards`). While history
+reclaimed even when the process stopped between the two. Every conversation
+the state database retained reaches the store with its messages and, for an
+imported conversation, its document and the texts it is searched by; the move
+leaves behind only what the store's migration rules take out, which history
+no longer retains. While history
 is off nothing moves, and the rows stay in the state database until history is
 switched on.
 <!-- /planned-change:history-text-only-messages -->
