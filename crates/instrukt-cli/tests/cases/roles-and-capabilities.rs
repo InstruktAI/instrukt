@@ -607,3 +607,88 @@ fn state_db(env: &TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
     )
     .unwrap()
 }
+
+/// A project policy with every required section, whose rule is `rule`.
+fn policy(title: &str, rule: &str) -> String {
+    format!(
+        "---\ndescription: The {title} policy.\n---\n\n# {title} — Policy\n\n## Rules\n\n{rule}\n\n\
+         ## Rationale\n\nBecause.\n\n## Scope\n\nAll work.\n\n## Enforcement\n\nReview.\n\n\
+         ## Exceptions\n\nNone.\n"
+    )
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP4
+#[test]
+fn a_focused_authors_commit_carries_what_instrukts_hooks_generate() {
+    let mut crew = workflow::Crew::new();
+    // The hook sections call `instrukt` by name, as an installed one would.
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        crew.project.env.injected("PATH").unwrap()
+    );
+    crew.project.env.set_env("PATH", &path);
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args(["hooks", "install"])
+        .assert()
+        .success();
+    crew.project
+        .create("guidance", "change", "Select the house policy.");
+    let builder = crew.worker("guidance", "builder", Some("crew/procedure/build"));
+    let session = builder["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    let workspace = std::path::Path::new(builder["worktree"].as_str().unwrap());
+    std::fs::create_dir_all(workspace.join("docs/project/policy")).unwrap();
+    std::fs::write(
+        workspace.join("docs/project/policy/house.md"),
+        policy("House", "Be kind."),
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("docs/project/index.yaml"),
+        "expanded:\n  - project/demo/policy/house\n",
+    )
+    .unwrap();
+    let env = &crew.project.env;
+    env.instrukt(workspace)
+        .env("T3CODE_THREAD_ID", session)
+        .args([
+            "repo",
+            "commit",
+            "--todo",
+            "guidance",
+            "--message",
+            "Select the house policy\n\nThe project's agents follow it.",
+            "--only",
+            "docs/project/policy/house.md",
+            "docs/project/index.yaml",
+        ])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "focused-author-committed-rendering",
+        env.git(workspace, ["show", "HEAD:AGENTS.md"])
+    );
+    let base = env.path("").display().to_string();
+    let head = env.git(workspace, ["rev-parse", "HEAD"]);
+    let status = env
+        .instrukt(workspace)
+        .env("T3CODE_THREAD_ID", session)
+        .args(["hooks", "status"])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "focused-author-hooks-status",
+        String::from_utf8_lossy(&status.get_output().stdout)
+            .replace(base.trim_end_matches('/'), "[TMP]")
+            .replace(&head, "[SHA]")
+    );
+}
