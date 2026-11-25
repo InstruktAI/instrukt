@@ -5,12 +5,13 @@
 //! the head's requested reviewer itself.
 //!
 //! One entry, [`ask`], runs the whole flow in this order: Form, Procedure
-//! and Runtime, then Placement, Cleanliness, Range, Review state and Request;
-//! the head's start key is claimed; under it Outstanding and the delivery are
-//! decided from the store and the runtime; the ask is recorded (with a send's
-//! command identity); the runtime is reached with no store lock held; the
-//! acceptance is recorded. A refused ask records nothing and reaches no
-//! runtime.
+//! and Runtime, then Placement, Cleanliness and Range; the head's start key
+//! is claimed; under it the same ask while outstanding returns that ask,
+//! and any other ask passes Review state, Request and Outstanding before the
+//! route is decided from the store and the runtime; the ask is recorded
+//! (with a send's command identity); the runtime is reached with no store
+//! lock held; the acceptance is recorded. A refused ask records nothing and
+//! reaches no runtime.
 
 mod _admission;
 mod _rendering;
@@ -137,10 +138,8 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
         .head_verdict(context.project, head)
         .map_err(AskError::Failed)?;
     _admission::range(&coordinates, verdict.pinned_base.as_ref())?;
-    _admission::review_state(kind, head, &verdict.standing)?;
     let state = RunnerState::new(context.home);
     let requests = crate::review::requests(&state, slug, head).map_err(failed)?;
-    _admission::request(head, &requests)?;
 
     let rendering = _rendering::render(slug, &coordinates);
     let key = keyed::review_key(slug.as_str(), head.as_str());
@@ -172,7 +171,7 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
         checkout: &checkout,
         rendering: &rendering,
     };
-    let reply = delivery.run(&state, &verdict.standing)?;
+    let reply = delivery.run(&state, &verdict.standing, &requests)?;
     drop(guard);
     retire(context, slug);
     Ok(reply)
@@ -274,12 +273,15 @@ impl Delivering<'_> {
         &self.coordinates.head
     }
 
-    /// Decides Outstanding and the route under the key, records the ask,
-    /// reaches the runtime and records the acceptance.
+    /// Under the key: returns the same ask while it is outstanding; admits
+    /// any other ask under Review state, Request and Outstanding; decides
+    /// the route, records the ask, reaches the runtime and records the
+    /// acceptance.
     fn run(
         &self,
         state: &RunnerState,
         standing: &crate::interfaces::VerdictStanding,
+        requests: &[crate::review::Request],
     ) -> Result<Reply, AskError> {
         let runtime = self.adapter.runtime();
         let bound = keyed::bound(state, runtime.name(), self.key).map_err(failed)?;
@@ -296,6 +298,13 @@ impl Delivering<'_> {
         let outstanding = asks
             .last()
             .filter(|ask| ask.accepted_at.is_none() || reviewer_turn == Some(Turn::InProgress));
+        // The same ask while outstanding returns it, whatever its reviewer
+        // recorded meanwhile within the turn it opened (Outstanding).
+        if let Some(ask) = outstanding.filter(|ask| ask.digest == self.rendering.digest) {
+            return self.repeat(ask, bound.as_ref().map(|bound| &bound.session));
+        }
+        _admission::review_state(self.kind, self.head(), standing)?;
+        _admission::request(self.head(), requests)?;
         if let Some(ask) = outstanding {
             return self.repeat(ask, bound.as_ref().map(|bound| &bound.session));
         }

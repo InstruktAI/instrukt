@@ -88,6 +88,14 @@ fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_th
         .success();
     let reviewer = project.rt.native_id("s1");
     project.record(&reviewer, &head, "needs_work").success();
+    project
+        .ask(&worktree, "feature", &head, &report, &[])
+        .success();
+    assert_eq!(
+        (project.rt.started_count(), project.rt.sent_count("s1")),
+        (1, 0),
+        "the same ask while the turn it opened goes on returns that ask"
+    );
     project.rt.consume("s1");
     project.rt.set_status("s1", "ended ok");
 
