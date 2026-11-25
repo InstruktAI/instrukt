@@ -993,9 +993,6 @@ fn described(mut schema: serde_json::Value, contract: &str) -> serde_json::Value
     schema
 }
 
-/// The JSON Schema `pattern` of an exact `${NAME}` secret reference.
-const SECRET_REFERENCE_PATTERN: &str = "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$";
-
 /// The JSON Schema of a key holding a `${NAME}` reference into `layer`'s
 /// secrets file: `contract`, then which file the reference resolves from
 /// and the `instrukt secrets set` command that writes its value.
@@ -1012,7 +1009,7 @@ pub(super) fn secret_reference(contract: &str, layer: LayerKind) -> serde_json::
     };
     json!({
         "type": "string",
-        "pattern": SECRET_REFERENCE_PATTERN,
+        "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
         "description": format!(
             "{contract}; an exact ${{NAME}} reference into {file}, its value written with `{command}`"
         ),
