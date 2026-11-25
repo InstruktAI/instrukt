@@ -254,7 +254,7 @@ No command/agent verb kind or agent-action exit-status router exists.
 | Value under `runtimes.<runtime>` | What its instruction conveys |
 | --- | --- |
 | `dispatch` | Delegate this agent's worker using the supplied brief, role, attempt, semantic key, display title and preferences with shared isolation in the parent's recorded workspace. Return native child identity and matching workspace/branch/head evidence; retain native parent linkage. |
-| `message_child` | Send a bounded follow-up, findings, review continuation or recovery to this parent's identified child, retaining its role/attempt and using the native continuation behavior when idle. |
+| `message_child` | Send a bounded follow-up, findings, review continuation or recovery to this parent's identified child within its outstanding attempt, or the brief of a newly reserved attempt already bound to that child, using the native continuation behavior when idle. |
 | `message_peer` | Send the supplied substantive text to an addressed peer/coordinator conversation, preserving the target and source attribution. |
 | `read_thread` | Read an identified conversation's relevant messages and attribution; state extent, pagination and unavailable evidence. This is not history search. |
 | `inspect_thread` | Inspect an identified thread or own child/task's state/result, distinguishing unavailable observation, input wait, failure and confirmed absence. |
@@ -290,7 +290,7 @@ agent-facing consumers retrieve the value through its alias.
 | Value | T3 entry instruction |
 | --- | --- |
 | `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. A repository todo shares one `<slug>/work` worktree; all repository children inherit `todo-orchestrator`'s workspace (`kind: task` creates no git worktree). Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
-| `message_child` | Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation. |
+| `message_child` | Message or continue the identified child natively, as the `message_child` contract above requires: a follow-up within an outstanding attempt stays under that role/attempt, and a newly reserved attempt is bound to the child through instrukt before its brief is sent. The native wording is owned by the shipped entry, `crates/instrukt-core/src/config/shipped/t3.yaml`. |
 | `message_peer` | Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution. |
 | `read_thread` | Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service. |
 | `inspect_thread` | Read the identified native thread or own delegated task through its native status/result operation. Follow native completion/wake instructions; inspect a running task only when those instructions permit it. |

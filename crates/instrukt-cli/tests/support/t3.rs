@@ -159,6 +159,13 @@ def find(id):
     file=root/(id+'.json')
     if not file.exists(): print('Thread '+id+' is no longer available.',file=sys.stderr); sys.exit(1)
     return json.loads(file.read_text())
+# T3's new-worktree workspace: a worktree of the thread's checkout at
+# `folder` from `base`, on the new branch `branch` when one is named, recorded
+# on the thread.
+def create_worktree(t,folder,base,branch):
+    folder.parent.mkdir(exist_ok=True)
+    subprocess.run(['git','-C',t['checkout'],'worktree','add','--quiet']+(['-b',branch] if branch is not None else [])+[str(folder),base],check=True)
+    t['worktreePath']=str(folder); t['branch']=base if branch is None else branch; t['base']=base
 def project_for(checkout):
     path=str(pathlib.Path(checkout).resolve())
     default_id='project-'+hashlib.sha256(path.encode()).hexdigest()
@@ -208,11 +215,18 @@ elif command=='start':
     # With `queued-start`, the runtime accepts the thread's opening input
     # and keeps it queued: neither entered nor completed.
     if (root/'queued-start').exists(): t['status']='queued'
-    if '--worktree' in flags:
-        folder=root/'worktrees'/id
-        folder.parent.mkdir(exist_ok=True)
-        subprocess.run(['git','-C',checkout,'worktree','add','--quiet']+(['-b',flags['--branch']] if '--branch' in flags else [])+[str(folder),flags['--worktree']],check=True)
-        t['worktreePath']=str(folder); t['branch']=flags.get('--branch',flags['--worktree']); t['base']=flags['--worktree']
+    # With `prepare-worktree`, a native launch into a new worktree answers
+    # while T3 still prepares it: the thread is `preparing` on the requested
+    # branch with no worktree path, and the worktree is created and recorded
+    # on the thread's state read whose ordinal, counted from the launch, the
+    # flag names.
+    preparing=root/'prepare-worktree'
+    if '--worktree' in flags and launch and launch['workspaceStrategy']['type']=='worktree' and preparing.exists():
+        t['status']='preparing'; t['branch']=flags.get('--branch',flags['--worktree'])
+        pending={'ordinal':int(preparing.read_text()),'reads':0,'folder':str(root/'worktrees'/id),'base':flags['--worktree'],'branch':flags.get('--branch')}
+        (root/(launch['threadId']+'.preparing')).write_text(json.dumps(pending)); preparing.unlink()
+    elif '--worktree' in flags:
+        create_worktree(t,root/'worktrees'/id,flags['--worktree'],flags.get('--branch'))
     if launch:
         t['runtimeMode']=launch['runtimeMode'];t['interactionMode']=launch['interactionMode'];t['createdBy']='user';t['commandId']=launch['commandId']
         if 'initialMessage' not in launch: t['messages']=[];t['status']='idle';t['latestRunId']=None;t['activeRunId']=None
@@ -307,6 +321,13 @@ elif command=='show':
             pass
     while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
+    preparing=root/(t['threadId']+'.preparing')
+    if preparing.exists():
+        pending=json.loads(preparing.read_text()); pending['reads']+=1
+        if pending['reads']>=pending['ordinal']:
+            create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
+            t['status']='running'; save(t); preparing.unlink()
+        else: preparing.write_text(json.dumps(pending))
     sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
@@ -518,6 +539,12 @@ impl FakeT3 {
         } else if p.exists() {
             std::fs::remove_file(p).unwrap();
         }
+    }
+    /// The next native launch into a new worktree answers while T3 is still
+    /// preparing that worktree; T3 records the worktree on the launched
+    /// thread's `read`th state read, counted from the launch.
+    pub fn prepare_worktree_until_read(&self, read: usize) {
+        std::fs::write(self.state.join("prepare-worktree"), read.to_string()).unwrap();
     }
     /// Whether a start has been held by the `hold-start` flag.
     pub fn start_held(&self) -> bool {

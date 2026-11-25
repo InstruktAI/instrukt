@@ -259,6 +259,71 @@ pub struct NativeAssignment {
     pub base: Option<CommitSha>,
 }
 
+/// The native session of the role's most recent earlier attempt that has a
+/// bound session on the reservation's runtime, with the selection and the
+/// dispatching session that attempt retained where it holds them. That attempt can be older than the role's
+/// latest attempt when later attempts never bound or bound on another runtime.
+/// Whether the session is still usable is native evidence, not part of this
+/// fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PriorSession {
+    pub session: SessionRef,
+    pub attempt: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection: Option<instrukt_core::config::AgentSelection>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dispatcher: Option<SessionRef>,
+}
+
+/// A reserved role attempt as its reservation replies: the retained native
+/// inputs and, derived from the record's bindings when the reply is made, the
+/// role's prior session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReservedAttempt {
+    #[serde(flatten)]
+    pub assignment: NativeAssignment,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prior_session: Option<PriorSession>,
+}
+
+/// The highest-numbered worker attempt of `role` below `attempt` whose binding
+/// carries a session of `runtime`. A worker binding the state migration carried
+/// forward records its kind as unspecified and retains no assignment.
+fn prior_session(
+    bindings: &[Binding],
+    role: &RoleName,
+    attempt: u64,
+    runtime: instrukt_core::config::Runtime,
+) -> Option<PriorSession> {
+    bindings
+        .iter()
+        .filter(|b| {
+            &b.role == role
+                && b.attempt.number < attempt
+                && matches!(
+                    b.attempt.assignment,
+                    AssignmentKind::Child | AssignmentKind::Workspace | AssignmentKind::Unspecified
+                )
+        })
+        .filter_map(|b| {
+            let session = b
+                .session
+                .as_ref()
+                .filter(|s| s.runtime.as_str() == runtime.name())?;
+            Some((b, session))
+        })
+        .max_by_key(|(b, _)| b.attempt.number)
+        .map(|(b, session)| {
+            let assignment = b.attempt.native_assignment.as_ref();
+            PriorSession {
+                session: session.clone(),
+                attempt: b.attempt.number,
+                selection: assignment.and_then(|a| a.selection.clone()),
+                dispatcher: assignment.and_then(|a| a.dispatcher.clone()),
+            }
+        })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct StoppedChild {
@@ -321,7 +386,7 @@ impl Work {
         &self,
         project: &ProjectRef,
         request: &AttemptRequest<'_>,
-    ) -> Result<NativeAssignment, WorkError> {
+    ) -> Result<ReservedAttempt, WorkError> {
         let AttemptRequest {
             todo,
             role,
@@ -355,6 +420,7 @@ impl Work {
                     "outstanding reservation belongs to a different selected runtime",
                 ));
             }
+            let prior = prior_session(&record.bindings, role, active.attempt.number, runtime);
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
@@ -378,7 +444,10 @@ impl Work {
                 s.flush()?;
                 dispatch_admitted(&s, index, &result)?;
             }
-            return Ok(result);
+            return Ok(ReservedAttempt {
+                assignment: result,
+                prior_session: prior,
+            });
         }
         if s.unjudged(index) {
             return Err(super::_session::unjudged_refusal(todo));
@@ -460,6 +529,7 @@ impl Work {
             role.as_str(),
             number,
         );
+        let prior = prior_session(&record.bindings, role, number, runtime);
         let selection = native_selection(&s, record, procedure)?;
         let assignment = NativeAssignment {
             dispatcher: s.caller_session()?,
@@ -502,7 +572,10 @@ impl Work {
         })?;
         s.flush()?;
         dispatch_admitted(&s, index, &assignment)?;
-        Ok(assignment)
+        Ok(ReservedAttempt {
+            assignment,
+            prior_session: prior,
+        })
     }
     /// Bind the native result only after verifying the reserved shared placement.
     pub fn bind_attempt(
@@ -1622,5 +1695,89 @@ mod tests {
             drift_review_binding(&record, Some(&analyzer)),
             Err(WorkError::Refused(_))
         ));
+    }
+
+    fn worker_binding(role: &str, number: u64, bound: Option<SessionRef>) -> Binding {
+        Binding {
+            role: RoleName::parse(role).unwrap(),
+            session: bound,
+            worktree: None,
+            attempt: Attempt {
+                assignment: AssignmentKind::Workspace,
+                number,
+                semantic_key: format!("demo/bug-fix:{role}:{number}"),
+                ..Default::default()
+            },
+        }
+    }
+
+    #[test]
+    fn prior_session_is_the_roles_latest_earlier_bound_attempt() {
+        let bindings = [
+            worker_binding("planner", 1, Some(session("planner-1"))),
+            worker_binding("planner", 2, Some(session("planner-2"))),
+            worker_binding("planner", 3, Some(session("planner-3"))),
+            worker_binding("plan-reviewer", 4, Some(session("reviewer-4"))),
+        ];
+        let planner = RoleName::parse("planner").unwrap();
+        let prior = prior_session(&bindings, &planner, 3, instrukt_core::config::Runtime::T3);
+        assert_eq!(
+            prior.map(|p| (p.session, p.attempt)),
+            Some((session("planner-2"), 2))
+        );
+    }
+
+    #[test]
+    fn prior_session_is_absent_when_no_earlier_attempt_of_the_role_was_bound() {
+        let bindings = [
+            worker_binding("planner", 1, None),
+            worker_binding("plan-reviewer", 1, Some(session("reviewer-1"))),
+        ];
+        let planner = RoleName::parse("planner").unwrap();
+        assert_eq!(
+            prior_session(&bindings, &planner, 2, instrukt_core::config::Runtime::T3),
+            None
+        );
+    }
+
+    #[test]
+    fn prior_session_names_a_carried_forward_worker_binding_without_its_unrecorded_facts() {
+        let planner = RoleName::parse("planner").unwrap();
+        let mut migrated = worker_binding("planner", 1, Some(session("planner-1")));
+        migrated.attempt.assignment = AssignmentKind::Unspecified;
+        let prior = prior_session(&[migrated], &planner, 2, instrukt_core::config::Runtime::T3);
+        assert_eq!(
+            prior,
+            Some(PriorSession {
+                session: session("planner-1"),
+                attempt: 1,
+                selection: None,
+                dispatcher: None,
+            })
+        );
+    }
+
+    #[test]
+    fn prior_session_carries_the_dispatcher_its_attempt_recorded() {
+        let planner = RoleName::parse("planner").unwrap();
+        let mut bound = worker_binding("planner", 1, Some(session("planner-1")));
+        bound.attempt.native_assignment = Some(NativeAssignment {
+            dispatcher: Some(session("lead-1")),
+            selection: None,
+            runtime: instrukt_core::config::Runtime::T3,
+            dispatch_allowed: true,
+            brief: "Plan the change.".into(),
+            procedure: None,
+            args: None,
+            role: planner.clone(),
+            attempt: 1,
+            semantic_key: "demo/bug-fix:planner:1".into(),
+            title: "planner".into(),
+            worktree: None,
+            branch: None,
+            base: None,
+        });
+        let prior = prior_session(&[bound], &planner, 2, instrukt_core::config::Runtime::T3);
+        assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
     }
 }

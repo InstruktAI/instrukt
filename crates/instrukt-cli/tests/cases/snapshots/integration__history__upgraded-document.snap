@@ -1,0 +1,22 @@
+---
+source: crates/instrukt-cli/tests/cases/history.rs
+assertion_line: 632
+expression: document
+---
+{
+  "messages": [
+    {
+      "id": "pre-upgrade",
+      "threadId": "child",
+      "role": "assistant",
+      "text": "Upgradetoken retained only in history."
+    }
+  ],
+  "thread": {
+    "id": "child",
+    "title": "Retained child",
+    "lineage": {
+      "parentThreadId": "parent"
+    }
+  }
+}

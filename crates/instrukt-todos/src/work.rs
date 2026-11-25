@@ -49,7 +49,7 @@ pub use _apps::GitHubAccess;
 pub use _assignment::{recorded_assignment, target_identity};
 pub use _attempts::{
     AttemptRequest, AttemptResolution, DriverPlacement, NativeAssignment, NativeBinding,
-    StoppedChild, WorkspaceEntry, WorkspaceRequest,
+    PriorSession, ReservedAttempt, StoppedChild, WorkspaceEntry, WorkspaceRequest,
 };
 pub use _diff::DiffLine;
 pub(crate) use _envelope::ShownStatus;

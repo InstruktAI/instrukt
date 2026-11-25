@@ -94,14 +94,111 @@ pub struct ConversationChanges {
     pub missing: Vec<SessionId>,
 }
 
-/// The native conversations one read covers.
-#[derive(Debug, Clone, Copy)]
-pub enum Scope<'a> {
-    /// Every conversation the source holds.
-    All,
-    /// Only these conversations: no other conversation is read, waited for
-    /// or reported missing.
-    Only(&'a [SessionId]),
+/// One batch of the text read: what a text mirror of conversations receives.
+pub struct TextChanges {
+    pub conversations: Vec<ConversationText>,
+    pub position: SourcePosition,
+    pub has_more: bool,
+}
+
+/// One changed conversation of a text read, named by its native id whether
+/// or not the read found the conversation's own record; it always carries
+/// that record or at least one finished message.
+pub struct ConversationText {
+    conversation: SessionId,
+    record: Option<ConversationOwnRecord>,
+    messages: Vec<MessageText>,
+}
+
+impl ConversationText {
+    /// What a text read returns of `conversation`: its own record, where the
+    /// source holds one, and the finished messages it returns; `None` when
+    /// it has neither, which is nothing to return.
+    pub fn new(
+        conversation: SessionId,
+        record: Option<ConversationOwnRecord>,
+        messages: Vec<MessageText>,
+    ) -> Option<Self> {
+        (record.is_some() || !messages.is_empty()).then_some(Self {
+            conversation,
+            record,
+            messages,
+        })
+    }
+
+    pub fn conversation(&self) -> &SessionId {
+        &self.conversation
+    }
+
+    /// The conversation's id, own record and finished messages.
+    pub fn into_parts(self) -> (SessionId, Option<ConversationOwnRecord>, Vec<MessageText>) {
+        (self.conversation, self.record, self.messages)
+    }
+}
+
+/// What a source holds of a conversation itself.
+pub struct ConversationOwnRecord {
+    pub title: String,
+    pub parent: Option<SessionId>,
+    pub native: Value,
+}
+
+/// One finished message: its text, and the source's record of it without
+/// that text, so the text is held once.
+pub struct MessageText {
+    id: String,
+    role: Role,
+    text: String,
+    created_at: Option<jiff::Timestamp>,
+    updated_at: Option<jiff::Timestamp>,
+    record: Value,
+}
+
+/// The parts of a [`MessageText`], taken apart by its consumer.
+pub struct MessageParts {
+    pub id: String,
+    pub role: Role,
+    pub text: String,
+    pub created_at: Option<jiff::Timestamp>,
+    pub updated_at: Option<jiff::Timestamp>,
+    /// The source's record of the message, without its text.
+    pub record: Value,
+}
+
+impl MessageText {
+    /// The message the source records as `record`, an object whose `text`
+    /// is a string: that text is taken out of the record. `None` for any
+    /// other record.
+    pub fn from_record(
+        id: String,
+        role: Role,
+        created_at: Option<jiff::Timestamp>,
+        updated_at: Option<jiff::Timestamp>,
+        mut record: Value,
+    ) -> Option<Self> {
+        let Some(Value::String(text)) = record.as_object_mut()?.shift_remove("text") else {
+            return None;
+        };
+        Some(Self {
+            id,
+            role,
+            text,
+            created_at,
+            updated_at,
+            record,
+        })
+    }
+
+    pub fn into_parts(self) -> MessageParts {
+        MessageParts {
+            id: self.id,
+            role: self.role,
+            text: self.text,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            record: self.record,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -140,29 +237,26 @@ pub trait ConversationNotifications: Send {
 }
 pub trait ConversationSource: Send {
     fn identity(&self) -> &str;
-    /// Returns the next bounded change batch within `scope`; the position
-    /// commits with its records.
+    /// The turn read: every changed conversation among `conversations`, in
+    /// one batch; no other conversation is read, waited for or reported
+    /// missing. The position commits with its records.
     fn changed_since(
         &self,
         position: Option<&SourcePosition>,
-        scope: Scope<'_>,
+        conversations: &[SessionId],
     ) -> Result<ConversationChanges, SourceError>;
+    /// The text read: the next bounded batch of changed conversations over
+    /// every conversation the source holds, each with its own record where
+    /// the source holds one and the finished messages it returns, which
+    /// leave out a runtime's reports of a background command, and nothing
+    /// else the source holds of it. A change to a finished row it leaves out
+    /// still makes its conversation changed. Its position is its own; the
+    /// position commits with what it delivered.
+    fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
     /// The newest assistant message the runtime has recorded in `thread`'s
     /// running turn, taken whole, whatever its phase: what a person is shown
     /// while that turn runs. `None` when no turn of the thread runs, or the
     /// running one has written nothing yet.
     fn latest_update(&self, thread: &SessionId) -> Result<Option<String>, SourceError>;
-}
-
-impl RecordKind {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Conversation => "conversation",
-            Self::Message => "message",
-            Self::Run => "run",
-            Self::Subagent => "subagent",
-            Self::TurnItem => "turn_item",
-        }
-    }
 }

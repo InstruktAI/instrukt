@@ -118,7 +118,7 @@
       "UC-GH8": 2
     },
     "project/instrukt/spec/feature/runner/history": {
-      "UC-HI1": 16
+      "UC-HI1": 15
     },
     "project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework": {
       "UC-IF19": 14,

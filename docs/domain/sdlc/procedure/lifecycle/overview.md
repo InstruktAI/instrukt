@@ -246,8 +246,7 @@ building, reviewing and fixing keeps its output.
        zero mixed application changes, with pre-entry reviewed pending Layer 1
        and Layer 2 fills pushed to `origin/<bootstrap-slug>/work` and no local
        `refs/heads/<bootstrap-slug>/work` left behind) following the tracked
-       pre-entry sequence for authoring those fills
-       (`sdlc/procedure/verification-bootstrap`).
+       pre-entry sequence (`sdlc/procedure/verification-bootstrap`).
        Read `{slug}`'s current prerequisites from `instrukt todo show {slug}`,
        append `<bootstrap-slug>` without dropping existing edges
        (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
@@ -265,19 +264,20 @@ building, reviewing and fixing keeps its output.
        additions, edits, replacements, or retirements; publication-checked
        `instrukt docs get <id>` from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
-3. **Select and dispatch the next primitive.** Every admitted role that shares
+3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
-   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) uses
-   `runtime.dispatch` above: reserve each attempt via
-   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
-   delegate with shared isolation in `<slug>/work`, and immediately bind via
-   `instrukt todo bind`. Only one workspace attempt may be active at a time;
-   completion stamps release it atomically. Live verification (`verifier`) is
-   not a shared `<slug>/work` `runtime.dispatch` child; it runs per Step 4b in
-   a separate one-off worktree session (`runtime.start_thread` /
-   `runtime.inspect_thread`) so the shared-workspace admission guarantee
-   remains unbroken.
+   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) reserves
+   each round with
+   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`
+   and either continues a retained worker (`runtime.message_child`) or starts a
+   fresh shared-isolation child in `<slug>/work` (`runtime.dispatch`) under
+   `general/procedure/orchestration`. Only one workspace attempt may be active
+   at a time; completion stamps release it atomically. Live verification
+   (`verifier`) is not a shared `<slug>/work` `runtime.dispatch` child; it runs
+   per Step 4b in a separate one-off worktree session (`runtime.start_thread` /
+   `runtime.inspect_thread`) so the shared-workspace admission guarantee remains
+   unbroken.
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
    discloses each finding's `Method:` (finding format in
@@ -303,9 +303,9 @@ building, reviewing and fixing keeps its output.
        `instrukt todo artifacts write {slug} verification-findings '<content>'`
        and skips `verifier` dispatch.
      - **Emergency hotfix deferral (`HOTFIX_DEFERRED`):** Permitted solely
-       for an emergency production hotfix (`sdlc/policy/live-verification`)
-       while preserving every
-       existing `sdlc/policy/definition-of-done` control; `todo-orchestrator`
+       under the emergency-hotfix exception (`sdlc/policy/live-verification`)
+       while preserving every existing `sdlc/policy/definition-of-done`
+       control; `todo-orchestrator`
        records `Verdict: HOTFIX_DEFERRED` in `verification-findings` citing the
        exact candidate HEAD SHA and the tracked follow-up todo slug/URL that
        delivers post-hotfix live verification (and `escape-assessment` when the
@@ -362,9 +362,10 @@ building, reviewing and fixing keeps its output.
            (`sdlc/procedure/lifecycle/work/deferrals`, satisfying `finalize`'s
            deferral precondition), then synchronize through the post-review
            synchronization owner, `finalizer` (`instrukt todo attempt` / `bind`
-           executing `sdlc/procedure/lifecycle/work/finalize`: merge
-           accepted `<canonical-ref>`, push `origin/<slug>/work`, and release
-           via `--role-complete` without stamping `--finalize-ready`), then
+           executing the merge-and-push synchronization path in
+           `sdlc/procedure/lifecycle/work/finalize`: merge accepted
+           `<canonical-ref>`, push `origin/<slug>/work`, and release via
+           `--role-complete` without stamping `--finalize-ready`), then
            obtain fresh independent exact-SHA `build-reviewer` `APPROVE` and
            re-run live verification (Step 4b) against that exact merged HEAD
            before recording `--finalize-ready`.
@@ -373,12 +374,10 @@ building, reviewing and fixing keeps its output.
            route it as a **standalone prerequisite bootstrap todo** (never
            mixing application changes with first-time CI workflow creation,
            `sdlc/policy/live-verification`): establish and unfreeze
-           `<bootstrap-slug>` with
-           pre-entry reviewed pending Layer 1 and Layer 2 fills pushed to
-           `origin/<bootstrap-slug>/work` (leaving no local
-           `refs/heads/<bootstrap-slug>/work`) following the pre-entry
-           sequence for authoring those fills
-           (`sdlc/procedure/verification-bootstrap`), append
+           `<bootstrap-slug>` with pre-entry reviewed pending Layer 1 and
+           Layer 2 fills pushed to `origin/<bootstrap-slug>/work` (leaving no
+           local `refs/heads/<bootstrap-slug>/work`) following the tracked
+           pre-entry sequence (`sdlc/procedure/verification-bootstrap`), append
            `<bootstrap-slug>` to `{slug}`'s prerequisites without dropping
            existing edges
            (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
@@ -387,7 +386,7 @@ building, reviewing and fixing keeps its output.
            delivery of `<bootstrap-slug>` automatically re-enables this todo);
            once `<bootstrap-slug>` delivers onto canonical main, synchronize the
            retained `<slug>/work` through the deferrals-checked `finalizer`
-           -> fresh `build-reviewer` -> `verifier` path above so the
+           synchronization -> fresh `build-reviewer` -> `verifier` path above so the
            verified exact candidate SHA includes the delivered verification
            stack and seeders.
          - If an **existing** substrate needs an in-scope update (on a repo
@@ -396,9 +395,8 @@ building, reviewing and fixing keeps its output.
            - For a code-only stack or seeder fix within the already-approved
              plan and Layer 1 contract (no Layer 1 / Layer 2 documentation
              delta), reserve and bind `builder` (`--role builder --procedure sdlc/procedure/lifecycle/work/build`)
-             to update the substrate (its verification stack and live probe,
-             `sdlc/procedure/verification-bootstrap`, when applicable) in
-             `<slug>/work`, commit, and release
+             to update the substrate (`sdlc/procedure/verification-bootstrap`
+             when applicable) in `<slug>/work`, commit, and release
              via `--build-complete`, then run static `build-reviewer` and live
              verification (Step 4b).
            - For any Layer 1 / Layer 2 pending contract update or plan revision
@@ -423,7 +421,7 @@ building, reviewing and fixing keeps its output.
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, current exact-SHA
    `verification-findings` holds (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED`
-   with the tracked follow-up todo an emergency hotfix owes,
+   with tracked follow-up todo under the emergency-hotfix exception in
    `sdlc/policy/live-verification`, and zero unresolved `FAIL` or `BLOCKED`),
    and all required approvals hold.
    For every `kind: bug` todo originating from a real occurrence
@@ -451,7 +449,7 @@ building, reviewing and fixing keeps its output.
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, current exact-SHA
    `verification-findings` holds (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED`
-   with the tracked follow-up todo an emergency hotfix owes,
+   with tracked follow-up todo under the emergency-hotfix exception in
    `sdlc/policy/live-verification`, and zero unresolved `FAIL` or `BLOCKED`),
    and all required approvals hold.
    For every `kind: bug` todo originating from a real occurrence

@@ -65,13 +65,13 @@ actually did the work recorded there.
    state, open findings, and gate status. Code enforces only the three hard
    integrity invariants; choose the next composable primitive from the prose
    playbook in `sdlc/procedure/lifecycle/overview`.
-3. Reserve a new worker through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`.
-   Use its rendered brief, role, attempt, semantic key, display title and
-   captured shared head with the configured runtime delegation instruction under
-   `general/procedure/ai-to-ai-operations`; immediately record `todo bind` with
-   the native child id and matching shared workspace evidence. Continue active
-   attempts with native child messaging. Yield while valid work continues; read
-   the native result and current factual ledger before choosing the next move.
+3. Reserve every new round through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
+   preserving its rendered brief, role, attempt, semantic key, display title,
+   captured shared head, and any reported `prior_session`. Then route the round
+   under **Continuing vs. Starting Fresh** below through the configured runtime
+   operations in `general/procedure/ai-to-ai-operations`. Yield while valid work
+   continues; read the native result and current factual ledger before choosing
+   the next move.
 4. Assess current session and work evidence. A step is complete only when the
    record carries its required artifact and stamp with current target bindings.
    A reply or ended run alone supplies neither.
@@ -83,6 +83,41 @@ A todo shares its unified `todo-orchestrator`'s single `<slug>/work` worktree
 and branch. Completion stamps release workspace attempts atomically before the
 next role is admitted. The runtime adapter supplies capabilities rather than
 workflow policy; the record supplies facts rather than a stored phase machine.
+
+#### Continuing vs. Starting Fresh
+
+- **Reserve every new round first:** Start every new round with
+  `instrukt todo attempt`, which reports any retained `prior_session` and the
+  resolved model selection for that role.
+- **Continue (`attempt` → `bind` → configured child-messaging instruction):**
+  Record `instrukt todo bind` for the new attempt against `prior_session` and
+  the recorded shared placement **before** sending the new brief through the
+  configured child-messaging instruction. Continuation applies only when
+  `prior_session` is present, reachable on the same runtime, matches the
+  resolved selection, and can be continued by the current orchestrator with
+  native result delivery back to this orchestrator (not bound to a former claim
+  holder), and the round is one of:
+  - A follow-up round of a producer (`intaker`, `architect`, `planner`,
+    `builder`, `fixer`, `deferrer`, `finalizer`).
+  - A finding-closure re-check of a reviewer (`prd-reviewer`,
+    `architecture-reviewer`, `plan-reviewer`, `build-reviewer`) when the
+    configured runtime permits continuing a reviewer session, **all** target
+    changes address only that reviewer's findings (no unrelated changes,
+    substantive scope rewrite, or design rewrite), and the review loop is not
+    deadlocked.
+- **Start fresh (`attempt` → configured delegation instruction → `bind`):**
+  Every other admitted new round starts fresh — delegate through the configured
+  delegation instruction and immediately record `instrukt todo bind` with the
+  new native child id and any recorded placement. This is the default for
+  attempt 1, roles outside the continuation lists above (such as `diagnoser` or
+  `drift-analyzer`), a confirmed unusable or former-orchestrator `prior_session`
+  (chosen before binding), a changed selection, any reviewer target change that
+  includes unrelated edits or a substantive scope or design rewrite, a
+  deadlocked review loop, or a runtime requiring fresh delegation for that role.
+- **Mid-attempt recovery:** While an attempt is still active (such as a missing
+  stamp or bounded recovery on a stopped turn), continue directly on that active
+  attempt through the configured child-messaging instruction without reserving a
+  new attempt.
 
 ### Terminal Child Cleanup
 

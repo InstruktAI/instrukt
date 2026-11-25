@@ -22,7 +22,7 @@ Use the explicitly configured instrukt fallback for the missing native capabilit
 ```
 
 ```
-Use native child/task messaging or continuation for the supplied child id. Relay the bounded follow-up and retain the same role/attempt. Continue an idle child through the native continuation operation.
+Use native child/task messaging or continuation for the supplied child id. Within an outstanding attempt, relay the bounded follow-up under that role/attempt. For a newly reserved attempt, bind that attempt to the child id through instrukt first, then send its rendered brief to the child's thread (t3_thread_send, keeping the thread's context); the child works the round under the new role/attempt. Continue an idle or finished child through the same native continuation.
 ```
 
 ## Preconditions

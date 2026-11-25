@@ -1,0 +1,49 @@
+---
+source: crates/instrukt-cli/tests/cases/todos.rs
+assertion_line: 635
+expression: "redact(&crew.todo([\"show\", slug]))"
+---
+retained-planner · change · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 13
+intent:
+  Keep list depth inside block quotes.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: retained-planner/work; base: <commit 1>
+    worktree: [TMP]/team-retained-planner-work
+  planner/1: t3:planner-1
+    key: instrukt:todo:demo/<id 1>:planner:1
+    branch: retained-planner/work; base: <commit 1>
+    worktree: [TMP]/team-retained-planner-work
+    completion: stamp #3; head: <commit 1>
+    released: <time>
+  planner/2: t3:planner-1
+    key: instrukt:todo:demo/<id 1>:planner:2
+    branch: retained-planner/work; base: <commit 1>
+    worktree: [TMP]/team-retained-planner-work
+    completion: stamp #7; head: <commit 1>
+    released: <time>
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  implementation-plan (2 versions)
+    <digest 2> by session t3:planner-1 at <time>
+    <digest 3> by session t3:planner-1 at <time>
+  plan-review-findings (1 version)
+    <digest 4> by session t3:lead-1 at <time>
+stamps:
+  #3 <time> role complete — planner/1 head <commit 1> — by session t3:planner-1 as planner, model codex gpt-test, eval <digest 5>
+  #5 <time> plan_review verdict needs_work — target <digest 2>, report <digest 4> — by session t3:lead-1 as todo-lead, model unknown, eval <digest 5>
+  #7 <time> role complete — planner/2 head <commit 1> — by session t3:planner-1 as planner, model codex gpt-test, eval <digest 5>
+workspace:
+  branch: retained-planner/work
+  worktree: [TMP]/team-retained-planner-work (clean)
+  head: <commit 1>
