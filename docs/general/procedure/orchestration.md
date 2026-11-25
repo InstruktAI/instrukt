@@ -17,15 +17,17 @@ worker sessions and recovery, and keep ownership clear until a grounded handoff.
 
 ### Dispatch Rules
 
-- **Classify the review's scope before selection.** Code, mixed code and docs,
-  directive documentation and other substantive reviews receive full depth.
-  Documentation that changes what a snippet establishes and directs no agent
-  differently uses the lighter scope under `general/policy/documentation-discipline`.
-  The dispatching session carries that classification to the reviewer.
-  Select through the reviewer's role mapping in `~/.instrukt/agents.yaml` (with
-  any per-task agent/tier override taking precedence first); shipped `strong`
-  and `standard` choices are configurable heuristics, not procedure-level model
-  or tier defaults.
+- **Classify the review's scope for selection, never inside the brief.** Code,
+  mixed code and docs, directive documentation and other substantive reviews
+  select for full depth; documentation that changes what a snippet establishes
+  and directs no agent differently selects for the lighter scope under
+  `general/policy/documentation-discipline`. Select through the reviewer's role
+  mapping in `~/.instrukt/agents.yaml` (with any per-task agent/tier override
+  taking precedence first); shipped `strong` and `standard` choices are
+  configurable heuristics, not procedure-level model or tier defaults. Pass
+  coordinates only in a delegated commit-review assignment — never carry the
+  classification into the brief; the reviewer determines depth from the diff
+  (`sdlc/procedure/lifecycle/work/review-commits`).
 
 Intelligence maintains the preference order for performance and then cost;
 availability is the first selection condition. The parent or orchestrator uses

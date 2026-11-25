@@ -41,6 +41,11 @@ All Committizen types are allowed.
 - One logical change per commit
 - Keep commits small and focused
 - Commit message explains WHY, not WHAT (code shows what)
+- A commit that changes directive text explains in its body what no diff shows:
+  the problem it answers, the reader role whose behavior it changes and the
+  behavior wanted, each requirement that shaped it stated as the requirement
+  with its source, the alternatives rejected, and what it leaves as it was
+  (`general/policy/documentation-discipline`).
 - Update or add tests when behavior changes.
 - Include migration notes when schema or data shape changes.
 - Squash noisy fixups before merge to keep history readable.
@@ -92,14 +97,17 @@ All Committizen types are allowed.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 
 - A `REQUEST CHANGES` verdict stays with the authoring session for
-  evidence-based rejection or in-scope remediation and re-review. Before
-  remediation, the author records each finding's disposition and its
-  independently established basis in the follow-up to the continuing reviewer,
-  applying the finding-validation and disposition rules in
-  `sdlc/procedure/lifecycle/fix-review-findings`. After remediation, the
-  follow-up identifies the fixing commits and closure evidence; an
-  evidence-only rejection names its sources. For commit review, this exchange
-  carries the disposition record. The author retains commit and review-routing responsibilities; the reviewer alone
+  evidence-based rejection or in-scope remediation and re-review, applying the
+  finding-validation and disposition rules in
+  `sdlc/procedure/lifecycle/fix-review-findings`. For commit review, fixing
+  commits carry each finding's disposition, independently established basis,
+  and closure evidence in their commit bodies; an evidence-only rejection on
+  the same head records its dispositions and sources in a disposition file
+  beside the prior report. The follow-up message that opens the continuing
+  reviewer's revision turn carries only the coordinates (`head`, prior report
+  path, and any disposition file path) and no free-text narrative or
+  constraints (`sdlc/procedure/lifecycle/work/review-commits`). The author
+  retains commit and review-routing responsibilities; the reviewer alone
   determines the verdict. What cannot proceed — a genuine human-owned decision,
   a safety gate, or a disagreement author and reviewer cannot resolve — is
   held, and the session goes idle with it; nothing routes it to another party
@@ -129,6 +137,10 @@ that invite the author to imitate platform output (`general/principle/priming`).
   nothing to check: the review spends a session and the human's attention and
   verifies nothing. Deciding by what the commit touches instead of what it
   risks turns every edit to a code file into a review cycle.
+- Carrying directive-change intent and finding dispositions in commit bodies
+  (or a named disposition file on an unchanged head) keeps review input
+  durable and visibly untrusted, while keeping the reviewer's assignment
+  strictly coordinates-only so author framing cannot masquerade as mandate.
 
 ## Scope
 
