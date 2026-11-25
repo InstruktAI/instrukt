@@ -44,8 +44,9 @@ creates no replacement session identity.
 returns whether the selected runtime holds a live project rooted exactly at
 that root, creating one in ensure mode, together with the runtime's own door
 for adding one. It never selects, alters or removes another project; an
-unreachable runtime returns its cause and no answer. Its released consumer is
-installation (`project/instrukt/spec/feature/runner/module-installation`).
+unreachable or refusing runtime returns its cause and no answer. Its released
+consumers are launch, for the root of the work it starts, and installation
+(`project/instrukt/spec/feature/runner/module-installation`).
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
 Worktree creation, shared native delegation and attachment to an existing
@@ -221,12 +222,24 @@ For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
 A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
+<!-- planned-change:fix-company-session-starts-outside-company-home -->
 subject identity requires it. The object key stays fixed across succession;
 its generation increases once under the object lock after confirmed native
 archive or deletion and only when outstanding or new work needs a session.
 Settled and idle threads remain reusable. Observation/send failures retain their
 target; they never establish terminal presence. Native archive/deletion owns
 provider detachment; the create receipt proves no stronger process-exit guarantee.
+<!-- change:fix-company-session-starts-outside-company-home -->
+subject identity requires it. The object key stays fixed across succession;
+its generation increases once under the object lock after confirmed native
+archive or deletion, or after an idle thread is confirmed misplaced (T3
+realization below), and only when outstanding or new work needs a session.
+Settled and idle threads in their checkout's own project remain reusable.
+Observation/send failures retain their target; they never establish terminal
+presence. Native archive/deletion owns provider detachment; neither the create
+receipt nor a misplacement rollover proves a process exit, and a rolled-over
+thread is idle and never sent to again.
+<!-- /planned-change:fix-company-session-starts-outside-company-home -->
 
 Components are UTF-8 percent-encoded, leaving only ASCII letters, digits, `-`,
 `_`, `.`, `~` unescaped; hex digits are uppercase. Occurrences are the scheduled
@@ -271,8 +284,14 @@ created-then-deleted; that evidence survives projection deletion. A lost launch
 reply replays the same command/thread IDs and opening message receipt. It neither
 allocates another generation nor sends the opening assignment separately.
 
+<!-- planned-change:fix-company-session-starts-outside-company-home -->
 Confirmed native archive/deletion with outstanding work allocates one successor
-under the object lock. Standing transfers only unconsumed events using its
+under the object lock.
+<!-- change:fix-company-session-starts-outside-company-home -->
+Confirmed native archive/deletion, or an idle thread confirmed misplaced, with
+outstanding work allocates one successor under the object lock.
+<!-- /planned-change:fix-company-session-starts-outside-company-home -->
+Standing transfers only unconsumed events using its
 existing generation accounting. Work validates eligible active claims and commits
 its binding/claim, runner acceptance, opening receipt and execution tracking
 together. Company harvests available completed answers before adoption, preserves
@@ -299,15 +318,17 @@ IDs and roots. Exclude deleted projects, compare canonical paths when available
 and otherwise resolved original paths, and select the one live project whose
 root is exactly the checkout. A project rooted at an ancestor or a descendant of
 the checkout never stands in for it: `root` placement would run the session in
-that other folder and `worktree` placement would branch another repository. A
-retry of a generation replays its captured project; a successor generation
-never inherits a retired generation's project and resolves its checkout's
-project afresh. No exact match leaves work pending before launch with
-instrukt's own cause, which names the checkout and its door and reaches
-operator surfaces unchanged; malformed/unavailable metadata leaves it pending
-with that cause. Both are retried on later passes. The launch path registers no
-project; installation owns where a checkout's project comes from
-(`project/instrukt/spec/feature/runner/module-installation`).
+that other folder and `worktree` placement would branch another repository.
+When no live project has that root, launch adds one through `execution_root` in
+ensure mode and starts in it. The checkout is always the execution root instrukt
+derives from the work's home — a registered project checkout, a company home or
+the platform checkout — so only such a root is ever added. A retry of a
+generation replays its captured project; a successor generation never inherits
+a retired generation's project and resolves its checkout's project afresh. Two
+live projects at one root are contradictory project evidence. An unreachable
+runtime, a refused addition or malformed metadata leaves work pending before
+launch with instrukt's own cause naming the checkout, which reaches operator
+surfaces unchanged and is retried on later passes.
 <!-- /planned-change:fix-company-session-starts-outside-company-home -->
 
 After model preparation, `server.getConfig` supplies normalized settings,
@@ -337,15 +358,25 @@ wakes or succeeds an instrukt-owned thread, and before every input it delivers
 to one — event, approval, recovery and conversation input alike, for every
 binding kind — the adapter resolves the checkout's project exactly, as for
 launch, and compares it with the thread's native project. The binding's
-recorded project is not proof of that match, and a thread a project listing
-returns as a candidate meets the same comparison before it is adopted. A
-thread in any other project is contradictory binding/project evidence: it is
-not adopted and is sent nothing. The failure is instrukt's own outcome, not a
-native diagnostic: operator surfaces carry the thread, the checkout and its
-door — archive that thread — while a person writing to a company's agent is
-told only that the assistant is unavailable for a while. Once it is archived,
-outstanding work starts the next generation at the checkout under the
-succession rules above. No project root is retained beside the binding; T3's
+recorded project is not proof of that match. A thread in any other project is
+misplaced and is sent nothing:
+
+- Reported `input-ready` or `ended failed`, it is rolled over: under the object
+  lock its owner allocates the next generation in the checkout's own project
+  exactly as it does after confirmed archive or deletion, with the same
+  transfer of outstanding work, and the outstanding work starts there. The
+  misplaced thread is left as it is, as history; instrukt never sends to it
+  again.
+- Reported `running`, `needs-input` or `unknown`, it is left alone: a turn in
+  progress, a pending request or an unobserved state is never cut off. Work
+  stays pending, and operator surfaces carry instrukt's own outcome naming the
+  thread and the checkout, stating that the thread rolls over once it is idle
+  or archived.
+
+A manual reservation never adopts a misplaced thread: a candidate a project
+listing returns meets the same comparison and is refused, with no rollover.
+A person writing to a company's agent is told only that the assistant is
+unavailable for a while. No project root is retained beside the binding; T3's
 project snapshot is read where the comparison is made.
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
@@ -511,9 +542,10 @@ instruction prose is a separate configuration surface.
 Execution-root readiness reads the authenticated project snapshot and matches
 canonical roots exactly, as launch does. Ensure mode adds a missing root with
 `t3 project add <root>`, titled by T3 from the folder name, then reads the
-snapshot again: the project it finds there is the result, and T3's refusal of
-a root that already has an active project is a reuse confirmed by the same
-read. The door for a root the adapter does not add is `t3 project add <root>`.
+snapshot again: the project it finds there is the result. T3's running server
+accepts one active project per root, so a refusal because another addition
+landed first is a reuse confirmed by the same read. The door reported for a
+root that is still missing is `instrukt install`, or `t3 project add <root>`.
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
 T3 project listing includes settled threads and supplies no server-side time
@@ -869,14 +901,16 @@ And the orchestrator has received its opening brief once
 ```gherkin
 Given an execution checkout has no runtime project rooted at itself
 And an ancestor folder is registered as a runtime project
-When the runner attempts to start a session for that checkout
-Then the start stays pending naming the checkout and its add door
+When the runner starts a session for that checkout
+Then a runtime project is registered at the exact checkout
+And the session starts in that checkout's project
 And no session is started in the ancestor project
-When a runtime project is registered at the exact checkout
-Then the runner starts the session in that checkout's project
-But when a bound thread belongs to a project rooted elsewhere
-Then the runner neither adopts nor delivers input to it and reports the thread, checkout and archive door
-And once that thread is archived, its successor starts in the checkout's own project
+When new work arrives for an idle bound thread whose project is rooted elsewhere
+Then that thread receives none of it
+And a successor starts in the checkout's own project and receives the work
+When new work arrives for a running bound thread whose project is rooted elsewhere
+Then the work stays pending and that thread receives none of it
+And the runner reports the thread and the checkout, and that the thread rolls over once idle
 ```
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
