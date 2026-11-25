@@ -101,8 +101,9 @@ thread in the projection included. The archive's re-read validates every table
 and column it consumes, the thread's runs, runtime requests and delegated tasks
 among them, against the migrated database. Authenticated
 `orchestration.dispatchCommand` with `thread.archive` archives a fixture
-thread, and archiving it again is reported as already archived from T3's
-refusal. The release and its fake are compared for each of these. A fixture
+thread, and a second `thread.archive` for it is refused while its projection
+row shows it archived. The release and its fake are compared for each of
+these. A fixture
 state the release cannot reach provider-free is reported as an exclusion.
 <!-- /planned:archive-finished-threads -->
 
