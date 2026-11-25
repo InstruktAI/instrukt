@@ -722,3 +722,66 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         .unwrap();
     assert_eq!(left, 0);
 }
+
+#[test]
+fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups() {
+    let mut project = support::Project::new();
+    project.env.set_env("INSTRUKT_NOW", "2026-11-23T09:00:00Z");
+    // GitHub cannot be read: the command answers from the migrated database.
+    project.github.stop();
+    let state = project.env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    let before = {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v37.sql"))
+            .unwrap();
+        // The v35 work rows: no shipped migration since changed their shape.
+        db.execute_batch(V35_WORK).unwrap();
+        let version: u32 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 37);
+        work_rows(&db)
+    };
+
+    // The real CLI migrates the database and reads the work through it.
+    project.ok(["list"]);
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+    assert_eq!(work_rows(&raw), before);
+
+    // Each lookup worktree standing makes is answered by its index.
+    for (lookup, index) in [
+        (
+            "SELECT todo_id FROM session_bindings WHERE worktree = ?1",
+            "session_bindings_worktree",
+        ),
+        (
+            "SELECT todo_id FROM session_bindings WHERE branch = ?1",
+            "session_bindings_branch",
+        ),
+        ("SELECT id FROM todos WHERE branch = ?1", "todos_branch"),
+        ("SELECT reason FROM holds WHERE todo_id = ?1", "holds_todo"),
+        (
+            "SELECT action FROM github_label_actions WHERE todo_id = ?1",
+            "github_label_actions_todo",
+        ),
+    ] {
+        let used: Vec<String> = raw
+            .prepare(&format!("EXPLAIN QUERY PLAN {lookup}"))
+            .unwrap()
+            .query_map(["x"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let named: Vec<bool> = used
+            .iter()
+            .map(|detail| detail.split_whitespace().any(|word| word == index))
+            .collect();
+        assert_eq!(named, [true], "{lookup}: {used:?}");
+    }
+}
