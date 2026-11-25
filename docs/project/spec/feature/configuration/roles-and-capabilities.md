@@ -97,13 +97,10 @@ responsibility is explicitly part of the recorded assignment; being in a
 project does not own the machine.
 
 <!-- planned:focused-author-commit-hook-refused -->
-The `instrukt hooks run` that git starts for a commit, merge, rewrite or
-checkout belongs to the Repository family: it is `code-commit`, addressing the
-working tree the hook runs in, so `own` reaches it in the workspace the
-caller's assignment records. A hook run writes only instrukt's own generated
-files into the commit being made there
-(`project/instrukt/spec/feature/repository/hook-sections`), so it reaches
-nothing that commit does not (`project/instrukt/policy/checks-and-guards`).
+`instrukt hooks run`, the call in each of instrukt's hook sections
+(`project/instrukt/spec/feature/repository/hook-sections`), belongs to the
+Repository family: it is `code-commit`, addressing the working tree the hook
+runs in, so `own` reaches it in the workspace the caller's assignment records.
 The detached `hooks worker` a post-hook starts remains `runner-execute`, and
 the sync it runs remains `publication`.
 <!-- /planned:focused-author-commit-hook-refused -->
