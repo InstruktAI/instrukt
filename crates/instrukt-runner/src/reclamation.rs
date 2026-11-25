@@ -336,12 +336,11 @@ pub fn stage_idle(considered: &[Considered], wiring: &RunnerWiring, reported: &m
     {
         let slug = &project.project.slug;
         let worktrees = match standings.worktree_standings(&project.project) {
-            Ok(worktrees) => {
-                reported.settled(slug, "worktree standing");
-                worktrees
-            }
+            Ok(worktrees) => worktrees,
             Err(error) => {
-                reported.owed(slug, "worktree standing", &error.to_string());
+                // The deferred pass reads standing for every project and
+                // reports its failure; one failure gets one notice.
+                tracing::debug!(event = "worktree_standing_unread", project = %slug, %error);
                 continue;
             }
         };
@@ -534,10 +533,12 @@ impl Deferred {
                 return;
             }
         };
+        let mut complete = true;
         for entry in entries {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
+                    complete = false;
                     swept.unread.insert(dir.to_path_buf());
                     // The rest of the directory may still be read.
                     reported.owed(
@@ -569,6 +570,9 @@ impl Deferred {
                     swept.remaining.insert(todo);
                 }
             }
+        }
+        if complete {
+            reported.settled(&project.slug, &dir.display().to_string());
         }
     }
 }
