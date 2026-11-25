@@ -24,13 +24,17 @@ company's GitHub administrator an administrator of it, and checks it out as the
 company's home. A company whose repository already exists there is one by
 contract: adding it to another computer checks that repository out as its home
 and changes nothing on GitHub. Nothing about a company is customised: two
-companies' homes differ only where each company's identity enters them.
+companies' homes differ only where each company's identity enters them. A
+company's repository is also a project like any other adopted on the computer,
+one whose documentation is the company's knowledge alone, so everything an
+adopted project receives works for it from the moment its home exists.
 <!-- /planned:company-home-generation -->
 
 ## Canonical fields
 
 ### The home
 
+<!-- planned-change:company-home-generation -->
 | Part | Where | Contract |
 | --- | --- | --- |
 | Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
@@ -48,6 +52,35 @@ companies' homes differ only where each company's identity enters them.
 - Module enablement for a company home follows the machine's global layer; a
   company home carries no module switches.
 - instrukt never deletes a company home.
+<!-- change:company-home-generation -->
+| Part | Where | Contract |
+| --- | --- | --- |
+| Home folder | `~/.instrukt/companies/<name>/` | `<name>` is the company's identity on this computer and follows the grammar of a project slug. |
+| Settings document | `company.yaml` in the home folder | Carries `schema_version`, `company: <name>` equal to the folder name, and the company-home keys of `project/instrukt/spec/feature/configuration/layered-configuration`. |
+| Project layer | `instrukt.yaml` at the root of the home's repository, committed | Part of the company skeleton (Generation): the home's repository is an adopted project like any other, named `company-<name>`, with todos off and automatic review on, under the project layer's rules (`project/instrukt/spec/feature/configuration/layered-configuration`). |
+| Secrets file | `secrets.env` in the home folder | The company's own protected secrets, under the protection, write and disclosure rules of `project/instrukt/spec/feature/configuration/owned-files`. |
+| Company knowledge | The company's documents in the home's `docs/` folder, and the index `docs/index.yaml` that selects from them | Optional. What every agent working for the company starts with, rendered into the home's committed `AGENTS.md` and, on request, into the company's skill, which also holds a document's `visibility` to its rules. It references only the company's own documents (`project/instrukt/spec/feature/publication/agent-entrypoints`, `project/instrukt/spec/feature/publication/company-plugin`), and it is never published to the computer's documentation (`project/instrukt/spec/feature/publication/project-publication`). |
+| Ignore file | `.gitignore` in the home folder | Keeps the settings document, the secrets file, `projects/` and the local state instrukt keeps in the home out of the repository. |
+
+- A folder under `companies/` without a valid settings document is not a
+  company: nothing is served or run for it, and validation names the folder
+  and the finding. A settings document whose `company` differs from its folder
+  name is such a finding.
+- The settings document is read on its own. It is no layer of a project's
+  effective configuration, and no project layer names a company.
+- What the settings document declares follows the machine's global layer's
+  module switches; the settings document carries no module switches. The
+  home's project layer switches the repository's modules as every project
+  layer does.
+- **The settings document has its own name.** A home whose settings are still
+  the root `instrukt.yaml` declaring `company` has that file converted to
+  `company.yaml` with every setting it holds, as every owned shape is
+  converted (`project/instrukt/spec/feature/configuration/owned-files`). Where
+  the home holds both, neither is changed and validation names both.
+- instrukt never deletes a company home.
+<!-- /planned-change:company-home-generation -->
+
+
 
 <!-- planned:company-home-generation -->
 ### Generation
@@ -69,19 +102,34 @@ companies' homes differ only where each company's identity enters them.
   adding the company is refused, naming the folder; nothing in it, and nothing
   on GitHub, is changed.
 
-- **One skeleton.** The repository is created holding the company skeleton,
-  which includes the ignore file of this spec, the company's knowledge index
-  with its documents folder, the committed `AGENTS.md` rendered from them
+- **One skeleton.** The repository is created holding the company skeleton:
+  the home's committed project layer and the ignore file of this spec (The
+  home), the company's knowledge index with its documents folder, the
+  committed `AGENTS.md` rendered from them
   (`project/instrukt/spec/feature/publication/agent-entrypoints`), and the
-  plugin catalog listing the company's plugin rendered from them
+  company's skill with the catalog that lists it, rendered from them
   (`project/instrukt/spec/feature/publication/company-plugin`). The skeleton
   comes from one source and is the same for every company except where the
   company's identity enters it. It holds nothing that writes the repository's
   default branch on its own: that branch has one writer
   (`general/policy/commits`).
-- **Ready when it ends.** The generated home holds a valid settings document
-  naming the company, and instrukt's hook sections, so it is a company on the
-  computer and a commit made in it carries its rendered `AGENTS.md`.
+- **Ready when it ends.** Whether the repository was created or checked out
+  by contract, the home holds a valid settings document naming the company
+  and instrukt's hook sections, and the computer has published it as the
+  project its project layer names. It is then a company on the computer and an
+  adopted project like any other: a commit made in it carries its rendered
+  `AGENTS.md`, and its pull requests are reviewed automatically and its
+  changes integrated as every adopted project's are
+  (`project/instrukt/spec/feature/configuration/layered-configuration`,
+  Automatic review enablement;
+  `project/instrukt/spec/feature/runner/pull-request-review`). Adding a
+  company is refused, naming what is missing, on a computer that lacks a
+  prerequisite of the home's project layer, and no repository and no home is
+  created.
+- **The company's knowledge stays the company's.** Publishing the home
+  publishes none of the company's documents to the computer's documentation,
+  so no agent working elsewhere on the computer reads them
+  (`project/instrukt/spec/feature/publication/project-publication`).
 - **From anywhere.** The operator, and an agent session acting for the
   operator whose role grants adding a company, add one with the same result
   from any working directory on the computer, a company's home included; the
@@ -256,7 +304,7 @@ Given an operator has declared the GitHub organisation that owns company homes o
 When their agent adds a new company, given its key, its name and its GitHub administrator
 Then the organisation holds the company's private repository, named after its key, holding the company skeleton
 And the company's GitHub administrator is an administrator of that repository
-And the computer holds the company's home as the checkout of that repository, ready with no step taken by hand
+And the computer holds the company's home as the checkout of that repository, ready as a project like any other with no step taken by hand
 And the company's home holds the same skeleton as every other company added this way
 But when no organisation is declared, or the declared owner is a personal account
 Then no repository and no home is created, and the operator is told the organisation is a prerequisite
@@ -270,7 +318,7 @@ Then nothing of it is changed, and the operator is told the home exists
 Given a company's repository exists in the organisation that owns company homes
 And the operator's computer holds no home for that company
 When their agent adds the company by its key
-Then the computer holds the company's home as the checkout of that repository, ready with no step taken by hand
+Then the computer holds the company's home as the checkout of that repository, ready as a project like any other with no step taken by hand
 And nothing of the repository on GitHub is changed
 ```
 <!-- /planned:company-home-generation -->
@@ -288,7 +336,8 @@ And nothing of the repository on GitHub is changed
 <!-- change:company-home-generation -->
 - instrukt reads a company home as it stands. A company's repository is
   created, and its home checked out, when the company is added (Generation);
-  keeping a home current is the operator's, outside this contract.
+  from then on the home is kept current as every adopted project's checkout
+  is.
 - A home folder that exists is never adopted: a home made by hand, or one that
   is not a checkout, stays as it is.
 <!-- /planned-change:company-home-generation -->

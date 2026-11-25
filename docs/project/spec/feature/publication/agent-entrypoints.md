@@ -191,12 +191,21 @@ A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
 section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
 commit naming each stale entrypoint; the repair is `instrukt docs render` and
+<!-- planned-change:company-home-generation -->
 a commit, or a commit through the hook. In a company's repository, the
 workflow that publishes the company's skill on main also writes the
 repository's `AGENTS.md`, with the shared workflows repository's own renderer,
 and commits to main only when what it rendered differs from what main holds;
 that workflow and its renderer belong to the shared workflows repository
 (`project/instrukt/policy/shared-workflows`).
+<!-- change:company-home-generation -->
+a commit, or a commit through the hook. In a company's repository that
+carries the shared workflows repository's publishing workflow, that workflow
+also writes the repository's `AGENTS.md` on main, with the shared workflows
+repository's own renderer, and commits to main only when what it rendered
+differs from what main holds; that workflow and its renderer belong to the
+shared workflows repository (`project/instrukt/policy/shared-workflows`).
+<!-- /planned-change:company-home-generation -->
 
 ### Company home entrypoint
 
@@ -217,6 +226,7 @@ reaches the agent through its role
 doctrine, not company knowledge. instrukt writes no other instruction file in
 the home and leaves any other there as it is.
 
+<!-- planned-change:company-home-generation -->
 - **What makes a repository a company home.** The rendering mode comes from
   what the working tree's root holds, tracked or not:
   - a root `instrukt.yaml` that declares `company` is a company's settings
@@ -237,6 +247,27 @@ the home and leaves any other there as it is.
   settings document tracked by mistake changes no rendering; configuration
   validation reports the tracked file
   (`project/instrukt/spec/feature/configuration/company-homes`).
+<!-- change:company-home-generation -->
+- **What makes a repository a company home.** The rendering mode comes from
+  what the working tree's root holds, tracked or not:
+  - a `docs/index.yaml`, a `company.yaml`, or a root `instrukt.yaml` that
+    still declares `company`: company rendering — the company's home, a clone
+    of the company's repository, or its CI, whether or not the root also
+    holds the project layer the company's repository commits
+    (`project/instrukt/spec/feature/configuration/company-homes`, The home);
+  - otherwise a root `instrukt.yaml` is the project layer: project rendering,
+    from the moment `instrukt init` writes it
+    (`project/instrukt/spec/feature/repository/project-initialization`).
+
+  A company's repository carries its index with it, so a company's home and
+  a clone of its repository render the same bytes. A root `instrukt.yaml`
+  that cannot be read, where it decides the mode, is a finding naming it,
+  handled as every finding is: the mode is never guessed from a file that
+  cannot be read (`sdlc/principle/design-fundamentals`). A company's settings
+  document tracked by mistake changes no rendering; configuration validation
+  reports the tracked file
+  (`project/instrukt/spec/feature/configuration/company-homes`).
+<!-- /planned-change:company-home-generation -->
 - **The company index.** `docs/index.yaml` holds `expanded` and `listed` and
   no other key; each is a list. Each entry names a company document by its
   path relative to `docs/`, a path ending in `.md`. An index that holds no
@@ -328,6 +359,7 @@ the home and leaves any other there as it is.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report every finding of the index and of the documents, and a
   home with a finding is not rendered.
+<!-- planned-change:company-home-generation -->
 - **Who renders it.** instrukt renders it in two places: the `pre-commit`
   section where it is installed in the home, and `instrukt docs render` run
   in the home or in a clone of the repository. The block order above and the
@@ -343,6 +375,24 @@ the home and leaves any other there as it is.
   whose index is gone are stated in this spec of the file instrukt writes,
   and none of them of that file. The runner starts sessions in the home as it
   stands and renders nothing there.
+<!-- change:company-home-generation -->
+- **Who renders it.** instrukt renders it in two places: the `pre-commit`
+  section where it is installed in the home, and `instrukt docs render` run
+  in the home or in a clone of the repository. The block order above and the
+  same bytes in a home and in a clone hold for instrukt's rendering, and
+  `instrukt docs render --check` compares the working file with that
+  rendering. A company repository that carries the shared workflows
+  repository's publishing workflow has an `AGENTS.md` committed on main by it
+  as well, rendered by that publisher with its own renderer; what that file
+  holds, and what that publisher reads, is that repository's contract
+  (`project/instrukt/policy/shared-workflows`). It
+  opens with that publisher's own first line and holds its blocks in that
+  publisher's own order, so it is not instrukt's rendering: the generated
+  line, the block order, the company passage and the removal of a rendering
+  whose index is gone are stated in this spec of the file instrukt writes,
+  and none of them of that file. The runner starts sessions in the home as it
+  stands and renders nothing there.
+<!-- /planned-change:company-home-generation -->
 - **Without `docs/index.yaml`**, the home has no rendering, and a rendering
   of instrukt's left there is removed. An `AGENTS.md` there that opens with
   any other line, the publisher's included, stays as it is: the hook section

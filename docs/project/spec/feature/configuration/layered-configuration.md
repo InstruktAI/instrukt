@@ -148,6 +148,13 @@ todo's worktree does not depend on it
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
 
+<!-- planned:company-home-generation -->
+`github.org` (the login of a GitHub organisation) is global only. It names the
+organisation that owns the company home repositories this computer adds, and
+what it may hold is stated with company home generation
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation).
+<!-- /planned:company-home-generation -->
+
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
 there is no project-layer `actions` key. CI required checks remain the merge gate.
@@ -336,11 +343,19 @@ selects a bot actor.
 - The project layer is the `instrukt.yaml` at the root of the repository
   containing the working directory. Outside a repository, or in one without
   that file, there is no project layer.
+<!-- planned-change:company-home-generation -->
 - A company home's document is the `instrukt.yaml` in
   `~/.instrukt/companies/<name>/`, addressed with `--company <name>`.
+<!-- change:company-home-generation -->
+- A company home's document is the `company.yaml` in
+  `~/.instrukt/companies/<name>/`, addressed with `--company <name>`. The
+  `instrukt.yaml` at the root of the home's repository is that repository's
+  project layer, like every project's.
+<!-- /planned-change:company-home-generation -->
 
 ### Company home documents
 
+<!-- planned-change:company-home-generation -->
 A company home's `instrukt.yaml` is a document of its own beside the two
 layers (`project/instrukt/spec/feature/configuration/company-homes`). It
 carries `schema_version`, `company` and the keys the layer rules permit in a
@@ -349,6 +364,16 @@ no layer: a read with `--company <name>` answers from that document alone. It
 is validated, patched, revision-checked and migrated like a layer document, and
 as a machine-owned file its conversion is persisted by writing paths
 (`project/instrukt/spec/feature/configuration/owned-files`).
+<!-- change:company-home-generation -->
+A company home's `company.yaml` is a document of its own beside the two
+layers (`project/instrukt/spec/feature/configuration/company-homes`). It
+carries `schema_version`, `company` and the keys the layer rules permit in a
+company home; any other key there is a finding naming the key. It combines with
+no layer: a read with `--company <name>` answers from that document alone. It
+is validated, patched, revision-checked and migrated like a layer document, and
+as a machine-owned file its conversion is persisted by writing paths
+(`project/instrukt/spec/feature/configuration/owned-files`).
+<!-- /planned-change:company-home-generation -->
 
 ### Effective configuration
 
