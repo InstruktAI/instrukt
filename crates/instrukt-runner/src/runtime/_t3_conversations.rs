@@ -1,8 +1,12 @@
-//! Short read-only projection batches from T3's durable SQLite state.
+//! Short read-only projection batches from T3's durable SQLite state, through
+//! two reads: the turn read covers every record T3 holds of a conversation,
+//! the text read only a conversation's own record and its messages; each
+//! validates, fingerprints and reads only the tables it covers.
 use super::_t3_fingerprint::{self, Fingerprint};
 use super::conversations::{
-    ConversationChanges, ConversationNotifications, ConversationRecord, ConversationSource,
-    RecordKind, Role, Scope, SourceError, SourcePosition,
+    ConversationChanges, ConversationNotifications, ConversationOwnRecord, ConversationRecord,
+    ConversationSource, ConversationText, MessageText, RecordKind, Role, Scope, SourceError,
+    SourcePosition, TextChanges,
 };
 use crate::runtime::_t3_home::T3Home;
 use instrukt_core::ids::SessionId;
@@ -34,13 +38,16 @@ enum Projection {
     Subagents,
     TurnItems,
 }
-const PROJECTIONS: [Projection; 5] = [
+/// What the turn read covers: every record T3 holds of a conversation.
+const TURN: &[Projection] = &[
     Projection::Threads,
     Projection::Messages,
     Projection::Runs,
     Projection::Subagents,
     Projection::TurnItems,
 ];
+/// What the text read covers: a conversation's own record and its messages.
+const TEXT: &[Projection] = &[Projection::Threads, Projection::Messages];
 impl Projection {
     fn name(self) -> &'static str {
         match self {
@@ -368,11 +375,11 @@ fn columns(db: &Connection, table: &str) -> Result<BTreeMap<String, String>, Sou
         })?
         .collect::<Result<_, _>>()?)
 }
-/// Checks the source's shape before every read. It runs on each read, so its
-/// records are trace-level.
-fn validate(path: &Path, location: &T3Home) -> Result<(), SourceError> {
+/// Checks the shape of the source tables a read consumes, `projections`,
+/// before every read. It runs on each read, so its records are trace-level.
+fn validate(path: &Path, location: &T3Home, projections: &[Projection]) -> Result<(), SourceError> {
     let db = open(path)?;
-    for projection in PROJECTIONS {
+    for &projection in projections {
         let found = columns(&db, &projection.table())?;
         for (name, kind) in projection.columns() {
             if found.get(name).map(String::as_str) != Some(kind) {
@@ -576,10 +583,12 @@ impl T3Conversations {
         }
     }
 }
-/// Discover raw content fingerprints within the caller's read snapshot.
+/// Discover raw content fingerprints of the source tables `projections`
+/// within the caller's read snapshot.
 fn discover(
     db: &Connection,
     scope: Scope<'_>,
+    projections: &[Projection],
     presence: &mut Option<super::Presence>,
 ) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
     let threads: Vec<Option<&str>> = match scope {
@@ -606,7 +615,7 @@ fn discover(
                 }),
             ).optional()?.unwrap_or(Presence::Absent));
         }
-        for projection in PROJECTIONS {
+        for &projection in projections {
             let mut after = 0_i64;
             loop {
                 let sql = format!(
@@ -663,22 +672,29 @@ fn discover(
 fn conversation(thread: &str) -> Result<SessionId, SourceError> {
     SessionId::parse(thread).map_err(|_| source_error("invalid conversation reference"))
 }
+/// The time a native record holds under `name`, when it holds one.
+fn payload_time(value: &Value, name: &str) -> Result<Option<jiff::Timestamp>, SourceError> {
+    value
+        .get(name)
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_str()
+                .ok_or_else(|| source_error("timestamp type incompatible"))
+                .and_then(|s| {
+                    s.parse()
+                        .map_err(|_| source_error("invalid source timestamp"))
+                })
+        })
+        .transpose()
+}
+fn row_time(row: &Row) -> Result<jiff::Timestamp, SourceError> {
+    row.updated_at
+        .parse()
+        .map_err(|_| source_error("invalid row timestamp"))
+}
 fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, SourceError> {
     let value = &row.payload;
-    let timestamp = |name: &str| -> Result<Option<jiff::Timestamp>, SourceError> {
-        value
-            .get(name)
-            .filter(|v| !v.is_null())
-            .map(|v| {
-                v.as_str()
-                    .ok_or_else(|| source_error("timestamp type incompatible"))
-                    .and_then(|s| {
-                        s.parse()
-                            .map_err(|_| source_error("invalid source timestamp"))
-                    })
-            })
-            .transpose()
-    };
+    let timestamp = |name: &str| payload_time(value, name);
     let kind = match projection {
         Projection::Threads => RecordKind::Conversation,
         Projection::Messages => RecordKind::Message,
@@ -714,6 +730,7 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
                 )
         }
     };
+    let updated_at = Some(row_time(&row)?);
     Ok(ConversationRecord {
         kind,
         id: row.native_id,
@@ -726,16 +743,52 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         title: value["title"].as_str().map(str::to_owned),
         text: (!texts.is_empty()).then(|| texts.join("\n\n")),
         created_at: timestamp("createdAt")?.or(timestamp("requestedAt")?),
-        updated_at: Some(
-            row.updated_at
-                .parse()
-                .map_err(|_| source_error("invalid row timestamp"))?,
-        ),
+        updated_at,
         completed,
         native: row.payload,
     })
 }
-/// One conversation read whole from a committed snapshot.
+/// One conversation's rows of the source tables a read covers, read whole
+/// from a committed snapshot: the finished ones, with the fingerprint of
+/// every row.
+struct Rows {
+    fingerprint: Fingerprint,
+    finished: Vec<(Projection, Row)>,
+    streaming: bool,
+    incomplete_runs: BTreeSet<String>,
+}
+
+fn rows(db: &Connection, thread: &str, projections: &[Projection]) -> Result<Rows, SourceError> {
+    let mut read = Rows {
+        fingerprint: Fingerprint::default(),
+        finished: Vec::new(),
+        streaming: false,
+        incomplete_runs: BTreeSet::new(),
+    };
+    for &projection in projections {
+        let mut after = String::new();
+        loop {
+            let rows = batch(db, projection, thread, &after)?;
+            let Some(last) = rows.last() else {
+                break;
+            };
+            after = last.native_id.clone();
+            for row in rows {
+                read.fingerprint.add(&row.fingerprint);
+                if row.streaming {
+                    read.streaming = true;
+                    read.incomplete_runs
+                        .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
+                } else {
+                    read.finished.push((projection, row));
+                }
+            }
+        }
+    }
+    Ok(read)
+}
+
+/// One conversation read whole by the turn read.
 struct Read {
     fingerprint: Fingerprint,
     records: Vec<ConversationRecord>,
@@ -745,37 +798,78 @@ struct Read {
 
 impl T3Conversations {
     fn read(&self, db: &Connection, thread: &str) -> Result<Read, SourceError> {
-        let mut fingerprint = Fingerprint::default();
-        let mut records = Vec::new();
-        let mut streaming = false;
-        let mut incomplete_runs = BTreeSet::new();
-        for projection in PROJECTIONS {
-            let mut after = String::new();
-            loop {
-                let rows = batch(db, projection, thread, &after)?;
-                let Some(last) = rows.last() else {
-                    break;
-                };
-                after = last.native_id.clone();
-                for row in rows {
-                    fingerprint.add(&row.fingerprint);
-                    if row.streaming {
-                        streaming = true;
-                        incomplete_runs
-                            .insert(row.payload["runId"].as_str().unwrap_or("*").to_owned());
-                    } else {
-                        records.push(normalized(projection, row)?);
-                    }
-                }
-            }
-        }
+        let Rows {
+            fingerprint,
+            finished,
+            streaming,
+            incomplete_runs,
+        } = rows(db, thread, TURN)?;
         Ok(Read {
             fingerprint,
-            records,
+            records: finished
+                .into_iter()
+                .map(|(projection, row)| normalized(projection, row))
+                .collect::<Result<_, _>>()?,
             streaming,
             incomplete_runs,
         })
     }
+}
+
+/// What the text read returns of `thread`'s finished rows of [`TEXT`]:
+/// `None` when it found neither the conversation's own record nor a
+/// finished message.
+fn text(
+    thread: &str,
+    finished: Vec<(Projection, Row)>,
+) -> Result<Option<ConversationText>, SourceError> {
+    let mut found = ConversationText {
+        conversation_id: thread.to_owned(),
+        record: None,
+        messages: Vec::new(),
+    };
+    for (projection, row) in finished {
+        match projection {
+            Projection::Threads => {
+                let title = row.payload["title"]
+                    .as_str()
+                    .ok_or_else(|| source_error("invalid thread shape"))?
+                    .to_owned();
+                found.record = Some(ConversationOwnRecord {
+                    title,
+                    parent_id: row.payload["lineage"]["parentThreadId"]
+                        .as_str()
+                        .map(str::to_owned),
+                    native: row.payload,
+                });
+            }
+            Projection::Messages => {
+                let updated_at = Some(row_time(&row)?);
+                let created_at = payload_time(&row.payload, "createdAt")?
+                    .or(payload_time(&row.payload, "requestedAt")?);
+                let role = serde_json::from_value::<Role>(row.payload["role"].clone())?;
+                let mut native = row.payload;
+                let text = match native.as_object_mut().and_then(|n| n.shift_remove("text")) {
+                    Some(Value::String(text)) => text,
+                    _ => return Err(source_error("invalid message shape")),
+                };
+                found.messages.push(MessageText {
+                    id: row.native_id,
+                    role,
+                    text,
+                    created_at,
+                    updated_at,
+                    native,
+                });
+            }
+            Projection::Runs | Projection::Subagents | Projection::TurnItems => {
+                return Err(source_error(
+                    "the text read returned a record it does not cover",
+                ));
+            }
+        }
+    }
+    Ok((found.record.is_some() || !found.messages.is_empty()).then_some(found))
 }
 
 /// What one settled conversation contributes to a batch; its fingerprint is
@@ -837,17 +931,27 @@ fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChange
     }
 }
 
+/// Where a pass over every conversation stands for one read.
+enum Step {
+    /// Read this conversation next.
+    Read(String),
+    /// The pass is over; these conversations it observed earlier are gone.
+    End(Vec<SessionId>),
+}
+
 impl T3Conversations {
-    /// The next conversation of a pass over every conversation, one per
-    /// batch. The pass discovers them once and keeps that inventory while
-    /// its own positions come back; any other position starts a new pass
-    /// from the first conversation, so a position retained across a restart
-    /// is caught up whole.
-    fn all(
+    /// The next conversation of a pass over every conversation of the
+    /// source tables `projections`, one per batch. The pass discovers them
+    /// once and keeps that inventory while its own positions come back; any
+    /// other position starts a new pass from the first conversation, so a
+    /// position retained across a restart is caught up whole. The caller
+    /// records the position it returns with [`Self::expect`].
+    fn step(
         &self,
         position: Option<&SourcePosition>,
-        mut state: Position,
-    ) -> Result<ConversationChanges, SourceError> {
+        state: &mut Position,
+        projections: &[Projection],
+    ) -> Result<Step, SourceError> {
         let fingerprints = {
             let mut cache = self.pass.borrow_mut();
             if cache
@@ -858,7 +962,7 @@ impl T3Conversations {
                     fingerprints: {
                         let mut db = open(&self.path)?;
                         let snapshot = db.transaction()?;
-                        discover(&snapshot, Scope::All, &mut None)?
+                        discover(&snapshot, Scope::All, projections, &mut None)?
                     },
                     expected: None,
                 });
@@ -885,23 +989,85 @@ impl T3Conversations {
                 .collect::<Result<Vec<_>, _>>()?;
             state.after = None;
             *self.pass.borrow_mut() = None;
-            let mut changes = empty_changes(SourcePosition(serde_json::to_value(state)?), false);
-            changes.missing = missing;
-            return Ok(changes);
+            return Ok(Step::End(missing));
         };
         state.observed.insert(thread.clone());
         state.after = Some(thread.clone());
+        Ok(Step::Read(thread.clone()))
+    }
+
+    /// The pass continues while `position`, the one a step's batch returned,
+    /// comes back.
+    fn expect(&self, position: &SourcePosition) {
+        if let Some(pass) = self.pass.borrow_mut().as_mut() {
+            pass.expected = Some(position.clone());
+        }
+    }
+
+    /// The turn read over every conversation, one per batch.
+    fn all(
+        &self,
+        position: Option<&SourcePosition>,
+        mut state: Position,
+    ) -> Result<ConversationChanges, SourceError> {
+        let thread = match self.step(position, &mut state, TURN)? {
+            Step::Read(thread) => thread,
+            Step::End(missing) => {
+                let mut changes =
+                    empty_changes(SourcePosition(serde_json::to_value(state)?), false);
+                changes.missing = missing;
+                return Ok(changes);
+            }
+        };
         let read = {
             let mut db = open(&self.path)?;
             let snapshot = db.transaction()?;
-            self.read(&snapshot, thread)?
+            self.read(&snapshot, &thread)?
         };
         let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), true);
-        contribute(&mut changes, &mut state, thread, read)?;
+        contribute(&mut changes, &mut state, &thread, read)?;
         changes.position = SourcePosition(serde_json::to_value(state)?);
-        if let Some(pass) = self.pass.borrow_mut().as_mut() {
-            pass.expected = Some(changes.position.clone());
+        self.expect(&changes.position);
+        Ok(changes)
+    }
+
+    /// The text read, one conversation per batch: a conversation whose
+    /// finished text is read is marked loaded with the fingerprint of what
+    /// it read, unless one of its messages is still streaming.
+    fn texts(
+        &self,
+        position: Option<&SourcePosition>,
+        mut state: Position,
+    ) -> Result<TextChanges, SourceError> {
+        let thread = match self.step(position, &mut state, TEXT)? {
+            Step::Read(thread) => thread,
+            Step::End(_) => {
+                return Ok(TextChanges {
+                    conversations: Vec::new(),
+                    position: SourcePosition(serde_json::to_value(state)?),
+                    has_more: false,
+                });
+            }
+        };
+        let Rows {
+            fingerprint,
+            finished,
+            streaming,
+            incomplete_runs: _,
+        } = {
+            let mut db = open(&self.path)?;
+            let snapshot = db.transaction()?;
+            rows(&snapshot, &thread, TEXT)?
+        };
+        if !streaming {
+            state.loaded.insert(thread.clone(), fingerprint);
         }
+        let changes = TextChanges {
+            conversations: text(&thread, finished)?.into_iter().collect(),
+            position: SourcePosition(serde_json::to_value(state)?),
+            has_more: true,
+        };
+        self.expect(&changes.position);
         Ok(changes)
     }
 
@@ -926,7 +1092,12 @@ impl T3Conversations {
         let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
         let mut db = open(&self.path)?;
         let snapshot = db.transaction()?;
-        let fingerprints = discover(&snapshot, Scope::Only(ids), &mut changes.scoped_presence)?;
+        let fingerprints = discover(
+            &snapshot,
+            Scope::Only(ids),
+            TURN,
+            &mut changes.scoped_presence,
+        )?;
         changes.missing = state
             .observed
             .iter()
@@ -955,13 +1126,19 @@ impl ConversationSource for T3Conversations {
         position: Option<&SourcePosition>,
         scope: Scope<'_>,
     ) -> Result<ConversationChanges, SourceError> {
-        validate(&self.path, &self.location)?;
+        validate(&self.path, &self.location, TURN)?;
         let mut state = migrate_position(position)?;
         state.observed.extend(state.loaded.keys().cloned());
         match scope {
             Scope::All => self.all(position, state),
             Scope::Only(ids) => self.only(ids, state),
         }
+    }
+    fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError> {
+        validate(&self.path, &self.location, TEXT)?;
+        let mut state = migrate_position(position)?;
+        state.observed.extend(state.loaded.keys().cloned());
+        self.texts(position, state)
     }
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError> {
         super::_t3_notifications::subscribe(&self.path)

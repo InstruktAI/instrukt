@@ -94,6 +94,41 @@ pub struct ConversationChanges {
     pub missing: Vec<SessionId>,
 }
 
+/// One batch of the text read: what a text mirror of conversations receives.
+pub struct TextChanges {
+    pub conversations: Vec<ConversationText>,
+    pub position: SourcePosition,
+    pub has_more: bool,
+}
+
+/// One changed conversation of a text read, named by its native id whether
+/// or not the read found the conversation's own record.
+pub struct ConversationText {
+    pub conversation_id: String,
+    /// The conversation's own record, where the source holds one.
+    pub record: Option<ConversationOwnRecord>,
+    /// The conversation's finished messages.
+    pub messages: Vec<MessageText>,
+}
+
+/// What a source holds of a conversation itself.
+pub struct ConversationOwnRecord {
+    pub title: String,
+    pub parent_id: Option<String>,
+    pub native: Value,
+}
+
+/// One finished message: its text, and the source's record of it without
+/// that text.
+pub struct MessageText {
+    pub id: String,
+    pub role: Role,
+    pub text: String,
+    pub created_at: Option<jiff::Timestamp>,
+    pub updated_at: Option<jiff::Timestamp>,
+    pub native: Value,
+}
+
 /// The native conversations one read covers.
 #[derive(Debug, Clone, Copy)]
 pub enum Scope<'a> {
@@ -147,6 +182,11 @@ pub trait ConversationSource: Send {
         position: Option<&SourcePosition>,
         scope: Scope<'_>,
     ) -> Result<ConversationChanges, SourceError>;
+    /// The text read: the next bounded batch of changed conversations over
+    /// every conversation the source holds, each with its own record and
+    /// its finished messages and nothing else the source holds of it. Its
+    /// position is its own; the position commits with what it delivered.
+    fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
     /// The newest assistant message the runtime has recorded in `thread`'s
     /// running turn, taken whole, whatever its phase: what a person is shown
