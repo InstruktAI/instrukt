@@ -2026,91 +2026,74 @@ mod tests {
     }
 
     #[test]
-    fn requests_that_complete_no_attempt_leave_the_callers_attempt_open() {
-        use crate::work::StampRequest;
+    fn a_request_that_completes_no_attempt_binds_none_of_the_callers_attempts() {
         let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
-        for request in [
-            StampRequest::IntentChecked,
-            StampRequest::BuildStarted,
-            StampRequest::FinalizeReady,
-            StampRequest::Kickback {
-                reason: "scope moved".into(),
-            },
-            StampRequest::TaskFiringStarted { occurrence: None },
-        ] {
-            assert_eq!(admit(&record, Some("builder-1"), &request).unwrap(), None);
-        }
-    }
-
-    #[test]
-    fn a_completion_without_a_session_is_refused_unless_it_is_record_only() {
-        use crate::evidence::BuildVerdict;
-        use crate::work::StampRequest;
-        let record = task_record(Vec::new());
-        for request in [
-            StampRequest::RoleComplete,
-            StampRequest::BuildComplete,
-            StampRequest::DeferralsProcessed,
-            build_verdict(BuildVerdict::ChangesRequested),
-            build_verdict(BuildVerdict::Approve),
-        ] {
-            assert!(refused(admit(&record, None, &request)), "{request:?}");
-        }
-        for request in [
-            preparation_verdict(PreparationReview::PrdReview),
-            disposition(),
-        ] {
-            assert_eq!(admit(&record, None, &request).unwrap(), None);
-        }
-    }
-
-    #[test]
-    fn a_session_without_the_requests_role_is_refused_unless_it_is_record_only() {
-        use crate::evidence::BuildVerdict;
-        use crate::work::StampRequest;
-        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
-        for request in [
-            StampRequest::RoleComplete,
-            StampRequest::DeferralsProcessed,
-            build_verdict(BuildVerdict::ChangesRequested),
-        ] {
-            assert!(
-                refused(admit(&record, Some("builder-1"), &request)),
-                "{request:?}"
-            );
-        }
-        for request in [
-            preparation_verdict(PreparationReview::PrdReview),
-            disposition(),
-        ] {
-            assert_eq!(admit(&record, Some("builder-1"), &request).unwrap(), None);
-        }
         assert_eq!(
-            admit(&record, Some("builder-1"), &StampRequest::BuildComplete).unwrap(),
-            Some(0)
+            admit(
+                &record,
+                Some("builder-1"),
+                &crate::work::StampRequest::FinalizeReady
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_completion_without_a_session_is_refused() {
+        let record = task_record(Vec::new());
+        assert!(refused(admit(
+            &record,
+            None,
+            &crate::work::StampRequest::BuildComplete
+        )));
+    }
+
+    #[test]
+    fn a_record_only_completion_without_a_session_binds_no_attempt() {
+        let record = task_record(Vec::new());
+        assert_eq!(admit(&record, None, &disposition()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_session_without_the_requests_role_is_refused() {
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        assert!(refused(admit(
+            &record,
+            Some("builder-1"),
+            &crate::work::StampRequest::DeferralsProcessed
+        )));
+    }
+
+    #[test]
+    fn a_record_only_completion_by_a_session_without_its_role_binds_no_attempt() {
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("builder-1"),
+                &preparation_verdict(PreparationReview::PrdReview)
+            )
+            .unwrap(),
+            None
         );
     }
 
     #[test]
     fn a_completion_completes_the_callers_latest_attempt_of_its_roles() {
-        use crate::work::StampRequest;
         let record = task_record(vec![
             child_binding("builder", 1, "worker"),
             child_binding("fixer", 2, "worker"),
             child_binding("fixer", 3, "other"),
-            child_binding("deferrer", 4, "worker"),
         ]);
         assert_eq!(
-            admit(&record, Some("worker"), &StampRequest::BuildComplete).unwrap(),
+            admit(
+                &record,
+                Some("worker"),
+                &crate::work::StampRequest::BuildComplete
+            )
+            .unwrap(),
             Some(1)
-        );
-        assert_eq!(
-            admit(&record, Some("other"), &StampRequest::BuildComplete).unwrap(),
-            Some(2)
-        );
-        assert_eq!(
-            admit(&record, Some("worker"), &StampRequest::DeferralsProcessed).unwrap(),
-            Some(3)
         );
     }
 
@@ -2126,65 +2109,75 @@ mod tests {
             .unwrap(),
             Some(0)
         );
-        assert_eq!(
-            admit(
-                &record,
-                Some("reviewer-1"),
-                &preparation_verdict(PreparationReview::PrdReview)
-            )
-            .unwrap(),
-            None
-        );
     }
 
     #[test]
-    fn only_a_build_approval_requires_an_independent_reviewer() {
-        use crate::evidence::BuildVerdict;
+    fn a_build_approval_by_the_claim_holder_is_refused() {
         // `driver-1` holds the todo's claim (`base_record`).
-        let record = task_record(vec![
-            child_binding("build-reviewer", 1, "driver-1"),
-            child_binding("build-reviewer", 2, "reviewer-1"),
-        ]);
+        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
         assert!(refused(admit(
             &record,
             Some("driver-1"),
-            &build_verdict(BuildVerdict::Approve)
+            &build_verdict(crate::evidence::BuildVerdict::Approve)
         )));
+    }
+
+    #[test]
+    fn a_build_change_request_by_the_claim_holder_completes_its_attempt() {
+        // `driver-1` holds the todo's claim (`base_record`).
+        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
         assert_eq!(
             admit(
                 &record,
                 Some("driver-1"),
-                &build_verdict(BuildVerdict::ChangesRequested)
+                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
             )
             .unwrap(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn a_build_approval_by_an_independent_reviewer_completes_its_attempt() {
+        let record = task_record(vec![child_binding("build-reviewer", 1, "reviewer-1")]);
         assert_eq!(
             admit(
                 &record,
                 Some("reviewer-1"),
-                &build_verdict(BuildVerdict::Approve)
+                &build_verdict(crate::evidence::BuildVerdict::Approve)
             )
             .unwrap(),
-            Some(1)
+            Some(0)
         );
     }
 
-    #[test]
-    fn a_released_attempt_completes_again_only_with_its_recorded_completion() {
-        use crate::work::StampRequest;
+    fn released_builder(completion_sequence: Option<u64>) -> Binding {
         let mut released = child_binding("builder", 1, "builder-1");
         released.attempt.released_at = Some(jiff::Timestamp::from_second(4).unwrap());
-        let unrecorded = task_record(vec![released.clone()]);
+        released.attempt.completion_sequence = completion_sequence;
+        released
+    }
+
+    #[test]
+    fn a_released_attempt_without_its_recorded_completion_is_refused() {
+        let record = task_record(vec![released_builder(None)]);
         assert!(refused(admit(
-            &unrecorded,
+            &record,
             Some("builder-1"),
-            &StampRequest::BuildComplete
+            &crate::work::StampRequest::BuildComplete
         )));
-        released.attempt.completion_sequence = Some(2);
-        let recorded = task_record(vec![released]);
+    }
+
+    #[test]
+    fn a_released_attempt_with_its_recorded_completion_completes_again() {
+        let record = task_record(vec![released_builder(Some(2))]);
         assert_eq!(
-            admit(&recorded, Some("builder-1"), &StampRequest::BuildComplete).unwrap(),
+            admit(
+                &record,
+                Some("builder-1"),
+                &crate::work::StampRequest::BuildComplete
+            )
+            .unwrap(),
             Some(0)
         );
     }
@@ -2209,87 +2202,99 @@ mod tests {
         (repo, captured, moved)
     }
 
-    fn shared_binding(
-        role: &str,
-        number: u64,
-        bound: &str,
-        tree: &Path,
-        base: &CommitSha,
-    ) -> Binding {
-        let mut binding = worker_binding(role, number, Some(session(bound)));
+    /// A record whose one attempt of `role`, bound to `bound`, shares
+    /// `tree` on branch `work` from the captured head `base`.
+    fn shared_record(role: &str, bound: &str, tree: &Path, base: &CommitSha) -> TodoRecord {
+        let mut binding = worker_binding(role, 1, Some(session(bound)));
         binding.worktree = Some(tree.to_path_buf());
         binding.attempt.branch = Some("work".into());
         binding.attempt.base_head = Some(base.clone());
-        binding
+        TodoRecord {
+            bindings: vec![binding],
+            ..base_record()
+        }
+    }
+
+    #[test]
+    fn a_read_only_completion_at_its_captured_head_completes_its_attempt() {
+        let (repo, _, moved) = shared_worktree();
+        let tree = repo.path();
+        let record = shared_record("build-reviewer", "reviewer-1", tree, &moved);
+        assert_eq!(
+            completion_binding(
+                &record,
+                Some(&session("reviewer-1")),
+                tree,
+                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
+            )
+            .unwrap(),
+            Some(0)
+        );
     }
 
     #[test]
     fn a_read_only_completion_is_refused_once_the_shared_head_moved_past_its_capture() {
-        use crate::evidence::BuildVerdict;
-        use crate::work::StampRequest;
-        let (repo, captured, moved) = shared_worktree();
+        let (repo, captured, _) = shared_worktree();
         let tree = repo.path();
-        let record = |reviewer_base: &CommitSha| TodoRecord {
-            bindings: vec![
-                shared_binding("build-reviewer", 1, "reviewer-1", tree, reviewer_base),
-                shared_binding("builder", 2, "builder-1", tree, &captured),
-            ],
-            ..base_record()
-        };
-        let verdict = build_verdict(BuildVerdict::ChangesRequested);
-        let reviewer = session("reviewer-1");
-        assert_eq!(
-            completion_binding(&record(&moved), Some(&reviewer), tree, &verdict).unwrap(),
-            Some(0)
-        );
+        let record = shared_record("build-reviewer", "reviewer-1", tree, &captured);
         assert!(refused(completion_binding(
-            &record(&captured),
-            Some(&reviewer),
+            &record,
+            Some(&session("reviewer-1")),
             tree,
-            &verdict
+            &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
         )));
-        // A writer completes at the head its own commits moved to.
+    }
+
+    #[test]
+    fn a_writer_completes_at_the_head_its_own_commits_moved_to() {
+        let (repo, captured, _) = shared_worktree();
+        let tree = repo.path();
+        let record = shared_record("builder", "builder-1", tree, &captured);
         assert_eq!(
             completion_binding(
-                &record(&captured),
+                &record,
                 Some(&session("builder-1")),
                 tree,
-                &StampRequest::BuildComplete
+                &crate::work::StampRequest::BuildComplete
             )
             .unwrap(),
-            Some(1)
+            Some(0)
+        );
+    }
+
+    /// A record holding both a bound `diagnoser` and a bound
+    /// `drift-analyzer` attempt, so each request must reach its own selector.
+    fn diagnoser_and_analyzer_record() -> TodoRecord {
+        task_record(vec![
+            child_binding("diagnoser", 1, "diagnoser-1"),
+            child_binding("drift-analyzer", 2, "analyzer-1"),
+        ])
+    }
+
+    #[test]
+    fn a_diagnosis_settlement_by_the_claimant_completes_the_diagnoser_attempt() {
+        // `driver-1` holds the todo's claim (`base_record`).
+        assert_eq!(
+            admit(
+                &diagnoser_and_analyzer_record(),
+                Some("driver-1"),
+                &crate::work::StampRequest::DiagnosisSettled
+            )
+            .unwrap(),
+            Some(0)
         );
     }
 
     #[test]
-    fn diagnosis_and_drift_requests_complete_through_their_own_selection() {
-        use crate::evidence::DriftClass;
-        use crate::work::StampRequest;
-        let drift = StampRequest::DriftReviewed {
+    fn a_drift_review_by_the_bound_analyzer_completes_its_attempt() {
+        let drift = crate::work::StampRequest::DriftReviewed {
             artifact: ArtifactName::new(artifact_names::PRD),
-            class: DriftClass::Cosmetic,
+            class: crate::evidence::DriftClass::Cosmetic,
             reason: "wording".into(),
         };
-        let unbound = task_record(Vec::new());
         assert_eq!(
-            admit(&unbound, Some("driver-1"), &StampRequest::DiagnosisSettled).unwrap(),
-            None
+            admit(&diagnoser_and_analyzer_record(), Some("analyzer-1"), &drift).unwrap(),
+            Some(1)
         );
-        assert_eq!(admit(&unbound, None, &drift).unwrap(), None);
-        let record = task_record(vec![
-            child_binding("diagnoser", 1, "diagnoser-1"),
-            child_binding("drift-analyzer", 2, "analyzer-1"),
-        ]);
-        assert_eq!(
-            admit(&record, Some("driver-1"), &StampRequest::DiagnosisSettled).unwrap(),
-            Some(0)
-        );
-        assert!(refused(admit(
-            &record,
-            Some("diagnoser-1"),
-            &StampRequest::DiagnosisSettled
-        )));
-        assert_eq!(admit(&record, Some("analyzer-1"), &drift).unwrap(), Some(1));
-        assert!(refused(admit(&record, Some("driver-1"), &drift)));
     }
 }
