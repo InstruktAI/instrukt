@@ -380,6 +380,13 @@ record carries its artifact and stamp, never when a session's reply says so.
 Whatever needs the human is a session asking in its thread; only anomalies are
 sent through `runner.notify`.
 
+<!-- planned:archive-finished-threads -->
+While the computer's retention window is set, each runner invocation also has
+the runtime archive the finished threads of its registered projects that have
+been quiet past it, after dispatch and event work and off every waiting path
+(`project/instrukt/spec/feature/runner/thread-retention`).
+<!-- /planned:archive-finished-threads -->
+
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;

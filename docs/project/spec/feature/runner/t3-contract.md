@@ -93,6 +93,19 @@ that server's assigned port before connecting, including after a restart.
 
 Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's native sender provenance. The release and its fake are compared for queued acceptance, replay without a duplicate, and the native `createdBy:"user"` stamp applied by WebSocket dispatch and launch. A deferred opening run keeps the checks provider-free.
 
+<!-- planned:archive-finished-threads -->
+Thread archiving is checked through the adapter's finished-thread listing and
+archive. The listing decodes a fixture thread's finished, quiet and pinned
+facts and its latest activity from the real listing, a recorded opening of the
+thread in the projection included. The archive's re-read validates every table
+and column it consumes, the thread's runs, runtime requests and delegated tasks
+among them, against the migrated database. Authenticated
+`orchestration.dispatchCommand` with `thread.archive` archives a fixture
+thread, and archiving it again is reported as already archived from T3's
+refusal. The release and its fake are compared for each of these. A fixture
+state the release cannot reach provider-free is reported as an exclusion.
+<!-- /planned:archive-finished-threads -->
+
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields
 are acceptable where the adapter permits them. Release and migration numbers
