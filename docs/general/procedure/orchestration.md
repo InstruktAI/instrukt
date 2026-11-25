@@ -25,9 +25,18 @@ worker sessions and recovery, and keep ownership clear until a grounded handoff.
   mapping in `~/.instrukt/agents.yaml` (with any per-task agent/tier override
   taking precedence first); shipped `strong` and `standard` choices are
   configurable heuristics, not procedure-level model or tier defaults. Pass
-  coordinates only in a delegated commit-review assignment — never carry the
-  classification into the brief; the reviewer determines depth from the diff
-  (`sdlc/procedure/lifecycle/work/review-commits`).
+  coordinates and optional widening source pointers only in every delegated
+  review assignment (`prd-reviewer`, `architecture-reviewer`, `plan-reviewer`,
+  `build-reviewer`, and `commit-reviewer`) — never carry classifications,
+  narrative summaries, or asserted constraints into a review brief
+  (`sdlc/procedure/lifecycle/review`). For todo reviews, those coordinates are
+  the slug, review phase, target (`artifact@digest`, or exact candidate `head`
+  and `base` for builds), report artifact, on re-review or recovery the prior
+  findings digest and any missing obligation, and optional widening pointers
+  (including `log` when carrying an orchestrator challenge); commit-review
+  coordinates live in `sdlc/procedure/lifecycle/work/review-commits`. Producer
+  briefs (such as `builder` or `planner`) remain free to carry orchestration
+  direction.
 
 Intelligence maintains the preference order for performance and then cost;
 availability is the first selection condition. The parent or orchestrator uses
@@ -49,8 +58,10 @@ current reviewed target. The orchestrator verifies the report's substance:
    lane or preparation-review section is present with substantive analysis.
 2. When the review reports zero Important-or-higher findings, verify the
    required `Why No Issues` evidence is specific to the target.
-3. If either check fails, reject the review and re-dispatch with its required
-   scope and the reviewer role's configured selection.
+3. If either check fails, reject the review and re-dispatch with the reviewer
+   role's configured selection, passing only coordinates naming the prior
+   report digest and the missing sections or lanes
+   (`sdlc/procedure/lifecycle/review`).
 
 This is a document-quality check, not a second code or artifact review. Digest
 binding proves which report exists; the orchestrator verifies that the reviewer

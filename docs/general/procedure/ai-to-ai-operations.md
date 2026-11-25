@@ -30,7 +30,9 @@ lifecycle contract.
    identity from similar briefs or target another environment.
 2. For each required runtime action, use its configured value below. The selected runtime entry
    supplies a native instruction or an instrukt route for a missing native
-   counterpart. Write the brief as the reality wanted from its role. For a todo worker,
+   counterpart. Write the brief as the reality wanted from its role (a review
+   assignment carries coordinates and widening source pointers only under
+   `sdlc/procedure/lifecycle/review`). For a todo worker,
    reserve the round with `instrukt todo attempt` (preserving its rendered brief,
    role, attempt, semantic key, display title, captured shared head, and any
    reported `prior_session`) and route continue-versus-fresh rounds under
