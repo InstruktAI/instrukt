@@ -23,8 +23,8 @@ Decide whether a drafted `prd` is a trustworthy product contract ready for
 the configured approval gate, and whether any recorded approval carries to it.
 Review the authority, feasibility premises, standing-principle compliance, and
 reasoning that survived into the PRD, then independently probe for supported
-outcomes the draft may have omitted. Leave architectural decomposition and
-implementation tasks to downstream phases.
+outcomes the draft may have omitted. Leave architectural decomposition,
+implementation mechanism, and concrete proof to downstream phases.
 
 ## Preconditions
 
@@ -55,7 +55,7 @@ Apply these configured action values to the identified assignment and session.
    An author never checks their own input. Take the checked `input` as the
    behavioral scope basis — fidelity to the conversation establishes neither
    the soundness of factual or quantitative claims nor exemption from standing
-   principles (`general/policy/human-contract`,
+   principles (`general/policy/human-contract`, `general/policy/grounding`,
    `general/policy/conflict-resolution`). Verify checkable premises against
    substrate and reject self-inflicted failure modes left under Risks
    (`sdlc/policy/preparation-artifact-quality`).

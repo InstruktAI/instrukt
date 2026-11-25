@@ -22,6 +22,7 @@ the requirement contract). They are defined once here and consumed by:
 
 - `sdlc/procedure/lifecycle/work/review-build` — the build reviewer, which **executes** the applicable lanes.
 - `sdlc/procedure/lifecycle/work/review-commits` — the commit reviewer, which executes the same lanes; that procedure resolves the scope lane's intent basis.
+- `sdlc/procedure/lifecycle/prepare/review-prd` and `sdlc/procedure/lifecycle/prepare/review-architecture` — preparation reviewers, which execute the applicable lanes through `sdlc/procedure/lifecycle/review`.
 - `sdlc/procedure/lifecycle/prepare/plan-draft` and `.../prepare/review-plan` — the planner and plan reviewer, which **anticipate** the lanes (the plan must pre-satisfy what build-review will check).
 
 Severity tiers, citation rules, the lane execution gate, and verdict arithmetic
@@ -280,7 +281,7 @@ is Important. Bypassing the data layer is Critical. A backward-compatibility bra
 
 **Authority:** the documented design principles (`sdlc/procedure/lifecycle/work/principle-violation-hunt`).
 
-Systematic check of the reviewed target — changed code, preparation artifacts, or pending contracts — against documented design principles, with fallback detection and feasibility grounding as primary targets. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
+Systematic check of the reviewed target — changed code, preparation artifacts, or pending contracts — against documented design principles, with fallback detection as the most prominent target. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
 
 Use the `sdlc/procedure/lifecycle/work/principle-violation-hunt` procedure for detailed hunt criteria.
 

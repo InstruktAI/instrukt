@@ -129,11 +129,11 @@ derive their own reading before reconciling it (`general/policy/leadership`).
 
 Every consequential inclusion and exclusion explains why it belongs here. Its
 reason rests on an inspectable premise, or names an assumption only for what
-cannot be verified against current substrate now (`general/principle/grounding`);
+cannot be inspected against current substrate now (`general/policy/grounding`);
 any checkable factual, size, capacity, or feasibility claim is verified before
 entering a criterion. A failure mode the design itself introduces is resolved in
-the design or explicitly accepted by the owner of a human-owned trade-off with
-its consequence stated; recording it as a risk leaves it unresolved. Inference
+the design or explicitly accepted by the party that owns the trade-off with its
+consequence stated; recording it as a risk leaves it unresolved. Inference
 beyond the evidence is permitted when the additional premise stays visible;
 evidence, inference, and human-ratified intent never collapse into one authority
 claim.
@@ -265,17 +265,12 @@ execute**. The author consuming it owns the HOW.
   says is delivered, what an observer experiences, or what kind of thing the
   work produces is WHAT, even when a mechanism word appears in it. A divergence
   from it is not recorded and proceeded on; the author stops and re-enters the
-  intent layer with one question. Recording such a divergence as HOW, however
-  well argued, is the invention this policy exists to catch.
-- **Carrying a detail in `input` establishes neither its soundness nor exemption
-  from standing principles** (`general/policy/human-contract`,
-  `general/policy/conflict-resolution`). When a stated outcome or behavioral
-  clause in `input` contradicts a standing principle, its own goal, or measured
-  substrate reality, treat the conflict as a defect to resolve rather than a
-  requirement to copy forward: resolve policy-settled technical mechanics within
-  the agent's lane, and return any resulting change to the intended behavioral
-  outcome to the intent owner with a grounded recommendation
-  (`general/policy/leadership`).
+  intent layer with one question — or, when carrying the input clause would
+  contradict a standing principle, its own goal, or verified substrate reality,
+  resolves the conflict under `general/policy/human-contract` and
+  `general/policy/conflict-resolution` rather than copying the defect forward.
+  Recording an ungrounded divergence as HOW, however well argued, is the
+  invention this policy exists to catch.
 - **Inputs are never rejected for carrying HOW.** The lead is kept and tested,
   not gated away — the mechanism hint is signal even when it is wrong.
 
@@ -698,11 +693,9 @@ docs/project/spec/feature/workflow/todo-rename#scenario-rename-conflict`. The ta
   agent that treats them as directives propagates errors no later gate catches.
   Verifying and overriding at the point of consumption — rather than rejecting
   the input at its boundary — puts the decision where the knowledge is, and
-  keeps the useful lead instead of discarding it. Verifying checkable premises
-  before locking criteria, resolving self-inflicted failure modes instead of
-  filing them under Risks, and enforcing standing principles even when an input
-  names a conflicting detail keep preparation focused on engineering truth
-  rather than copying upstream assumptions forward.
+  keeps the useful lead instead of discarding it. Treating upstream inputs as
+  unverified premises rather than exemptions prevents early guesses from
+  hardening into unchallengeable contracts across downstream review rounds.
 - A plan is written before the implementation exists, so its placement, names,
   and decomposition are forecasts the implementation can falsify (`general/principle/grounding`).
   Binding the builder to them turns every code discovery into a plan defect and

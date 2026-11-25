@@ -230,18 +230,12 @@ A finding is valid only when all four hold:
    A closure that waits on a decision or an authorization names no state of the
    target.
 
-A finding that claims a defect in existing or implemented behavior establishes,
-from current sources, that a reachable condition triggers it
-(`sdlc/concept/defect-evidence`); any such claim failing
-`sdlc/concept/defect-evidence` is an investigation lead, never a finding. For
-preparation targets — where no implementation has executed yet — a design-defect
-finding may instead rest on a substrate-grounded derivation with every step
-shown from current files, measurements, or contracts: arithmetic against
-measured substrate, a concrete sequence of ordinary operations including
-concurrent branches (`sdlc/policy/state-storage`), or a direct contradiction
-with the target's own success criteria. Speculative risks without shown
-substrate steps remain investigation leads, and the convergence and
-re-derivation bounds below apply equally to derivation findings.
+A finding that claims a defect establishes, from current sources, that a
+reachable condition triggers it (`sdlc/concept/defect-evidence` — including a
+substrate-grounded design derivation for an unbuilt preparation target, subject
+to that concept's tail-risk and external-substrate exclusions and the
+convergence and re-derivation bounds below); any defect claim failing
+`sdlc/concept/defect-evidence` is an investigation lead, never a finding.
 
 An observation missing any one of these is an **investigation lead**, not a
 finding: it cannot block, never enters remediation, requires no producer

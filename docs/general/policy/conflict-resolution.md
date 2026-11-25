@@ -7,8 +7,8 @@ visibility: 'public'
 
 ## Rules
 
-- Resolve conflicts between governing contracts of the same standing by
-  priority: specificity → rule intent → applicability → recency.
+- Resolve conflicts between governing contracts by priority: specificity → rule
+  intent → applicability → recency.
 - Work artifacts (such as task inputs, requirements, architectures, and plans)
   authorize delivery scope; they stand outside this precedence ladder and grant
   no exemption from standing principles, policies, or verified substrate reality
@@ -18,9 +18,8 @@ visibility: 'public'
 ## Rationale
 
 - Consistent priority prevents indecision and hidden rule‑picking.
-- Keeping work artifacts off the contract-precedence ladder ensures an
-  unverified claim or mechanism inside a task input never overrides standing
-  engineering invariants.
+- Delivery inputs are authored before full grounding; separating them from
+  governing contracts preserves standing invariants across every review gate.
 - Code is the ground truth when docs and behavior diverge.
 
 ## Scope

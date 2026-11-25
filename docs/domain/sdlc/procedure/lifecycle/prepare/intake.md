@@ -332,7 +332,9 @@ framework only after the situation reveals a question that framework handles;
 never run a default framework sequence.
 
 Every consequential recommendation answers “why here?” Its reason resolves to
-an inspectable premise or is labelled as an assumption. An assumption may orient
+an inspectable premise, or is labelled as an assumption only when it cannot be
+inspected against current substrate now (`general/policy/grounding`,
+`sdlc/policy/preparation-artifact-quality`). An assumption may orient
 investigation or name an open decision; it cannot supply product or business
 intent the input does not carry.
 Consider both failure pressure and opportunity: what becomes costly or unsafe
