@@ -798,6 +798,17 @@ Then the resolved native options map that effort to thought_level with value xhi
 And those options carry no other effort option
 ```
 
+### UC-SS28: A developer's todo pickup is accepted once T3 finishes preparing its worktree
+
+```gherkin
+Given the runner picks up a developer's eligible todo on T3
+And T3 answers the launch while it is still preparing that todo's worktree
+When T3 finishes preparing the worktree during that pickup
+Then the pickup accepts the orchestrator in that conversation and its managed worktree
+And no failed start is reported for it
+And the orchestrator has received its opening brief once
+```
+
 ## Known caveats
 
 - A legacy native admission whose original startup request is unknown remains
