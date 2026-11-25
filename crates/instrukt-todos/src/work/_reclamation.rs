@@ -250,40 +250,53 @@ impl Release<'_> {
                 worktree_command("move", &original, Some(&staging)),
             )?;
         }
-        let Some((staged, _)) = self.locate()?.filter(|(listed, _)| listed.path == staging) else {
-            self.keep(resource, "git no longer lists it where it was moved to");
-            return Ok(false);
-        };
-        let removal = match self.held(&staged)? {
-            Some(cause) => Err(cause),
-            None => git::run(self.root, worktree_command("remove", &staging, None))
+        // From here the worktree may be away from its path: every outcome
+        // either removes it or restores it there, or reports where it is.
+        let removal = (|| -> Result<(), String> {
+            let staged = self
+                .locate()
+                .map_err(|error| format!("git's worktree list could not be read: {error}"))?
+                .filter(|(listed, _)| listed.path == staging)
+                .map(|(listed, _)| listed)
+                .ok_or_else(|| "git no longer lists it where it was moved to".to_owned())?;
+            if let Some(cause) = self.not_ours(&staged) {
+                return Err(cause);
+            }
+            if let Some(cause) = self
+                .held(&staged)
+                .map_err(|error| format!("it could not be checked again: {error}"))?
+            {
+                return Err(cause);
+            }
+            git::run(self.root, worktree_command("remove", &staging, None))
                 .map(|_| ())
-                .map_err(|error| error.to_string()),
-        };
+                .map_err(|error| error.to_string())
+        })();
         match removal {
             Ok(()) => {
                 self.released.push(resource);
                 return Ok(true);
             }
             Err(cause) => {
-                let back = if _worktrees::exists(&original).unwrap_or(true) {
-                    format!(
+                let back = match _worktrees::exists(&original) {
+                    Ok(true) => format!(
                         "; it stays at {} since something is at its path",
                         staging.display()
-                    )
-                } else {
-                    git::run(
+                    ),
+                    Ok(false) => match git::run(
                         self.root,
                         worktree_command("move", &staging, Some(&original)),
-                    )
-                    .err()
-                    .map(|error| {
-                        format!(
-                            "; moving it back from {} failed: {error}",
+                    ) {
+                        Ok(_) => String::new(),
+                        Err(error) => format!(
+                            "; moving it back from {} failed, so it stays there: {error}",
                             staging.display()
-                        )
-                    })
-                    .unwrap_or_default()
+                        ),
+                    },
+                    Err(error) => format!(
+                        "; whether its path is free could not be read ({error}), so it stays at {}",
+                        staging.display()
+                    ),
                 };
                 self.keep(resource, format!("{cause}{back}"));
             }
