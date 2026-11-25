@@ -1,0 +1,34 @@
+---
+source: crates/instrukt-cli/tests/cases/session-continuity.rs
+expression: "support::redact(&p.todo([\"show\", \"parser\"]))"
+---
+parser · change · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 11
+intent:
+  Improve the parser.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:instrukt:launch:<event 1>
+hold: none
+sessions:
+  todo-orchestrator/1: t3:instrukt:launch:<event 1>
+    key: instrukt:todo:demo/<id 1>:todo-orchestrator:1
+    branch: parser/work; base: <commit 1>
+    worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1>
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (1 version)
+    <digest 2> by Test Developer at <time>
+  prd-review-findings (1 version)
+    <digest 3> by Test Developer at <time>
+stamps:
+  #4 <time> prd_review verdict approve — target <digest 2>, report <digest 3> — by Test Developer, eval <digest 4>
+  #5 <time> prd approved by a human — <digest 2> — by session t3:instrukt:launch:<event 1> as todo-orchestrator, model claudeAgent claude-opus-5-5, eval <digest 4>
+workspace:
+  branch: parser/work
+  worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1> (clean)
+  head: <commit 1>
