@@ -129,16 +129,6 @@ pub struct MessageText {
     pub native: Value,
 }
 
-/// The native conversations one read covers.
-#[derive(Debug, Clone, Copy)]
-pub enum Scope<'a> {
-    /// Every conversation the source holds.
-    All,
-    /// Only these conversations: no other conversation is read, waited for
-    /// or reported missing.
-    Only(&'a [SessionId]),
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SourceError {
     #[error("conversation source I/O at {}: {source}",path.display())]
@@ -175,12 +165,13 @@ pub trait ConversationNotifications: Send {
 }
 pub trait ConversationSource: Send {
     fn identity(&self) -> &str;
-    /// Returns the next bounded change batch within `scope`; the position
-    /// commits with its records.
+    /// The turn read: every changed conversation among `conversations`, in
+    /// one batch; no other conversation is read, waited for or reported
+    /// missing. The position commits with its records.
     fn changed_since(
         &self,
         position: Option<&SourcePosition>,
-        scope: Scope<'_>,
+        conversations: &[SessionId],
     ) -> Result<ConversationChanges, SourceError>;
     /// The text read: the next bounded batch of changed conversations over
     /// every conversation the source holds, each with its own record and

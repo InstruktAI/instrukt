@@ -5,7 +5,7 @@
 use super::_t3_fingerprint::{self, Fingerprint};
 use super::conversations::{
     ConversationChanges, ConversationNotifications, ConversationOwnRecord, ConversationRecord,
-    ConversationSource, ConversationText, MessageText, RecordKind, Role, Scope, SourceError,
+    ConversationSource, ConversationText, MessageText, RecordKind, Role, SourceError,
     SourcePosition, TextChanges,
 };
 use crate::runtime::_t3_home::T3Home;
@@ -584,16 +584,18 @@ impl T3Conversations {
     }
 }
 /// Discover raw content fingerprints of the source tables `projections`
-/// within the caller's read snapshot.
+/// within the caller's read snapshot: of `conversations` only, or of every
+/// conversation when none are named. The presence of a single named
+/// conversation is reported in `presence`.
 fn discover(
     db: &Connection,
-    scope: Scope<'_>,
+    conversations: Option<&[SessionId]>,
     projections: &[Projection],
     presence: &mut Option<super::Presence>,
 ) -> Result<BTreeMap<String, Fingerprint>, SourceError> {
-    let threads: Vec<Option<&str>> = match scope {
-        Scope::All => vec![None],
-        Scope::Only(ids) => ids
+    let threads: Vec<Option<&str>> = match conversations {
+        None => vec![None],
+        Some(ids) => ids
             .iter()
             .map(|id| Some(id.as_str()))
             .collect::<BTreeSet<_>>()
@@ -602,7 +604,7 @@ fn discover(
     };
     let mut fingerprints = BTreeMap::new();
     for thread in threads {
-        if matches!(scope, Scope::Only([_]))
+        if matches!(conversations, Some([_]))
             && let Some(thread) = thread
         {
             use super::Presence;
@@ -931,17 +933,17 @@ fn empty_changes(position: SourcePosition, has_more: bool) -> ConversationChange
     }
 }
 
-/// Where a pass over every conversation stands for one read.
+/// Where a pass over every conversation stands.
 enum Step {
     /// Read this conversation next.
     Read(String),
-    /// The pass is over; these conversations it observed earlier are gone.
-    End(Vec<SessionId>),
+    /// The pass is over.
+    End,
 }
 
 impl T3Conversations {
-    /// The next conversation of a pass over every conversation of the
-    /// source tables `projections`, one per batch. The pass discovers them
+    /// The next conversation of the text read's pass over every
+    /// conversation of the source tables `projections`, one per batch. The pass discovers them
     /// once and keeps that inventory while its own positions come back; any
     /// other position starts a new pass from the first conversation, so a
     /// position retained across a restart is caught up whole. The caller
@@ -962,7 +964,7 @@ impl T3Conversations {
                     fingerprints: {
                         let mut db = open(&self.path)?;
                         let snapshot = db.transaction()?;
-                        discover(&snapshot, Scope::All, projections, &mut None)?
+                        discover(&snapshot, None, projections, &mut None)?
                     },
                     expected: None,
                 });
@@ -978,18 +980,9 @@ impl T3Conversations {
                 && state.loaded.get(*thread) != Some(*fingerprint)
         });
         let Some((thread, _)) = next else {
-            let missing = state
-                .observed
-                .iter()
-                .filter(|thread| !fingerprints.contains_key(*thread))
-                .map(|id| {
-                    SessionId::parse(id)
-                        .map_err(|_| source_error("invalid missing conversation reference"))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
             state.after = None;
             *self.pass.borrow_mut() = None;
-            return Ok(Step::End(missing));
+            return Ok(Step::End);
         };
         state.observed.insert(thread.clone());
         state.after = Some(thread.clone());
@@ -1004,33 +997,6 @@ impl T3Conversations {
         }
     }
 
-    /// The turn read over every conversation, one per batch.
-    fn all(
-        &self,
-        position: Option<&SourcePosition>,
-        mut state: Position,
-    ) -> Result<ConversationChanges, SourceError> {
-        let thread = match self.step(position, &mut state, TURN)? {
-            Step::Read(thread) => thread,
-            Step::End(missing) => {
-                let mut changes =
-                    empty_changes(SourcePosition(serde_json::to_value(state)?), false);
-                changes.missing = missing;
-                return Ok(changes);
-            }
-        };
-        let read = {
-            let mut db = open(&self.path)?;
-            let snapshot = db.transaction()?;
-            self.read(&snapshot, &thread)?
-        };
-        let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), true);
-        contribute(&mut changes, &mut state, &thread, read)?;
-        changes.position = SourcePosition(serde_json::to_value(state)?);
-        self.expect(&changes.position);
-        Ok(changes)
-    }
-
     /// The text read, one conversation per batch: a conversation whose
     /// finished text is read is marked loaded with the fingerprint of what
     /// it read, unless one of its messages is still streaming.
@@ -1041,7 +1007,7 @@ impl T3Conversations {
     ) -> Result<TextChanges, SourceError> {
         let thread = match self.step(position, &mut state, TEXT)? {
             Step::Read(thread) => thread,
-            Step::End(_) => {
+            Step::End => {
                 return Ok(TextChanges {
                     conversations: Vec::new(),
                     position: SourcePosition(serde_json::to_value(state)?),
@@ -1071,11 +1037,11 @@ impl T3Conversations {
         Ok(changes)
     }
 
-    /// Every changed conversation of the scope in one batch: a scope names
-    /// one or two conversations, so a scoped read never leaves a pass half
-    /// done, and every scoped read compares the whole scope with what its
-    /// position loaded. Conversations outside the scope are not read and
-    /// leave the position.
+    /// The turn read: every changed conversation of `ids` in one batch. A
+    /// caller names one or two conversations, so the read never leaves a
+    /// pass half done, and every read compares all of them with what its
+    /// position loaded. Conversations not named are not read and leave the
+    /// position.
     fn only(
         &self,
         ids: &[SessionId],
@@ -1092,12 +1058,7 @@ impl T3Conversations {
         let mut changes = empty_changes(SourcePosition(serde_json::Value::Null), false);
         let mut db = open(&self.path)?;
         let snapshot = db.transaction()?;
-        let fingerprints = discover(
-            &snapshot,
-            Scope::Only(ids),
-            TURN,
-            &mut changes.scoped_presence,
-        )?;
+        let fingerprints = discover(&snapshot, Some(ids), TURN, &mut changes.scoped_presence)?;
         changes.missing = state
             .observed
             .iter()
@@ -1124,15 +1085,12 @@ impl ConversationSource for T3Conversations {
     fn changed_since(
         &self,
         position: Option<&SourcePosition>,
-        scope: Scope<'_>,
+        conversations: &[SessionId],
     ) -> Result<ConversationChanges, SourceError> {
         validate(&self.path, &self.location, TURN)?;
         let mut state = migrate_position(position)?;
         state.observed.extend(state.loaded.keys().cloned());
-        match scope {
-            Scope::All => self.all(position, state),
-            Scope::Only(ids) => self.only(ids, state),
-        }
+        self.only(conversations, state)
     }
     fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError> {
         validate(&self.path, &self.location, TEXT)?;

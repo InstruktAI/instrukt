@@ -6,7 +6,7 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::SessionRef;
 
 use crate::runtime::Presence;
-use crate::runtime::conversations::{ConversationRecord, RecordKind, Role, Scope};
+use crate::runtime::conversations::{ConversationRecord, RecordKind, Role};
 
 /// One message of a conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +73,7 @@ pub fn conversation(home: &Home, env: &Env, session: &SessionRef) -> Conversatio
     let mut records = Vec::new();
     let mut position = None;
     let presence = loop {
-        let batch = match source.changed_since(position.as_ref(), Scope::Only(&only)) {
+        let batch = match source.changed_since(position.as_ref(), &only) {
             Ok(batch) => batch,
             Err(error) => return Conversation::CannotRead(error.to_string()),
         };
