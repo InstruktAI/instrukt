@@ -634,8 +634,9 @@ applies, and a condition that has cleared opens none.
   answer; a question an agent asked belongs to the owner its contract names.
 - **Coordinator:** diagnose what the session waits for. A stalled permission or
   tool-approval prompt is shown to the operator in the coordinator's thread with
-  the session's address and what it asks, and the todo is held with a reason
-  naming that question; a question an agent can answer goes to
+  the session's address and what it asks; it places no hold, and the todo stays
+  runnable, so the coordinator does not rest while it waits. A question an
+  agent can answer goes to
   that owner under `NC-29`; a person-owned question goes to the work's origin
   under `NC-46`.
 - **Stop and settlement:** stop after routing. Settle when the session resumes or
@@ -779,10 +780,11 @@ a recommended resolution, never what a person said in another conversation
 
 ##### NC-48 — A settlement returned
 
-- **Evidence available:** the outcome recorded in the `log` of a todo the return
-  concerns, that version's recorded writer and the todo's creation record, the
-  open return it answers, the holds placed for it, and the todos concerned. A
-  message from the origin only points at the record.
+- **Evidence available:** the outcome recorded in the `log` of any todo the
+  return concerns, that version's recorded writer and the todo's creation
+  record — or, where the operator is the origin, the operator's answer in the
+  coordinator's thread — the open return it answers, the holds placed for it,
+  and the todos concerned. A message from an origin only points at the record.
 - **Ownership:** the people decided; the origin records the outcome, and the
   adopted intent in a todo whose intent changes; the Coordinator applies the
   rest within `sdlc/policy/todo-creation-discipline`.
@@ -791,8 +793,9 @@ a recommended resolution, never what a person said in another conversation
   the adopted outcome, fold a superseded todo into its survivor and withdraw it,
   withdraw a todo retired outright, record a boundary or dependency the outcome
   sets, release the holds placed for it and send the closure notices
-  (`sdlc/procedure/lifecycle/coordinate`). An outcome no recorded origin wrote
-  is no settlement.
+  (`sdlc/procedure/lifecycle/coordinate`), including the withdrawal of another
+  origin's todo, whose origin receives the closure notice. An outcome neither a
+  recorded origin nor the operator-origin gave is no settlement.
 - **Stop and settlement:** settle when no todo the outcome retires, hold placed
   for it or open return remains and every other affected origin has its
   notice.

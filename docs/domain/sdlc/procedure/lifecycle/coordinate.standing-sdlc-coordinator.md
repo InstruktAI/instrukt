@@ -165,12 +165,13 @@ waiting on a person. The operator's answer here is the settlement.
 
 ### 4. Apply a settlement
 
-1. **Recognise it.** A settlement is the agreed outcome the origin of a todo
+1. **Recognise it.** A settlement is the agreed outcome an origin of any todo
    the return concerns writes into that todo's `log`. Read the version with
    `instrukt todo artifacts list <slug>` and compare its recorded writer with
-   the session the todo's creation record names. A message, or an outcome
-   another session wrote, is no settlement: answer it by pointing at where the
-   origin records one.
+   the session the todo's creation record names. Where the operator is the
+   origin, their answer in this thread is the settlement. A message, or an
+   outcome another session wrote, is no settlement: answer it by pointing at
+   where the origin records one.
 2. **Apply it at once.** Waiting for other origins to confirm is not part of
    it. Apply it within the coordinator's bounds in
    `sdlc/policy/todo-creation-discipline`, to as many todos as it names:

@@ -466,12 +466,14 @@ acts on todos it does not hold, within these bounds alone.
   coordinator writes into the surviving todo's `log` what the redundant filing
   carried that the survivor lacks, with its source, and then withdraws it on
   the path below.
-- **A settlement is the origin's record.** A settlement counts when the
-  origin of a todo the return concerns — the session that todo's creation
+- **A settlement is the origin's record.** A settlement counts when an
+  origin of any todo the return concerns — the session that todo's creation
   record names — writes the agreed outcome into that todo's `log`. The
   coordinator reads the version's recorded writer and compares it with the
-  creation record; a message tells it only where to look, and an outcome
-  recorded by any other session is no settlement.
+  creation record; a message tells it only where to look. Where the platform
+  operator is the origin, because no creating session was reachable, the
+  operator's answer in the coordinator's own thread is the settlement. An
+  outcome from any other session is no settlement.
 - **A settlement is applied as recorded.** The coordinator resumes, changes or
   withdraws each todo the settlement names, one todo or several, including one
   that carries a person's request: the origin is where the people concerned
@@ -628,8 +630,8 @@ this policy.
   the associated todo-log explanation is incomplete reconciliation.
 <!-- planned:standing-sdlc-coordinator -->
 - A coordinator that holds work without naming its release, withdraws a todo
-  carrying a person's request without that todo's origin's recorded
-  settlement, retires a filing that carries a person's request as redundant,
+  carrying a person's request without a settlement of an origin of a todo the
+  return concerns, retires a filing that carries a person's request as redundant,
   or removes a todo before its running work is settled and its claim released,
   violates this policy. A coordinator acting within **Coordinator pauses and
   retirements** is not a flagger.
