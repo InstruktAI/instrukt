@@ -60,14 +60,12 @@ code. This table groups the catalog by capability family. A command's read and
 write forms can map to different actions. New command paths declare their
 mapping; a missing mapping is a defect, never an unclassified bypass.
 
+<!-- planned-change:github-human-agent-reflection -->
+
 | Family | Actions | Objects and current instrukt surface |
 | --- | --- | --- |
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
-<!-- planned-change:github-human-agent-reflection -->
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
-<!-- change:github-human-agent-reflection -->
-| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
-<!-- /planned-change:github-human-agent-reflection -->
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
@@ -80,6 +78,27 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+
+<!-- change:github-human-agent-reflection -->
+
+| Family | Actions | Objects and current instrukt surface |
+| --- | --- | --- |
+| Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
+| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
+| Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
+| Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
+| Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
+| Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
+| Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
+| Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
+| Publication | `publication` | `sync` and hook-triggered publication for the selected project and positions; position ownership remains mandatory. |
+| Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
+| Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
+| Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
+| Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
+| Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+
+<!-- /planned-change:github-human-agent-reflection -->
 
 Review evidence belongs to the Evidence family: `instrukt review record` and
 `instrukt review exempt` are `stamp`, and `instrukt review show` is

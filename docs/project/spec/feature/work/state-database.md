@@ -279,6 +279,8 @@ bindings) only through work's command contract.
 **`todos`** — one row per local item. Key: `id`. Unique while live:
 `(project, slug)` among `active`, `iceboxed` and `structural_holder` rows.
 
+<!-- planned-change:github-human-agent-reflection -->
+
 | Column | Meaning |
 | --- | --- |
 | `id` | Durable identity: 32 lowercase hex characters. |
@@ -288,11 +290,7 @@ bindings) only through work's command contract.
 | `status` | Record status: `active`, `iceboxed`, `structural_holder`, `delivered` or `removed`. Never a workflow phase. |
 | `created_at`, `created_by` | Creation time and actor. |
 | `human_involved` | The audit-only creation declaration, or `NULL`. |
-<!-- planned-change:github-human-agent-reflection -->
 | `refreshed_at` | Latest successful read of this local item from GitHub (including a not-modified response); `NULL` before a read. Listing age uses this local observation time, never its revision or creation time. |
-<!-- change:github-human-agent-reflection -->
-| `refreshed_at` | Latest successful read of this todo's issue on GitHub (including a not-modified response); `NULL` before a read. |
-<!-- /planned-change:github-human-agent-reflection -->
 | `revision` | Incremented by every accepted change; the revision reflection writes. |
 | `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. |
 | `group_slug` | The holder's last-known slug, for a holder not stored on this computer, or `NULL`. |
@@ -305,6 +303,33 @@ bindings) only through work's command contract.
 | `removed_at`, `removed_from` | Withdrawal time, starting the recovery window, and the status restoration returns to. |
 | `removal` | Released working resources kept as recovery evidence (branch and head, worktrees). |
 | `sequence` | The last record-order number given to a version or stamp. |
+
+<!-- change:github-human-agent-reflection -->
+
+| Column | Meaning |
+| --- | --- |
+| `id` | Durable identity: 32 lowercase hex characters. |
+| `project` | The project's slug. |
+| `slug` | Project-local address. |
+| `kind` | `feature`, `change`, `bug` or `task`. |
+| `status` | Record status: `active`, `iceboxed`, `structural_holder`, `delivered` or `removed`. Never a workflow phase. |
+| `created_at`, `created_by` | Creation time and actor. |
+| `human_involved` | The audit-only creation declaration, or `NULL`. |
+| `refreshed_at` | Latest successful read of this todo's issue on GitHub (including a not-modified response); `NULL` before a read. |
+| `revision` | Incremented by every accepted change; the revision reflection writes. |
+| `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. |
+| `group_slug` | The holder's last-known slug, for a holder not stored on this computer, or `NULL`. |
+| `schedule` | A task's schedule: an ISO-8601 instant with offset, or `cron:<five fields>`; `NULL` for none. |
+| `catch_up` | `once` or `skip`. |
+| `agent`, `tier` | A task's agent preference and tier, or `NULL`. |
+| `claim_machine`, `claim_session`, `claim_at` | The execution claim: holding computer, claiming session, time; `NULL` when unclaimed. `claim.held` is `claim_machine IS NOT NULL`. |
+| `branch` | The work branch recorded at build start. |
+| `delivered_commit`, `delivered_at`, `delivered_by` | Completion evidence. |
+| `removed_at`, `removed_from` | Withdrawal time, starting the recovery window, and the status restoration returns to. |
+| `removal` | Released working resources kept as recovery evidence (branch and head, worktrees). |
+| `sequence` | The last record-order number given to a version or stamp. |
+
+<!-- /planned-change:github-human-agent-reflection -->
 
 **`prerequisites`** — the dependency edges. Key: `(todo_id, prerequisite_id)`,
 both `todos.id`; `prerequisite_id` may name a retained delivered todo.
@@ -333,21 +358,35 @@ reflected; the artifact's identity on GitHub).
 Approvals and intent checks are stamps: `fact = 'approval'` and
 `fact = 'intent_checked'`.
 
+<!-- planned-change:github-human-agent-reflection -->
+
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
 | `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
 | `at`, `actor` | Time and acting session, GitHub account or person. |
-<!-- planned-change:github-human-agent-reflection -->
 | `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; retained in reflected stamps so reconstruction does not reapply the same decision. |
-<!-- change:github-human-agent-reflection -->
-| `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; so reading the issue again never reapplies the same decision. |
-<!-- /planned-change:github-human-agent-reflection -->
 | `role` | The role the acting session played, or `NULL`. |
 | `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
 | `eval_fingerprint` | The published fingerprint copied at write time. |
 | `human_involved` | The audit-only declaration, or `NULL`. |
 | `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). |
+
+<!-- change:github-human-agent-reflection -->
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id`, `sequence` | The todo and record order. |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `at`, `actor` | Time and acting session, GitHub account or person. |
+| `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; so reading the issue again never reapplies the same decision. |
+| `role` | The role the acting session played, or `NULL`. |
+| `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
+| `eval_fingerprint` | The published fingerprint copied at write time. |
+| `human_involved` | The audit-only declaration, or `NULL`. |
+| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). |
+
+<!-- /planned-change:github-human-agent-reflection -->
 
 **`holds`** — the current dispatch hold and the ordered hold audit. Row order
 retains distinct actions even when source timestamps tie. Columns: `todo_id`, `source` (`manual`, `automatic` or `github`),
@@ -398,18 +437,25 @@ review is still owed before preparation release.
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
 
+<!-- planned-change:github-human-agent-reflection -->
+
 | Column | Meaning |
 | --- | --- |
 | `todo_id` | The item. |
 | `issue_number` | The reflected issue. |
-<!-- planned-change:github-human-agent-reflection -->
 | `remote_revision` | The confirmed remote revision: the record revision GitHub holds. |
 | `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. |
 | `conflicted` | A newer remote revision met a pending local change; commands refuse until `instrukt todo refresh`. |
 | `failure` | The last failure that left reflection pending. |
 | `pull_number` | The linked pull request. |
 | `issue_id`, `record_comment`, `etag`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
+
 <!-- change:github-human-agent-reflection -->
+
+| Column | Meaning |
+| --- | --- |
+| `todo_id` | The item. |
+| `issue_number` | The reflected issue. |
 | `remote_revision` | The confirmed reflected revision: the latest record revision whose reflection GitHub accepted. |
 | `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. |
 | `failure` | The last failure that left reflection pending. |
@@ -422,6 +468,7 @@ reflection. Key: `todo_id`.
 | `events_page`, `events_last` | The page of the issue's events holding the last event read before the first hold-label action still outstanding (the last event read when none is), and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
 | `reviews` | The build verdicts whose review is on the pull request, by their stamps' record order, as JSON. Each verdict is reflected on its own: one not yet reflected, or refused, holds back no other. |
 | `issue_id`, `pull_outstanding`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
+
 <!-- /planned-change:github-human-agent-reflection -->
 
 **`inbound_commands`** — processed `/instrukt` comment identities and their
