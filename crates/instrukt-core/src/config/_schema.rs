@@ -866,13 +866,27 @@ fn render_schema_text(
         .get("default")
         .map(|d| format!(", default {d}"))
         .unwrap_or_default();
-    let desc = schema
+    // A description of several lines, such as a connector kind's setup with
+    // its manifest, continues indented under the key it describes.
+    let mut desc_lines = schema
         .get("description")
         .and_then(|d| d.as_str())
+        .map(str::lines)
+        .into_iter()
+        .flatten();
+    let desc = desc_lines
+        .next()
         .map(|d| format!(" — {d}"))
         .unwrap_or_default();
     if !prefix.is_empty() {
         out.push(format!("{prefix} ({type_desc}, {req}{default}){desc}"));
+        out.extend(desc_lines.map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("    {line}")
+            }
+        }));
     }
     let req_list: Vec<&str> = schema
         .get("required")

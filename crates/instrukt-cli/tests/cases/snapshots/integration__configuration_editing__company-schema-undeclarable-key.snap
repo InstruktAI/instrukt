@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/configuration-editing.rs
+expression: "stderr(&env, &unknown)"
+---
+instrukt: `board` `board` cannot be declared under a company home; declarable keys: company, connectors, issuer, mcp, members, profiles, schema_version, webhooks

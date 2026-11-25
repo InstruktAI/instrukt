@@ -132,22 +132,31 @@ pub struct DeclaredConnector {
     pub entry: Value,
 }
 
-/// A declaration equal to the one shipped for Slack, installed by core's own
-/// units so their documents and expectations stay as they are.
+/// A declaration with the fields of the one shipped for Slack, and a short
+/// setup and manifest standing in for its own, installed by core's own units
+/// so their documents and expectations stay as they are.
 #[cfg(test)]
 pub(crate) fn install_fixture() {
     use instrukt_connector::{Field, Rule};
     static FIXTURE: Declaration = Declaration {
         key: "slack",
         message_chars: 12_000,
+        setup: "Create the app from the manifest below; its tokens' references go into `app_token` and `bot_token`.",
+        manifest: Some("display_information:\n  name: agent\n"),
         fields: &[
             Field {
                 name: "app_token",
-                rule: Rule::SecretReference { required: true },
+                rule: Rule::SecretReference {
+                    required: true,
+                    source: "the app-level token with the scope `connections:write`, generated in the Slack app's settings",
+                },
             },
             Field {
                 name: "bot_token",
-                rule: Rule::SecretReference { required: true },
+                rule: Rule::SecretReference {
+                    required: true,
+                    source: "the bot token Slack issues when the app is installed to the workspace",
+                },
             },
             Field {
                 name: "context_messages",
