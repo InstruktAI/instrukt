@@ -44,7 +44,7 @@ pub(super) fn root_document_on_disk(root: &Path) -> Result<Option<Vec<u8>>, std:
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.is_file() => std::fs::read(&path).map(Some),
         Ok(_) => Ok(None),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) if gone(&err) => Ok(None),
         Err(err) => Err(err),
     }
 }
@@ -59,7 +59,7 @@ pub(super) fn entry_index_absent_on_disk(root: &Path, rel: &str) -> Result<bool,
         match std::fs::symlink_metadata(&at) {
             Ok(meta) if meta.file_type().is_symlink() => return Ok(false),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(err) if gone(&err) => return Ok(true),
             Err(err) => return Err(err),
         }
     }
@@ -345,7 +345,7 @@ impl Committed {
                     continue;
                 }
                 Ok(_) => continue,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) if gone(&err) => continue,
                 Err(source) => return Err(PublicationError::Io { path: full, source }),
             }
             let bytes = std::fs::read(&full)
@@ -501,7 +501,7 @@ fn links_at_or_above(root: &Path, place: &str) -> Result<Vec<String>, Publicatio
                 break;
             }
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) if gone(&err) => break,
             Err(source) => return Err(PublicationError::Io { path: full, source }),
         }
     }
@@ -516,7 +516,7 @@ fn links_inside(root: &Path, folder: &str) -> Result<Vec<String>, PublicationErr
     match std::fs::symlink_metadata(&dir) {
         Ok(meta) if meta.is_dir() => {}
         Ok(_) => return Ok(Vec::new()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) if gone(&err) => return Ok(Vec::new()),
         Err(source) => return Err(PublicationError::Io { path: dir, source }),
     }
     let mut links = Vec::new();
@@ -554,11 +554,21 @@ fn linked_folder(root: &Path, path: &str) -> Result<Option<String>, PublicationE
         match std::fs::symlink_metadata(&full) {
             Ok(meta) if meta.file_type().is_symlink() => return Ok(Some(folder)),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(err) if gone(&err) => return Ok(None),
             Err(source) => return Err(PublicationError::Io { path: full, source }),
         }
     }
     Ok(None)
+}
+
+/// Whether `err`, from looking at a path in the working tree, says nothing
+/// stands there: the path is missing, or a folder on the way to it is now a
+/// file, as when a folder git still lists was replaced by a document.
+fn gone(err: &std::io::Error) -> bool {
+    matches!(
+        err.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
 }
 
 pub(super) fn safe_relative(path: &str) -> Result<PathBuf, PublicationError> {

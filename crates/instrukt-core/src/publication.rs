@@ -541,4 +541,45 @@ mod tests {
         let again = plan_plugin(root, &key, &name).unwrap().drift.unwrap();
         assert!(again.writes.is_empty() && again.removals.is_empty());
     }
+
+    #[test]
+    fn a_tracked_folder_replaced_by_a_document_reads_as_gone_before_it_is_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let key = ProjectSlug::parse("acme").unwrap();
+        let name = CompanyName::parse("Acme").unwrap();
+        crate::git::run(root, ["init", "--quiet"]).unwrap();
+        write(
+            root,
+            ".claude-plugin/marketplace.json",
+            "{\"plugins\": []}\n",
+        );
+        write(root, "docs/index.yaml", "listed: [guide.md/spring.md]\n");
+        write(
+            root,
+            "docs/guide.md/spring.md",
+            "---\ndescription: Spring.\n---\n\n# Spring\n",
+        );
+        write_plugin(root, &plan_plugin(root, &key, &name).unwrap()).unwrap();
+        // The document and its generated file are tracked.
+        crate::git::run(root, ["add", "--all"]).unwrap();
+
+        // The document's folder becomes a document, nothing staged: git still
+        // lists both the old document and its generated file.
+        std::fs::remove_dir_all(root.join("docs/guide.md")).unwrap();
+        write(root, "docs/index.yaml", "listed: [guide.md]\n");
+        write(
+            root,
+            "docs/guide.md",
+            "---\ndescription: The guide.\n---\n\n# Guide\n",
+        );
+        let plan = plan_plugin(root, &key, &name).unwrap();
+        assert!(plan.findings.is_empty(), "{:?}", plan.findings);
+        write_plugin(root, &plan).unwrap();
+        let again = plan_plugin(root, &key, &name).unwrap();
+        assert!(again.findings.is_empty(), "{:?}", again.findings);
+        let drift = again.drift.unwrap();
+        assert!(drift.writes.is_empty() && drift.removals.is_empty());
+        assert!(again.catalog.is_none());
+    }
 }
