@@ -261,19 +261,33 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 /// it finds.
 fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    if args.validate {
+        let findings = publication::validate_plugin(&root, &args.key, &args.name)?;
+        for finding in &findings {
+            ctx.out.line(&finding.to_string())?;
+        }
+        return Ok(if findings.is_empty() {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
+    }
     let plan = publication::plan_plugin(&root, &args.key, &args.name)?;
     let mut failed = !plan.findings.is_empty();
     if args.check {
-        for line in check_lines(&plan.writes, &plan.removals, "instrukt docs plugin") {
-            ctx.out.line(&line)?;
-            failed = true;
+        if let Some(drift) = &plan.drift {
+            for line in check_lines(&drift.writes, &drift.removals, "instrukt docs plugin") {
+                ctx.out.line(&line)?;
+                failed = true;
+            }
         }
-    } else if !args.validate && !failed {
-        if let Some(version) = plan.version {
-            ctx.out
-                .line(&format!("{}: version {version}", plan.folder.display()))?;
-        }
-        let removed: Vec<&Path> = plan.removals.iter().map(PathBuf::as_path).collect();
+    } else if let Some(drift) = plan.drift.as_ref().filter(|_| !failed) {
+        ctx.out.line(&format!(
+            "{}: version {}",
+            plan.folder.display(),
+            drift.version
+        ))?;
+        let removed: Vec<&Path> = drift.removals.iter().map(PathBuf::as_path).collect();
         for path in publication::write_plugin(&root, &plan)? {
             let what = if removed.contains(&path.as_path()) {
                 "removed"
@@ -288,7 +302,7 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
     Ok(if !failed {
         ExitCode::SUCCESS
-    } else if args.check || args.validate {
+    } else if args.check {
         ExitCode::FAILURE
     } else {
         crate::output::could_not(

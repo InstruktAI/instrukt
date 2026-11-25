@@ -573,15 +573,25 @@ impl std::fmt::Display for PluginVersion {
     }
 }
 
-/// What rendering a company's plugin from one view of its repository does:
-/// every file to write, every file to remove, and what it found. It writes
-/// nothing itself; with a finding it holds no write and no removal.
+/// What rendering a company's plugin from one view of its repository finds
+/// and would change. It writes nothing itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginPlan {
     /// The plugin's folder, relative to the repository's root.
     pub folder: PathBuf,
-    /// The plugin's version once the plan is applied; `None` with a finding.
-    pub version: Option<PluginVersion>,
+    /// What leaves every file as it is.
+    pub findings: Vec<PluginFinding>,
+    /// What the rendering changes against what the view holds; `None` when
+    /// a finding leaves the rendering, the held version or the plugin's
+    /// folder unknown. It is applied only when the plan holds no finding.
+    pub drift: Option<PluginDrift>,
+}
+
+/// What a rendering changes against what the view holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginDrift {
+    /// The plugin's version once the rendering is applied.
+    pub version: PluginVersion,
     /// Each file whose content differs from what the view holds, or that it
     /// does not hold, in the order they are written: the plugin's files
     /// other than its manifest, then its manifest, then the catalog.
@@ -589,61 +599,148 @@ pub struct PluginPlan {
     /// Each file the view holds under the plugin's folder that the plugin
     /// does not hold, relative to the repository's root.
     pub removals: Vec<PathBuf>,
-    pub findings: Vec<PluginFinding>,
+}
+
+/// The version the plugin's manifest holds, as far as it can be known.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Held {
+    /// The repository holds no manifest for the plugin.
+    Absent,
+    Version(PluginVersion),
+    /// A finding, or a link on the way to the manifest, leaves it unknown.
+    Unknown,
+}
+
+/// What a view says of the plugin before anything is compared.
+struct Assessment<'t> {
+    findings: Vec<PluginFinding>,
+    /// The rendering, unless a finding of the documents prevents it.
+    files: Option<BTreeMap<String, String>>,
+    held: Held,
+    /// The catalog as read, with its bytes, when it can be read.
+    catalog: Option<(Json, &'t [u8])>,
+    /// Whether a link stands at or above the plugin's folder or inside it.
+    folder_linked: bool,
+}
+
+/// Reads what `tree` says of the plugin of `key`, named `name`, and every
+/// finding, comparing nothing.
+fn assess<'t>(
+    tree: &'t Committed,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<Assessment<'t>, PublicationError> {
+    let folder = folder(key);
+    let manifest_path = format!("{folder}/{MANIFEST}");
+    let mut folder_linked = false;
+    let mut findings = Vec::new();
+    for link in tree.links() {
+        let at_folder = on_the_way(link, &folder) || within(link, &folder);
+        if at_folder || on_the_way(link, CATALOG) {
+            folder_linked |= at_folder;
+            findings.push(PluginFinding::Link {
+                path: link.to_owned(),
+            });
+        }
+    }
+    let rendered = render(tree, key, name)?;
+    // Nothing behind a link is read: the manifest and the catalog are each
+    // judged unless a link stands at or above that file.
+    let held = if tree.is_link(&manifest_path) {
+        Held::Unknown
+    } else {
+        match held_version(tree, &manifest_path) {
+            Ok(None) => Held::Absent,
+            Ok(Some(version)) => Held::Version(version),
+            Err(finding) => {
+                findings.push(finding);
+                Held::Unknown
+            }
+        }
+    };
+    let catalog = if tree.is_link(CATALOG) {
+        None
+    } else {
+        match read_catalog(tree) {
+            Ok(catalog) => Some(catalog),
+            Err(finding) => {
+                findings.push(finding);
+                None
+            }
+        }
+    };
+    let files = match rendered {
+        Rendered::Files(files) => Some(files),
+        Rendered::Findings(found) => {
+            findings.extend(found);
+            None
+        }
+    };
+    Ok(Assessment {
+        findings,
+        files,
+        held,
+        catalog,
+        folder_linked,
+    })
+}
+
+/// Every finding of the plugin of `key`, named `name`, in `tree`, a view
+/// holding the plugin's folder and the catalog, without comparing any file.
+pub(super) fn findings(
+    tree: &Committed,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<Vec<PluginFinding>, PublicationError> {
+    Ok(assess(tree, key, name)?.findings)
 }
 
 /// Plans the rendering of the plugin of `key`, named `name`, from `tree`,
 /// a view holding the plugin's folder and the catalog
-/// ([`Committed::working_tree_places`]).
+/// ([`Committed::working_tree_places`]): every finding, and what the
+/// rendering changes wherever that can be known, findings or not.
 pub(super) fn plan(
     tree: &Committed,
     key: &ProjectSlug,
     name: &CompanyName,
 ) -> Result<PluginPlan, PublicationError> {
+    let assessment = assess(tree, key, name)?;
+    let drift = match (assessment.files, assessment.held, assessment.folder_linked) {
+        (Some(files), Held::Absent, false) => {
+            Some(drift(tree, key, name, files, None, assessment.catalog)?)
+        }
+        (Some(files), Held::Version(version), false) => Some(drift(
+            tree,
+            key,
+            name,
+            files,
+            Some(version),
+            assessment.catalog,
+        )?),
+        _ => None,
+    };
+    Ok(PluginPlan {
+        folder: PathBuf::from(folder(key)),
+        findings: assessment.findings,
+        drift,
+    })
+}
+
+/// What the rendering `files`, every file but the manifest, changes against
+/// what `tree` holds: the version kept from `held` when the rendering with
+/// it equals the folder file for file, and raised otherwise; the files to
+/// write, in their order, the catalog's entry among them when `catalog`
+/// could be read; and the files to remove.
+fn drift(
+    tree: &Committed,
+    key: &ProjectSlug,
+    name: &CompanyName,
+    mut files: BTreeMap<String, String>,
+    held: Option<PluginVersion>,
+    catalog: Option<(Json, &[u8])>,
+) -> Result<PluginDrift, PublicationError> {
     let folder = folder(key);
     let manifest_path = format!("{folder}/{MANIFEST}");
-    let mut findings: Vec<PluginFinding> = tree
-        .links()
-        .filter(|link| {
-            on_the_way(link, &folder) || within(link, &folder) || on_the_way(link, CATALOG)
-        })
-        .map(|link| PluginFinding::Link {
-            path: link.to_owned(),
-        })
-        .collect();
-    let rendered = render(tree, key, name)?;
-    // Nothing behind a link is read: the manifest and the catalog are each
-    // judged unless a link stands at or above that file.
-    let mut held = None;
-    let mut entry = None;
-    if !tree.is_link(&manifest_path) {
-        match held_version(tree, &manifest_path) {
-            Ok(version) => held = version,
-            Err(finding) => findings.push(finding),
-        }
-    }
-    if !tree.is_link(CATALOG) {
-        match catalog(tree, key, name)? {
-            Ok(file) => entry = file,
-            Err(finding) => findings.push(finding),
-        }
-    }
-    let mut files = match rendered {
-        Rendered::Files(files) => files,
-        Rendered::Findings(found) => {
-            findings.extend(found);
-            BTreeMap::new()
-        }
-    };
-    if !findings.is_empty() {
-        return Ok(PluginPlan {
-            folder: PathBuf::from(folder),
-            version: None,
-            writes: Vec::new(),
-            removals: Vec::new(),
-            findings,
-        });
-    }
     let prefix = format!("{folder}/");
     let holds: BTreeMap<String, &[u8]> = tree
         .below(&prefix)
@@ -671,14 +768,14 @@ pub(super) fn plan(
         .map(|(path, text)| planned(path, text))
         .collect();
     writes.extend(manifest_text.map(|text| planned(manifest_path, text)));
-    writes.extend(entry);
+    if let Some((document, bytes)) = catalog {
+        writes.extend(catalog_entry(document, bytes, key, name)?);
+    }
     writes.retain(PlannedFile::differs);
-    Ok(PluginPlan {
-        folder: PathBuf::from(folder),
-        version: Some(version),
+    Ok(PluginDrift {
+        version,
         writes,
         removals,
-        findings,
     })
 }
 
@@ -759,29 +856,37 @@ fn json_document(value: &Json, file: &str) -> Result<String, PublicationError> {
         })
 }
 
-/// The catalog with the plugin's entry set, as the file to write; `None`
-/// when the entry already holds its values, or the finding that the view
-/// holds no catalog or one that cannot be read.
-fn catalog(
-    tree: &Committed,
+/// The catalog the view holds, as read, with its bytes, or the finding
+/// that it holds none or one that is no JSON object holding a list of
+/// plugins.
+fn read_catalog(tree: &Committed) -> Result<(Json, &[u8]), PluginFinding> {
+    let Some(bytes) = tree.file(CATALOG) else {
+        return Err(PluginFinding::NoCatalog);
+    };
+    let unreadable = |reason: &str| PluginFinding::CatalogUnreadable {
+        reason: reason.to_owned(),
+    };
+    let document = match serde_json::from_slice::<Json>(bytes) {
+        Ok(document @ Json::Object(_)) => document,
+        Ok(_) => return Err(unreadable("it is not a JSON object")),
+        Err(err) => return Err(unreadable(&format!("it is not JSON: {err}"))),
+    };
+    if !matches!(document.get("plugins"), Some(Json::Array(_))) {
+        return Err(unreadable("it holds no `plugins` list"));
+    }
+    Ok((document, bytes))
+}
+
+/// The catalog `document`, read from `bytes`, with the plugin's entry set,
+/// as the file to write; `None` when the entry already holds its values.
+fn catalog_entry(
+    mut document: Json,
+    bytes: &[u8],
     key: &ProjectSlug,
     name: &CompanyName,
-) -> Result<Result<Option<PlannedFile>, PluginFinding>, PublicationError> {
-    let Some(bytes) = tree.file(CATALOG) else {
-        return Ok(Err(PluginFinding::NoCatalog));
-    };
-    let unreadable = |reason: &str| {
-        Ok(Err(PluginFinding::CatalogUnreadable {
-            reason: reason.to_owned(),
-        }))
-    };
-    let mut document = match serde_json::from_slice::<Json>(bytes) {
-        Ok(document @ Json::Object(_)) => document,
-        Ok(_) => return unreadable("it is not a JSON object"),
-        Err(err) => return unreadable(&format!("it is not JSON: {err}")),
-    };
+) -> Result<Option<PlannedFile>, PublicationError> {
     let Some(Json::Array(plugins)) = document.get_mut("plugins") else {
-        return unreadable("it holds no `plugins` list");
+        return Ok(None);
     };
     let wanted = [
         ("name", Json::from(key.as_str())),
@@ -798,7 +903,7 @@ fn catalog(
                 .iter()
                 .all(|(member, value)| entry.get(*member) == Some(value)) =>
         {
-            return Ok(Ok(None));
+            return Ok(None);
         }
         Some(entry) => {
             for (member, value) in wanted {
@@ -812,11 +917,11 @@ fn catalog(
                 .collect(),
         )),
     }
-    Ok(Ok(Some(PlannedFile {
+    Ok(Some(PlannedFile {
         path: PathBuf::from(CATALOG),
         text: json_document(&document, CATALOG)?,
         current: Some(bytes.to_vec()),
-    })))
+    }))
 }
 
 /// The path of the file `to` relative to the folder of the file `from`,
@@ -997,8 +1102,26 @@ mod tests {
         Committed::of(&files)
     }
 
+    /// The catalog with the plugin's entry set, or the finding that it
+    /// cannot be read.
+    fn catalog(
+        tree: &Committed,
+        key: &ProjectSlug,
+        name: &CompanyName,
+    ) -> Result<Result<Option<PlannedFile>, PluginFinding>, PublicationError> {
+        match read_catalog(tree) {
+            Ok((document, bytes)) => catalog_entry(document, bytes, key, name).map(Ok),
+            Err(finding) => Ok(Err(finding)),
+        }
+    }
+
+    /// What rendering from `tree` changes, which must be knowable.
+    fn drift_of(tree: &Committed) -> PluginDrift {
+        plan(tree, &key(), &name()).unwrap().drift.unwrap()
+    }
+
     /// `tree` with `plan`'s writes applied and its removals made.
-    fn applied(tree: &[(String, String)], plan: &PluginPlan) -> Vec<(String, String)> {
+    fn applied(tree: &[(String, String)], plan: &PluginDrift) -> Vec<(String, String)> {
         let mut files: BTreeMap<String, String> = tree.iter().cloned().collect();
         for path in &plan.removals {
             files.remove(path.to_str().unwrap());
@@ -1042,9 +1165,9 @@ mod tests {
             ("docs/company.md", "# Company\n\nWe make things.\n"),
             (CATALOG, CATALOG_TEXT),
         ]);
-        let plan1 = plan(&view(&first), &key(), &name()).unwrap();
+        let plan1 = drift_of(&view(&first));
         let rendered = applied(&first, &plan1);
-        let again = plan(&view(&rendered), &key(), &name()).unwrap();
+        let again = drift_of(&view(&rendered));
         assert!(again.writes.is_empty() && again.removals.is_empty());
         assert_eq!(again.version, plan1.version);
         let mut changed = rendered.clone();
@@ -1053,20 +1176,19 @@ mod tests {
                 *text = "# Company\n\nWe make more things.\n".to_owned();
             }
         }
-        let raised = plan(&view(&changed), &key(), &name()).unwrap();
-        assert_eq!(raised.version, plan1.version.map(PluginVersion::raised));
+        let raised = drift_of(&view(&changed));
+        assert_eq!(raised.version, plan1.version.raised());
         let mut stray = rendered.clone();
         stray.push(("plugins/acme/notes.md".to_owned(), "old".to_owned()));
-        let cleaned = plan(&view(&stray), &key(), &name()).unwrap();
+        let cleaned = drift_of(&view(&stray));
         assert_eq!(cleaned.removals, [PathBuf::from("plugins/acme/notes.md")]);
-        assert_eq!(cleaned.version, plan1.version.map(PluginVersion::raised));
+        assert_eq!(cleaned.version, plan1.version.raised());
     }
 
     #[test]
     fn the_manifest_is_written_after_the_plugins_other_files_and_the_catalog_last() {
         let tree = repository(Some(CATALOG_TEXT), &[]);
-        let paths: Vec<PathBuf> = plan(&tree, &key(), &name())
-            .unwrap()
+        let paths: Vec<PathBuf> = drift_of(&tree)
             .writes
             .into_iter()
             .map(|file| file.path)
@@ -1180,7 +1302,8 @@ mod tests {
         ] {
             let tree = repository(Some(CATALOG_TEXT), &[]).with_link(link);
             let plan = plan(&tree, &key(), &name()).unwrap();
-            assert!(plan.writes.is_empty() && plan.removals.is_empty(), "{link}");
+            // Behind a link at the plugin's folder nothing is compared.
+            assert_eq!(plan.drift.is_none(), link != ".claude-plugin", "{link}");
             assert_eq!(
                 plan.findings,
                 [PluginFinding::Link {
@@ -1195,6 +1318,26 @@ mod tests {
                 .unwrap()
                 .findings
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_check_still_knows_what_differs_beside_a_catalog_finding() {
+        let plan = plan(&repository(None, &[]), &key(), &name()).unwrap();
+        assert_eq!(plan.findings, [PluginFinding::NoCatalog]);
+        let written: Vec<PathBuf> = plan
+            .drift
+            .unwrap()
+            .writes
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+        assert_eq!(
+            written,
+            [
+                PathBuf::from("plugins/acme/skills/acme/SKILL.md"),
+                PathBuf::from("plugins/acme/.claude-plugin/plugin.json"),
+            ]
         );
     }
 
