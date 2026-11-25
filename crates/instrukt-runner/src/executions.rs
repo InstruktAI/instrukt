@@ -10,8 +10,10 @@
 //! - the workflow state moved on since the last look: the session is
 //!   making progress; its recovery starts afresh;
 //! - the todo waits on a person (a hold, or an approval gate that waits for
-//!   a human): the next evidence is not the session's to produce, so
-//!   nothing is sent and nothing is reported;
+//!   a human): the next evidence is not the session's to produce, so this
+//!   observation sends no recovery input and reports no stopped execution;
+//!   a `Gone` session with an eligible keyed assignment still takes the
+//!   succession below, which is decided first;
 //! - the session is `running` or `needs-input`: it is working or waiting
 //!   in its own thread;
 //! - its status cannot be observed: retried next tick, never an anomaly;
