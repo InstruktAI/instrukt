@@ -122,14 +122,12 @@ pub fn repository_local(matches: &ArgMatches) -> bool {
     )
 }
 
-/// The documentation reads: they inspect the state database, so an older
-/// one is read through its migrated in-memory image and the file stays as
-/// found (`project/instrukt/spec/feature/work/state-database`).
+/// The documentation reads, as the catalog classifies them: they inspect the
+/// state database, so an older one is read through its migrated in-memory
+/// image and the file stays as found
+/// (`project/instrukt/spec/feature/work/state-database`).
 pub fn state_inspection(matches: &ArgMatches) -> bool {
-    matches!(
-        command_path(matches).0.as_slice(),
-        ["docs", "get" | "index" | "schema" | "validate"]
-    )
+    action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
 /// The commands that write no log: `docs render [--check]`, so a check
