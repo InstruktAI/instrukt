@@ -10,7 +10,10 @@
 //! - `INSTRUKT_LOG_DIR` selects a per-test log directory independently of the
 //!   fixture directory; it is created by the logger, never by setup;
 //! - every subprocess carries the write fence
-//!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home: an
+//!   (`instrukt_core::fsx::FENCE_VARIABLE`) over the live user's home — the
+//!   whole home when the inherited temporary directory lies outside it,
+//!   otherwise the locations instrukt is known to write there, each around
+//!   the way down to that directory (`live_fence`): an
 //!   instrukt process whose own file operation would land there, directly or
 //!   through a symbolic link, refuses it before it happens and records the
 //!   refusal in a record this test owns and names in the fence; on drop the
@@ -663,9 +666,18 @@ where
 }
 
 /// The live user's locations every instrukt process of a test is fenced
-/// from: the whole live home, unless the test's own directory lies inside
-/// it, and in every case the files and trees instrukt is known to write
-/// there (through a symbolic link, these may resolve outside the home).
+/// from, computed around the test's temporary directory: the whole live
+/// home when that directory lies outside it, and in every case the files and
+/// trees instrukt is known to write there (through a symbolic link, these may
+/// resolve outside the home).
+///
+/// A named location that contains the temporary directory, such as a T3
+/// session's under `.t3`, is replaced by its entries off the way down to
+/// that directory, at each level: the record the test owns and instrukt's
+/// own temporary files lie there, and the fence would refuse them. Not
+/// fenced then are the directories on that way themselves, names created in
+/// them after the test starts, and entries that link onto the way or into
+/// the temporary directory.
 fn live_fence(home: &Path, temp_dir: &Path) -> Vec<PathBuf> {
     let scratch = temp_dir.canonicalize().unwrap_or_else(|error| {
         panic!(
@@ -673,7 +685,7 @@ fn live_fence(home: &Path, temp_dir: &Path) -> Vec<PathBuf> {
             temp_dir.display()
         )
     });
-    let mut fenced: Vec<PathBuf> = [
+    let named: Vec<PathBuf> = [
         ".instrukt",
         ".t3",
         ".gitconfig",
@@ -689,9 +701,52 @@ fn live_fence(home: &Path, temp_dir: &Path) -> Vec<PathBuf> {
     .iter()
     .map(|rel| home.join(rel))
     .collect();
+    let mut fenced = Vec::new();
     let real = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
     if !scratch.starts_with(&real) {
-        fenced.insert(0, home.to_path_buf());
+        fenced.push(home.to_path_buf());
+    }
+    for entry in named {
+        // A location that does not exist cannot contain the temporary
+        // directory; it stays fenced as written.
+        match entry.canonicalize() {
+            Ok(location) if scratch.starts_with(&location) => {
+                fenced.extend(off_the_way(&location, &scratch));
+            }
+            _ => fenced.push(entry),
+        }
+    }
+    fenced
+}
+
+/// The entries of each directory from `location` down to the parent of
+/// `scratch` that lead neither onto that way nor into `scratch`, each by its
+/// own path. A directory on the way that cannot be listed fails setup: the
+/// location is never left unfenced. An entry that vanishes or links nowhere
+/// stays fenced: another program changing live data never fails a test.
+fn off_the_way(location: &Path, scratch: &Path) -> Vec<PathBuf> {
+    let mut fenced = Vec::new();
+    let mut dir = location.to_path_buf();
+    for step in scratch.strip_prefix(location).unwrap().components() {
+        let unlisted = |error: std::io::Error| -> ! {
+            panic!(
+                "the fenced directory {} cannot be listed: {error}",
+                dir.display()
+            )
+        };
+        let mut entries = Vec::new();
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|error| unlisted(error)) {
+            let path = entry.unwrap_or_else(|error| unlisted(error)).path();
+            let onto_the_way = path
+                .canonicalize()
+                .is_ok_and(|leads| scratch.starts_with(&leads) || leads.starts_with(scratch));
+            if !onto_the_way {
+                entries.push(path);
+            }
+        }
+        entries.sort();
+        fenced.extend(entries);
+        dir.push(step);
     }
     fenced
 }
