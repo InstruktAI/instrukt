@@ -36,7 +36,7 @@ approved intent enlarges the horizon and is invalid
 not reallocate ownership); a genuine intent gap is reported as an investigation
 lead, never encoded as a blocking demand.
 
-Lanes run in parallel, each in its own native subagent, under `sdlc/procedure/lifecycle/review`. Each lane produces findings with severity levels.
+Lanes run in parallel, each in its own native subagent, under `sdlc/procedure/lifecycle/review` (full applicable-lane fan-out on discovery passes; affected-lane fan-out with independent delta-verified carry for untouched clean lanes on remediation reviews). Each executed lane produces findings with severity levels.
 
 A project-scope testing ruling (for example a test moratorium) supersedes the
 tests lane and every per-criterion named-test demand in Scope verification for
@@ -67,12 +67,19 @@ unchanged; in every project without such a ruling this catalog applies in full.
 ### A verdict and its lane scores are written together
 
 Lane scores describe the state the verdict is issued against, so a verdict that
-changes without its scores being re-run leaves a document asserting both
-"unmet" and "approved" — and the reader cannot tell which half is current. When
-a review approves work it previously rejected, the lanes are re-scored against
-the corrected state in the same act; carrying forward the earlier scores under a
-new verdict is a defect in the artifact regardless of whether the fixes were
-real.
+changes without current lane entries leaves a document asserting both "unmet"
+and "approved" — and the reader cannot tell which half is current. When a
+review approves work it previously rejected, every applicable lane is accounted
+for against the corrected state in the same act: every affected lane (any lane
+that held a finding, had a missing or unsupported score, or whose trigger
+surface or affected dependencies the remediation delta touches) is freshly
+re-executed, and every unaffected lane that already passed cleanly in the same
+review cycle carries an explicit delta-verified confirmation naming the prior
+report digest and the independently verified non-intersection against the
+remediation diff (`sdlc/procedure/lifecycle/review`). Carrying forward earlier
+scores without independent diff verification, or leaving any previously unmet
+or delta-touched lane un-re-run, is a defect in the artifact regardless of
+whether the fixes were real.
 
 The verdict is written by the reviewer alone. An author recording its own
 approval into the review artifact after applying fixes — however faithfully it

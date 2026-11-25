@@ -102,26 +102,41 @@ defective: finding defects is the lane's work.
   when no general lane covers it. An entry point the project lacks is recorded
   as a gap, never as nothing found.
 
-**Run each applicable lane in its own native subagent.** Dispatch the lanes to
-the harness's own subagents, in parallel (`general/principle/parallel-work`).
-Each starts fresh, with the brief as its only context from you: use the
-harness's fresh-subagent form, never a fork of your own conversation, so your
-reasoning and conclusions do not frame its investigation. A lane's brief carries
-one lane question and the address of the lane's catalog section; the exact read
-addresses of the frozen target; the intent basis this review established, with
-its source addresses; the project focus points that bear on the lane, with
-theirs; the source facts you have already established, with their addresses and
-qualifications, and verbatim excerpts of the owner rules the lane needs; the
-finding rules of step 4; and the result it returns: findings in the step 4
-format, or clean-pass evidence, plus any gap it could not close. On a disputed
-point the brief gives the evidence and the question, never the finding to reach
-or avoid, and it states no preferred verdict. You hold the domain's rendering and cut
-each brief from it. The brief is the lane subagent's complete mandate: it reads
-only the sources its question requires, follows only the Required reads those
-sources need, and reports missing context as a gap. It investigates and returns
-evidence; recording the review artifact and verdict, sending messages and
-performing session acts stay with the invoking reviewer. Where the harness
-offers no native subagents, run the lanes as separate passes yourself.
+**Run each applicable lane in its own native subagent.** On a discovery pass
+(the first review of a target, or any pass starting a new review cycle after
+substantive drift), dispatch every applicable lane to the harness's own
+subagents, in parallel (`general/principle/parallel-work`). On a remediation
+review within the same review cycle (step 6), when a prior complete discovery
+pass already scored the unchanged surfaces, dispatch fresh native subagents for
+every **affected lane** — any lane that held an unresolved finding on the prior
+pass, any lane whose trigger surface or affected dependencies the remediation
+delta touches, and any lane whose prior score was missing or unsupported. For
+each **unaffected applicable lane** (scored clean on the prior pass, with no
+file, contract, or dependency in its trigger surface touched by the remediation
+delta), verify non-intersection independently from the remediation diff — never
+from an author summary (step 0) — and record an explicit delta-verified carry
+line naming the prior report digest and the verified non-intersection; whenever
+intersection is uncertain, dispatch that lane in a fresh subagent.
+
+Each dispatched lane starts fresh, with the brief as its only context from you:
+use the harness's fresh-subagent form, never a fork of your own conversation,
+so your reasoning and conclusions do not frame its investigation. A lane's
+brief carries one lane question and the address of the lane's catalog section;
+the exact read addresses of the frozen target; the intent basis this review
+established, with its source addresses; the project focus points that bear on
+the lane, with theirs; the source facts you have already established, with
+their addresses and qualifications, and verbatim excerpts of the owner rules
+the lane needs; the finding rules of step 4; and the result it returns:
+findings in the step 4 format, or clean-pass evidence, plus any gap it could
+not close. On a disputed point the brief gives the evidence and the question,
+never the finding to reach or avoid, and it states no preferred verdict. You
+hold the domain's rendering and cut each brief from it. The brief is the lane
+subagent's complete mandate: it reads only the sources its question requires,
+follows only the Required reads those sources need, and reports missing context
+as a gap. It investigates and returns evidence; recording the review artifact
+and verdict, sending messages and performing session acts stay with the
+invoking reviewer. Where the harness offers no native subagents, run the
+dispatched lanes as separate passes yourself.
 
 For the tests lane, independently re-prove every triggered `TQ-*` predicate.
 Record evidence for each triggered predicate or a reasoned `N/A`. Evidence
@@ -142,10 +157,13 @@ appears in your review or in a lane's evidence. A gap whose question one lane
 owns goes back to that lane; anything else you establish is your own finding
 under step 4.
 
-Each executed lane produces a findings section, even when it has no findings.
-A missing section means the review is incomplete: execute the missing lane
-before producing a verdict. The report states every lane's disposition and, for
-each executed lane, the question its brief asked.
+Each executed lane produces a findings section, even when it has no findings;
+each delta-verified unaffected lane on a remediation review produces a
+delta-verified carry line naming the prior report digest and the verified
+non-intersection against the remediation diff. A missing lane entry means the
+review is incomplete: execute the missing lane before producing a verdict. The
+report states every lane's disposition and, for each executed lane, the
+question its brief asked.
 
 ### 2. Apply the quality gates
 
