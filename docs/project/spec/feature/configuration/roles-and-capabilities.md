@@ -102,6 +102,13 @@ objects, `own` is empty unless that machine-wide configuration or installation
 responsibility is explicitly part of the recorded assignment; being in a
 project does not own the machine.
 
+`instrukt hooks run`, the call in each of instrukt's hook sections
+(`project/instrukt/spec/feature/repository/hook-sections`), belongs to the
+Repository family: it is `code-commit`, addressing the working tree the hook
+runs in, so `own` reaches it in the workspace the caller's assignment records.
+The detached `hooks worker` a post-hook starts remains `runner-execute`, and
+the sync it runs remains `publication`.
+
 ### Caller and object resolution
 
 The selected runtime adapter recognizes the native caller. For T3,
@@ -271,6 +278,15 @@ Then reporting a defect into any project on its computer and reading which defec
 And creating, changing or withdrawing any other work is not
 ```
 
+### UC-RCAP4: A focused author's hook runs are admitted in its own workspace
+
+```gherkin
+Given a focused author holding code-commit at own, bound to its assigned worktree, with instrukt's hooks installed
+When it commits there
+Then the hook runs its commit triggers are admitted
+But a hook run it starts outside its assigned worktree is refused before it runs, with its reporting path
+```
+
 ## Known caveats
 
 - Capabilities cover instrukt commands only. File edits, raw git, `gh` and
@@ -281,9 +297,11 @@ And creating, changing or withdrawing any other work is not
 - `company-agent` is a `standing` role, so its grants shape its help and
   briefing and refuse nothing: an instrukt command outside `read`, `tools` and
   `report` is held back by its procedure
-  (`general/procedure/company-assistance`), not refused by this layer. A
-  `focused` company agent would also be refused the instrukt hook run its own
-  commits trigger in the company home.
+  (`general/procedure/company-assistance`), not refused by this layer.
+- A `focused` role without `code-commit`, such as a reviewer, is refused the
+  hook run a commit of its own triggers, and that commit is made without what
+  instrukt generates. Every shipped `focused` role that commits holds
+  `code-commit` through `worker`.
 
 ## See Also
 

@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+expression: "String::from_utf8_lossy(&status.get_output().stdout).replace(base.trim_end_matches('/'),\n\"[TMP]\").replace(&head, \"[SHA]\")"
+---
+hooks directory: [TMP]/demo/.git/hooks
+runs recorded for the repository at [TMP]/demo/.git
+pre-commit: current
+  last run: staged in committed form: docs/project/index.yaml, instrukt.yaml, AGENTS.md
+post-commit: current
+  last run: none
+post-merge: current
+  last run: none
+post-rewrite: current
+  last run: none
+post-checkout: current
+  last run: none
