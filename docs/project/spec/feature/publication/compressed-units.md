@@ -52,9 +52,9 @@ for a company document. Every doc-owning repository keeps its units the same
 way, in one place outside every documentation position, each at the source's
 own path relative to `docs/`. A checkout anywhere, a fresh clone, a worktree,
 a company container or a CI runner, therefore renders with the same units
-offline. A unit is no snippet and no company document: no index, required
-read or reference names one, and validation of snippets and company
-documents does not read one as either.
+offline. A unit lies outside every documentation position, so it is no
+snippet (`project/instrukt/spec/domain/docs`), and it is no company document
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 An index that selects sources carries only the selection. No digest, model
 or other fact about a unit is written into it.
@@ -77,7 +77,7 @@ or other fact about a unit is written into it.
 | --- | --- |
 | current | the unit's source digest equals the digest of its source's delivered prose |
 | stale | the unit exists and its source digest differs |
-| missing | a source that needs a unit, by an entrypoint index of the same repository, has none |
+| missing | a source of this repository that an entrypoint index of this repository inlines has no unit |
 | orphaned | the unit's source no longer exists; or its source is a `general`, project or company source that no entrypoint index of the repository inlines |
 
 A unit of a domain snippet is orphaned only when the snippet no longer
@@ -99,9 +99,8 @@ file of a company plugin's skill
 - **Stale and missing fall back, one source at a time.** A source whose unit
   is stale or missing is held in its full prose. That decision is taken for
   that source alone, changes how no other source is rendered, is no finding,
-  and never stops a sync, a commit, a rendering or a check. The rendering's
-  output names each source it holds in prose for that reason, as a notice. An
-  orphaned unit is never rendered.
+  and never stops a sync, a commit, a rendering or a check. An orphaned unit
+  is never rendered.
 - **The legend once.** A rendering that holds at least one unit carries one
   fixed legend of the notation once, before the first unit, in text every
   runtime loads, including a runtime that strips HTML comments. A rendering
@@ -123,11 +122,14 @@ frontmatter cannot be read or lacks its source digest or model:
 - every unit is read from the repository's place for units and nowhere else,
   and nothing is read through a symbolic link at or above that place or
   inside it; such a link is a finding naming it;
-- a finding is handled as that rendering handles a finding of its source
+- a unit with a finding never stands in for its source. A rendering that
+  stops on a finding stops on it as on a finding of its source
   (`project/instrukt/spec/feature/publication/agent-entrypoints`,
   `project/instrukt/spec/feature/publication/company-plugin`,
-  `project/instrukt/spec/feature/publication/project-publication`). A unit with
-  a finding never stands in for its source.
+  `project/instrukt/spec/feature/publication/project-publication`); a
+  rendering that is written despite a finding, as a global agent file is
+  with a reference left for an agent program, holds the source's prose in
+  that unit's place and reports the finding.
 
 ### Inspecting units
 
@@ -158,9 +160,8 @@ verdict on whether a unit is current. A company's knowledge is not published
 (`project/instrukt/spec/feature/configuration/company-homes`); its units carry
 their own source digests in its repository.
 
-The eval fingerprint covers the current units that the global agent files
-hold and those of evaluated snippets
-(`project/instrukt/spec/feature/publication/eval-fingerprint`).
+Which units the eval fingerprint covers is
+`project/instrukt/spec/feature/publication/eval-fingerprint`'s.
 
 ## Use cases
 
@@ -180,7 +181,7 @@ And none of those sources is held in prose
 Given a maintainer's repository whose always-on sources each have a current compressed unit
 When the maintainer changes one of those sources and merges the change without renewing its unit
 And the repository's renderings are made from the merged content
-Then that source reaches agents in its changed prose, and the rendering names it as held in prose
+Then that source reaches agents in its changed prose
 And every other source reaches agents compressed
 And the maintainer's checks, the commit and publication all succeed
 When a renewed unit for that source is committed
@@ -208,7 +209,7 @@ Then it is told there is nothing to compress
   evaluation attributes a regression to.
 - Between a merged prose change and its renewed unit, the rendering holds
   that source in prose, and a file close to its runtime's size limit can pass
-  it for that while; the rendering's notice names the source.
+  it for that while; the inspection names the source.
 - A domain repository's inspection names no missing unit for a domain
   snippet that only another repository's always-on selection inlines; that
   snippet is held in prose in the global files until its unit is committed.

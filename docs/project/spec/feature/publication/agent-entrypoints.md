@@ -73,6 +73,18 @@ section, in order:
 4. **Triggered procedures.** One listing line per procedure of the position
    carrying an `activation_trigger`, naming its trigger and
    `instrukt docs get <id> --closure`.
+
+Within one rendered file, a snippet appears in full at most once. A
+triggered procedure keeps its trigger and its `instrukt docs get <id>
+--closure` command wherever it appears: rendered in full, its trigger line
+stands directly under its heading; listed, its listing line is the triggered
+form (trigger and `--closure`) rather than the plain `get <id>` form; it is
+not listed a second time.
+A rendering never inlines a pending snippet and drops planned material
+(`project/instrukt/spec/feature/publication/project-publication`).
+Only references outside code are resolved; a reference inside a code span or
+fenced code block is left exactly as written and is never reported as
+unresolved.
 <!-- change:compressed-global-entrypoints -->
 1. **Heading.** `# <Name>`: the position's name with its first letter
    capitalised (`# General`, `# Sdlc`, `# Project`).
@@ -94,31 +106,30 @@ section, in order:
    `instrukt docs get <id> --closure`.
 
 A global agent file gives its listed snippets and its triggered procedures
-each a heading of their own that carries the read command once, and their
-lines carry no command; the root `AGENTS.md` and the domain read carry the
-command on every line. Both are listing-line forms of
-`project/instrukt/spec/feature/docs/progressive-retrieval`.
-<!-- /planned-change:compressed-global-entrypoints -->
+each a heading of their own that carries the read command once, in the
+headed listing-line form, and their lines carry no command; the root
+`AGENTS.md` uses the inline form, each line carrying its command
+(`project/instrukt/spec/feature/docs/progressive-retrieval`).
 
 Within one rendered file, a snippet appears in full at most once. A
-triggered procedure keeps its trigger and its `instrukt docs get <id>
---closure` command wherever it appears: rendered in full, its trigger line
-stands directly under its heading; listed, its listing line is the triggered
-form (trigger and `--closure`) rather than the plain `get <id>` form; it is
-not listed a second time.
+triggered procedure keeps its trigger wherever it appears and leads to its
+`instrukt docs get <id> --closure` command: rendered in full, its trigger
+line stands directly under its heading; listed, its listing line is the
+triggered form (trigger, and `--closure` on the line or in its heading)
+rather than the plain `get <id>` form; it is not listed a second time.
 A rendering never inlines a pending snippet and drops planned material
 (`project/instrukt/spec/feature/publication/project-publication`).
 Only references outside code are resolved; a reference inside a code span or
 fenced code block is left exactly as written and is never reported as
 unresolved.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 <!-- planned:compressed-global-entrypoints -->
 Wherever this spec says a global agent file, a root `AGENTS.md` or a company
 home's `AGENTS.md` holds a snippet or a company document in full, that
 rendering holds the source's current compressed unit in its place, and the
 source's prose where its unit is stale or missing
-(`project/instrukt/spec/feature/publication/compressed-units`). The domain
-read holds every snippet in its prose.
+(`project/instrukt/spec/feature/publication/compressed-units`).
 <!-- /planned:compressed-global-entrypoints -->
 
 ### Committed entrypoints
@@ -563,6 +574,11 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   (`project/instrukt/spec/feature/publication/company-plugin`).
 
 <!-- planned:compressed-global-entrypoints -->
+A compressed unit that keeps a reference left for an agent program never
+enters a global file: the file holds that source's prose in the unit's place,
+and the sync reports the finding naming the unit
+(`project/instrukt/spec/feature/publication/compressed-units`).
+
 #### The uncompressed copy
 
 Every sync that writes global files also writes, for each runtime, the same

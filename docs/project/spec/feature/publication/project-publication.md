@@ -187,11 +187,21 @@ those are written whole by every sync that publishes them and never removed
 
 ### Failure
 
+<!-- planned-change:compressed-global-entrypoints -->
 A sync that fails after it started writing leaves the project's previous
 publication readable and records no commit. Rendering that cannot resolve a
 required read fails the sync and names the file and the read. A reference a
 global agent file keeps unresolved is a finding of that sync, not a failure
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- change:compressed-global-entrypoints -->
+A sync that fails after it started writing leaves the project's previous
+publication readable and records no commit. Rendering that cannot resolve a
+required read fails the sync and names the file and the read. A reference a
+global agent file keeps unresolved is a finding of that sync, not a failure
+(`project/instrukt/spec/feature/publication/agent-entrypoints`); a
+compressed unit that keeps one is not rendered, and its source's prose stands
+in its place (`project/instrukt/spec/feature/publication/compressed-units`).
+<!-- /planned-change:compressed-global-entrypoints -->
 
 Nothing is written through a link. A symbolic link found at one of
 publication's own destinations — a published file, a global agent file, an
