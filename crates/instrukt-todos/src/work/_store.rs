@@ -476,6 +476,38 @@ impl Store {
         })
     }
 
+    /// The sessions bound to, or holding the execution claim of, the
+    /// project's todos that are neither delivered nor removed, whatever the
+    /// state of each binding's attempt, in text order.
+    pub fn open_work_sessions(&self) -> Result<Vec<SessionRef>, WorkError> {
+        let delivered = text_of(&TodoStatus::Delivered);
+        let removed = text_of(&TodoStatus::Removed);
+        self.read(Vec::new(), |conn, path, project| {
+            let sql = StateDbError::sqlite(path);
+            let mut statement = conn
+                .prepare_cached(
+                    "SELECT b.session FROM todos AS t
+                     JOIN session_bindings AS b ON b.todo_id = t.id
+                     WHERE t.project = ?1 AND t.status NOT IN (?2, ?3)
+                       AND b.session IS NOT NULL
+                     UNION
+                     SELECT t.claim_session FROM todos AS t
+                     WHERE t.project = ?1 AND t.status NOT IN (?2, ?3)
+                       AND t.claim_session IS NOT NULL
+                     ORDER BY 1",
+                )
+                .map_err(&sql)?;
+            let sessions = statement
+                .query_map(params![project.as_str(), delivered, removed], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(&sql)?
+                .collect::<Result<Vec<String>, _>>()
+                .map_err(&sql)?;
+            sessions.iter().map(|text| session(path, text)).collect()
+        })
+    }
+
     /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
         self.read(Vec::new(), load_items)

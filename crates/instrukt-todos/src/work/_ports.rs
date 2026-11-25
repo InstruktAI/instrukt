@@ -7,9 +7,10 @@ use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
-    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, GitHubReach, HoldCause, Pickup,
-    PickupCandidate, ProjectRef, Reflection, ReflectionReport, RetentionPurge, SessionBinding,
-    SessionBindings, TaskFirings, TaskOutcome, TaskTiming, TodoKind, WorkInterfaceError,
+    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, GitHubReach, HoldCause,
+    OpenWorkSessions, Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionReport,
+    RetentionPurge, SessionBinding, SessionBindings, TaskFirings, TaskOutcome, TaskTiming,
+    TodoKind, WorkInterfaceError,
 };
 use jiff::Timestamp;
 
@@ -1142,6 +1143,17 @@ impl RetentionPurge for Work {
     fn purge_expired(&self, project: &ProjectRef) -> Result<Vec<TodoSlug>, WorkInterfaceError> {
         let s = Session::open(self, project)?;
         Ok(s.purged.clone())
+    }
+}
+
+impl OpenWorkSessions for Work {
+    fn open_work_sessions(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<SessionRef>, WorkInterfaceError> {
+        // The local record alone: no provider is asked and nothing is written,
+        // so a project whose code is not on GitHub is answered too.
+        Ok(_store::Store::new(self.home(), &project.slug).open_work_sessions()?)
     }
 }
 
