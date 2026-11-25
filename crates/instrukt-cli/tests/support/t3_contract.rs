@@ -996,10 +996,7 @@ pub fn real(root: &Path) -> Result<()> {
         Ok(users)
     };
     let persisted = {
-        let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
-            Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
-            instrukt_core::state_db::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
+        let db = input_database()?;
         let mut statement = db.prepare(
             "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id=?1",
         )?;
