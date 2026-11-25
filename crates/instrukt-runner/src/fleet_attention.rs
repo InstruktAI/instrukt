@@ -8,18 +8,22 @@
 //! events in the same transaction. The runner's own observations append
 //! through [`condition`]. Every append that is new opens the project's
 //! episode while runnable work remains; the change that leaves no runnable
-//! work closes it with `runner.attention.fleet_quiet`.
+//! work closes it with `runner.attention.fleet_quiet`. An agent raises the
+//! conditions only its judgment establishes through [`raise`], within the
+//! project it works in.
 
 use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, RoleName, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, Transaction, params};
 use jiff::Timestamp;
 
 use crate::event_log;
 use crate::events::{
     AppendOutcome, AttentionHoldSource, EmissionContext, Event, EventHomeOwner, EventLogError,
+    occurrence_id,
 };
-use crate::state::{self, StateError};
+use crate::interfaces::{FleetRecord, WorkInterfaceError};
+use crate::state::{self, RunnerState, StateError};
 
 /// A dispatch hold as one side of a record change carries it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +198,84 @@ fn open_episode_of(conn: &Connection, project: &ProjectSlug) -> Result<Option<St
     )
     .optional()
     .map_err(state::sql(&state::db_path(conn)))
+}
+
+/// A raise was refused, or could not be recorded.
+#[derive(Debug, thiserror::Error)]
+pub enum RaiseError {
+    /// The raise named no todo.
+    #[error("a raise names the todos it concerns; name at least one active todo of the project")]
+    NoTodo,
+    /// A named todo is not active work of the raise's project.
+    #[error(
+        "`{todo}` is not active work of `{project}`; a raise comes from a session working in the project it concerns: name active todos of `{project}`"
+    )]
+    NotActive {
+        project: ProjectSlug,
+        todo: TodoSlug,
+    },
+    #[error(transparent)]
+    Record(#[from] WorkInterfaceError),
+    #[error(transparent)]
+    EventLog(#[from] EventLogError),
+}
+
+impl From<StateError> for RaiseError {
+    fn from(error: StateError) -> Self {
+        Self::EventLog(error.into())
+    }
+}
+
+/// Raises a condition about `todos` of `project` with the obligation at
+/// stake, carried as written, from `caller_session` at `now`
+/// (`fleet-attention`, "Raised conditions"). Every named todo must be
+/// active work of `project`; the first is the event's subject and the rest
+/// are related. Returns the raise's identity.
+pub fn raise(
+    home: &Home,
+    fleet: &dyn FleetRecord,
+    project: &ProjectSlug,
+    caller_session: Option<&SessionRef>,
+    todos: &[TodoSlug],
+    obligation: &str,
+    now: Timestamp,
+) -> Result<String, RaiseError> {
+    let mut named: Vec<TodoSlug> = Vec::with_capacity(todos.len());
+    for todo in todos {
+        if !named.contains(todo) {
+            named.push(todo.clone());
+        }
+    }
+    let Some((subject, related)) = named.split_first() else {
+        return Err(RaiseError::NoTodo);
+    };
+    let caller = caller_session.map(ToString::to_string);
+    let at = now.to_string();
+    let mut parts = vec![caller.as_deref().unwrap_or(""), at.as_str(), obligation];
+    parts.extend(named.iter().map(TodoSlug::as_str));
+    let identity = occurrence_id(&parts);
+    let context = context(home, now, caller)?;
+    let raised = Event::AttentionRaised {
+        project: project.clone(),
+        todo: subject.clone(),
+        related: related.to_vec(),
+        obligation: obligation.to_owned(),
+        raise: identity.clone(),
+    };
+    RunnerState::new(home).write(|tx| {
+        for todo in &named {
+            if !fleet.active_todo(tx, project, todo)? {
+                return Err(RaiseError::NotActive {
+                    project: project.clone(),
+                    todo: todo.clone(),
+                });
+            }
+        }
+        let runnable = fleet.runnable_remains(tx, project)?;
+        condition(tx, &context, &raised, runnable)?;
+        Ok(())
+    })?;
+    Ok(identity)
 }
 
 /// The emission context of an attention event appended on this computer at
@@ -444,5 +526,87 @@ mod tests {
         apply(&home, &repeated);
         assert_eq!(logged(&home), ["runner.attention.attempts_failing"]);
         assert_eq!(episode(&home), opened);
+    }
+
+    /// Work's answer: `demo` has these active todos and runnable work.
+    struct Active(&'static [&'static str]);
+
+    impl FleetRecord for Active {
+        fn runnable_remains(
+            &self,
+            _: &Transaction<'_>,
+            _: &ProjectSlug,
+        ) -> Result<bool, WorkInterfaceError> {
+            Ok(true)
+        }
+
+        fn active_todo(
+            &self,
+            _: &Transaction<'_>,
+            project: &ProjectSlug,
+            todo: &TodoSlug,
+        ) -> Result<bool, WorkInterfaceError> {
+            Ok(project.as_str() == "demo" && self.0.contains(&todo.as_str()))
+        }
+    }
+
+    fn slugs(names: &[&str]) -> Vec<TodoSlug> {
+        names
+            .iter()
+            .map(|name| TodoSlug::parse(name).unwrap())
+            .collect()
+    }
+
+    fn raised(home: &Home, todos: &[&str]) -> Result<String, RaiseError> {
+        raise(
+            home,
+            &Active(&["a", "b"]),
+            &ProjectSlug::parse("demo").unwrap(),
+            Some(&SessionRef::parse("t3:raiser").unwrap()),
+            &slugs(todos),
+            "the two converge",
+            now(),
+        )
+    }
+
+    #[test]
+    fn a_raise_naming_a_todo_outside_the_projects_active_work_is_refused_unrecorded() {
+        let (_dir, home) = home();
+        let refused = raised(&home, &["a", "elsewhere"]);
+        assert!(matches!(
+            refused,
+            Err(RaiseError::NotActive { todo, .. }) if todo.as_str() == "elsewhere"
+        ));
+        assert!(logged(&home).is_empty());
+        assert_eq!(episode(&home), None);
+    }
+
+    #[test]
+    fn a_raise_naming_no_todo_is_refused() {
+        let (_dir, home) = home();
+        assert!(matches!(raised(&home, &[]), Err(RaiseError::NoTodo)));
+    }
+
+    #[test]
+    fn an_admitted_raise_is_one_event_about_its_first_todo_from_its_session() {
+        let (_dir, home) = home();
+        let identity = raised(&home, &["b", "a", "b"]).unwrap();
+        let envelope: serde_json::Value = RunnerState::new(&home)
+            .read(|conn, path| {
+                conn.query_row("SELECT envelope FROM events", [], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(state::sql(path))
+            })
+            .unwrap()
+            .map(|text| serde_json::from_str(&text).unwrap())
+            .unwrap();
+        assert_eq!(envelope["subject"], "todo:b");
+        assert_eq!(
+            envelope["related"],
+            serde_json::json!(["todo:a", "session:t3:raiser"])
+        );
+        assert_eq!(envelope["data"]["raise"], identity.as_str());
+        assert!(episode(&home).is_some());
     }
 }
