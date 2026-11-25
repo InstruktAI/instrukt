@@ -982,9 +982,11 @@ pub fn real(root: &Path) -> Result<()> {
     ensure!(
         retained["messages"]
             .as_array()
-            .is_some_and(|messages| messages
-                .iter()
-                .any(|m| m["role"] == "user" && m["text"] == "contract deferred input")),
+            .is_some_and(
+                |messages| messages.iter().any(|m| m["id"] == "contract-input"
+                    && m["role"] == "user"
+                    && m["text"].as_str().is_some_and(|text| !text.is_empty()))
+            ),
         "history retained no user message"
     );
     ensure!(
