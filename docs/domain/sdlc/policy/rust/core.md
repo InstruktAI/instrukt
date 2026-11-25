@@ -107,8 +107,8 @@ visibility: 'public'
 ### Traits
 
 23. **Add a trait only when you need a test double or you have two real
-    implementations.** Don't pre-abstract. See `rust/testing.md` for the
-    detailed rule.
+    implementations.** Don't pre-abstract. See `sdlc/policy/rust/testing` for
+    the detailed rule.
 24. **Prefer `Arc<dyn Trait>` for swappable I/O.** Generics
     (`<T: Trait>`) only when (a) benchmarks show dyn is too slow, or (b)
     the type is part of a compile-time contract you want enforced.
@@ -188,6 +188,41 @@ visibility: 'public'
     cleaner.** Take ownership and return the modified value when it
     expresses intent better.
 
+### Build output
+
+51. **Dev and test builds keep line tables for workspace code and no debug
+    info for dependencies.** The workspace root `Cargo.toml` declares:
+
+    ```toml
+    [profile.dev]
+    debug = "line-tables-only"
+
+    [profile.dev.package."*"]
+    debug = 0
+    ```
+
+    The manifest declares no `debug` setting for the test profile, so tests
+    build with these. Workspace code compiled into the program or its tests
+    is built with line tables, the debug info that gives a backtrace frame
+    its file and line. A unit Cargo compiles only for build time (a build
+    script, a procedural macro, or a crate only those depend on) may be built
+    with no debug info, workspace member or not.
+52. **Each live worktree builds into its own target directory.**
+    `CARGO_TARGET_DIR` never points at a directory another live worktree
+    builds into.
+53. **A bounded local `sccache` is the optional route to reusing compilation
+    between worktrees.** Where a faster cold build in a new worktree is
+    wanted, `sccache` runs as the compiler wrapper (`RUSTC_WRAPPER`) with its
+    local disk cache capped (`SCCACHE_CACHE_SIZE`), while each worktree keeps
+    its own target directory. It reuses a compilation only when it can cache
+    that compilation and the cache key matches. The key can include absolute
+    paths, so a compilation in a worktree at another path may miss; how an
+    installed `sccache` version normalizes those paths is its vendor's to
+    document. Crates that invoke the system linker, such as binaries and
+    procedural macros, are not cached, and by default neither are
+    incrementally compiled crates, which in the dev profile are the workspace
+    members and path dependencies.
+
 ## Rationale
 
 Rust's compiler is the discipline mechanism. The rules above lean into that —
@@ -202,6 +237,24 @@ model and reintroduce hidden coupling.
 The `dyn` vs generics default (use `dyn`) reflects the actual workload (I/O
 bound, not CPU bound) — dynamic dispatch cost is negligible compared to the
 I/O it wraps, and `dyn` is simpler.
+
+The dev profile settings keep the debug info a backtrace reads for the file
+and line of a frame in workspace code that runs in the program or its tests.
+They leave out the rest: for workspace crates everything beyond those line
+tables, such as variable and parameter information, and for dependencies all
+debug info. A crate loses only what its build carried before, and one compiled
+only for build time, such as a procedural macro or what a build script depends
+on, may already carry none. Each worktree's build is smaller by what the
+omitted part weighs. That weight depends on the workspace and the dependencies
+it compiles, so a size figure holds only for the build it was measured on.
+
+A target directory holds one build at a time. Builds that share one take
+turns on its lock, and its executables are whichever worktree built last, so
+a worktree can run or test another branch's binary. Separate directories keep
+concurrent worktrees independent and correct. A compilation cache keyed on
+each compilation's inputs can hand one worktree what another already compiled
+without sharing that mutable directory, and its size cap keeps the cache
+itself bounded.
 
 ## Scope
 
@@ -232,3 +285,9 @@ infrastructure crates, test code, build scripts.
 - The "two real implementations or test double" rule for traits has a
   carve-out for marker traits (`Send`, `Sync`, etc.) and for stdlib trait
   implementations.
+
+## See Also
+
+- https://doc.rust-lang.org/cargo/reference/profiles.html — Cargo profiles: the `debug` levels, per-package overrides, build-dependency defaults and profile inheritance.
+- https://doc.rust-lang.org/cargo/reference/build-cache.html — Cargo build cache: the target directory and the shared-cache route through `sccache`.
+- https://github.com/mozilla/sccache — `sccache`: the Rust wrapper setup, what it caches, path normalization between build directories, and the local disk cache settings.

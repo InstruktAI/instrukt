@@ -24,7 +24,8 @@ dominate iteration speed.
    project's repository folder; single Cargo workspace at the repo root.
 
 2. Apply the platform's Rust policies (`sdlc/policy/rust/core`
-   and `rust/testing`) — they own idiom, DI, and test shape.
+   and `sdlc/policy/rust/testing`) — they own idiom, DI, test shape, and the
+   build profiles the workspace `Cargo.toml` declares.
 3. Clippy + rustfmt are the lint/format lane; the compiler is the built-in
    reviewer — treat warnings as errors in CI.
 4. Single-binary delivery, self-hosted (itsUP or native service); no runtime
