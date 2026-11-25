@@ -108,10 +108,20 @@ def all_threads():
 # The projection and the thread files change together under this lock: a
 # thread's state is projected before its file shows it, as T3 publishes a run
 # before its thread reports it, and no projection reads a thread file that a
-# concurrent save has yet to project. No hold waits inside it.
+# concurrent save has yet to project. No hold waits inside it, and a fake
+# that cannot take it within a minute fails rather than waiting on.
 class state_lock:
     def __enter__(self) -> None:
-        self.file=open(root/'state.lock','a'); fcntl.flock(self.file,fcntl.LOCK_EX)
+        self.file=open(root/'state.lock','a')
+        given_up=time.monotonic()+60
+        while True:
+            try:
+                fcntl.flock(self.file,fcntl.LOCK_EX|fcntl.LOCK_NB); return
+            except BlockingIOError:
+                if time.monotonic()>given_up:
+                    self.file.close()
+                    print('the fake T3 state lock was not released within a minute',file=sys.stderr); sys.exit(1)
+                time.sleep(0.01)
     def __exit__(self,*_: object) -> None: self.file.close()
 # What a projection reads of a thread's input and of the thread itself.
 class Input(TypedDict, total=False):
