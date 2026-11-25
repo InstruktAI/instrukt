@@ -490,7 +490,9 @@ impl Agents {
 /// What the next writing command does to `agents.yaml`.
 #[derive(Debug, PartialEq, Eq)]
 enum NextWrite {
-    /// Nothing: the file is current and not a recognised copy.
+    /// Nothing for this operation: the file is not a recognised copy and no
+    /// shape conversion applies. Whether it is valid is for [`Agents::parse`]
+    /// to decide.
     Keep,
     /// Remove the file and then the deployment record: the record recognises
     /// the file as a copy an earlier release wrote and nobody edited.
