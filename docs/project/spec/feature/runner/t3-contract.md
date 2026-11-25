@@ -45,6 +45,17 @@ permits. Native launch accepts `createdBy:"user"` on the pinned WebSocket path;
 caller payload provenance does not override it. Grammar or projection shape alone
 proves neither completed workspace preparation nor successful provider execution.
 
+<!-- planned:fix-company-session-starts-outside-company-home -->
+Project resolution and registration belong to the same boundary. `t3 project
+add <root>` creates a live project at exactly that root and refuses a root that
+already has an active one; the project snapshot then lists it. A launch for a
+checkout whose only containing project is rooted at an ancestor stays pending
+and creates no thread. The fake holds its project table as state: a project
+exists only where the fixture or an emulated `t3 project add` placed it, never
+by deriving it from the folders under test, and the agreement check covers its
+project snapshot and its `project add`.
+<!-- /planned:fix-company-session-starts-outside-company-home -->
+
 ### Consumed upstream surfaces
 
 Paths in this table belong to `pingdotgg/t3code`; the instrukt identities name

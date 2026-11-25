@@ -598,6 +598,17 @@ the gate adds no webhook, queue or process.
 - **Conversation stream or relay fails:** the runner retains its link, position
   and pending handover evidence and exposes the failure through
   `instrukt events status` and logs under the conversation-link contract.
+<!-- planned:fix-company-session-starts-outside-company-home -->
+- **A checkout has no runtime project of its own:** its launch stays pending
+  with the checkout named and is retried on later passes; it never runs in a
+  project rooted at an ancestor, such as the person's home folder, where it
+  would read that folder's agent instructions. `instrukt install` creates a
+  company home's runtime project and reports a project checkout's as an unmet
+  prerequisite with its door. An instrukt-owned bound thread whose project is
+  rooted elsewhere fails visibly and is sent nothing; archiving it starts the
+  next generation at the checkout
+  (`project/instrukt/spec/feature/runner/session-continuity`).
+<!-- /planned:fix-company-session-starts-outside-company-home -->
 - **A deleted orchestrator left its todo branch checked out:** native keyed launch
   attaches the verified retained worktree to the new object generation. A
   settled retained orchestrator wakes in its existing shared workspace.

@@ -58,6 +58,29 @@ finding, never an implicit enablement. Empty `webhooks: {}` creates no endpoint
 or receiver demand. `runner.autostart: false` leaves the enabled module's demand
 intact: deliberate todo pickup still has reflection and timing responsibilities.
 
+<!-- planned:fix-company-session-starts-outside-company-home -->
+### Runtime projects of execution roots
+
+A session starts in its execution root only where the selected runtime holds a
+project rooted exactly at that root
+(`project/instrukt/spec/feature/runner/session-continuity`, `execution_root`).
+
+- A company home whose responsibilities start runtime sessions on this
+  computer — a declared connector, or event sources while this computer reacts
+  to them — demands a runtime project rooted at the home. `instrukt install`
+  reuses one that exists and creates a missing one; `install --check` reports a
+  missing one as unmet and creates nothing. An unreachable runtime leaves the
+  resource unmet with its cause, and the next `install` completes it.
+  `--module conversations` includes these projects. A company home's runtime
+  project is never withdrawn, whatever the demand: the sessions it holds stay
+  with it.
+- An adopted project whose effective settings start runtime sessions on this
+  computer — todos, or events with procedure activation — needs a runtime
+  project rooted at its registered checkout. Installation and `install --check`
+  report a missing one as an unmet prerequisite naming the checkout and the
+  runtime's door for adding it, and create none.
+<!-- /planned:fix-company-session-starts-outside-company-home -->
+
 ### Installation and inspection commands
 
 | Command | Result |

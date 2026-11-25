@@ -39,6 +39,15 @@ creates no replacement session identity.
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
+<!-- planned:fix-company-session-starts-outside-company-home -->
+`execution_root` takes an execution root and a mode, check or ensure. It
+returns whether the selected runtime holds a live project rooted exactly at
+that root, creating one in ensure mode, together with the runtime's own door
+for adding one. It never selects, alters or removes another project; an
+unreachable runtime returns its cause and no answer. Its released consumer is
+installation (`project/instrukt/spec/feature/runner/module-installation`).
+<!-- /planned:fix-company-session-starts-outside-company-home -->
+
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
 unattended consumers use adapter capabilities. Conversation links use the
@@ -278,11 +287,24 @@ title (`generateTitle:false`), explicit model/modes and initial message. Scoped
 short-lived tokens are revoked after use. T3 0.1.8 stamps WebSocket launches and
 sends `createdBy:"user"`; that native stamp is accepted.
 
+<!-- planned-change:fix-company-session-starts-outside-company-home -->
 Before first launch, authenticated `GET /api/projects` supplies registered project
 IDs and roots. Exclude deleted projects, compare canonical paths when available
 and otherwise resolved original paths, and select the deepest containing root
 by path components. No match or malformed/unavailable metadata leaves work
 pending before launch; no implicit project registration occurs.
+<!-- change:fix-company-session-starts-outside-company-home -->
+Before first launch, authenticated `GET /api/projects` supplies registered project
+IDs and roots. Exclude deleted projects, compare canonical paths when available
+and otherwise resolved original paths, and select the one live project whose
+root is exactly the checkout. A project rooted at an ancestor or a descendant of
+the checkout never stands in for it: `root` placement would run the session in
+that other folder and `worktree` placement would branch another repository. No
+exact match, or malformed/unavailable metadata, leaves work pending before
+launch with a cause naming the checkout, retried on later passes. The launch
+path registers no project; installation owns where a checkout's project comes
+from (`project/instrukt/spec/feature/runner/module-installation`).
+<!-- /planned-change:fix-company-session-starts-outside-company-home -->
 
 After model preparation, `server.getConfig` supplies normalized settings,
 project overrides, managed limits and selected-provider mode capabilities.
@@ -304,6 +326,18 @@ successor. T3 owns preparation and release; a launch reply can precede completed
 workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
+
+<!-- planned:fix-company-session-starts-outside-company-home -->
+Every placement runs in the checkout's own project. Before an instrukt-owned
+bound or recovered thread is adopted, woken or sent input, the adapter resolves
+the checkout's project exactly, as for launch, and compares it with the thread's
+native project. A thread in any other project is contradictory binding/project
+evidence: it is not adopted and is sent nothing, and the failure names the
+thread and its door — archive that thread, after which outstanding work starts
+the next generation at the checkout under the succession rules above. No
+project root is retained beside the binding; T3's project snapshot is read
+where the comparison is made.
+<!-- /planned:fix-company-session-starts-outside-company-home -->
 
 Service failures retain the captured request and actual cause for retry/status.
 No unresolved-start permission state, five-minute start anomaly or operator
@@ -462,6 +496,15 @@ instruction prose is a separate configuration surface.
 | Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+
+<!-- planned:fix-company-session-starts-outside-company-home -->
+Execution-root readiness reads the authenticated project snapshot and matches
+canonical roots exactly, as launch does. Ensure mode adds a missing root with
+`t3 project add <root>`, titled by T3 from the folder name, then reads the
+snapshot again: the project it finds there is the result, and T3's refusal of
+a root that already has an active project is a reuse confirmed by the same
+read. The door for a root the adapter does not add is `t3 project add <root>`.
+<!-- /planned:fix-company-session-starts-outside-company-home -->
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
