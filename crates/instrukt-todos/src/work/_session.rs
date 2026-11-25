@@ -1411,7 +1411,8 @@ impl<'w> Session<'w> {
     /// outside the reflection lock, so no command's flush waits behind a
     /// push; each outcome is committed in a brief writer transaction. A
     /// branch the remote moved away from is left there and its reason kept;
-    /// a remote that cannot be reached leaves everything for the next tick.
+    /// a remote that cannot be reached keeps its reason too, so the todo
+    /// shows its publication pending, and the next tick tries again.
     /// A todo no longer owed publication has its reason cleared.
     pub fn publish(&mut self) -> Result<(), WorkError> {
         let remote = github::tracked_remote(&self.project.root, &self.base)?;
@@ -1484,15 +1485,19 @@ impl<'w> Session<'w> {
                     );
                     self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
                 }
-                super::_publication::Pushed::Unreached(why) => {
+                super::_publication::Pushed::Unreached(reason) => {
                     tracing::warn!(
                         event = "work_branch_unpublished",
                         project = %self.project.slug,
                         todo = %self.items[index].record.slug,
                         branch,
-                        reason = why,
+                        reason,
                         "the work branch could not reach its remote; the next tick tries again"
                     );
+                    let why = format!(
+                        "branch `{branch}` could not reach `{remote}` ({reason}); the next tick publishes it"
+                    );
+                    self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
                 }
             }
         }
