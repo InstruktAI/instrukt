@@ -16,13 +16,15 @@ else. A project belongs to no company, and a company home carries no roles and
 no authorization.
 
 <!-- planned:company-home-generation -->
-A new company's home is generated. An operator declares once, for the
-computer, the GitHub organisation that owns company homes; from then on an
-agent asked to add a company creates the company's private repository in that
+A company's home is generated. An operator declares once, for the computer,
+the GitHub organisation that owns company homes; from then on an agent asked
+to add a company creates the company's private repository in that
 organisation with the one company skeleton every company receives, makes the
 company's GitHub administrator an administrator of it, and checks it out as the
-company's home. Nothing about a company is customised: two companies' homes
-differ only where each company's identity enters them.
+company's home. A company whose repository already exists there is one by
+contract: adding it to another computer checks that repository out as its home
+and changes nothing on GitHub. Nothing about a company is customised: two
+companies' homes differ only where each company's identity enters them.
 <!-- /planned:company-home-generation -->
 
 ## Canonical fields
@@ -55,8 +57,17 @@ differ only where each company's identity enters them.
 | Owning organisation | `github.org` in the machine's global layer names the GitHub organisation that owns every company home repository on this computer. instrukt names no owner of its own. |
 | Repository | `company-<name>` in the owning organisation, private, where `<name>` is the company's key. |
 | Home | The repository's checkout at `~/.instrukt/companies/<name>/`. |
-| Administrator | The company's GitHub administrator, named when the company is added, is an administrator of the repository. |
+| Administrator | The company's GitHub administrator, named when the repository is created, is made an administrator of it. |
 | Identity | The company's key, the name people write the company by, and its GitHub administrator. Generation takes nothing else. |
+
+- **The repository by contract.** Where `company-<name>` does not exist in
+  the owning organisation, it is created with the skeleton and the
+  administrator. Where it exists, it is a company home repository by
+  contract: its content is not inspected, nothing on GitHub is changed, and it
+  is checked out as the home.
+- **An existing home is never overwritten.** Where the home folder exists,
+  adding the company is refused, naming the folder; nothing in it, and nothing
+  on GitHub, is changed.
 
 - **One skeleton.** The repository is created holding the company skeleton,
   which includes the ignore file of this spec, the company's knowledge index
@@ -65,7 +76,9 @@ differ only where each company's identity enters them.
   plugin catalog listing the company's plugin rendered from them
   (`project/instrukt/spec/feature/publication/company-plugin`). The skeleton
   comes from one source and is the same for every company except where the
-  company's identity enters it.
+  company's identity enters it. It holds nothing that writes the repository's
+  default branch on its own: that branch has one writer
+  (`general/policy/commits`).
 - **Ready when it ends.** The generated home holds a valid settings document
   naming the company, and instrukt's hook sections, so it is a company on the
   computer and a commit made in it carries its rendered `AGENTS.md`.
@@ -83,9 +96,6 @@ differ only where each company's identity enters them.
   settings stay as they were. Adding a company on a computer whose `github.org`
   is not declared, or names no organisation, is refused, naming the key and the
   prerequisite; no repository and no home is created.
-- **Nothing of a company's is overwritten.** When the company's repository
-  already exists, or its home folder already holds anything, adding the
-  company changes none of it, and names what it found.
 <!-- /planned:company-home-generation -->
 
 ### What stays out of the repository
@@ -250,8 +260,18 @@ And the computer holds the company's home as the checkout of that repository, re
 And the company's home holds the same skeleton as every other company added this way
 But when no organisation is declared, or the declared owner is a personal account
 Then no repository and no home is created, and the operator is told the organisation is a prerequisite
-But when the company's repository or home already exists
-Then nothing of it is changed, and the operator is told what was found
+But when the company already has a home on the computer
+Then nothing of it is changed, and the operator is told the home exists
+```
+
+### UC-CH6: Give another computer an existing company's home
+
+```gherkin
+Given a company's repository exists in the organisation that owns company homes
+And the operator's computer holds no home for that company
+When their agent adds the company by its key
+Then the computer holds the company's home as the checkout of that repository, ready with no step taken by hand
+And nothing of the repository on GitHub is changed
 ```
 <!-- /planned:company-home-generation -->
 
@@ -266,11 +286,11 @@ Then nothing of it is changed, and the operator is told what was found
   company's repository — and keeping it current are the operator's, outside
   this contract.
 <!-- change:company-home-generation -->
-- instrukt reads a company home as it stands. A new company's repository and
-  home are generated (Generation). The first checkout on a computer of a
-  company repository that already exists — made by an agent at the request of
-  someone with access to it — and keeping a home current are the operator's,
-  outside this contract.
+- instrukt reads a company home as it stands. A company's repository is
+  created, and its home checked out, when the company is added (Generation);
+  keeping a home current is the operator's, outside this contract.
+- A home folder that exists is never adopted: a home made by hand, or one that
+  is not a checkout, stays as it is.
 <!-- /planned-change:company-home-generation -->
 - Company homes on one computer are separate folders of one operating-system
   user. What keeps a session working for one company from reading another
