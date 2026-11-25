@@ -308,9 +308,15 @@ attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
 for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
+<!-- planned-change:github-human-agent-reflection -->
 Work releases a delivered todo's worktree and work branch when the runner
 asks, on each computer that holds any of them
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
+<!-- change:github-human-agent-reflection -->
+Work releases a delivered todo's worktree and work branch when the runner
+asks, on the computer whose work record holds the todo
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
+<!-- /planned-change:github-human-agent-reflection -->
 goes first, through the release a withdrawal uses
 (`project/instrukt/spec/feature/work/state-database`): read and checked at
 its path, moved aside with git's own worktree move, read and checked again,

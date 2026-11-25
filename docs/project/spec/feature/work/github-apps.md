@@ -1,5 +1,5 @@
 ---
-description: Role-selected GitHub App bot identities, protected keys and installation tokens for visible bot authorship, independent native reviews and trusted record recovery.
+description: Role-selected GitHub App bot identities, protected keys and installation tokens for visible bot authorship and independent native reviews.
 ---
 # GitHub Apps — Spec
 

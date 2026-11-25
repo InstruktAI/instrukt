@@ -66,10 +66,18 @@ fingerprint, and reporting is `instrukt eval report`, which builds an HTML repor
 record, together with the flavor's activatable report procedure that tells an
 agent when and how to run it and what to say about it.
 
+<!-- planned-change:github-human-agent-reflection -->
 The runner declares interfaces for reading and mutating work items through
 work’s command contract: recording and reflecting claims, flushing pending
 reflection, recording last-fired stamps, setting automatic holds, purging expired
 retained records, and reading and writing per-role session bindings. It also
+<!-- change:github-human-agent-reflection -->
+The runner declares interfaces for reading and mutating work items through
+work’s command contract: recording claims, flushing pending reflection and
+reading people's controls on ticks, recording last-fired stamps, setting
+automatic holds, purging expired retained records, and reading and writing
+per-role session bindings. It also
+<!-- /planned-change:github-human-agent-reflection -->
 declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
@@ -145,7 +153,7 @@ Deleting the home is not a lossless reset.
 <!-- planned-change:github-human-agent-reflection -->
 | `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
 <!-- change:github-human-agent-reflection -->
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, reflection bookkeeping and the read positions of the todos' issues — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | nothing: the work record is its only copy and must be preserved, as must operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, reflection bookkeeping and the read positions of the todos' issues — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | nothing: the work record is its only copy and must be preserved, as must operational runner state, authoritative object bindings and generation history |
 <!-- /planned-change:github-human-agent-reflection -->
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
