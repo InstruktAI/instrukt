@@ -121,12 +121,15 @@ recognizes newly durable identities and in-place changes independently of native
 timestamps, including later hydration of older records and equal-time updates.
 The text read discovers its inventory of every conversation in one finite
 read-only SQLite transaction, then reads each selected conversation in a fresh
-transaction; the returned records determine its loaded fingerprint. That
-fingerprint covers the conversation's own record and its messages only
+transaction. Its loaded fingerprint covers every row the conversation has in
+the source's conversation and message tables, the finished rows it leaves out
+of what it returns included
 (`project/instrukt/spec/feature/runner/session-continuity`), so a change to
 anything else the source holds of a conversation is not a change history is
-told of. A stored position whose fingerprint of a conversation differs from
-the text read's has that conversation read again.
+told of, while a new or changed row it leaves out, such as a report of a
+background command, has the conversation read again without changing what
+history retains of it. A stored position whose fingerprint of a conversation
+differs from the text read's has that conversation read again.
 Streaming content remains deferred until complete. A conversation's loaded-source
 fingerprint and its retained conversation, messages and index entry commit
 atomically;
@@ -253,11 +256,14 @@ how far moving earlier history in has progressed.
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
 | `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
 
-Each text is stored once: a text held in a row of `history_messages` is not in
-the conversation's document, and no other table repeats it. The conversation's
-row repeats beside its document only the identity, title, parent and aliases
-it is looked up and listed by, and a runtime message's record keeps the
-source's own fields, which may repeat its row's id, role and times. The
+Each retained text is stored once, in its row of `history_messages`: the
+member of the conversation's document it was taken from no longer holds it,
+and no other table repeats it. Another member of an imported document may
+hold an equal value of its own, such as a mirror's archival text equal to its
+transcript, and stays. The conversation's row repeats beside its document only
+the identity, computer, title, parent and aliases it is looked up, listed and
+attributed by, and a runtime message's record keeps the source's own fields,
+which may repeat its row's id, role and times. The
 full-text index stores terms and reads the text it shows from the retained
 rows. A row already retained stays when a later read of its conversation no
 longer returns it, so messages a source has dropped stay in history.
