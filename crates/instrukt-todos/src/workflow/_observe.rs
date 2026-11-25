@@ -12,7 +12,9 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::RepositoryError;
 
-use crate::evidence::{ContentDigest, Grounding, StampFact, TodoEvidence};
+use crate::evidence::{
+    Actor, ContentDigest, Grounding, StampFact, TodoEvidence, VerificationDisposition,
+};
 
 use super::_provider::{
     ChangeSinceReview, CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations,
@@ -571,6 +573,22 @@ pub(crate) fn readiness_approved(
     {
         return false;
     }
+    record
+        .stamps
+        .iter()
+        .rev()
+        .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
+        .is_some_and(|s| independent(record, &s.actor, Some(caller)))
+}
+
+/// Whether `actor` is independent of the todo's claim holder, driver and
+/// writer roles (and of `caller`, when given), as
+/// [`is_independent_reviewer`] judges it over the record's bindings.
+fn independent(
+    record: &crate::work::TodoRecord,
+    actor: &Actor,
+    caller: Option<&instrukt_core::ids::SessionRef>,
+) -> bool {
     let bindings: Vec<(
         instrukt_core::ids::RoleName,
         instrukt_runner::interfaces::AssignmentKind,
@@ -580,19 +598,97 @@ pub(crate) fn readiness_approved(
         .iter()
         .map(|b| (b.role.clone(), b.attempt.assignment, b.session.as_ref()))
         .collect();
-    record
+    is_independent_reviewer(
+        record.claim.as_ref().and_then(|c| c.session.as_ref()),
+        &bindings,
+        actor,
+        caller,
+    )
+}
+
+/// The verifier role, whose bound attempt records a live verification
+/// disposition (`delivery-cycle`, "Live verification disposition").
+pub(crate) const VERIFIER_ROLE: &str = "verifier";
+
+/// Who may record which verification disposition for `commit`, and which
+/// may follow another for it (`delivery-cycle`, "Live verification
+/// disposition"): the single owner of the rule on both of work's paths.
+/// `binding_role` is the role of the binding `caller` acts under: a bound
+/// `verifier` attempt, or the caller's live driver binding.
+///
+/// - pass, fail, blocked: only an independent bound `verifier`;
+/// - Tier 0 skip: that verifier, or the claim-holding orchestrator;
+/// - hotfix deferral: the claim-holding orchestrator alone.
+///
+/// While the latest disposition a `verifier` recorded for `commit` is fail,
+/// the orchestrator's skip and deferral are refused; while it is blocked,
+/// its skip is. Every refusal names its door.
+pub(crate) fn verification_admission(
+    record: &crate::work::TodoRecord,
+    caller: &instrukt_core::ids::SessionRef,
+    binding_role: &instrukt_core::ids::RoleName,
+    disposition: VerificationDisposition,
+    commit: &CommitSha,
+) -> Result<(), String> {
+    const NEW_VERIFIER: &str = "a pass, fail or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip or hotfix deferral from the claim-holding orchestrator";
+    if binding_role.as_str() == VERIFIER_ROLE {
+        if !independent(record, &Actor::Session(caller.clone()), None) {
+            return Err(format!(
+                "this verifier is not independent: its session holds the claim, drives the todo or wrote this change; {NEW_VERIFIER}"
+            ));
+        }
+        if disposition == VerificationDisposition::HotfixDeferred {
+            return Err(
+                "a hotfix deferral is the claim-holding orchestrator's alone; a verifier records pass, fail, blocked or tier_0_skip"
+                    .to_owned(),
+            );
+        }
+        return Ok(());
+    }
+    let holds_claim = record
+        .claim
+        .as_ref()
+        .is_some_and(|claim| claim.session.as_ref() == Some(caller));
+    if !holds_claim {
+        return Err(format!(
+            "a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator, and this session is neither; {NEW_VERIFIER}"
+        ));
+    }
+    if !matches!(
+        disposition,
+        VerificationDisposition::Tier0Skip | VerificationDisposition::HotfixDeferred
+    ) {
+        return Err(format!(
+            "the orchestrator records a Tier 0 skip or a hotfix deferral, never a {disposition}: {NEW_VERIFIER}"
+        ));
+    }
+    let verifier_recorded = record
         .stamps
         .iter()
         .rev()
-        .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
-        .is_some_and(|s| {
-            is_independent_reviewer(
-                record.claim.as_ref().and_then(|c| c.session.as_ref()),
-                &bindings,
-                &s.actor,
-                Some(caller),
-            )
-        })
+        .find_map(|stamp| match &stamp.fact {
+            StampFact::VerificationDisposition {
+                disposition,
+                commit: recorded,
+                ..
+            } if recorded == commit
+                && stamp.role.as_ref().map(|r| r.as_str()) == Some(VERIFIER_ROLE) =>
+            {
+                Some(*disposition)
+            }
+            _ => None,
+        });
+    match (verifier_recorded, disposition) {
+        (Some(VerificationDisposition::Fail), _) => Err(format!(
+            "a verifier recorded fail for commit {commit}, which a {disposition} does not wave through; what clears it is a new candidate commit, or a new verifier attempt on this commit"
+        )),
+        (Some(VerificationDisposition::Blocked), VerificationDisposition::Tier0Skip) => {
+            Err(format!(
+                "a verifier recorded blocked for commit {commit}, which a tier_0_skip does not wave through; what clears it is a new candidate commit, a new verifier attempt on this commit, or a hotfix deferral naming its tracked follow-up (`--verification hotfix_deferred --follow-up <slug>`)"
+            ))
+        }
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -714,6 +810,195 @@ mod tests {
                 ..GroundingChange::default()
             }
         );
+    }
+
+    mod admission {
+        use super::super::super::_testing::{session, sha};
+        use super::*;
+        use crate::evidence::{ModelProvenance, StampRecord};
+        use crate::work::{Attempt, Binding, TodoRecord};
+        use VerificationDisposition::{Blocked, Fail, HotfixDeferred, Pass, Tier0Skip};
+        use instrukt_core::ids::RoleName;
+        use instrukt_runner::interfaces::AssignmentKind;
+
+        fn role(name: &str) -> RoleName {
+            RoleName::parse(name).unwrap()
+        }
+
+        fn binding(name: &str, who: &str, assignment: AssignmentKind) -> Binding {
+            Binding {
+                role: role(name),
+                session: Some(session(who)),
+                worktree: None,
+                attempt: Attempt {
+                    assignment,
+                    ..Attempt::default()
+                },
+            }
+        }
+
+        /// A todo claimed by `orchestrator`, driving it, which `builder`
+        /// built and `verifier` (also its earlier build reviewer) verifies.
+        fn record() -> TodoRecord {
+            let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
+                "schema": 4, "id": "ab".repeat(16), "project": "demo", "slug": "ship-it",
+                "kind": "change", "status": "active", "created": "2026-01-01T00:00:00Z",
+                "created_by": {"person": {"name": "dev"}}, "revision": 1,
+                "claim": {"machine": "cd".repeat(16), "session": "cli:orchestrator",
+                          "at": "2026-01-02T00:00:00Z"},
+            }))
+            .unwrap();
+            record.bindings = vec![
+                binding("todo-lead", "orchestrator", AssignmentKind::Driver),
+                binding("builder", "builder", AssignmentKind::Workspace),
+                binding("build-reviewer", "verifier", AssignmentKind::Workspace),
+                binding(VERIFIER_ROLE, "verifier", AssignmentKind::Workspace),
+            ];
+            record
+        }
+
+        /// `disposition` for `commit`, recorded by `who` as `recorded_as`.
+        fn recorded(
+            record: &mut TodoRecord,
+            who: &str,
+            recorded_as: &str,
+            disposition: VerificationDisposition,
+            commit: &CommitSha,
+        ) {
+            let sequence = record.next_sequence();
+            record.stamps.push(StampRecord {
+                source_comment: None,
+                fact: StampFact::VerificationDisposition {
+                    disposition,
+                    commit: commit.clone(),
+                    report: ContentDigest::of("findings"),
+                    follow_up: None,
+                },
+                at: jiff::Timestamp::from_second(1_800_000_000).unwrap(),
+                actor: Actor::Session(session(who)),
+                model: None,
+                eval_fingerprint: None,
+                role: Some(role(recorded_as)),
+                human_involved: None,
+                sequence,
+                model_provenance: ModelProvenance::Unknown,
+            });
+        }
+
+        fn admit(
+            record: &TodoRecord,
+            who: &str,
+            acting_as: &str,
+            disposition: VerificationDisposition,
+            commit: &CommitSha,
+        ) -> Result<(), String> {
+            verification_admission(record, &session(who), &role(acting_as), disposition, commit)
+        }
+
+        #[test]
+        fn an_independent_verifier_records_all_but_a_deferral() {
+            let record = record();
+            let head = sha('a');
+            for disposition in [Pass, Fail, Blocked, Tier0Skip] {
+                assert_eq!(
+                    admit(&record, "verifier", VERIFIER_ROLE, disposition, &head),
+                    Ok(())
+                );
+            }
+            let deferral = admit(&record, "verifier", VERIFIER_ROLE, HotfixDeferred, &head);
+            assert!(deferral.unwrap_err().contains("orchestrator's alone"));
+        }
+
+        #[test]
+        fn a_verifier_that_wrote_or_drives_the_change_records_nothing() {
+            let mut record = record();
+            record
+                .bindings
+                .push(binding(VERIFIER_ROLE, "builder", AssignmentKind::Workspace));
+            record.bindings.push(binding(
+                VERIFIER_ROLE,
+                "orchestrator",
+                AssignmentKind::Workspace,
+            ));
+            let head = sha('a');
+            for who in ["builder", "orchestrator"] {
+                for disposition in [Pass, Tier0Skip] {
+                    let refusal = admit(&record, who, VERIFIER_ROLE, disposition, &head);
+                    assert!(
+                        refusal
+                            .unwrap_err()
+                            .contains("new independent `verifier` attempt"),
+                        "{who} {disposition}"
+                    );
+                }
+            }
+        }
+
+        #[test]
+        fn the_claim_holder_records_only_a_skip_or_a_deferral() {
+            let record = record();
+            let head = sha('a');
+            for disposition in [Tier0Skip, HotfixDeferred] {
+                assert_eq!(
+                    admit(&record, "orchestrator", "todo-lead", disposition, &head),
+                    Ok(())
+                );
+            }
+            for disposition in [Pass, Fail, Blocked] {
+                let refusal = admit(&record, "orchestrator", "todo-lead", disposition, &head);
+                assert!(refusal.unwrap_err().contains("never a"), "{disposition}");
+            }
+            let elsewhere = admit(&record, "builder", "todo-lead", Tier0Skip, &head);
+            assert!(elsewhere.unwrap_err().contains("this session is neither"));
+        }
+
+        #[test]
+        fn a_verifiers_fail_or_blocked_limits_the_orchestrator_on_that_commit_only() {
+            let head = sha('a');
+            let mut failed = record();
+            // The verifier first served as build reviewer: its disposition's
+            // recorded role, not its first binding, keys the limit.
+            recorded(&mut failed, "verifier", VERIFIER_ROLE, Fail, &head);
+            for disposition in [Tier0Skip, HotfixDeferred] {
+                let refusal =
+                    admit(&failed, "orchestrator", "todo-lead", disposition, &head).unwrap_err();
+                assert!(
+                    refusal.contains("a new candidate commit, or a new verifier attempt"),
+                    "{refusal}"
+                );
+            }
+            assert_eq!(
+                admit(&failed, "orchestrator", "todo-lead", Tier0Skip, &sha('b')),
+                Ok(())
+            );
+
+            let mut blocked = record();
+            recorded(&mut blocked, "verifier", VERIFIER_ROLE, Blocked, &head);
+            let refusal = admit(&blocked, "orchestrator", "todo-lead", Tier0Skip, &head);
+            assert!(
+                refusal
+                    .unwrap_err()
+                    .contains("hotfix deferral naming its tracked follow-up")
+            );
+            assert_eq!(
+                admit(&blocked, "orchestrator", "todo-lead", HotfixDeferred, &head),
+                Ok(())
+            );
+
+            // Only the latest disposition a verifier recorded limits.
+            recorded(&mut failed, "verifier", VERIFIER_ROLE, Pass, &head);
+            assert_eq!(
+                admit(&failed, "orchestrator", "todo-lead", Tier0Skip, &head),
+                Ok(())
+            );
+            // An orchestrator's own disposition is no verifier's.
+            let mut skipped = record();
+            recorded(&mut skipped, "orchestrator", "todo-lead", Tier0Skip, &head);
+            assert_eq!(
+                admit(&skipped, "orchestrator", "todo-lead", HotfixDeferred, &head),
+                Ok(())
+            );
+        }
     }
 
     #[test]
