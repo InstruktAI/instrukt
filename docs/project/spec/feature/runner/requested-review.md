@@ -69,11 +69,20 @@ from work and derives none of its own.
 
 ### Kinds of ask
 
-| Ask | Names | The head |
+| Ask | Names | The head's verdict on this computer |
 | --- | --- | --- |
-| Review | No prior report, no disposition file | Carries no current verdict on this computer. |
-| Re-review of a revised head | The prior report, no disposition file | Carries no current verdict on this computer. |
-| Dispute of findings on an unchanged head | The prior report and the disposition file | Carries a current verdict on this computer, recorded by this head's requested reviewer (Starting the reviewer). |
+| Review | No prior report, no disposition file | None stands here, and none was handed off. |
+| Re-review of a revised head | The prior report, no disposition file | None stands here, and none was handed off. |
+| Dispute of findings on an unchanged head | The prior report and the disposition file | It stands here, and its current version was recorded by this head's requested reviewer (Starting the reviewer). |
+
+The head's verdict here is the head verdict work's Settlement row reads: one
+that stands here with the session that recorded its current version, one an
+export handed off, or none
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence, Settlement). A head whose verdict was handed off admits no ask of
+any kind, because work admits no further version of it here. A derived
+approval and a verdict recognised as already published are no head verdict
+and decide no kind of ask.
 
 A disposition file without a prior report is refused under Form.
 
@@ -89,10 +98,10 @@ asked for.
 | Placement | The worktree is the project's registered checkout or a linked worktree of it, the named branch is checked out in it, and that branch's head is the named head. The report destination lies outside the worktree, in a directory that exists; a prior report and a disposition file are files that exist. | What the repository or the file system shows instead. |
 | Cleanliness | The worktree holds no uncommitted change. | That the worktree is not clean. The door is committing or removing the change. |
 | Range | The head is a commit of the repository that shares history with the project's canonical branch, and the named base is the pinned base. | The pinned base, or that the head shares no history with the canonical branch. |
-| Review state | The head's current verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`, Review evidence). | The current verdict and `instrukt review show`; for a dispute, the session that recorded it. |
+| Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`, Admission of review evidence, Settlement). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
 | Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`, One review per commit). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the head's requested reviewer has no turn in progress (Starting the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
-| Runtime | The selected runtime starts a session under a fixed key, sends it input, reports whether it has a turn in progress and recognises the caller (`project/instrukt/spec/feature/runner/session-continuity`, Runtime choice and feature availability). | The runtime and the capability it lacks. |
+| Runtime | The selected runtime starts a session under a fixed key, sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`, Runtime choice and feature availability). | The runtime and the capability it lacks. |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
 A refused ask starts no reviewer, sends nothing and records nothing.
@@ -108,14 +117,13 @@ Assignment]`). It holds, in this order:
    read with its closure, for the one-off worktree review it describes;
 2. the role, `commit-reviewer`, and the project;
 3. the coordinates, each under its name, in the order of the table above, with
-   source pointers in the order they were given;
-4. where the outcome is returned: the requesting session, as the selected
-   runtime recognises the caller, or no session when the caller is not one.
+   source pointers in the order they were given.
 
-The same coordinates from the same requesting session always render the same
-assignment, and it holds nothing the requester composed. The reviewer of a
-requested review receives this rendering as its assignment, and the ask offers
-no way to add to it.
+The same coordinates always render the same assignment, and it holds nothing
+the requester composed. The reviewer of a requested review receives this
+rendering as its assignment, and the ask offers no way to add to it. The
+reviewer returns its outcome as its procedure directs for a one-off review
+(`sdlc/procedure/lifecycle/work/review-commits`).
 
 A requested review is answered by the procedure that answers a review instrukt
 asks for on its own initiative, under the role that procedure declares
@@ -138,15 +146,22 @@ runtime's acceptance.
 | The head's requested reviewer | What an admitted ask does |
 | --- | --- |
 | None yet | Starts it with the rendering as its opening input. |
-| Exists and has no turn in progress | Sends it the rendering, which opens its next turn. |
+| Exists and has no turn in progress | Sends it the rendering under the ask's command identity, and the rendering opens its next turn. |
 | Exists and has a turn in progress | Nothing: the ask is refused under Outstanding. |
 | Its session was archived or deleted | Starts a successor under the same key, as session-continuity succeeds a generation, for a review or a re-review. A dispute is refused under Review state: the successor did not record the verdict. |
 
 An ask is outstanding from its admission until the turn its rendering opened
-ends. The same ask — the same coordinates from the same requesting session —
-repeated while it is outstanding returns that ask and starts or sends nothing
-new. A re-review of a revised head is a new head and has its own requested
-reviewer.
+ends. The same ask — the same coordinates — repeated while it is outstanding
+returns that ask and starts or sends nothing new. A re-review of a revised head
+is a new head and has its own requested reviewer.
+
+A start is the keyed start of session-continuity, whose identities are fixed
+by the start key and generation before anything reaches the runtime
+(`project/instrukt/spec/feature/runner/session-continuity`, Keyed dispatch and
+recovery). A send carries a command identity derived from the start key, the
+generation it is sent to and the ask, recorded with the ask before anything
+reaches the runtime. The runtime keeps a repeated command identity from
+opening a second turn.
 
 ### Beside review requests
 
@@ -165,14 +180,16 @@ An admitted ask returns within its own wait, once the runtime accepted the
 start or the send. The reply names the head, the pinned base, the kind of ask,
 the requested reviewer's session and start key, whether this ask started it or
 sent to it, the report destination, and where the outcome arrives: in the
-report destination, in `instrukt review show <head>` once the reviewer records
-its verdict, and as the reviewer's return to the requesting session when the
-rendering names one. The reply does not wait for the review.
+report destination, and in `instrukt review show <head>` once the reviewer
+records its verdict. The reply does not wait for the review.
 
 When the runtime does not accept the start or the send within the command's
-wait, the ask is refused, naming the runtime and its door: the same command,
-which replays the same start or send with the identities the first ask fixed
-(`project/instrukt/policy/checks-and-guards`).
+wait, the ask is refused, naming the runtime and its door: the same command.
+It replays the ask with the identities the first one recorded. For a send it
+first asks the runtime whether that command identity was accepted, and sends
+again under the same identity only when it was not
+(`project/instrukt/policy/checks-and-guards`). Only that command replays an
+ask; nothing in the background delivers it.
 
 ### Verdict
 
@@ -195,19 +212,23 @@ evidence, Settlement). Both carry coordinates only.
 
 ### Requested review records
 
-The runner keeps each admitted ask in the state database
-(`project/instrukt/spec/feature/work/state-database`, Runner tables).
+The runner keeps each admitted ask in a store of its own.
+
+| Store | Holds | Written by | Write-isolation unit |
+| --- | --- | --- | --- |
+| `state/requested-review.db` | The admitted asks. | `instrukt review start` only: a command its caller waits on. | `state/requested-review.lock` |
 
 | Property | Value |
 | --- | --- |
-| Holds | Per project and head: each admitted ask with its kind, its coordinates, the requesting session, its rendering and the start or send that delivered it. |
+| Holds | Per project and head: each admitted ask with its kind, its coordinates, its rendering and that rendering's SHA-256 digest, the requested reviewer's start key, whether a start or a send delivers it, a send's command identity, the generation it reached, and when it was admitted and accepted. |
 | Nature | Authoritative: the requested reviewer's assignment, from which its role, project and placement resolve (`project/instrukt/spec/feature/configuration/roles-and-capabilities`, Caller and object resolution), and the only record of which session a dispute of the head goes to. |
-| Owner | The runner; written only by `instrukt review start`, in the transaction that captures the start or the send. |
+| Owner | The runner; written only by `instrukt review start`. |
 | Loss cost | The requested reviewer resolves no assignment and records no verdict, and a dispute of its head can no longer be asked for: lost intent. |
-| Medium | The state database, beside the runtime bindings it is written with. |
-| Write isolation | The state database's writer lock. Its only writer is a command the caller waits on, like the runtime bindings it shares a transaction with. |
+| Medium | A SQLite database of its own with its own migrations: the asks grow with every head asked for, are read by head and by start key, and a head's asks change together. |
+| Write isolation | Its own lock, taken only by `instrukt review start` and held for each of that command's transactions, never while the command waits on the runtime or takes the state database's writer lock. No background writer takes it, and no write to this store takes the writer lock (`sdlc/policy/state-storage`, Write isolation follows contention). Readers, the requested reviewer's assignment resolution among them, take no lock. |
+| Recording | The ask, with a send's command identity, is recorded before its start or send reaches the runtime, and its acceptance and generation once the runtime accepted it. The start key joins it to the runner's runtime binding, which the keyed start records in the state database as every keyed start does. |
 | Scope | One computer: the requested reviewer runs on this computer's runtime. Moving review evidence between computers moves no ask (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
-| Lifecycle | One record per head asked for, holding that head's asks. It is current while the canonical branch does not contain the head, and history once it does. History is retired after a retention period, inside `instrukt review start`. |
+| Lifecycle | A head's asks are current while the canonical branch does not contain the head, and history once it does. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`, Review evidence storage), inside `instrukt review start`. |
 
 ## Use cases
 

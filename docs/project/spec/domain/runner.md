@@ -210,10 +210,12 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, pending sign-ins and their waiting calls, and requested-review records), whose schema is published in
+  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
-  import progress (`project/instrukt/spec/feature/runner/history`).
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
@@ -575,9 +577,11 @@ conversation
 
 <!-- planned:fixed-shape-commit-review-dispatch -->
 
-For a requested review the runner asks work for the head's current verdict,
-the session that recorded it and the pinned base work admits its verdict
-against, and reads the commit's review requests from its own delivery records.
+For a requested review the runner asks work whether the head's verdict stands
+here, with the session that recorded its current version, or was handed off,
+with the export that handed it off, and for the pinned base work admits its
+verdict against; it reads the commit's review requests from its own delivery
+records.
 It starts the requested reviewer through the runtime adapter under its own
 start key; work admits that reviewer's verdict like any other
 (`project/instrukt/spec/feature/runner/requested-review`).

@@ -121,7 +121,7 @@ runner holds no review request for it.
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| work → runner | Customer / Supplier | A commit's current verdict with the session that recorded it, and the pinned base work admits the commit's verdict against, consulted when a requested review is admitted |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
 
 <!-- /planned:fixed-shape-commit-review-dispatch -->
 

@@ -143,6 +143,17 @@ deleting the home is not a lossless reset.
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
+<!-- planned:fixed-shape-commit-review-dispatch -->
+
+`state/requested-review.db` holds the requested reviews
+`instrukt review start` admitted, and `state/requested-review.lock` is its
+write-isolation unit, taken only by that command
+(`project/instrukt/spec/feature/runner/requested-review`, Requested review
+records). Nothing re-creates the store: it is the only record of each
+requested reviewer's assignment and must be preserved.
+
+<!-- /planned:fixed-shape-commit-review-dispatch -->
+
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
 a link at the database file itself is refused
