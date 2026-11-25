@@ -263,7 +263,8 @@ pub(super) fn local_search(
 }
 
 /// Read a retained conversation's document as its source gave it, rebuilt
-/// with every retained text in its place.
+/// with each retained text that has a place in it back in that place; a
+/// text that belongs to no document is searched by and not shown.
 pub fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, HistoryError> {
     _store::show(home, source, conversation)
 }

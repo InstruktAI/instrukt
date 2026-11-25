@@ -146,7 +146,7 @@ pub(super) fn search(home: &Home, query: &str, limit: usize) -> Result<Vec<Match
 }
 
 /// The retained document of `conversation`, by native identity or archive
-/// alias, with every text back in its place.
+/// alias, with each text that has a place in it back in that place.
 pub(super) fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, HistoryError> {
     let Some(db) = _db::read(home)? else {
         return Err(HistoryError::Source("conversation not retained".into()));

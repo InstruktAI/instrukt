@@ -2,8 +2,9 @@
 //! by the rules of `project/instrukt/spec/feature/runner/history` (History
 //! store): the store's own migration and the move out of the state database
 //! both convert through here, and the TeleClaude import retains each mirror
-//! by the mirror rule. The rule is selected by the kind of a conversation's
-//! source, never guessed from what it holds.
+//! by the mirror rule. A runtime source, named by its identity, selects the
+//! runtime rule; for any other source, the shape of the earlier document
+//! selects the mirror rule or the rule for any other document.
 use super::{
     _store::{Place, StoredTime, Text},
     HistoryError,
