@@ -150,12 +150,10 @@ Read in full:
 Apply the archetype matrix, execution-host rules, and dynamic tiering of
 `sdlc/policy/live-verification`:
 
-- **Tier 0 (no runtime or executable-doctrine delta):** return a concise Tier 0
+- **Tier 0 (no live run warranted):** return a concise Tier 0
   `verification-findings` payload citing the exact candidate HEAD SHA, reason,
   and `Verdict: TIER_0_SKIP`, and stop.
-- **Tier 1 / Tier 2 (including changed executable agent doctrine under
-  `general/policy/documentation-discipline`):** compose the `verification-plan`
-  payload naming:
+- **Tier 1 / Tier 2:** compose the `verification-plan` payload naming:
   - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
   - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
     `local`) from Layer 1 or the archetype matrix;
@@ -274,8 +272,8 @@ Select execution by archetype and Layer 1 `execution_host`:
     yet):**
     - Permitted **only** for a standalone prerequisite bootstrap delivery
       carrying zero application-feature changes
-      (`sdlc/policy/live-verification`, Standalone CI workflow bootstrap or
-      path-migration rule). If a candidate mixes application changes with a missing
+      (`sdlc/policy/live-verification`: a standalone CI workflow bootstrap or
+      path migration carries no application change). If a candidate mixes application changes with a missing
       default-branch workflow, return `Verdict: BLOCKED` naming the missing
       default-branch workflow so `todo-orchestrator` routes standalone
       prerequisite bootstrap first.
@@ -294,8 +292,8 @@ Select execution by archetype and Layer 1 `execution_host`:
       authorized raw-evidence storage; a local probe never substitutes for
       required CI run evidence) alongside independent `build-reviewer` review of
       the newly authored workflow file.
-- **Local isolated execution (Docker-free CLI/daemon/temp-home/doctrine
-  archetypes, or explicit local-stack override):**
+- **Local isolated execution (Docker-free CLI/daemon/temp-home archetypes, or
+  explicit local-stack override):**
   - Confirm ≥20 GiB free disk space before building binaries or containers
     (`general/policy/shared-machine-resources`).
   - Boot the archetype's exact isolation primitive inside this isolated
@@ -303,15 +301,13 @@ Select execution by archetype and Layer 1 `execution_host`:
     `-f verification/docker-compose.verify.yml` on both startup and teardown:
     `docker compose -p verify-<slot> -f verification/docker-compose.verify.yml up -d`;
     for CLI/daemon stacks, build and invoke the candidate binary path under
-    isolated temp homes honoring Layer 1 and `sdlc/policy/testing` Rule 17; for
+    isolated temp homes honoring Layer 1 and `sdlc/policy/testing` on inheriting the home and isolating application
+    roots; for
     native mobile/ERP hosts, boot the simulator or ephemeral tenant).
   - Run deterministic seed shortcuts to reach precondition state, and register
     guaranteed cleanup on both normal completion and error so every spawned
     slot, process group, container, volume, and ephemeral temp directory is
     removed before exit (`general/policy/shared-machine-resources`).
-- **Executable doctrine / directive text:** run structural validation
-  (`instrukt docs validate`, `instrukt docs render --check`) and prepare a
-  fresh behavioral replay / dry-run scenario under the candidate rendering.
 
 ### 4. Driver — execute blind on the real surface
 
@@ -338,8 +334,8 @@ For a **standalone first-time CI bootstrap** (`first-bootstrap-smoke`) or
 **standalone workflow-path migration** (`candidate-workflow-smoke`) candidate
 (Step 3), the branch-push or `pull_request` checked-in baseline smoke
 exercising the shared verification entrypoint supplies the live execution on
-the real surface (`sdlc/policy/live-verification`, Standalone CI workflow
-bootstrap or path-migration rule) without requiring per-todo `workflow_dispatch`
+the real surface (`sdlc/policy/live-verification`: a standalone CI workflow
+bootstrap or path migration carries no application change) without requiring per-todo `workflow_dispatch`
 inputs.
 
 ### 5. Checker — audit honesty, verify evidence, and triage anomalies

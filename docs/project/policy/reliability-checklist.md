@@ -15,9 +15,12 @@ point declared by `sdlc/procedure/lifecycle/work/verify`. Semantic diff-trigger
 evaluation and Promote -> Automate -> Prune maintenance follow
 `sdlc/policy/live-verification`.
 
+
 | Semantic Diff Trigger | Mandatory Live Check | Originating Real Occurrence |
 | --- | --- | --- |
 | Diff changes `instrukt.db` writer locking, `Session` lock lifetimes, or GitHub reflection flushing (`crates/instrukt-todos/src/work/`) | Against an isolated temp `INSTRUKT_HOME` with a delayed local loopback GitHub reflection stub holding a first command's reflection flush in flight, invoke an unrelated local state write (such as `instrukt todo create` or `instrukt todo artifacts write` on another slug via the built candidate binary) and verify via a concurrent read (`instrukt todo show <other-slug> --json` or `instrukt todo list`, which takes neither lock per `project/instrukt/spec/feature/work/state-database`) that the unrelated local SQLite transaction commits and becomes visible immediately while the first reflection request remains stalled — observing local commit completion separately from the writing command's subsequent reflection flush and CLI exit | [Issue #106](https://github.com/InstruktAI/instrukt/issues/106) (GitHub reflection held `writer.lock` across remote network I/O and starved concurrent local runner state writes to timeout) |
+| Diff modifies `scripts/ci-changes.sh`, or adds or changes a Rust test read (`CARGO_MANIFEST_DIR`, `include_str!`, `include_bytes!`) in `crates/` or `tests/` of a repository file outside `crates/` | Run `scripts/ci-changes.sh --classify` on the repository paths the workspace tests read or compile, and its `pull_request` mode on a real git diff of representative paths, and verify every such path selects `rust=true` while the documentation and configuration paths for which `project/instrukt/policy/testing` runs no Rust check, such as root `instrukt.yaml`, keep `rust=false` | [Issue #191](https://github.com/InstruktAI/instrukt/issues/191) (docs-only PR #163 passed pull_request CI without the workspace tests, which read shipped `docs/domain/sdlc/*.md` and `docs/general/*.md`; main push run `45214982312` then failed) |
+
 
 ## Rationale
 
@@ -38,8 +41,7 @@ verify that every entry cites an inspectable real occurrence and obeys
 
 ## Exceptions
 
-- Tier 0 changes with no runtime or executable-doctrine delta skip live
-  execution.
+- Tier 0 changes skip live execution.
 
 ## See Also
 

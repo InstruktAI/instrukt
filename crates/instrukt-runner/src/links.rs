@@ -6,7 +6,7 @@ mod _turns;
 mod _watch;
 use crate::runtime::{
     RuntimeAdapter,
-    conversations::{ConversationSource, Scope, SourcePosition},
+    conversations::{ConversationSource, SourcePosition},
 };
 pub use _management::{Discussion, Operation, manage};
 pub(crate) use _watch::{Destinations, Worker, record as record_failure};
@@ -275,7 +275,7 @@ fn opening(
     let mut position = None;
     let mut seen = Finished::new();
     loop {
-        let batch = source.changed_since(position.as_ref(), Scope::Only(&pair))?;
+        let batch = source.changed_since(position.as_ref(), &pair)?;
         if let Some(failure) = batch
             .turn_failures
             .iter()
@@ -598,10 +598,7 @@ fn relay_direction(
         if !active(home, &d.link)? {
             return Ok(());
         }
-        let batch = source.changed_since(
-            Some(&d.position),
-            Scope::Only(std::slice::from_ref(&d.source.id)),
-        )?;
+        let batch = source.changed_since(Some(&d.position), std::slice::from_ref(&d.source.id))?;
         if batch.missing.iter().any(|id| id == &d.source.id) {
             return Err(LinkError::Refused(
                 "linked source conversation is missing; restore its native source content".into(),

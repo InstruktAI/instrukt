@@ -68,7 +68,7 @@ enum Command {
     Init(repository::InitArgs),
     /// Install, remove, inspect and run instrukt's git hook sections.
     Hooks(repository::HooksArgs),
-    /// Attributed commits in an authoring worktree.
+    /// Attributed commits and reclaimed build output in the acting agent's authoring worktree.
     Repo(repository::RepoArgs),
     /// Use-case coverage, reservation and trace.
     Specs(specs::SpecsArgs),
@@ -82,7 +82,7 @@ enum Command {
     Review(review::ReviewArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
-    /// Extract, import and search retained conversations across computers.
+    /// Extract and search retained conversations across computers.
     History(history::HistoryArgs),
     /// Internal signed loopback webhook receiver (installation is separate).
     Webhooks(webhooks::WebhooksArgs),
@@ -200,7 +200,13 @@ fn run() -> ExitCode {
         || authorization::untraced(&matches)
     {
         Ctx::inspection()
-    } else if authorization::read_only(&matches) || authorization::repository_local(&matches) {
+    } else if authorization::state_inspection(&matches) {
+        // A documentation read, and its admission, inspect the state database.
+        Ctx::inspection()
+    } else if authorization::read_only(&matches)
+        || authorization::repository_local(&matches)
+        || authorization::deferred_writing(&matches)
+    {
         Ctx::configuration_read()
     } else {
         Ctx::from_process()
@@ -266,7 +272,7 @@ fn run() -> ExitCode {
     }
     if deferred_patch {
         ctx.home = ctx.home.for_writing();
-        if let Err(error) = instrukt_core::config::Agents::migrate_shape(&ctx.home) {
+        if let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home) {
             return report(&error.into());
         }
     }

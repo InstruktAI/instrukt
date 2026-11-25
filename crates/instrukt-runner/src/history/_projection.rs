@@ -1,9 +1,11 @@
-//! Commits normalized changes with the runtime-opaque source position.
+//! Commits a text read's conversations with the runtime-opaque source
+//! position.
 use super::{
-    _store::{self, Conversation},
+    _earlier::MESSAGES,
+    _store::{self, Conversation, Place, StoredTime, Text},
     HistoryError,
 };
-use crate::runtime::conversations::{ConversationChanges, RecordKind, SourcePosition};
+use crate::runtime::conversations::{ConversationText, SourcePosition};
 use instrukt_core::{
     home::Home,
     state_db::{
@@ -11,8 +13,7 @@ use instrukt_core::{
         rusqlite::{OptionalExtension, params},
     },
 };
-use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use serde_json::json;
 
 pub(super) fn position(db: &StoreDb, source: &str) -> Result<Option<SourcePosition>, HistoryError> {
     let stored: Option<String> = db
@@ -27,40 +28,63 @@ pub(super) fn position(db: &StoreDb, source: &str) -> Result<Option<SourcePositi
         .map(|s| serde_json::from_str(&s).map_err(HistoryError::from))
         .transpose()
 }
+
+/// Retains each of `conversations`, a text read's batch: its row from its
+/// own record, when the batch carries it, and its messages added or
+/// updated, none removed; then commits them with `position`, the batch's.
+/// A conversation the store has not retained whose own record the batch
+/// lacks fails the batch.
 pub(super) fn apply(
     home: &Home,
     db: &mut StoreDb,
     source: &str,
-    batch: &ConversationChanges,
+    conversations: Vec<ConversationText>,
+    position: &SourcePosition,
 ) -> Result<usize, HistoryError> {
     let computer = instrukt_core::machine::machine_id(home)?.to_string();
-    db.write(|tx|->Result<usize,HistoryError>{
-        let mut affected=BTreeSet::new();
-        for record in &batch.records {
-            tx.execute("INSERT INTO history_projection_records VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(source,projection,native_id) DO UPDATE SET thread_id=excluded.thread_id,updated_at=excluded.updated_at,payload_json=excluded.payload_json",params![source,record.kind.name(),record.id,record.conversation_id,record.updated_at.map(|t|t.to_string()).unwrap_or_default(),serde_json::to_string(record)?])?;
-            affected.insert(record.conversation_id.clone());
-        }
-        for thread in &affected {
-            let mut stmt=tx.prepare("SELECT payload_json FROM history_projection_records WHERE source=?1 AND thread_id=?2 ORDER BY updated_at,native_id")?;
-            let raw=stmt.query_map(params![source,thread],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
-            let mut document=json!({"messages":[],"runs":[],"subagents":[],"turnItems":[]});
-            let mut title=None;let mut parent=None;let mut text=Vec::new();
-            for payload in raw {
-                let value:Value=serde_json::from_str(&payload)?;
-                let kind:RecordKind=serde_json::from_value(value["kind"].clone())?;
-                match kind {
-                    RecordKind::Conversation=>{document["thread"]=value["native"].clone();title=value["title"].as_str().map(str::to_owned);parent=value["parent_id"].as_str().map(str::to_owned);},
-                    _=>{
-                        let key=match kind {RecordKind::Message=>"messages",RecordKind::Run=>"runs",RecordKind::Subagent=>"subagents",RecordKind::TurnItem=>"turnItems",RecordKind::Conversation=>unreachable!()};
-                        document[key].as_array_mut().ok_or_else(||HistoryError::Source("invalid retained record collection".into()))?.push(value["native"].clone());
-                        if let Some(s)=value["text"].as_str().filter(|s|!s.is_empty()){text.push(s.to_owned());}
+    let loaded = conversations.len();
+    db.write(|tx| -> Result<usize, HistoryError> {
+        for changed in conversations {
+            let (conversation, record, messages) = changed.into_parts();
+            let texts = messages
+                .into_iter()
+                .map(|m| {
+                    let m = m.into_parts();
+                    Ok(Text {
+                        native_id: m.id,
+                        role: serde_json::to_value(m.role)?.as_str().map(str::to_owned),
+                        text: m.text,
+                        created_at: m.created_at.map(StoredTime::from),
+                        updated_at: m.updated_at.map(StoredTime::from),
+                        place: Place::Appended {
+                            list: MESSAGES.into(),
+                            record: m.record,
+                        },
+                    })
+                })
+                .collect::<Result<Vec<_>, HistoryError>>()?;
+            match record {
+                Some(record) => _store::write_conversation(
+                    tx,
+                    source,
+                    None,
+                    &Conversation {
+                        aliases: vec![conversation.to_string()],
+                        native_id: conversation.to_string(),
+                        computer: computer.clone(),
+                        title: record.title,
+                        parent: record.parent.map(|parent| parent.to_string()),
+                        limitations: vec![
+                            "Only content retained by the source runtime is available.".into(),
+                        ],
+                        document: json!({"messages": [], "thread": record.native}),
+                        texts,
                     },
-                }
+                )?,
+                None => _store::write_texts_of(tx, source, conversation.as_str(), &texts)?,
             }
-            let Some(title)=title else{return Err(HistoryError::Source("source conversation metadata is not available yet".into()));};
-            _store::write_conversation(tx,source,&Conversation{native_id:thread.clone(),computer:computer.clone(),title,parent,aliases:vec![thread.clone()],document,body:text.join("\n\n"),limitations:vec!["Only content retained by the source runtime is available.".into()]})?;
         }
-        tx.execute("INSERT INTO history_source_positions VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET position_json=excluded.position_json",params![source,serde_json::to_string(&batch.position)?])?;
-        Ok(affected.len())
+        tx.execute("INSERT INTO history_source_positions VALUES(?1,?2) ON CONFLICT(source) DO UPDATE SET position_json=excluded.position_json",params![source,serde_json::to_string(position)?])?;
+        Ok(loaded)
     })
 }

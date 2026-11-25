@@ -14,8 +14,9 @@ mod _observe;
 mod _provider;
 mod _schema;
 mod _service;
+mod _standing;
 #[cfg(test)]
-mod _testing;
+pub(crate) mod _testing;
 
 pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, coverage};
 pub use _finding::{Finding, Problem};

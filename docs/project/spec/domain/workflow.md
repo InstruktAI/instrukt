@@ -53,6 +53,8 @@ commit. Intelligence owns all activity routing in clear prose
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
 <!-- /planned-change:verification-stamp-and-evidence-store -->
 
+- **Worktree standing:** whether a todo's worktree on a computer is delivered, idle or under way, derived from the todo's record and the repository.
+
 ## Ownership boundary
 
 <!-- planned-change:verification-stamp-and-evidence-store -->
@@ -81,6 +83,35 @@ marker, and relays work's decision and the claim's session from the evidence of
 the same derivation. The runner consumes both for execution observation
 (`project/instrukt/spec/feature/runner/session-continuity`).
 
+Workflow also derives the standing of each todo worktree git lists for a
+project on a computer: delivered, idle or under way. It is derived on request
+and stored nowhere, and the runner consumes it for worktree reclamation
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). A worktree or
+branch a live todo records is that todo's, whatever earlier todo carried the
+same name. That a todo is delivered, parked or held is work's fact, relayed
+from the evidence of the same derivation; parked and held are idle. Workflow
+derives the two other idle readings from that record:
+
+- **A candidate waits for integration** while a finalized hand-off stands for
+  the todo's current head.
+- **Work has gone back to preparation** while the todo has build evidence and
+  the latest of its preparation evidence is later in the record's order than
+  the latest of that build evidence. Preparation evidence is a version of the
+  todo's intent, requirements, diagnosis, architecture or plan, or a
+  preparation review verdict. Build evidence is a build start or completion,
+  a build review verdict, processed deferrals or a finalized hand-off.
+
+An active todo in none of these states is under way. A kickback is neither
+kind of evidence and its reason is never read
+(`general/principle/intelligence-boundaries`): a candidate sent back for a
+failing check stays under way until preparation evidence is written. A
+structural holder has no lifecycle and no standing.
+
+For a delivered todo workflow also answers what it still owes: its worktree,
+its local work branch and its work branch on origin, each for as long as git
+lists it for the project on that computer. It finds them from what git lists
+there, never by reading through delivered work.
+
 ## Event subjects and origins
 
 - **Name:** `workflow.finalized` (occurrence).
@@ -94,6 +125,8 @@ the same derivation. The runner consumes both for execution observation
 
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
 - **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
+
+- **Workflow → runner (worktree standing):** workflow supplies each todo worktree's standing on the computer, and what a delivered todo still owes of its worktree and work branch; the runner reclaims by it and derives none of it.
 
 ## Governing designs and decisions
 

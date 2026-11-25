@@ -98,7 +98,8 @@ mod _validate;
 use std::path::PathBuf;
 
 pub(crate) use _company::{
-    CompanyDocument, CompanyFrontmatter, CompanyReference, company_document,
+    CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText,
+    company_document, company_paths,
 };
 pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,

@@ -1103,9 +1103,11 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
     assert!(!db_path.exists());
     assert!(!lock_path.exists());
 
-    // Clause 3: default docs validate against a home whose state database records the todo
-    // succeeds while writer.lock is held and leaves the database unmodified (no purge).
-    let work = crate::fixtures::work::Project::new();
+    // Clause 3: default docs validate, run from an agent session, against a home whose
+    // state database records the todo in an older release's schema succeeds while
+    // writer.lock is held, and leaves the database file, its schema version and its
+    // absent sidecars exactly as found: no migration, no purge, no lock.
+    let mut work = crate::fixtures::work::Project::new();
     publish_crew_flavor(&work.env);
     work.repo.write(
         "instrukt.yaml",
@@ -1115,32 +1117,38 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
             crate::fixtures::work::REPOSITORY
         ),
     );
-    work.create("plan-work", "change", "Plan pending documentation.");
-    work.create("expired-work", "change", "Withdrawn beyond recovery.");
-    work.ok(["remove", "expired-work"]);
-    let work_db = work.env.instrukt_home().join("state/instrukt.db");
+    let state = work.env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let work_db = state.join("instrukt.db");
+    let sidecars =
+        ["-wal", "-shm", "-journal"].map(|side| state.join(format!("instrukt.db{side}")));
+    for file in std::iter::once(&work_db).chain(&sidecars) {
+        if file.exists() {
+            std::fs::remove_file(file).unwrap();
+        }
+    }
+    let stored_version = || -> u32 {
+        instrukt_core::state_db::rusqlite::Connection::open(&work_db)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap()
+    };
     {
-        let conn = instrukt_core::state_db::rusqlite::Connection::open(&work_db).unwrap();
-        conn.execute(
-            "UPDATE todos SET removed_at = '2020-01-01T00:00:00Z' WHERE slug = 'expired-work'",
-            [],
+        let db = instrukt_core::state_db::rusqlite::Connection::open(&work_db).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v35.sql"))
+            .unwrap();
+        db.execute_batch(
+            "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence,removed_at) VALUES
+             ('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','demo','plan-work','change','active','2026-11-20T00:00:00Z','{\"person\":\"Test Developer\"}',1,'once',1,NULL),
+             ('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','demo','expired-work','change','removed','2026-11-20T00:00:00Z','{\"person\":\"Test Developer\"}',2,'once',2,'2020-01-01T00:00:00Z');",
         )
         .unwrap();
     }
-    let read_todos = || -> Vec<(String, String, String, i64)> {
-        let conn = instrukt_core::state_db::rusqlite::Connection::open(&work_db).unwrap();
-        let mut stmt = conn
-            .prepare("SELECT id, slug, status, revision FROM todos ORDER BY slug")
-            .unwrap();
-        stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
-        })
-        .unwrap()
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap()
-    };
-    let before = read_todos();
-    assert_eq!(before.len(), 2);
+    assert!(stored_version() < instrukt_core::state_db::schema_version());
+    let version = stored_version();
+    let bytes = std::fs::read(&work_db).unwrap();
+    // The command runs as an agent session, so admission resolves its caller.
+    work.env.set_env("T3CODE_THREAD_ID", "validating-session");
 
     work.repo
         .write(
@@ -1172,5 +1180,12 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
     assert!(backed.out.is_empty(), "{}", backed.out);
     drop(lock);
 
-    assert_eq!(read_todos(), before);
+    assert_eq!(stored_version(), version);
+    assert!(
+        std::fs::read(&work_db).unwrap() == bytes,
+        "validation changed the state database file"
+    );
+    for sidecar in &sidecars {
+        assert!(!sidecar.exists(), "{}", sidecar.display());
+    }
 }

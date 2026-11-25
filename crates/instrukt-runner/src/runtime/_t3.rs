@@ -592,6 +592,25 @@ pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<
     verify_placement(request, thread)
 }
 
+/// Whether T3 is still preparing the new worktree `request` asks for: the
+/// present thread is on the requested branch, T3 reports it as preparing, and
+/// it has no worktree path yet. T3 records the path after it answers the
+/// launch (`project/instrukt/spec/feature/runner/t3-contract`).
+fn placement_preparing(request: &RuntimeStart, thread: &Thread) -> bool {
+    let new_worktree = request
+        .native_launch
+        .as_ref()
+        .is_none_or(|launch| launch.existing_worktree.is_none());
+    new_worktree
+        && request
+            .worktree
+            .as_ref()
+            .is_some_and(|worktree| thread.branch.as_deref() == Some(&worktree.branch))
+        && thread.presence == super::Presence::Present
+        && ThreadStatus::parse(&thread.native_status) == Some(ThreadStatus::Preparing)
+        && thread.worktree.is_none()
+}
+
 fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
     if let Some(path) = request
         .native_launch
@@ -623,6 +642,9 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
         }
     }
     if let Some(worktree) = &request.worktree {
+        if placement_preparing(request, thread) {
+            return Err(SessionsError::PlacementPreparing(thread.session.clone()));
+        }
         if thread.branch.as_deref() != Some(&worktree.branch)
             || thread.worktree.as_ref().is_none_or(|p| !p.is_absolute())
         {
@@ -668,6 +690,51 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
     Ok(())
 }
 
+/// A thread's status as T3 spells it in `t3 thread show` and `t3 thread list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum ThreadStatus {
+    Running,
+    Preparing,
+    Starting,
+    Resuming,
+    Queued,
+    Waiting,
+    WaitingForInput,
+    WaitingForApproval,
+    Idle,
+    Completed,
+    Stopped,
+    Failed,
+    Interrupted,
+    Cancelled,
+    RolledBack,
+}
+impl ThreadStatus {
+    /// The member T3's spelling `native` names; a spelling outside the set
+    /// names none and is observed as an unknown state.
+    fn parse(native: &str) -> Option<Self> {
+        use serde::de::IntoDeserializer as _;
+        let spelling: serde::de::value::StrDeserializer<'_, serde::de::value::Error> =
+            native.into_deserializer();
+        Self::deserialize(spelling).ok()
+    }
+    fn state(self) -> SessionState {
+        match self {
+            Self::Running | Self::Preparing | Self::Starting | Self::Resuming | Self::Queued => {
+                SessionState::Running
+            }
+            Self::Waiting | Self::WaitingForInput | Self::WaitingForApproval => {
+                SessionState::NeedsInput
+            }
+            Self::Idle | Self::Completed | Self::Stopped => SessionState::InputReady,
+            Self::Failed | Self::Interrupted | Self::Cancelled | Self::RolledBack => {
+                SessionState::EndedFailed
+            }
+        }
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct NativeThread {
@@ -695,13 +762,8 @@ impl NativeThread {
         if self.thread_id.is_empty() {
             return Err(failure("decode", "incomplete thread identity"));
         }
-        let status = match self.status.as_str() {
-            "running" | "preparing" | "starting" | "resuming" | "queued" => SessionState::Running,
-            "waiting" | "waiting_for_input" | "waiting_for_approval" => SessionState::NeedsInput,
-            "idle" | "completed" | "stopped" => SessionState::InputReady,
-            "failed" | "interrupted" | "cancelled" | "rolled_back" => SessionState::EndedFailed,
-            _ => SessionState::Unknown,
-        };
+        let native_status = ThreadStatus::parse(&self.status);
+        let status = native_status.map_or(SessionState::Unknown, ThreadStatus::state);
         let presence = if self.archived == Some(true) {
             super::Presence::Archived
         } else {
@@ -741,7 +803,7 @@ impl NativeThread {
             worktree: self.worktree_path.filter(|p| !p.as_os_str().is_empty()),
             provider: self.provider_instance_id,
             model: self.model,
-            interrupted: self.status == "interrupted",
+            interrupted: native_status == Some(ThreadStatus::Interrupted),
             settled: self.settled,
             settled_at: self.settled_at,
             native_status: self.status,
@@ -768,5 +830,64 @@ fn failure(operation: &str, detail: impl Into<String>) -> SessionsError {
         runtime: "t3".into(),
         operation: operation.into(),
         detail: detail.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A todo pickup asking T3 for a new worktree of `parser/work`.
+    fn new_worktree_request() -> RuntimeStart {
+        RuntimeStart {
+            launch_modes: None,
+            native_launch: Some(crate::runtime::NativeLaunch {
+                command_id: "instrukt:launch:1".into(),
+                thread_id: "instrukt:launch:1".into(),
+                project_id: "project".into(),
+                existing_worktree: None,
+            }),
+            preferences: Vec::new(),
+            selection: None,
+            selection_evidence: None,
+            checkout: std::path::PathBuf::from("/checkout"),
+            key: "instrukt:todo:demo/parser:todo-orchestrator:1".into(),
+            title: "parser".into(),
+            brief: "Assignment.".into(),
+            worktree: Some(crate::runtime::WorktreeRequest {
+                from: "origin/main".into(),
+                base: "base".into(),
+                branch: "parser/work".into(),
+            }),
+            profiles: crate::runtime::Profiles::default(),
+        }
+    }
+
+    /// The thread `t3 thread show --json` reports with T3 status `status`, on
+    /// the requested branch and with no worktree path.
+    fn shown_without_worktree(status: &str) -> Thread {
+        let native: NativeThread = serde_json::from_value(serde_json::json!({
+            "threadId": "instrukt:launch:1", "projectId": "project", "title": "parser",
+            "status": status, "branch": "parser/work", "worktreePath": null,
+            "pendingRequestCount": 0, "archived": false,
+            "latestRunId": "run:1", "activeRunId": if status == "failed" { None } else { Some("run:1") },
+        }))
+        .unwrap();
+        native.decode().unwrap()
+    }
+
+    #[test]
+    fn a_new_worktree_t3_is_still_preparing_is_pending_placement() {
+        let thread = shown_without_worktree("preparing");
+        let outcome = verify_request(&new_worktree_request(), &thread);
+        assert!(
+            matches!(outcome, Err(SessionsError::PlacementPreparing(ref session)) if *session == thread.session)
+        );
+    }
+
+    #[test]
+    fn a_failed_preparation_on_the_requested_branch_is_a_failed_placement() {
+        let outcome = verify_request(&new_worktree_request(), &shown_without_worktree("failed"));
+        assert!(matches!(outcome, Err(SessionsError::Failed { .. })));
     }
 }

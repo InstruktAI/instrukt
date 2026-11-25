@@ -119,6 +119,8 @@ pub enum SessionsError {
         "native project for {session} under `{key}` is unverified; restore its retained project evidence"
     )]
     ProjectUnverified { key: String, session: SessionRef },
+    #[error("thread {0} is still being placed: the runtime is preparing its requested worktree")]
+    PlacementPreparing(SessionRef),
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]

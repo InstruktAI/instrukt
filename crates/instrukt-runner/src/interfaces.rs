@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -572,6 +572,132 @@ pub trait RetentionPurge: Send + Sync {
 }
 
 // ---------------------------------------------------------------------
+// Worktree reclamation
+// ---------------------------------------------------------------------
+
+/// Who asks for a section of the work record in which no role attempt
+/// opens on a todo's worktree, and what admits it there
+/// (`worktree-reclamation`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionAdmission {
+    /// The runner: admitted while no role attempt is open on the worktree
+    /// and the record is still at the revision the runner observed before
+    /// its git checks.
+    Runner { revision: u64 },
+    /// A session the todo's assignment binds: admitted unless another
+    /// session holds the worktree.
+    Session(SessionRef),
+}
+
+/// A session that holds a todo's worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeHolder {
+    /// A role attempt open on the worktree.
+    Attempt {
+        role: RoleName,
+        attempt: u64,
+        session: Option<SessionRef>,
+    },
+    /// The todo's execution claim, with no role attempt open.
+    Claim { session: Option<SessionRef> },
+}
+
+impl std::fmt::Display for WorktreeHolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let by = |session: &Option<SessionRef>| {
+            session
+                .as_ref()
+                .map_or_else(|| "no recorded session".to_owned(), ToString::to_string)
+        };
+        match self {
+            Self::Attempt {
+                role,
+                attempt,
+                session,
+            } => write!(f, "the role attempt {role}/{attempt} ({})", by(session)),
+            Self::Claim { session } => write!(f, "the execution claim ({})", by(session)),
+        }
+    }
+}
+
+/// What asking for an attempt-free section came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionOutcome {
+    /// The action ran inside the section.
+    Ran,
+    /// The worktree is held, so the action did not run.
+    Held(WorktreeHolder),
+    /// The record changed after the revision the runner observed, so the
+    /// action did not run.
+    RecordChanged,
+    /// The project's record holds no todo with that identity.
+    NotRecorded,
+}
+
+/// A working resource of a delivered todo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveredResource {
+    Worktree(PathBuf),
+    LocalBranch(String),
+    OriginBranch(String),
+}
+
+impl std::fmt::Display for DeliveredResource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Worktree(path) => write!(f, "the worktree {}", path.display()),
+            Self::LocalBranch(name) => write!(f, "the local branch {name}"),
+            Self::OriginBranch(name) => write!(f, "the branch {name} on origin"),
+        }
+    }
+}
+
+/// What a delivered release did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeliveredRelease {
+    /// Another delivered release runs on this computer: nothing was done
+    /// and the cleanup stays owed.
+    Busy,
+    /// What was released, and what stays with its cause.
+    Done {
+        released: Vec<DeliveredResource>,
+        kept: Vec<(DeliveredResource, String)>,
+    },
+}
+
+/// Work's part in worktree reclamation (`work` domain, "Work → runner
+/// (worktree reclamation)"): a section in which no role attempt opens, and
+/// the release of a delivered todo's worktree and work branch.
+pub trait WorktreeReclamation: Send + Sync {
+    /// Runs `action` inside one write transaction of the work record, under
+    /// the writer lock, in which no role attempt opens on `todo`'s
+    /// worktree, when `admission` admits it; the section writes nothing,
+    /// and `action` is all it holds the lock for.
+    fn attempt_free(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoId,
+        admission: &SectionAdmission,
+        action: &mut dyn FnMut(),
+    ) -> Result<SectionOutcome, WorkInterfaceError>;
+
+    /// Releases what workflow attributes to the delivered todo `delivered`
+    /// on this computer, and nothing else: its worktree, then its work
+    /// branch locally and on origin (`todos`, "Parking, withdrawal and
+    /// delivery"). A worktree or branch workflow attributes to a live todo
+    /// is not among them.
+    fn release_delivered(
+        &self,
+        project: &ProjectRef,
+        delivered: &TodoWorktree,
+    ) -> Result<DeliveredRelease, WorkInterfaceError>;
+
+    /// Whether `project`'s work record on this computer holds the todo
+    /// `todo`.
+    fn holds(&self, project: &ProjectRef, todo: &TodoId) -> Result<bool, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
 // Workflow
 // ---------------------------------------------------------------------
 
@@ -584,6 +710,12 @@ pub enum WorkflowInterfaceError {
     /// Observing the repository or facts failed.
     #[error("workflow observation for `{todo}`: {message}")]
     Observation { todo: TodoSlug, message: String },
+    /// Reading what git lists of a project's worktrees and branches failed.
+    #[error("git's worktrees and branches of {project}: {message}")]
+    Listing {
+        project: ProjectSlug,
+        message: String,
+    },
     /// The work record could not supply the evidence.
     #[error(transparent)]
     Work(#[from] WorkInterfaceError),
@@ -616,12 +748,20 @@ pub struct Assignment {
     /// A factual progress fingerprint over record & workspace state, used by
     /// the runner to detect whether a dispatched session made progress.
     pub state: String,
+    /// The session holding the todo's execution claim, relayed from work;
+    /// `None` while no session holds it.
+    pub holder: Option<SessionRef>,
+    /// Whether the todo waits on a person (a hold, or an approval gate
+    /// that waits for a human), as work decides it.
+    pub waits_on_person: bool,
 }
 
 /// Reading workflow's derived state for dispatch.
 pub trait WorkflowAssignments: Send + Sync {
-    /// The todo's current assignment, or `None` when no lane is owed
-    /// (delivered, removed, or a prerequisite blocks every lane). Pure
+    /// The todo's current assignment, or `None` when no lane is owed: the
+    /// todo is not active, it is held while no session holds its claim, a
+    /// prerequisite is undelivered, or no claim is held while it waits on
+    /// a human approval or on integration of a finalized hand-off. Pure
     /// derivation: it records nothing and appends no event. Serves
     /// `workflow` domain "Published contracts" and `work-dispatch` "Todo
     /// pickup".
@@ -630,6 +770,64 @@ pub trait WorkflowAssignments: Send + Sync {
         project: &ProjectRef,
         todo: &TodoSlug,
     ) -> Result<Option<Assignment>, WorkflowInterfaceError>;
+}
+
+/// What git still lists on this computer of a delivered todo's working
+/// resources: the cleanup it still owes (`delivery-cycle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveredRemains {
+    pub worktree: bool,
+    pub local_branch: bool,
+    pub origin_branch: bool,
+}
+
+impl DeliveredRemains {
+    /// Whether any of them remains.
+    pub fn any(self) -> bool {
+        self.worktree || self.local_branch || self.origin_branch
+    }
+}
+
+/// A todo worktree's standing on this computer, as workflow derives it
+/// (`workflow` domain, "Worktree standing").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeStanding {
+    /// Its todo's rounds of building, reviewing and fixing are under way.
+    UnderWay,
+    /// Its todo is parked or held, its candidate waits for integration, or
+    /// its work has gone back to preparation.
+    Idle,
+    /// Its todo is delivered, with what git still lists of it.
+    Delivered(DeliveredRemains),
+}
+
+/// One todo whose worktree or work branch git lists for a project on this
+/// computer, with its standing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoWorktree {
+    pub todo: TodoSlug,
+    pub identity: TodoId,
+    /// The record revision the standing was derived at: advanced by every
+    /// accepted change to the todo's record.
+    pub revision: u64,
+    /// The worktree git lists for it, when it has one.
+    pub worktree: Option<PathBuf>,
+    /// Its work branch, when its record names one.
+    pub branch: Option<String>,
+    pub standing: WorktreeStanding,
+}
+
+/// Reading workflow's worktree standing for reclamation.
+pub trait WorktreeStandings: Send + Sync {
+    /// Each todo whose worktree, local work branch or work branch on
+    /// `origin` git lists for `project` on this computer, with its standing.
+    /// Pure derivation from the work record this computer holds and git:
+    /// it records nothing and makes no GitHub request
+    /// (`worktree-reclamation`, "Idle worktrees").
+    fn worktree_standings(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<TodoWorktree>, WorkflowInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -646,6 +844,7 @@ pub struct WorkPorts {
     pub firings: Arc<dyn TaskFirings>,
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
+    pub reclamation: Arc<dyn WorktreeReclamation>,
 }
 
 impl std::fmt::Debug for WorkPorts {
@@ -667,6 +866,8 @@ pub struct RunnerWiring {
     pub review: Option<Arc<dyn AutomaticReview>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
+    /// Workflow's worktree standing, read for worktree reclamation.
+    pub standings: Option<Arc<dyn WorktreeStandings>>,
     /// The company the runner hosts: its conversations. `None` hosts none.
     pub company: Option<Arc<dyn CompanyPorts>>,
 }

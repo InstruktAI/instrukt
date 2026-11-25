@@ -13,6 +13,7 @@ use instrukt_runner::interfaces::{
 };
 use jiff::Timestamp;
 
+use super::_envelope::ShownStatus;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
@@ -228,9 +229,11 @@ impl Claims for Work {
 /// The tick's polling of the todos this computer has an interest in,
 /// beyond the pickup listing (`github-record`, "Interest-driven refresh"):
 /// the todos it holds claims on, so what a human does on GitHub reaches the
-/// worker holding the claim, and the prerequisites that claimed work is
-/// blocked on. Local items are pulled with conditional requests; a
-/// prerequisite that is not a local item refreshes its listing copy.
+/// worker holding the claim, the prerequisites that claimed work is
+/// blocked on, and the todos whose worktree or work branch it holds, so it
+/// learns of a delivery made on another computer. Local items are pulled
+/// with conditional requests; a prerequisite that is not a local item
+/// refreshes its listing copy.
 fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
     let machine = s.machine()?;
     let claimed: Vec<usize> = (0..s.items.len())
@@ -242,6 +245,16 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
                 .is_some_and(|c| c.machine == machine)
         })
         .collect();
+    let here = HeldHere::read(&s.project.root)?;
+    let held: Vec<usize> = (0..s.items.len())
+        .filter(|&index| here.interests(&s.items[index].record, &machine))
+        .collect();
+    for index in held {
+        match s.pull_through(index) {
+            Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+            Err(err) => return Err(err),
+        }
+    }
     let mut blocking: Vec<TodoId> = Vec::new();
     for &index in &claimed {
         match s.pull_through(index) {
@@ -286,6 +299,62 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
         }
     }
     Ok(())
+}
+
+/// The worktrees and work branches git lists for a project on this
+/// computer: its worktrees' paths, local branches and branches on origin.
+#[derive(Debug, Default)]
+struct HeldHere {
+    worktrees: std::collections::BTreeSet<std::path::PathBuf>,
+    branches: std::collections::BTreeSet<String>,
+}
+
+impl HeldHere {
+    /// Reads it from the repository at `root`, in one worktree listing and
+    /// one branch listing.
+    fn read(root: &std::path::Path) -> Result<Self, WorkError> {
+        let worktrees = super::_worktrees::worktrees(root)?
+            .into_iter()
+            .skip(1)
+            .map(|listed| listed.path)
+            .collect();
+        let branches = instrukt_core::git::run(
+            root,
+            [
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes/origin",
+            ],
+        )?
+        .lines()
+        .filter_map(|name| {
+            name.strip_prefix("refs/heads/")
+                .or_else(|| name.strip_prefix("refs/remotes/origin/"))
+        })
+        .map(str::to_owned)
+        .collect();
+        Ok(Self {
+            worktrees,
+            branches,
+        })
+    }
+
+    /// Whether `record` is refreshed for what this computer holds of it:
+    /// it is not delivered in this computer's record, `machine` does not
+    /// claim it (claimed work is refreshed as such), and git lists a
+    /// worktree its bindings recorded or its work branch here.
+    fn interests(&self, record: &TodoRecord, machine: &instrukt_core::machine::MachineId) -> bool {
+        record.status != TodoStatus::Delivered
+            && !record.claim.as_ref().is_some_and(|c| &c.machine == machine)
+            && (record
+                .bindings
+                .iter()
+                .filter_map(|binding| binding.worktree.as_ref())
+                .any(|path| self.worktrees.contains(path))
+                || super::_reclamation::work_branch(record)
+                    .is_some_and(|branch| self.branches.contains(&branch)))
+    }
 }
 
 fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
@@ -1122,6 +1191,23 @@ impl WorkEvidence for Work {
         let prerequisites = expand(&mut s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
     }
+
+    fn local_evidence(
+        &self,
+        project: &ProjectRef,
+        listed: &crate::evidence::ListedResources,
+    ) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
+        let worktrees: Vec<String> = listed
+            .worktrees
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect();
+        Ok(_store::Store::new(self.home(), &project.slug)
+            .items_naming(&worktrees, &listed.branches)?
+            .into_iter()
+            .map(|item| to_evidence(item.record, Vec::new()))
+            .collect())
+    }
 }
 
 /// Pulls local item `index` for a read: a conflicted item is still read.
@@ -1289,6 +1375,22 @@ pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisi
     out
 }
 
+/// Whether the todo waits on a person (`github-record`, the `Needs you`
+/// marker): it shows as held, or a current approval gate waits for a
+/// human. Work decides this once; the board marker and workflow's
+/// assignment relay it. `awaiting_human_approval` answers whether an
+/// approval gate waits for a human under the configured `prd` and `task`
+/// approvers; it is asked only when the shown status leaves that open.
+pub(crate) fn waits_on_person<E>(
+    shown: ShownStatus,
+    awaiting_human_approval: impl FnOnce() -> Result<bool, E>,
+) -> Result<bool, E> {
+    if shown == ShownStatus::Held {
+        return Ok(true);
+    }
+    awaiting_human_approval()
+}
+
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
     TodoEvidence {
         branch: record.branch.clone(),
@@ -1298,6 +1400,7 @@ pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) 
         slug: record.slug,
         kind: record.kind,
         status: record.status,
+        revision: record.revision,
         artifacts: record
             .artifacts
             .into_iter()
@@ -1377,4 +1480,124 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use instrukt_core::config::Approver;
+    use instrukt_runner::interfaces::TodoKind;
+
+    use super::{ShownStatus, waits_on_person};
+    use crate::evidence::{
+        PreparationReview, ReviewVerdict, StampFact, TodoEvidence, TodoStatus, artifact_names,
+    };
+    use crate::workflow::_testing::{digest, todo};
+    use crate::workflow::waiting_for_human_approval;
+
+    fn waits(evidence: &TodoEvidence, approver: Approver) -> bool {
+        let shown = ShownStatus::of(evidence.status, evidence.hold.is_some());
+        let Ok(waits) = waits_on_person(shown, || {
+            Ok::<_, Infallible>(waiting_for_human_approval(evidence, approver, approver))
+        });
+        waits
+    }
+
+    /// A local record of `demo`, active and unclaimed, with no binding.
+    fn local_record() -> crate::work::TodoRecord {
+        use instrukt_core::ids::{ProjectSlug, TodoSlug};
+        crate::work::TodoRecord {
+            schema: super::super::_model::SCHEMA,
+            id: crate::work::TodoId::parse(&"ab".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("depth").unwrap(),
+            prior_slugs: Vec::new(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: "2026-11-03T10:00:00Z".parse().unwrap(),
+            created_by: crate::evidence::Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision: 3,
+            sequence: 0,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            label_actions: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: instrukt_runner::interfaces::CatchUp::Once,
+            agent: None,
+            branch: Some("depth/work".into()),
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    /// This computer, holding `depth/work`.
+    fn holding_the_work_branch() -> (super::HeldHere, instrukt_core::machine::MachineId) {
+        let here = super::HeldHere {
+            worktrees: Default::default(),
+            branches: ["depth/work".to_owned()].into_iter().collect(),
+        };
+        let machine = instrukt_core::machine::MachineId::parse(&"0".repeat(16)).unwrap();
+        (here, machine)
+    }
+
+    #[test]
+    fn an_unclaimed_todo_whose_work_branch_this_computer_holds_is_refreshed() {
+        let (here, machine) = holding_the_work_branch();
+        assert!(here.interests(&local_record(), &machine));
+    }
+
+    #[test]
+    fn a_todo_this_computer_already_reads_as_delivered_is_not_refreshed_for_its_branch() {
+        let (here, machine) = holding_the_work_branch();
+        let delivered = crate::work::TodoRecord {
+            status: TodoStatus::Delivered,
+            ..local_record()
+        };
+        assert!(!here.interests(&delivered, &machine));
+    }
+
+    #[test]
+    fn a_hold_waits_on_a_person_while_the_todo_shows_as_held() {
+        let held = todo(TodoKind::Change).held().build();
+        assert!(waits(&held, Approver::Human));
+        assert!(waits(&held, Approver::Peer));
+
+        let delivered = todo(TodoKind::Change)
+            .held()
+            .status(TodoStatus::Delivered)
+            .build();
+        assert!(!waits(&delivered, Approver::Human));
+        assert!(!waits(&delivered, Approver::Peer));
+    }
+
+    #[test]
+    fn a_todo_shown_as_held_waits_without_asking_about_approval() {
+        assert_eq!(waits_on_person(ShownStatus::Held, || Err(())), Ok(true));
+        assert_eq!(waits_on_person(ShownStatus::Active, || Err(())), Err(()));
+    }
+
+    #[test]
+    fn an_unapproved_reviewed_prd_waits_on_a_person_only_under_a_human_approver() {
+        let reviewed = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-v1")
+            .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
+            .stamped(StampFact::PreparationVerdict {
+                phase: PreparationReview::PrdReview,
+                verdict: ReviewVerdict::Approve,
+                target: digest("prd-v1"),
+                report: digest("ok"),
+            })
+            .build();
+        assert!(waits(&reviewed, Approver::Human));
+        assert!(!waits(&reviewed, Approver::Peer));
+        assert!(!waits(&todo(TodoKind::Feature).build(), Approver::Human));
+    }
 }

@@ -113,6 +113,9 @@ pub struct AdmittedProject {
     /// finding at `review.automatic` that needs no GitHub. Whether the two
     /// identities are ready is asked where review is done.
     pub review: bool,
+    /// Worktree reclamation of the declared regenerable output admitted: no
+    /// finding stands at `regenerable`.
+    pub reclamation: bool,
 }
 
 /// A generation as built from the files, with what was not admitted.
@@ -465,6 +468,9 @@ fn admit_project(
         && !findings
             .iter()
             .any(|f| f.key == super::_review::REVIEW_AUTOMATIC_KEY);
+    let reclamation = !findings
+        .iter()
+        .any(super::_regenerable::withholds_reclamation);
     Ok((
         AdmittedProject {
             slug: record.project.clone(),
@@ -475,6 +481,7 @@ fn admit_project(
             events,
             history,
             review,
+            reclamation,
         },
         findings,
     ))
@@ -491,9 +498,10 @@ struct Modules {
 impl Modules {
     /// What is admitted of these switches, given the layer's findings: a
     /// finding against a module (`modules.<module>`) withholds that module
-    /// alone; a finding at `review.*` withholds automatic review alone; a
-    /// layer that does not validate for any other reason withholds history,
-    /// which reads every adopted project, and nothing else.
+    /// alone; a finding at `review.*` withholds automatic review alone, and
+    /// one at `regenerable` withholds worktree reclamation alone; a layer
+    /// that does not validate for any other reason withholds history, which
+    /// reads every adopted project, and nothing else.
     fn admitted(self, findings: &[Finding]) -> Self {
         let against = |module: &str| {
             let key = format!("modules.{module}");
@@ -501,9 +509,11 @@ impl Modules {
                 .iter()
                 .any(|f| f.key == key || f.key.starts_with(&format!("{key}.")))
         };
-        let invalid = findings
-            .iter()
-            .any(|f| !f.key.starts_with("modules.") && !f.key.starts_with("review."));
+        let invalid = findings.iter().any(|f| {
+            !f.key.starts_with("modules.")
+                && !f.key.starts_with("review.")
+                && !super::_regenerable::withholds_reclamation(f)
+        });
         Self {
             todos: self.todos && !against("todos"),
             events: self.events && !against("events"),
@@ -662,6 +672,19 @@ mod tests {
                 events: true,
                 history: true,
             }
+        );
+    }
+
+    #[test]
+    fn a_finding_at_the_regenerable_declaration_withholds_no_module() {
+        let switched = Modules {
+            todos: true,
+            events: true,
+            history: true,
+        };
+        assert_eq!(
+            switched.admitted(&[finding(super::super::REGENERABLE_KEY)]),
+            switched
         );
     }
 

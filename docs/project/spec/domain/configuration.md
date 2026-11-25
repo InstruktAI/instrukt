@@ -219,6 +219,11 @@ This context emits no events.
   language: configuration validates `connectors:` against the company
   context's connector declarations.
 
+- **Runner (worktree reclamation)** — customer / supplier: configuration
+  supplies a project's admitted declaration of regenerable output and decides
+  that it stays inside the project's checkout
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except
 the connector declarations, which it consumes.

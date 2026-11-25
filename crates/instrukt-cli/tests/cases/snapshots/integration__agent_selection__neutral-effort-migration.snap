@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/agent-selection.rs
-expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap()"
+expression: own
 ---
 {
   "schema_version": 3,
@@ -33,6 +33,14 @@ expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().st
         }
       ]
     }
+  },
+  "bundles": {
+    "read": [
+      {
+        "action": "docs-read",
+        "scope": "any"
+      }
+    ]
   },
   "profiles": {
     "personal": {
@@ -99,13 +107,5 @@ expression: "serde_json::from_slice::<serde_json::Value>(&output.get_output().st
         }
       ]
     }
-  },
-  "bundles": {
-    "read": [
-      {
-        "action": "docs-read",
-        "scope": "any"
-      }
-    ]
   }
 }

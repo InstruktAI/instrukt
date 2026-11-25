@@ -1,0 +1,11 @@
+---
+source: crates/instrukt-cli/tests/cases/company-plugin.rs
+expression: "repo.read(\"plugins/acme/skills/acme/references/systems.md\")"
+---
+---
+description: The systems Acme works with.
+---
+
+# Systems
+
+The workshop runs on ERPNext and orders arrive by email.

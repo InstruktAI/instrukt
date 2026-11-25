@@ -54,7 +54,7 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
 
 ### 1. Read context
 
-- Apply the artifact-discovery rule from `preparation-artifact-quality`
+- Apply the artifact-discovery rule from `sdlc/policy/preparation-artifact-quality`
   (`instrukt todo artifacts list {slug}`) — read `log` when present, and any
   other present artifact relevant to this review.
 - `instrukt todo artifacts read {slug} implementation-plan` — the artifact under review.
@@ -75,7 +75,7 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
 - The code review procedure — to understand what the reviewer will check.
 - Walk the governing-contracts entry points yourself before you read the
   Governing contracts section the plan carries or references, then compare
-  (`preparation-artifact-quality`, Governing contracts).
+  (`sdlc/policy/preparation-artifact-quality`).
 
 ### 2. Substantive delivery analysis
 
@@ -113,7 +113,8 @@ Findings:
 - Task contradicts the intent artifact, architecture, or in-scope feature-spec scenarios -> Critical.
 - Task copy-pastes upstream text instead of referencing it by
   `@artifact#section-header` -> Important (per
-  `policy/preparation-artifact-quality` §Referencing upstream intent).
+  `sdlc/policy/preparation-artifact-quality`: upstream intent is referenced,
+  not copied).
 
 The reviewer cannot approve the plan while any criterion lacks a Delivery
 analysis entry that names concrete deliverables.
@@ -274,7 +275,7 @@ or blocker provisions of the preparation artifact quality policy.
 Where the plan changes an operation a caller waits on, verify its statement of
 what each caller waits for against the code it cites: the shared resources
 held, their other holders, and whether the outcome reaches the caller within
-its deadline (`preparation-artifact-quality`, DoD-driven review-awareness). A
+its deadline (`sdlc/policy/preparation-artifact-quality`). A
 missing statement, or one the code contradicts, is a finding.
 
 ### 5a. Diagnosis validation (only when a `diagnosis` artifact is present)
@@ -325,7 +326,7 @@ recorded as re-verifiable facts) alongside its conclusion — and validate:
   A task outside that boundary is Critical.
 - **Scenario authoring is bounded to the regression scenario.** A bug plan
   authors at most one pending feature-spec scenario — the one encoding the
-  reported symptom (plan-draft step 3c). A
+  reported symptom (`sdlc/procedure/lifecycle/prepare/plan-draft`). A
   second authored scenario, or one encoding behavior beyond the reported
   symptom, is Critical. When a bindable scenario already exists, the plan binds
   it and authors none.
@@ -342,8 +343,8 @@ carries — in a `change` or `bug`, or in a `feature` whose architecture was
 skipped — apply the grounding and divergence checks of
 `sdlc/procedure/lifecycle/prepare/review-architecture` to it, the
 paradigm-native alternative built before you read the plan's
-(`preparation-artifact-quality`, Structural decisions carry architecture
-review). A plan that makes one without carrying its architecture reasoning is a
+(`sdlc/policy/preparation-artifact-quality`: a structural decision carries
+architecture review). A plan that makes one without carrying its architecture reasoning is a
 Requirement-Violation, and so is a bug plan that patches locally where its
 `diagnosis` names a prescribing decision that has failed this way before.
 
@@ -372,8 +373,7 @@ to pre-satisfy:
   `doc_impact_none: <reason>` is a Requirement-Violation (blocking), not a soft
   finding. The reviewer does not approve the plan until the delta is reflected
   or justified. For each prepare-authored pending feature-spec region, apply
-  the owner-local rule (`sdlc/policy/preparation-artifact-quality`,
-  §Acceptance scenario quality): a scenario or clause whose predicate another
+  the owner-local rule (`sdlc/policy/preparation-artifact-quality`): a scenario or clause whose predicate another
   context decides is an Important finding whose closure is removal or a
   one-sentence pointer to the owner. A third disposition is
   `doc_deferred: <holding-slug> — <inline-snippet-reference>#<section>`. Accept
@@ -389,7 +389,7 @@ to pre-satisfy:
   When the delivery removes a capability that a whole live snippet describes,
   or the last dispatcher of a command artifact, the plan names each retiring
   file and verifies its empty companion was authored in `<slug>/work` under this slug
-  (`general/procedure/doc-snippet-authoring` step 13). A retiring file with no
+  (`general/procedure/doc-snippet-authoring`). A retiring file with no
   companion, a task that deletes it, or a removal left to an act after
   delivery is a Requirement-Violation.
 - **ADR discipline (hard gate)**: any ADR the plan schedules, or that was
@@ -479,12 +479,14 @@ Check the plan against:
   net", "best-effort recovery", and "tolerant parsing" are the usual aliases —
   judge the mechanism (a substitute path taken when the primary fails or input
   is bad), not the label.
-- **Intelligence boundaries** (per `principle/intelligence-boundaries`):
+- **Intelligence boundaries** (per `general/principle/intelligence-boundaries`):
   reject plan tasks that prescribe regex / classifier / scorer / auto-fixer
   code on free-text content. Patterns: hardcoded vocabulary tables;
   word-count thresholds for "is this meaningful?"; `is_*` / `should_*`
   predicates on natural language; auto-rewriters that edit agent artifacts
-  to match structural rubrics. The defining test: would the task be
+  to match structural rubrics; tests, replays or scores whose subject is a
+  document, a prompt or a skill, run by code or by staged agent sessions. The
+  defining test: would the task be
   unnecessary if the agent's briefing said the right thing? If yes, the
   task belongs in the briefing, not the plan. Critical — these accumulate
   silently and corrupt the codebase faster than coupling violations
@@ -521,13 +523,13 @@ Severity tiers and verdict arithmetic are owned by
 - **Symmetry demands on a consumer spec.** A finding that asks a consumer
   context's use case to be extended to mirror an owner's rule assigns the
   owner's behavior to the artifact under review
-  (`sdlc/policy/preparation-artifact-quality`, §Evidence does not reallocate
+  (`sdlc/policy/preparation-artifact-quality`: evidence does not reallocate
   ownership). Drop it; the valid finding, if any, is the restatement itself.
 - **Scope-enlarging findings.** A finding cites a contract the plan's current
   text violates. A finding that prescribes functionality, instrumentation,
   provisioning paths, or subsystems beyond the approved intent artifact is not
   a finding — findings carry no authority to enlarge the horizon
-  (`sdlc/policy/preparation-artifact-quality`, §Evidence does
+  (`sdlc/policy/preparation-artifact-quality`: evidence does
   not reallocate ownership). A genuine gap in the approved intent is reported
   as exactly that, for the claimant to route to the intent's owner; it is never
   encoded as a blocking demand for the missing work.
@@ -607,5 +609,5 @@ The reservation lane is easy to skip because it has no artifact of its own: befo
 stamping a verdict, inspect `instrukt specs coverage` and run
 `instrukt specs reserve --slug {slug} --binding <spec_id>:<UC-id>` for every scenario the plan declares it
 will bind. A binding already reserved by a different in-flight slug is a
-Requirement-Violation under the Test coverage lane (`definition-of-done-lanes`) —
+Requirement-Violation under the Test coverage lane (`sdlc/policy/definition-of-done-lanes`) —
 do not approve past it.
