@@ -86,12 +86,16 @@ orchestrator records either with no verifier attempt. From any other session,
 whether a writer role, a session that does not hold the claim or an unbound
 session, each of the three is refused and nothing is recorded.
 
-The orchestrator's own disposition never clears what a verifier recorded for
-the same commit. While the latest disposition a `verifier` recorded for a
-commit is fail, the orchestrator's Tier 0 skip or hotfix deferral for that
-commit is refused; while it is blocked, its Tier 0 skip is refused. The
-refusal names what clears it: a new candidate commit, or a new `verifier`
-attempt on that commit.
+What a `verifier` recorded for a commit limits what the orchestrator may
+record for that commit. While the latest disposition a `verifier` recorded for
+it is fail, the orchestrator's Tier 0 skip or hotfix deferral is refused, and
+the refusal names what clears it: a new candidate commit, or a new `verifier`
+attempt on that commit. While it is blocked, the orchestrator's Tier 0 skip is
+refused, and the refusal names what clears it: a new candidate commit, a new
+`verifier` attempt on that commit, or, under the hotfix exception of
+`sdlc/policy/live-verification`, a hotfix deferral naming its tracked
+follow-up. That deferral is admitted after a verifier's blocked and admits the
+commit to readiness.
 
 Whether a candidate warrants a skip, a deferral or a live run is the
 orchestrator's judgment under `sdlc/policy/live-verification`; code admits the

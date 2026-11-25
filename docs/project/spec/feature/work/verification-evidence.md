@@ -45,8 +45,11 @@ worktree dirty and reaches no commit. Evidence is held per project, todo and
 run, and is found on that computer from the reference its findings carry.
 
 The store and its entries are readable and writable only by the owner of the
-instrukt home. A project, todo or run identifier that would resolve outside
-the store is refused before anything is read, written or removed
+instrukt home. Every path instrukt reads, writes or removes in the store stays
+within the store's canonical location, so a home reached through a symbolic
+link keeps its store. A project, todo or run identifier, a path inside an
+entry or a symbolic link in the store that would resolve outside that location
+is refused before anything is read, written or removed through it
 (`sdlc/policy/security-awareness`).
 
 The store is derived state (`sdlc/policy/state-storage`): its source is the
