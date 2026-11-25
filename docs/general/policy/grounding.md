@@ -115,8 +115,9 @@ reasoning, or conversational hypothesis.
   fetched in that session is a violation, whether or not the act turned out
   correct.
 - Inspecting another session's transcript to reconstruct or verify what its
-  human said is a violation: intent past that session is read from the artifact
-  its steward authored.
+  human said is a violation, except where the governing procedure assigns that
+  comparison. A current intent check on a todo's `input` travels unchanged, and
+  intent past it is read from the artifact its steward authored.
 - Reviewers treat an artifact claim with no re-inspectable evidence, no named
   human decision, and no visible assumption as a defect in the artifact.
 - No prose scanner, score, or automated grader is built for any of the above.

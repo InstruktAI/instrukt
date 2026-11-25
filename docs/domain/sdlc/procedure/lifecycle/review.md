@@ -58,7 +58,8 @@ preferred classification or design alone does not reopen a decision.
 
 Where a procedure has you read the conversation that produced the work — a
 session transcript named by an artifact's writers or a commit's `Session:`
-trailer — that reading corroborates the authorized basis and never gates the
+trailer — that reading checks the work against what the human directed there,
+where the conversation holds human direction, and its absence never gates the
 work. Read it when it can be read. When it cannot — the writer has no recorded
 session, or the conversation is unavailable through
 the configured runtime conversation read instruction — record what you tried and why
