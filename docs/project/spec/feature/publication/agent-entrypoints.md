@@ -51,6 +51,7 @@ master file and there are no addenda: each rendering has one source, an
 
 ## Canonical fields
 
+<!-- planned-change:native-company-skill-rendering -->
 The root `AGENTS.md` also lists the project's own procedures that declare
 subscriptions, under “Configured Responsibilities”, whether or not events is
 enabled on the computer that renders it. No branding line is emitted.
@@ -62,6 +63,20 @@ rendered is a finding of the committed rendering, naming the file: Codex
 reads it in place of `AGENTS.md`, so it hides every committed update.
 instrukt never deletes it, since it may be a person's own
 (`general/policy/agent-artifact-governance`).
+<!-- change:native-company-skill-rendering -->
+The root `AGENTS.md` also lists the project's own procedures that declare
+subscriptions, under “Configured Responsibilities”, whether or not events is
+enabled on the computer that renders it. No branding line is emitted.
+instrukt writes no project override instruction file, such as Codex's
+`AGENTS.override.md`: the root `AGENTS.md` is the only instruction file
+generated in a repository (`general/policy/agent-artifact-governance`). An
+`AGENTS.override.md` at the root of a repository whose root `AGENTS.md` is
+rendered is a finding of the committed rendering, naming the file: Codex
+reads it in place of `AGENTS.md`, so it hides every committed update.
+instrukt never deletes it, since it may be a person's own
+(`general/policy/agent-artifact-governance`).
+<!-- /planned-change:native-company-skill-rendering -->
+
 
 ### Rendering a selection
 

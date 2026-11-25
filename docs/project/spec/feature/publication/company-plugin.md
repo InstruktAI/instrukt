@@ -46,8 +46,11 @@ catalog formats (See Also), which decide where each of its files stands.
   document their required reads reach, is carried exactly once: in the main
   file where an `expanded` document brings it in, otherwise as a file of its
   own.
-- **Links between documents.** A Markdown link from one company document to
-  another points, in the plugin, at where the plugin carries that document.
+- **References between documents.** A reference in one company document's
+  text to another, in each form the company's knowledge admits
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
+  company's knowledge stands alone), names in the plugin where the plugin
+  carries that document.
 - **The descriptions are instrukt's.** The plugin's and the skill's
   descriptions say whose knowledge the plugin holds and when an agent uses
   the skill. They take the company's name and nothing else: no document and
@@ -61,14 +64,20 @@ reads them, and every finding of that rendering is a finding here
 knowledge stands alone; What the index may say). The plugin adds these, each
 naming the document and what is wrong:
 
-- **Nothing the plugin names lies outside it.** A link to a company document
-  the plugin does not carry — one the index does not select and no required
-  read reaches — is a finding naming the document and the link.
+- **The index.** A repository without `docs/index.yaml` holds no knowledge
+  to render: that is a finding naming the file, for a rendering, a check and
+  a validation alike.
+- **Nothing the plugin names lies outside it.** A reference in a document's
+  text to a company document the plugin does not carry — one the index does
+  not select and no required read reaches — is a finding naming the document
+  and the reference.
+- **Frontmatter.** Frontmatter that is not a YAML mapping, in any document
+  the plugin carries, is a finding naming the document and why.
 - **Visibility.** A company document's frontmatter may carry `visibility`,
   `internal` or `public`; a document without it is `internal`, and any other
   value is a finding. The plugin holds every document whatever its
-  visibility. A `public` document that requires or links to an `internal` one
-  is a finding naming both.
+  visibility. A `public` document that requires or references an `internal`
+  one is a finding naming both.
 
 With a finding, no file is written or removed.
 
@@ -128,9 +137,6 @@ A caller asks for one of three things in a company's repository:
   finding and exits non-zero only when there is one, so it answers for a
   branch whose plugin is behind its documents.
 
-In a repository without `docs/index.yaml` there is nothing to render: each of
-the three says so and changes no file.
-
 The `pre-commit` section, a sync, a start and a tick render no plugin, and
 rendering a repository's `AGENTS.md` renders none. A commit on a branch
 carries the plugin its base held.
@@ -172,6 +178,17 @@ Then the validation passes although the branch's plugin is behind its documents
 And no file is changed
 But when the change makes a public document depend on an internal one
 Then the validation fails naming both documents, and no file is changed
+```
+
+### UC-CP4: An operator learns whether the plugin the repository holds still matches its documents
+
+```gherkin
+Given a company's repository holds the plugin rendered from its documents
+When the operator has the plugin checked
+Then the check passes and no file is changed
+When a document changes and the operator has the plugin checked again
+Then the check fails naming each file of the plugin that is behind the documents
+And no file is changed
 ```
 
 ## Known caveats
