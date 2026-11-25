@@ -261,8 +261,27 @@ fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_wr
         current.select(Some("builder"), None, None, None).unwrap()[0].effort,
         Some(instrukt_core::config::Effort::High)
     );
-    insta::assert_json_snapshot!(
-        "neutral-effort-migration",
-        serde_json::from_slice::<serde_json::Value>(&output.get_output().stdout).unwrap()
-    );
+    // The entries the file names, as the effective selection shows them;
+    // what the shipped defaults add beside them is theirs, not this
+    // conversion's.
+    let shown: serde_json::Value = serde_json::from_slice(&output.get_output().stdout).unwrap();
+    let named: serde_yaml_ng::Value = serde_yaml_ng::from_str(&old).unwrap();
+    let mut own = serde_json::Map::new();
+    for (section, entries) in named.as_mapping().unwrap() {
+        let section = section.as_str().unwrap();
+        own.insert(
+            section.to_owned(),
+            match entries.as_mapping().filter(|_| section != "default") {
+                Some(entries) => entries
+                    .keys()
+                    .map(|key| {
+                        let key = key.as_str().unwrap();
+                        (key.to_owned(), shown[section][key].clone())
+                    })
+                    .collect(),
+                None => shown[section].clone(),
+            },
+        );
+    }
+    insta::assert_json_snapshot!("neutral-effort-migration", own);
 }
