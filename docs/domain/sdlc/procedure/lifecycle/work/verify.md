@@ -150,12 +150,10 @@ Read in full:
 Apply the archetype matrix, execution-host rules, and dynamic tiering of
 `sdlc/policy/live-verification`:
 
-- **Tier 0 (no runtime or executable-doctrine delta):** return a concise Tier 0
+- **Tier 0 (no live run warranted):** return a concise Tier 0
   `verification-findings` payload citing the exact candidate HEAD SHA, reason,
   and `Verdict: TIER_0_SKIP`, and stop.
-- **Tier 1 / Tier 2 (including changed executable agent doctrine under
-  `general/policy/documentation-discipline`):** compose the `verification-plan`
-  payload naming:
+- **Tier 1 / Tier 2:** compose the `verification-plan` payload naming:
   - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
   - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
     `local`) from Layer 1 or the archetype matrix;
@@ -294,8 +292,8 @@ Select execution by archetype and Layer 1 `execution_host`:
       authorized raw-evidence storage; a local probe never substitutes for
       required CI run evidence) alongside independent `build-reviewer` review of
       the newly authored workflow file.
-- **Local isolated execution (Docker-free CLI/daemon/temp-home/doctrine
-  archetypes, or explicit local-stack override):**
+- **Local isolated execution (Docker-free CLI/daemon/temp-home archetypes, or
+  explicit local-stack override):**
   - Confirm ≥20 GiB free disk space before building binaries or containers
     (`general/policy/shared-machine-resources`).
   - Boot the archetype's exact isolation primitive inside this isolated
@@ -309,9 +307,6 @@ Select execution by archetype and Layer 1 `execution_host`:
     guaranteed cleanup on both normal completion and error so every spawned
     slot, process group, container, volume, and ephemeral temp directory is
     removed before exit (`general/policy/shared-machine-resources`).
-- **Executable doctrine / directive text:** run structural validation
-  (`instrukt docs validate`, `instrukt docs render --check`) and prepare a
-  fresh behavioral replay / dry-run scenario under the candidate rendering.
 
 ### 4. Driver — execute blind on the real surface
 

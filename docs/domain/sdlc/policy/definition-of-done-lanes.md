@@ -52,7 +52,7 @@ unchanged; in every project without such a ruling this catalog applies in full.
 | ownership               | § Domain ownership review; `domain-ownership`                                          | Verify every domain rule is implemented by its single owning context and crossed only through a published contract                                                               |
 | paradigm                | § Paradigm-fit assessment                                                              | Check data flow, component reuse, pattern consistency, forward-migration of owned data                                                                                           |
 | principles              | § Principle violation hunt; `principle-violation-hunt`                                 | Structural violation hunt against design principles                                                                                                                              |
-| intelligence-boundaries | `principle/intelligence-boundaries`                                                    | Find code that classifies, scores, judges, or auto-edits free-text content semantics                                                                                             |
+| intelligence-boundaries | `principle/intelligence-boundaries`                                                    | Find code or staged checks that grade free-text content, and contracts that make prose a test subject                                                                            |
 | security                | § Security review                                                                      | Check for secrets, injection, auth gaps, and repository-privacy leakage                                                                                                          |
 | tests                   | § Test coverage check; `quality-predicate-registry`                                    | Evaluate behavioral value, weak-test anti-patterns, and coverage                                                                                                                 |
 | errors                  | § Error handling review; `silent-failure-audit`                                        | Find silent failures and inadequate error handling                                                                                                                               |
@@ -141,8 +141,9 @@ lifecycle review):
 1. Identify the authoritative source and quote the criterion.
 2. Identify the specific reviewed change that delivers it (file, function, line range).
 3. Explain, in one sentence, how that change satisfies it.
-4. Where the project opts into tests, name the scenario-bound test and the
-   concrete production-code mutation it catches under the testing policy.
+4. Where the project opts into tests and the criterion concerns software
+   behavior, name the scenario-bound test and the concrete production-code
+   mutation it catches under the testing policy.
 
 Findings:
 
@@ -158,7 +159,8 @@ Findings:
 
 A reviewer cannot approve while any Scope verification entry is missing its
 reviewed change or satisfaction analysis. In a project that opts into tests, the
-entry also needs its test and killing mutation.
+entry for a criterion on software behavior also needs its test and killing
+mutation.
 
 #### Code quality review
 
@@ -300,6 +302,10 @@ free text and name where each executes. A judgment moved from an agent into
 code is the finding. That a change removes an agent, invokes fewer agents, or
 makes work "mechanical" is never a compliance argument; it is the exact shape
 the principle warns against.
+
+A contract or plan that makes documentation, a prompt or a skill the subject of
+a test, a replay or a score is the same finding, whether code or staged agent
+sessions would run the check (`general/principle/intelligence-boundaries`).
 
 #### Security review
 
