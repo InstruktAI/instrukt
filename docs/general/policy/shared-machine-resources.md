@@ -108,15 +108,9 @@ All agents, all sessions, all projects, on every machine they run on.
 
 ## Enforcement
 
-<!-- planned-change:runner-owned-workspace-cleanup -->
 Reviewers treat a checkout left with build output that the rules above require
 removed, or an ephemeral process left orphaned after its work ends, as a process
 miss.
-<!-- change:runner-owned-workspace-cleanup -->
-Reviewers treat a checkout left with build output that the rules above require
-removed, an ephemeral process left orphaned after its work ends, or a shell
-command that deletes a todo worktree or its build output, as a process miss.
-<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 ## Exceptions
 
