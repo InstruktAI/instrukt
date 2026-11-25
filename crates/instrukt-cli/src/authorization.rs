@@ -156,12 +156,7 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
 }
 
 pub fn strict_inspection(matches: &ArgMatches) -> bool {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     matches!(
         path.as_slice(),
         ["events", "status" | "dead-letters"] | ["ticks", "status"] | ["status"]
@@ -170,12 +165,7 @@ pub fn strict_inspection(matches: &ArgMatches) -> bool {
 /// The owning project a work read names with `--project`: the project whose
 /// layer it reads, wherever the caller stands.
 pub fn named_project(matches: &ArgMatches) -> Option<ProjectSlug> {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     matches!(
         path.as_slice(),
         ["todo", "list"] | ["bugs", "list" | "suppressions" | "report"]
@@ -184,12 +174,7 @@ pub fn named_project(matches: &ArgMatches) -> Option<ProjectSlug> {
     .flatten()
 }
 pub fn read_only(matches: &ArgMatches) -> bool {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     if path == ["webhooks", "serve"] {
         return true;
     }
@@ -230,12 +215,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
 }
 
 pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
-    let mut path = Vec::new();
-    let mut leaf = matches;
-    while let Some((name, sub)) = leaf.subcommand() {
-        path.push(name);
-        leaf = sub;
-    }
+    let (path, leaf) = command_path(matches);
     let action = if path == ["install"] && leaf.get_flag("check") {
         Some(Action::InstallationRead)
     } else if path == ["docs", "render"] && leaf.get_flag("check") {
