@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-runner/src/standing.rs
+expression: "standing_title(PROCEDURE, Some(\"integrator\"), Some(\"todo:demo\"), \"k\")"
+---
+integrator · todo:demo

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "shown(&crew, &undisposed.get_output().stderr)"
+---
+instrukt: readiness requires a current verification disposition admitting handoff at this exact commit SHA — an independent verifier's pass, or the claim-holding orchestrator's tier_0_skip or hotfix_deferred: no verification disposition recorded (a pass, tier_0_skip or hotfix_deferred is owed at this commit)

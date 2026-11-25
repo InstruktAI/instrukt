@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&stderr(&refused), &[(head.as_str(), \"HEAD\")], &[\"s1\"])"
+---
+instrukt: review request 1 for [HEAD] is handed over to session t3:[SESSION-1]; only that request's reviewer records this commit's verdict, so no second review starts. Its verdict shows in `instrukt review show [HEAD]`

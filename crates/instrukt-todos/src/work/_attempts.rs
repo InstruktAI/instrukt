@@ -61,7 +61,7 @@ pub(super) fn phase_base(root: &Path, branch: &str) -> Result<(String, CommitSha
     let base = head(root, &from)?;
     Ok((from, base))
 }
-fn clean(root: &Path) -> Result<(), WorkError> {
+pub(super) fn clean(root: &Path) -> Result<(), WorkError> {
     if !git::run(root, ["status", "--porcelain=v1"])?.is_empty() {
         return Err(WorkError::refused(
             "shared workspace has uncommitted changes; recover the outstanding attempt in place",
@@ -932,6 +932,7 @@ pub(super) fn completion_binding(
             StampRequest::BuildComplete => &["builder", "fixer"],
             StampRequest::BuildVerdict { .. } => &["build-reviewer"],
             StampRequest::DeferralsProcessed => &["deferrer"],
+            StampRequest::VerificationDisposition { .. } => &[crate::workflow::VERIFIER_ROLE],
             StampRequest::PreparationVerdict { phase, .. } => match phase {
                 PreparationReview::PrdReview => &["prd-reviewer"],
                 PreparationReview::ArchitectureReview => &["architecture-reviewer"],
@@ -939,7 +940,13 @@ pub(super) fn completion_binding(
             },
             _ => return Ok(None),
         };
-        if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
+        // A disposition from a caller with no verifier binding takes the
+        // record-only path, where admission judges the caller.
+        let record_only = matches!(
+            request,
+            StampRequest::PreparationVerdict { .. } | StampRequest::VerificationDisposition { .. }
+        );
+        if caller.is_none() && record_only {
             return Ok(None);
         }
         let caller =
@@ -949,8 +956,9 @@ pub(super) fn completion_binding(
                 b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
             })
         else {
-            // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
-            if matches!(request, StampRequest::PreparationVerdict { .. }) {
+            // Existing deliberately recorded preparation reviews without native
+            // dispatch remain admissible; a disposition takes the record-only path.
+            if record_only {
                 return Ok(None);
             }
             return Err(WorkError::refused("caller has no bound completion role"));
@@ -1026,6 +1034,7 @@ pub(super) fn completion_binding(
             | StampRequest::DiagnosisSettled
             | StampRequest::DriftReviewed { .. }
             | StampRequest::PreparationVerdict { .. }
+            | StampRequest::VerificationDisposition { .. }
     );
     if readonly && b.attempt.base_head.as_ref() != Some(&current) {
         return Err(WorkError::refused(
@@ -1067,6 +1076,61 @@ pub(super) fn completion_binding(
         )));
     }
     Ok(Some((index, true)))
+}
+
+/// The caller's live driver binding on the todo: the binding the
+/// orchestrator records a Tier 0 skip or hotfix deferral under, with no
+/// verifier attempt.
+pub(super) fn live_driver(record: &TodoRecord, caller: &SessionRef) -> Option<usize> {
+    record
+        .bindings
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, b)| {
+            b.session.as_ref() == Some(caller)
+                && b.attempt.assignment == AssignmentKind::Driver
+                && b.attempt.released_at.is_none()
+        })
+        .map(|(index, _)| index)
+}
+
+/// The workspace a record-only disposition is written over
+/// (`delivery-cycle`, "Live verification disposition"): no workspace
+/// attempt open on the todo's worktree, whose finding it would race; the
+/// caller in the driver binding's shared worktree; that tree clean, so the
+/// head it binds is the candidate.
+pub(super) fn record_only_workspace(
+    record: &TodoRecord,
+    driver: usize,
+    cwd: &Path,
+) -> Result<(), WorkError> {
+    if let Some(open) = record.bindings.iter().find(|b| b.is_open_role_attempt()) {
+        return Err(WorkError::refused(format!(
+            "the {}/{} attempt is open on the todo's worktree; a disposition is recorded after that attempt's release or its recorded failure",
+            open.role, open.attempt.number
+        )));
+    }
+    let path = record.bindings[driver]
+        .worktree
+        .as_ref()
+        .ok_or_else(|| WorkError::refused("shared workspace missing"))?;
+    if canonical(
+        &git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside worktree"))?,
+    )? != canonical(path)?
+    {
+        return Err(WorkError::refused(
+            "a disposition is recorded from the todo's shared worktree, whose head is the candidate; run it there",
+        ));
+    }
+    // `clean`'s own refusal names an outstanding attempt, which this path
+    // has none of; its other failures pass through unchanged.
+    clean(path).map_err(|err| match err {
+        WorkError::Refused(_) => WorkError::refused(
+            "the shared workspace has uncommitted changes or an unfinished Git operation; commit or restore them before recording a disposition",
+        ),
+        other => other,
+    })
 }
 
 pub(super) fn readiness(
@@ -1139,13 +1203,19 @@ pub(super) fn readiness(
             "readiness requires matching clean shared, local and published candidate",
         ));
     }
-    // Invariant 2: exact-SHA independent reviewer APPROVE stamp.
+    // Invariant 2, the independent exact-SHA handoff gate: an independent
+    // reviewer's APPROVE stamp and a current verification disposition that
+    // admits handoff, both bound to this exact commit SHA.
     if !crate::workflow::readiness_approved(record, root, &candidate, caller) {
         return Err(WorkError::refused(
             "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
         ));
     }
-    Ok(())
+    crate::workflow::handoff_admitted(record, &candidate, caller).map_err(|why| {
+        WorkError::refused(format!(
+            "readiness requires a current verification disposition admitting handoff at this exact commit SHA — an independent verifier's pass, or the claim-holding orchestrator's tier_0_skip or hotfix_deferred: {why}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]

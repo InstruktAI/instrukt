@@ -1,6 +1,9 @@
 //! Review evidence commands: `instrukt review record|exempt|show`
-//! (`project/instrukt/spec/feature/work/github-apps`, Review evidence).
+//! (`project/instrukt/spec/feature/work/github-apps`, Review evidence), and
+//! `instrukt review start`, the ask for a requested review
+//! (`project/instrukt/spec/feature/runner/requested-review`).
 
+use std::ffi::OsString;
 use std::io::Read as _;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -9,6 +12,7 @@ use anyhow::{Context as _, bail};
 use instrukt_core::config::Configuration;
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
+use instrukt_runner::requested_review::{self, Reached};
 use instrukt_todos::work::review::{self, ReviewProject, Verdict};
 
 use crate::context::Ctx;
@@ -21,6 +25,10 @@ pub struct ReviewArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum ReviewCommand {
+    /// Ask for the independent review of an exact committed worktree head
+    /// by its coordinates alone; instrukt renders the reviewer's assignment
+    /// and starts or sends to the head's reviewer itself.
+    Start(StartArgs),
     /// Record the calling session's verdict of the commits after the base
     /// up to the head, with the complete report.
     Record(RecordArgs),
@@ -34,6 +42,43 @@ enum ReviewCommand {
     Export(ExportArgs),
     /// Take in an export written on another computer, or on this one.
     Import(ImportArgs),
+}
+
+/// A requested review's coordinates: each names a place or a commit, and
+/// none takes text of its own.
+#[derive(Debug, clap::Args)]
+struct StartArgs {
+    /// The absolute path of the worktree that holds the candidate: the
+    /// project's registered checkout or a linked worktree of it.
+    #[arg(long)]
+    worktree: OsString,
+    /// The branch checked out in the worktree whose head is the candidate.
+    #[arg(long)]
+    branch: OsString,
+    /// The full id of the candidate commit, the branch's head.
+    #[arg(long)]
+    head: OsString,
+    /// The full id of the pinned base the review starts from.
+    #[arg(long)]
+    base: OsString,
+    /// The absolute path, outside the worktree, the reviewer writes its
+    /// complete report to.
+    #[arg(long)]
+    report: OsString,
+    /// The absolute path of the earlier review's report, on re-review.
+    #[arg(long)]
+    prior_report: Option<OsString>,
+    /// The absolute path of the author's dispositions of the earlier
+    /// findings, to dispute them on an unchanged head.
+    #[arg(long)]
+    disposition: Option<OsString>,
+    /// A source the reviewer reads beside the candidate: a snippet id, or
+    /// `repo@commit:path`. Repeatable.
+    #[arg(long = "source")]
+    sources: Vec<OsString>,
+    /// Print the reply as JSON.
+    #[arg(long)]
+    json: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -104,6 +149,7 @@ fn verdict(text: &str) -> Result<Verdict, String> {
 
 pub fn run(args: ReviewArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
+        ReviewCommand::Start(args) => start(args, ctx),
         ReviewCommand::Record(args) => record(args, ctx),
         ReviewCommand::Exempt(args) => exempt(args, ctx),
         ReviewCommand::Show(args) => show(&args, ctx),
@@ -162,6 +208,59 @@ fn caller(
     config: &Configuration,
 ) -> anyhow::Result<Option<instrukt_core::ids::SessionRef>> {
     Ok(config.caller(&crate::wiring::environment(ctx)?)?)
+}
+
+fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let (project, config) = standing_project(ctx)?;
+    let coordinates = requested_review::Coordinates::parse(&requested_review::RawCoordinates {
+        worktree: args.worktree,
+        branch: args.branch,
+        head: args.head,
+        base: args.base,
+        report: args.report,
+        prior_report: args.prior_report,
+        disposition: args.disposition,
+        sources: args.sources,
+    })?;
+    let verdicts = crate::wiring::head_verdicts(ctx);
+    let project = instrukt_runner::interfaces::ProjectRef {
+        slug: project.slug,
+        root: project.root,
+    };
+    let reply = requested_review::ask(
+        &requested_review::AskContext {
+            home: &ctx.home,
+            config: &config,
+            project: &project,
+            verdicts: verdicts.as_ref(),
+            now: ctx.clock.now(),
+        },
+        coordinates,
+    )?;
+    if args.json {
+        ctx.out.json(&reply)?;
+        return Ok(ExitCode::SUCCESS);
+    }
+    let reached = match (reply.reached, reply.repeated) {
+        (_, true) => "already reached by this same outstanding ask",
+        (Reached::Started, false) => "started by this ask",
+        (Reached::Sent, false) => "sent this ask",
+    };
+    ctx.out.line(&format!(
+        "requested {} of {} from pinned base {}",
+        reply.kind, reply.head, reply.base
+    ))?;
+    ctx.out.line(&format!(
+        "reviewer: session {}, {reached}, start key {}",
+        reply.reviewer, reply.start_key
+    ))?;
+    ctx.out
+        .line(&format!("report: {}", reply.report.display()))?;
+    ctx.out.line(&format!(
+        "outcome: in the report, and in `{}` once the reviewer records its verdict",
+        reply.show
+    ))?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn record(args: RecordArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {

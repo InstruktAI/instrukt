@@ -1,5 +1,5 @@
 ---
-description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context, retire terminal todo orchestrator threads, and leave other session lifecycle to the runtime.'
+description: 'Artifacts carry continuity; dispatchers record outcomes and handoffs, retain needed conversation context, finish completed todo orchestrator threads, and leave other session lifecycle to the runtime.'
 visibility: 'public'
 ---
 
@@ -11,7 +11,7 @@ Sessions are ephemeral expressions; artifacts carry continuity. A session exists
 for an outcome, and the work record carries that outcome beyond the
 conversation. Whoever dispatches work records its outcome and handoff, retaining
 context needed by later review rounds or a pending human conversation. Apart
-from terminal todo orchestrator retirement through the configured runtime
+from finishing completed todo orchestrator threads through the configured runtime
 action, the runtime owns session lifecycle, ending and cleanup.
 
 Completion of a workflow assignment, release of its claim, end of an execution
@@ -23,8 +23,8 @@ its required artifact and stamp, never because a reply says it is done.
 A workflow can establish completion of one assignment; the agent holds the
 current conversation and its remaining obligations. Treating one assignment as
 the whole session can cut off a forming conversation or discard context needed
-by a later review round. instrukt records that assignment's handoff and retires
-only terminal todo orchestrator threads through the configured runtime action;
+by a later review round. instrukt records that assignment's handoff and finishes
+completed todo orchestrator threads through the configured runtime action;
 otherwise the runtime manages the conversation's lifecycle.
 
 A claim determines who drives the work next, while a session determines where
@@ -65,33 +65,20 @@ conversation still has an open question.
   Starting a peer confers no authority over that peer's other obligations.
 - **A lane releases its claim before handoff.** Confirm `claim.held` is false
   after `instrukt todo update <slug> --unclaim`, then record the assignment's
-  outcome and next owner. Apart from terminal orchestrator retirement, session
-  ending and cleanup belong to the runtime.
+  outcome and next owner. Apart from finishing completed todo orchestrator
+  threads, session ending and cleanup belong to the runtime.
 - **Standing roles persist under their mandate.** The standing integrator
   parks after current work settles and is woken by its subscribed events.
   Task recurrence is governed by its record and runner, not an improvised timer.
-<!-- planned-change:standing-sdlc-coordinator -->
-- **Dormant settling and terminal retirement are distinct.** Active, held, and
-  between-phase sessions stay wakeable, using dormant settling where the
-  runtime supports it. Automation neither settles nor retires a standing agent.
-  Once a todo reaches a terminal state (`delivered` or `withdrawn`), its phase
-  orchestrator threads retire through the configured terminal retirement action
-  after all record writes and handoffs are confirmed, removing them from active
-  and settled thread lists while retaining transcripts for audit and history
-  extraction.
-<!-- change:standing-sdlc-coordinator -->
-- **Dormant settling and terminal retirement are distinct.** Active, held, and
-  between-phase sessions stay wakeable, using dormant settling where the
-  runtime supports it. Nothing retires a standing agent, and automation never
-  settles one. A standing agent whose procedure names a rest condition settles
-  its own thread through the configured settling action when that condition
-  holds and its current work is recorded; its next event or message wakes it
-  with its context. Once a todo reaches a terminal state (`delivered` or
-  `withdrawn`), its phase orchestrator threads retire through the configured
-  terminal retirement action after all record writes and handoffs are
-  confirmed, removing them from active and settled thread lists while
-  retaining transcripts for audit and history extraction.
-<!-- /planned-change:standing-sdlc-coordinator -->
+- **Workflows finish threads; archiving stays outside workflow procedures.**
+  Active, held, between-phase, and terminal (`delivered` or `withdrawn`) todo
+  orchestrator threads use the single configured `runtime.finish_thread` action
+  when resting or after all terminal record writes and handoffs are confirmed.
+  A standing procedure likewise self-finishes when parked dormant with no
+  pending work or human obligation (`general/procedure/event-handling/overview`),
+  waking in place on its next subscribed event. Finished threads stay quiet,
+  readable, and wakeable in place; runner automation and other agents never
+  finish or archive a standing agent.
 <!-- planned:standing-sdlc-coordinator -->
 - **What execution discovers returns through the work's origin.** A decision
   that belongs to a person, met in work an agent carries out for someone else's

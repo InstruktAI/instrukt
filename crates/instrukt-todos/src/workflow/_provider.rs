@@ -17,7 +17,8 @@ use serde::Serialize;
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactVersion, BuildVerdict, ContentDigest,
     DependencyDigest, DriftClass, PreparationReview, Prerequisite, ReviewVerdict, RoleBinding,
-    StampFact, TodoEvidence, TodoStatus, artifact_names, upstream_of,
+    StampFact, StampRecord, TodoEvidence, TodoStatus, VerificationDisposition, artifact_names,
+    upstream_of,
 };
 
 /// Each artifact with a drift classification.
@@ -169,6 +170,26 @@ impl BuildReviewBinding {
     }
 }
 
+/// Whether the latest verification disposition still binds the current
+/// worktree head and `verification-findings` report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationBinding {
+    Current,
+    StaleCommit,
+    StaleReport,
+}
+
+impl VerificationBinding {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Current => "current",
+            Self::StaleCommit => "stale_commit",
+            Self::StaleReport => "stale_report",
+        }
+    }
+}
+
 /// Status of a configured approval gate (`approvals.prd`, `approvals.task`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
@@ -185,7 +206,7 @@ pub enum ApprovalStatus {
     },
 }
 
-/// Status of the independent exact-SHA review gate for integration.
+/// Status of the independent exact-SHA handoff gate for integration.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum IntegrateGateStatus {
@@ -262,6 +283,30 @@ pub struct BuildReviewFact {
     pub open_findings: bool,
 }
 
+/// The latest verification disposition, as the ledger reports it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerificationFact {
+    pub disposition: VerificationDisposition,
+    pub commit: CommitSha,
+    pub report_digest: ContentDigest,
+    pub recorder: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<RoleName>,
+    /// A hotfix deferral's follow-up todo, as recorded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub follow_up: Option<crate::work::TodoRef>,
+    pub binding: VerificationBinding,
+    pub admits_handoff: bool,
+}
+
+/// The latest disposition a verifier recorded for the worktree head when it
+/// is fail or blocked: what limits the orchestrator's skip or deferral there.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct VerifierLimitFact {
+    pub disposition: VerificationDisposition,
+    pub commit: CommitSha,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrerequisiteFact {
     pub slug: TodoSlug,
@@ -300,6 +345,10 @@ pub struct TodoLedger {
     pub build_review: Option<BuildReviewFact>,
     pub diagnosis_settled: bool,
     pub deferrals_open: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification: Option<VerificationFact>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verifier_limit: Option<VerifierLimitFact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalize_ready_commit: Option<CommitSha>,
     pub prerequisites: Vec<PrerequisiteFact>,
@@ -442,6 +491,31 @@ impl TodoLedger {
         if self.deferrals_open {
             lines.push("deferrals: unprocessed".to_owned());
         }
+        if let Some(v) = &self.verification {
+            let role = v
+                .role
+                .as_ref()
+                .map(|r| format!(" as {r}"))
+                .unwrap_or_default();
+            let follow_up = v
+                .follow_up
+                .as_ref()
+                .map(|t| format!(", follow-up {} ({})", t.slug, t.id))
+                .unwrap_or_default();
+            let limit = self
+                .verifier_limit
+                .as_ref()
+                .map(|l| format!(" [verifier recorded {} at this head]", l.disposition))
+                .unwrap_or_default();
+            lines.push(format!(
+                "verification: {} ({}, commit {}, report {}, by {}{role}{follow_up}){limit}",
+                v.disposition,
+                v.binding.as_str(),
+                v.commit,
+                v.report_digest,
+                v.recorder
+            ));
+        }
         if let Some(commit) = &self.finalize_ready_commit {
             lines.push(format!("finalize_ready: {commit}"));
         }
@@ -490,10 +564,10 @@ impl TodoLedger {
                 } else {
                     "ready to stamp --finalize-ready"
                 };
-                lines.push(format!("  review gate: ready ({commit}; {handoff})"));
+                lines.push(format!("  handoff gate: ready ({commit}; {handoff})"));
             }
             IntegrateGateStatus::Blocked { reasons } => {
-                lines.push(format!("  review gate: blocked ({})", reasons.join("; ")));
+                lines.push(format!("  handoff gate: blocked ({})", reasons.join("; ")));
             }
         }
 
@@ -826,6 +900,89 @@ pub(crate) fn current_build_verdict(
     })
 }
 
+/// The latest verification disposition recorded for the todo, with the
+/// commit and report it binds: the only one that can be current
+/// (`artifact-currency`, "Verification-disposition currency").
+fn latest_disposition(
+    evidence: &TodoEvidence,
+) -> Option<(
+    &StampRecord,
+    VerificationDisposition,
+    &CommitSha,
+    &ContentDigest,
+)> {
+    evidence.stamps.iter().rev().find_map(|s| match &s.fact {
+        StampFact::VerificationDisposition {
+            disposition,
+            commit,
+            report,
+            ..
+        } => Some((s, *disposition, commit, report)),
+        _ => None,
+    })
+}
+
+/// The handoff half of invariant 2 (`delivery-cycle`, "Live verification
+/// disposition"): the latest verification disposition names `candidate`,
+/// binds the current `verification-findings` report and admits handoff,
+/// and a pass was recorded by a session independent of the claim holder,
+/// driver and writers (and of `caller`, when given). One predicate for
+/// `--finalize-ready` and the ledger, so the ledger never advertises a
+/// readiness that refuses. The error names what is owed.
+pub(crate) fn handoff_disposition(
+    evidence: &TodoEvidence,
+    candidate: &CommitSha,
+    caller: Option<&SessionRef>,
+) -> Result<(), String> {
+    // Ledger reasons are joined with `; `, so none holds one.
+    const OWED: &str = "a pass, tier_0_skip or hotfix_deferred is owed at this commit";
+    let Some((stamp, disposition, commit, report)) = latest_disposition(evidence) else {
+        return Err(format!("no verification disposition recorded ({OWED})"));
+    };
+    if commit != candidate {
+        return Err(format!(
+            "latest verification disposition, {disposition}, names another commit ({OWED})"
+        ));
+    }
+    let current_report = evidence
+        .artifacts
+        .iter()
+        .find(|a| a.name.as_str() == artifact_names::VERIFICATION_FINDINGS)
+        .and_then(|a| a.versions.last())
+        .map(|v| &v.digest);
+    if current_report != Some(report) {
+        return Err(format!(
+            "verification-findings changed since the latest disposition, {disposition}, was recorded (one is owed for the current report)"
+        ));
+    }
+    if !disposition.admits_handoff() {
+        return Err(format!(
+            "latest verification disposition is {disposition} ({OWED})"
+        ));
+    }
+    if disposition == VerificationDisposition::Pass {
+        let bindings: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = evidence
+            .bindings
+            .iter()
+            .map(|b| {
+                (
+                    b.role.clone(),
+                    b.attempt.assignment,
+                    Some(&b.binding.session),
+                )
+            })
+            .collect();
+        let claim = evidence.claim.as_ref().and_then(|c| c.session.as_ref());
+        if !is_independent_reviewer(claim, &bindings, &stamp.actor, caller) {
+            return Err(
+                "the verification pass was not recorded by an independent verifier (a new independent verifier attempt is owed)"
+                    .to_owned(),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// The latest finalize-ready commit if it still stands (no later build
 /// completion or kickback).
 pub(crate) fn current_finalize_ready(evidence: &TodoEvidence) -> Option<&CommitSha> {
@@ -1122,11 +1279,7 @@ pub(crate) fn derive_ledger(
                 verdict: *verdict,
                 target_commit: target.clone(),
                 report_digest: report.clone(),
-                reviewer: match &s.actor {
-                    Actor::Session(id) => id.to_string(),
-                    Actor::GitHub { login } => format!("@{login}"),
-                    Actor::Person { name } => name.clone(),
-                },
+                reviewer: actor_word(&s.actor),
                 independent,
                 binding,
                 open_findings: *verdict == BuildVerdict::ChangesRequested
@@ -1150,6 +1303,64 @@ pub(crate) fn derive_ledger(
     });
 
     let finalize_ready_commit = current_finalize_ready(evidence).cloned();
+
+    let observed_head = observed
+        .worktree
+        .as_ref()
+        .and_then(|w| w.head.as_ref())
+        .or(observed.branch_head.as_ref());
+    let verification = latest_disposition(evidence).map(|(s, disposition, commit, report)| {
+        let follow_up = match &s.fact {
+            StampFact::VerificationDisposition { follow_up, .. } => follow_up.clone(),
+            _ => None,
+        };
+        let binding = if observed_head != Some(commit) {
+            VerificationBinding::StaleCommit
+        } else if ledger.current(artifact_names::VERIFICATION_FINDINGS) != Some(report) {
+            VerificationBinding::StaleReport
+        } else {
+            VerificationBinding::Current
+        };
+        VerificationFact {
+            disposition,
+            commit: commit.clone(),
+            report_digest: report.clone(),
+            recorder: actor_word(&s.actor),
+            role: s.role.clone(),
+            follow_up,
+            binding,
+            admits_handoff: observed_head
+                .is_some_and(|head| handoff_disposition(evidence, head, None).is_ok()),
+        }
+    });
+    let verifier_limit = observed_head.and_then(|head| {
+        evidence
+            .stamps
+            .iter()
+            .rev()
+            .find_map(|s| match &s.fact {
+                StampFact::VerificationDisposition {
+                    disposition,
+                    commit,
+                    ..
+                } if commit == head
+                    && s.role.as_ref().map(RoleName::as_str) == Some(super::VERIFIER_ROLE) =>
+                {
+                    Some(*disposition)
+                }
+                _ => None,
+            })
+            .filter(|d| {
+                matches!(
+                    d,
+                    VerificationDisposition::Fail | VerificationDisposition::Blocked
+                )
+            })
+            .map(|disposition| VerifierLimitFact {
+                disposition,
+                commit: head.clone(),
+            })
+    });
 
     // Gate 1: Interference lock
     let active_workspace_attempt = evidence
@@ -1220,7 +1431,7 @@ pub(crate) fn derive_ledger(
         }
     };
 
-    // Gate 2: Independent exact-SHA review gate for integrate
+    // Gate 2: Independent exact-SHA handoff gate for integrate
     let integrate_review_gate = {
         let mut reasons = Vec::new();
         if active_workspace_attempt.is_some() {
@@ -1263,6 +1474,11 @@ pub(crate) fn derive_ledger(
                 reasons.push("no independent build_review approve stamp".to_owned());
             }
         }
+        if let Some(head) = &head
+            && let Err(why) = handoff_disposition(evidence, head, None)
+        {
+            reasons.push(why);
+        }
         if reasons.is_empty()
             && let Some(commit) = head
         {
@@ -1299,6 +1515,8 @@ pub(crate) fn derive_ledger(
         build_review,
         diagnosis_settled,
         deferrals_open,
+        verification,
+        verifier_limit,
         finalize_ready_commit,
         prerequisites,
         prerequisites_satisfied,
@@ -1308,6 +1526,15 @@ pub(crate) fn derive_ledger(
             task_approval,
             integrate_review_gate,
         },
+    }
+}
+
+/// Who acted, in the ledger's words.
+fn actor_word(actor: &Actor) -> String {
+    match actor {
+        Actor::Session(id) => id.to_string(),
+        Actor::GitHub { login } => format!("@{login}"),
+        Actor::Person { name } => name.clone(),
     }
 }
 
@@ -1385,6 +1612,116 @@ mod tests {
     use super::super::_testing::{digest, session, sha, todo};
     use super::*;
 
+    /// A claimed change with a `verification-findings` report `report`.
+    fn verified(report: &str) -> TodoEvidence {
+        todo(TodoKind::Change)
+            .artifact(artifact_names::VERIFICATION_FINDINGS, report)
+            .claimed()
+            .build()
+    }
+
+    /// `disposition` of `commit` against report `report`, by `who`.
+    fn disposed(
+        evidence: &mut TodoEvidence,
+        who: &str,
+        disposition: VerificationDisposition,
+        commit: &CommitSha,
+        report: &str,
+    ) {
+        let sequence = evidence.stamps.len() as u64 + 100;
+        evidence.stamps.push(StampRecord {
+            source_comment: None,
+            fact: StampFact::VerificationDisposition {
+                disposition,
+                commit: commit.clone(),
+                report: digest(report),
+                follow_up: None,
+            },
+            at: jiff::Timestamp::from_second(1_800_000_100).unwrap(),
+            actor: Actor::Session(session(who)),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence,
+            model_provenance: Default::default(),
+        });
+    }
+
+    #[test]
+    fn a_disposition_admits_handoff_only_at_its_commit_and_report() {
+        let head = sha('a');
+        let mut evidence = verified("tier 0");
+        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Tier0Skip,
+            &head,
+            "tier 0",
+        );
+        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+        // A new candidate commit carries none until one is recorded for it.
+        assert!(handoff_disposition(&evidence, &sha('b'), None).is_err());
+        // A rewritten report leaves the disposition as history.
+        let mut rewritten = evidence.clone();
+        rewritten.artifacts[0].versions[0].digest = digest("tier 0, revised");
+        assert!(handoff_disposition(&rewritten, &head, None).is_err());
+    }
+
+    #[test]
+    fn only_the_latest_disposition_counts() {
+        let head = sha('a');
+        let mut evidence = verified("live run");
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Tier0Skip,
+            &head,
+            "live run",
+        );
+        disposed(
+            &mut evidence,
+            "verifier",
+            VerificationDisposition::Fail,
+            &head,
+            "live run",
+        );
+        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        disposed(
+            &mut evidence,
+            "verifier",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+    }
+
+    #[test]
+    fn a_pass_admits_only_when_its_recorder_is_independent() {
+        let head = sha('a');
+        let mut evidence = verified("live run");
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        let mut independent = verified("live run");
+        disposed(
+            &mut independent,
+            "verifier",
+            VerificationDisposition::Pass,
+            &head,
+            "live run",
+        );
+        assert_eq!(handoff_disposition(&independent, &head, None), Ok(()));
+        assert!(handoff_disposition(&independent, &head, Some(&session("verifier"))).is_err());
+    }
+
     #[test]
     fn fast_track_bug_needs_no_prd_or_plan_to_pass_integrate_gate() {
         let head = sha('a');
@@ -1421,22 +1758,47 @@ mod tests {
             reviewed_change: Some(ChangeSinceReview::Unchanged),
             ..Default::default()
         };
-        let ledger = derive_ledger(
-            &evidence,
-            &observed,
-            Approvers {
-                prd: Approver::Human,
-                task: Approver::Human,
-            },
-            Vec::new(),
-        );
+        let approvers = Approvers {
+            prd: Approver::Human,
+            task: Approver::Human,
+        };
+        let ledger = derive_ledger(&evidence, &observed, approvers, Vec::new());
         assert_eq!(ledger.gates.prd_approval, ApprovalStatus::NotRequired);
+        // The handoff gate's second half: no disposition is current yet,
+        // and that is the gate's one reason.
+        assert!(matches!(
+            &ledger.gates.integrate_review_gate,
+            IntegrateGateStatus::Blocked { reasons } if reasons.len() == 1
+        ));
+        evidence.artifacts.push(crate::evidence::ArtifactHistory {
+            name: crate::evidence::ArtifactName::new(artifact_names::VERIFICATION_FINDINGS),
+            versions: vec![crate::evidence::ArtifactVersion {
+                digest: digest("tier 0"),
+                writer: Actor::Session(session("orchestrator")),
+                created: jiff::Timestamp::from_second(1_800_000_011).unwrap(),
+                derived_from: Vec::new(),
+                sequence: 11,
+                grounding: Default::default(),
+            }],
+        });
+        disposed(
+            &mut evidence,
+            "orchestrator",
+            VerificationDisposition::Tier0Skip,
+            &head,
+            "tier 0",
+        );
+        let ledger = derive_ledger(&evidence, &observed, approvers, Vec::new());
         assert_eq!(
             ledger.gates.integrate_review_gate,
             IntegrateGateStatus::Ready {
                 commit: head,
                 finalize_stamped: false,
             }
+        );
+        assert_eq!(
+            ledger.verification.map(|v| (v.binding, v.admits_handoff)),
+            Some((VerificationBinding::Current, true))
         );
     }
 

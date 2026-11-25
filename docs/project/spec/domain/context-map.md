@@ -124,6 +124,16 @@ Fleet attention adds these crossings
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 <!-- /planned:standing-sdlc-coordinator -->
 
+
+A requested review (`project/instrukt/spec/feature/runner/requested-review`)
+adds one crossing and is no part of the review gate: it emits no event and the
+runner holds no review request for it.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+
+
 Worktree reclamation adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/worktree-reclamation`.
 

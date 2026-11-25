@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-event-delivery.rs
+expression: "format!(\"{}\\n{}\", r.runtime.title(\"s1\"), r.runtime.title(\"s2\"))"
+---
+responder · todo:one
+responder · todo:two

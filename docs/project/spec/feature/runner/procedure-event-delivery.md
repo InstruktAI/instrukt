@@ -128,14 +128,15 @@ requires reconciliation under the standing-agent contract. Failed observation
 or send never authorizes a replacement. Cleanup retains pending input or a
 visible terminal failure; it never silently discards the responsibility's work.
 <!-- change:standing-sdlc-coordinator -->
-Settling a standing T3 thread suspends neither its responsibility nor
-delivery: later input wakes the same thread. Automation never settles it; a
-standing agent settles its own thread only at a rest its procedure names
-(`project/instrukt/spec/feature/runner/procedure-standing-agent`).
-Continuation resolves retained older work first; actual runtime record removal
-requires reconciliation under the standing-agent contract. Failed observation
-or send never authorizes a replacement. Cleanup retains pending input or a
-visible terminal failure; it never silently discards the responsibility's work.
+Settling a standing T3 thread suspends neither its responsibility nor delivery:
+later input wakes the same thread. Runner automation never settles it; a
+standing procedure may self-settle when parked dormant
+(`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`). Continuation
+resolves retained older work first; actual runtime record removal requires
+reconciliation under the standing-agent contract. Failed observation or send
+never authorizes a replacement. Cleanup retains pending input or a visible
+terminal failure; it never silently discards the responsibility's work.
 <!-- /planned-change:standing-sdlc-coordinator -->
 
 ### Initialization-fixed settings
@@ -369,11 +370,11 @@ Examples:
 - Handover establishes supplied context, not successful domain execution.
   Lost acknowledgement can repeat data; identities promise neither exactly-once
   effects nor replay beyond retention.
-- Only-at-entry work may defer later events for its whole run. Automation
-  never settles a standing T3 thread, a standing agent settles its own only at
-  a rest its procedure names, and a settled one stays reachable, under
-  `project/instrukt/spec/feature/runner/procedure-standing-agent`; no revival
-  or attendance-visibility gate applies.
+- Only-at-entry work may defer later events for its whole run. Runner automation
+  never settles a standing T3 thread, a standing procedure may self-settle when
+  parked dormant, and a settled one stays reachable, under
+  `project/instrukt/spec/feature/runner/procedure-standing-agent`; no revival or
+  attendance-visibility gate applies.
 <!-- /planned-change:standing-sdlc-coordinator -->
 
 ## See Also

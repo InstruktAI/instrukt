@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&stdout(&asked), &commits, &[\"s1\"])"
+---
+requested review of [HEAD] from pinned base [BASE]
+reviewer: session t3:[SESSION-1], started by this ask, start key instrukt:review:demo:[HEAD]
+report: [TMP]/reports/one.md
+outcome: in the report, and in `instrukt review show [HEAD]` once the reviewer records its verdict

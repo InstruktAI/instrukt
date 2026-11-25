@@ -165,6 +165,12 @@ pub fn fleet_record(
     Ok(Arc::new(_work::work(ctx)?))
 }
 
+/// Work's answers for `instrukt review start`
+/// (`project/instrukt/spec/feature/runner/requested-review`).
+pub fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::HeadVerdicts> {
+    _work::head_verdicts(ctx)
+}
+
 /// Work's evidence read contract, for workflow's fact provider.
 #[allow(dead_code, reason = "consumed by the todo commands in wave 3")]
 pub fn work_evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>>> {

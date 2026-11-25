@@ -30,6 +30,7 @@ roles:
   plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   build-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   commit-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
+  verifier: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
 bundles:
   read:
     - {action: docs-read, scope: any}

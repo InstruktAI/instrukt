@@ -53,7 +53,7 @@ you rest.
 ### Bounds that keep owners in place
 
 - **Act on the owning command, never as the owner.** You place and release
-  holds, declare dependencies, withdraw work and retire threads through their
+  holds, declare dependencies, withdraw work and finish threads through their
   commands, within `sdlc/policy/todo-creation-discipline`. You never drive a
   todo's workflow, dispatch its roles, author its artifacts or feature code, or
   reach `main` other than through the integrator. A todo's orchestrator still
@@ -106,8 +106,6 @@ Apply these configured action values to the identified assignment and session.
 <!-- @config: runtime.message_peer -->
 
 <!-- @config: runtime.finish_thread -->
-
-<!-- @config: runtime.retire_thread -->
 
 ### 1. Read the condition against the current record
 
@@ -178,11 +176,10 @@ waiting on a person. The operator's answer here is the settlement.
    - a todo that resumes unchanged has its pause released;
    - a todo whose intent changes resumes once its origin has recorded the
      adopted outcome in that todo's `input`;
-   - a todo superseded by another has what was particular to it folded into
-     the survivor's `log` and is withdrawn, and its orchestrator thread
-     retired;
+   - a todo superseded by another has what was particular to it folded into the
+     survivor's `log` and is withdrawn, and its orchestrator thread finished;
    - a todo retired outright, such as one whose requester adopts an existing
-     solution, is withdrawn and its orchestrator thread retired, with no
+     solution, is withdrawn and its orchestrator thread finished, with no
      survivor;
    - an outcome that keeps converging todos apart records the boundary or
      dependency it set.
@@ -204,16 +201,18 @@ waiting on a person. The operator's answer here is the settlement.
 
 ### 6. Rest
 
-At the end of every turn, read `instrukt todo list`. When no todo of the
-project is active, unheld and not a structural holder — none remains, or every
-one is held for an origin's answer, the operator's or an external gate — settle
-this thread through the configured settling action. The end of an attention
-episode (`runner.attention.fleet_quiet`) is the event that tells you this has
-come to hold after you last ended a turn awake. The next attention event, a
-hold's release among them, or a message wakes this same thread with its
-context.
-
-Otherwise end the turn; the next event or message brings the next work.
+At the end of every turn, read `instrukt todo list`. While a todo of the project
+is active, unheld and not a structural holder, that fleet is your active watch:
+end the turn without finishing this thread, and the next event or message brings
+the next work. When none remains — none is active, or every one is held for an
+origin's answer, the operator's or an external gate — you are parked: finish
+this thread through the configured `runtime.finish_thread` action under
+`general/procedure/event-handling/overview`. A question you asked the operator
+waits on the hold of the todo it concerns, not on this thread, and does not keep
+you active. The end of an attention episode (`runner.attention.fleet_quiet`) is
+the event that tells you this has come to hold after you last ended a turn
+active. The next attention event, a hold's release among them, or a message
+wakes this same thread in place with its context.
 
 ## Outputs
 

@@ -161,10 +161,10 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         "schema_version: 4\nroles:\n  planner: {order: [antigravity]}\n",
     )
     .unwrap();
-    // Work for each role: a procedure of that role answering one fact.
-    for (name, role) in [
-        ("own-choice", "planner"),
-        ("shipped-choice", "plan-reviewer"),
+    // Work for each role: a procedure of that role answering its own fact.
+    for (name, role, fact) in [
+        ("own-choice", "planner", "example.overridden"),
+        ("shipped-choice", "plan-reviewer", "example.shipped"),
     ] {
         computer.project.write(
             &format!("docs/domain/reactions/procedure/{name}.md"),
@@ -172,9 +172,7 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
                 "procedure",
                 name,
                 "Answer a fact.",
-                &format!(
-                    "role: {role}\nsubscription_home: project\nsubscriptions: [example.changed]\n"
-                ),
+                &format!("role: {role}\nsubscription_home: project\nsubscriptions: [{fact}]\n"),
                 &[],
                 "Inspect the current fact.\n",
             ),
@@ -183,25 +181,6 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
     computer.project.commit("docs: publish work for two roles");
     documented::sync(&computer.env, &computer.project);
     computer.tick();
-    let event = serde_json::json!({"id":"one-fact","type":"example.changed","source":computer.computer(),"subject":"todo:sample","home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{}});
-    redis::cmd("XADD")
-        .arg(instrukt_runner::transport::EVENT_STREAM)
-        .arg("*")
-        .arg("event")
-        .arg(event.to_string())
-        .query::<String>(&mut redis.connection())
-        .unwrap();
-    computer.tick();
-    let started: std::collections::BTreeMap<String, (String, String)> = runtime
-        .threads()
-        .iter()
-        .map(|id| {
-            (
-                runtime.title(id),
-                (runtime.provider(id).to_string(), runtime.model(id)),
-            )
-        })
-        .collect();
     let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
     let selected = |role: &str, first: Option<&str>| {
         let (profile, tier) = shipped.order(Some(role), None, None, None).unwrap()[0].clone();
@@ -211,15 +190,35 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         let model = shipped.model_chain(&profile, tier).unwrap().remove(0);
         (model.instance.to_string(), model.model)
     };
+    // One fact at a time: the thread it starts belongs to the role answering
+    // that fact, recognised by arriving after the threads already running.
+    let answer = |fact: &str, running: &[String]| {
+        let event = serde_json::json!({"id":fact,"type":fact,"source":computer.computer(),"subject":"todo:sample","home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{}});
+        redis::cmd("XADD")
+            .arg(instrukt_runner::transport::EVENT_STREAM)
+            .arg("*")
+            .arg("event")
+            .arg(event.to_string())
+            .query::<String>(&mut redis.connection())
+            .unwrap();
+        computer.tick();
+        let started: Vec<String> = runtime
+            .threads()
+            .into_iter()
+            .filter(|id| !running.contains(id))
+            .collect();
+        assert_eq!(started.len(), 1);
+        started[0].clone()
+    };
+    let own = answer("example.overridden", &[]);
     assert_eq!(
-        started,
-        std::collections::BTreeMap::from([
-            (
-                "own-choice".to_owned(),
-                selected("planner", Some("antigravity"))
-            ),
-            ("shipped-choice".to_owned(), selected("plan-reviewer", None)),
-        ])
+        (runtime.provider(&own).to_string(), runtime.model(&own)),
+        selected("planner", Some("antigravity"))
+    );
+    let kept = answer("example.shipped", std::slice::from_ref(&own));
+    assert_eq!(
+        (runtime.provider(&kept).to_string(), runtime.model(&kept)),
+        selected("plan-reviewer", None)
     );
 }
 

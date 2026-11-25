@@ -669,14 +669,14 @@ applies, and a condition that has cleared opens none.
 ##### NC-42 — Stale thread of delivered or withdrawn work
 
 - **Evidence available:** a todo in a terminal state, its recorded orchestrator
-  thread still active or settled, and its open obligations.
-- **Ownership:** terminal retirement is owed by the retirement rule of
-  `sdlc/policy/todo-creation-discipline`; the Coordinator executes it when its
-  owner left it undone.
+  thread still active, and its open obligations.
+- **Ownership:** finishing a terminal todo's thread is owed by the
+  terminal-finishing rule of `sdlc/policy/todo-creation-discipline`; the
+  Coordinator executes it when its owner left it undone.
 - **Coordinator:** after confirming the todo is terminal and the thread holds no
-  unfinished human or worker obligation, retire it through the configured
-  retirement action. Never retire a standing agent.
-- **Stop and settlement:** settle when the thread is retired.
+  unfinished human or worker obligation, finish it through the configured
+  `runtime.finish_thread` action. Never finish another standing agent's thread.
+- **Stop and settlement:** settle when the thread is finished.
 
 ##### NC-43 — Agents confused about who does what
 
@@ -742,7 +742,8 @@ a recommended resolution, never what a person said in another conversation
   `sdlc/policy/todo-creation-discipline`.
 - **Coordinator:** choose the survivor by progress and completeness, write what
   the redundant filing carried that the survivor lacks into the survivor's
-  `log`, withdraw the redundant filing and retire its thread. Nobody is told.
+  `log`, withdraw the redundant filing and finish its orchestrator thread.
+  Nobody is told.
 - **Stop and settlement:** settle when one todo remains and its log carries the
   folded evidence.
 

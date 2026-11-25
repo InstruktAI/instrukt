@@ -47,6 +47,7 @@ pub mod keyed;
 pub mod launch;
 pub mod process;
 pub mod reclamation;
+pub mod requested_review;
 pub mod review;
 pub mod runner;
 pub mod runtime;
