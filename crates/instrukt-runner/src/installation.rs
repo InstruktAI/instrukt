@@ -374,6 +374,19 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
     let Ok(candidate) = instrukt_core::config::Admitted::load(request.home) else {
         return;
     };
+    // Reclamation is reported withheld for the projects admission withheld
+    // it for, with the findings that did.
+    let withheld: Vec<std::path::PathBuf> = candidate
+        .generation
+        .projects()
+        .iter()
+        .filter(|project| !project.reclamation)
+        .map(|project| {
+            project
+                .checkout
+                .join(instrukt_core::config::CONFIG_FILE_NAME)
+        })
+        .collect();
     for finding in &candidate.findings {
         let label = format!("{} `{}`", finding.document.display(), finding.key);
         if matches!(
@@ -381,7 +394,9 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             FindingKind::EventsNeedTransport | FindingKind::AutomaticReviewNotReady
         ) {
             report.finding(label, &finding.message);
-        } else if instrukt_core::config::withholds_reclamation(finding) {
+        } else if instrukt_core::config::withholds_reclamation(finding)
+            && withheld.contains(&finding.document)
+        {
             report.finding(
                 label,
                 format!(
