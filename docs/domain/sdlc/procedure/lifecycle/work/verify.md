@@ -19,13 +19,22 @@ parameters:
 
 ## Goal
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 Independently verify that the committed candidate HEAD works on its real user
 or runtime surface without relying on builder claims, and return sanitized,
 publishable `verification-plan` and `verification-findings` payloads for
 `todo-orchestrator` to persist on the todo record.
+<!-- change:verification-stamp-and-evidence-store -->
+Independently verify that the committed candidate HEAD works on its real user
+or runtime surface without relying on builder claims, write sanitized,
+publishable `verification-plan` and `verification-findings` artifacts to the
+todo record, and record the verification disposition they support for that
+exact HEAD.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Preconditions
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - The slug and clean candidate HEAD SHA were supplied by `todo-orchestrator`.
 - **Workspace isolation and access boundaries:** `verifier` never shares
   `todo-orchestrator`'s admitted `<slug>/work` worktree and is not dispatched
@@ -38,6 +47,19 @@ publishable `verification-plan` and `verification-findings` payloads for
   with `<slug>/work`; leaving repository files and the todo ledger untouched is
   prose-enforced by this procedure until dedicated `verifier` role grants and
   native verification-phase stamping exist.
+<!-- change:verification-stamp-and-evidence-store -->
+- The slug and clean candidate HEAD SHA were supplied by `todo-orchestrator`.
+- **Placement:** `todo-orchestrator` reserved and bound this `verifier`
+  attempt in `<slug>/work` after `build-reviewer` released, and you work there
+  as a shared child at the candidate HEAD the attempt captured. Your session is
+  distinct from the orchestrator and from every writer of the change, which is
+  what admits your `pass`, `fail` or `blocked`
+  (`general/principle/verification-independence`). Your disposition is
+  admitted only over a clean tree at that captured HEAD: build output the
+  repository ignores leaves it clean, and slots, raw evidence and every other
+  run file live outside the worktree (Step 3). Recording the disposition
+  releases the attempt (Step 6).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 - Approved intent (`input`, plus `prd` for a feature or settled `diagnosis` for
   a bug) is readable by artifact name via
   `instrukt todo artifacts read {slug} <name>`.
@@ -150,9 +172,16 @@ Read in full:
 Apply the archetype matrix, execution-host rules, and dynamic tiering of
 `sdlc/policy/live-verification`:
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Tier 0 (no live run warranted):** return a concise Tier 0
   `verification-findings` payload citing the exact candidate HEAD SHA, reason,
   and `Verdict: TIER_0_SKIP`, and stop.
+<!-- change:verification-stamp-and-evidence-store -->
+- **Tier 0 (no live run warranted):** write a concise Tier 0
+  `verification-findings` citing the exact candidate HEAD SHA, reason, and
+  `Verdict: TIER_0_SKIP`, record the `tier_0_skip` disposition and report it
+  (Step 6, items 3 to 5), and stop.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 - **Tier 1 / Tier 2:** compose the `verification-plan` payload naming:
   - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
   - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
@@ -292,6 +321,7 @@ Select execution by archetype and Layer 1 `execution_host`:
       authorized raw-evidence storage; a local probe never substitutes for
       required CI run evidence) alongside independent `build-reviewer` review of
       the newly authored workflow file.
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Local isolated execution (Docker-free CLI/daemon/temp-home archetypes, or
   explicit local-stack override):**
   - Confirm ≥20 GiB free disk space before building binaries or containers
@@ -308,6 +338,28 @@ Select execution by archetype and Layer 1 `execution_host`:
     guaranteed cleanup on both normal completion and error so every spawned
     slot, process group, container, volume, and ephemeral temp directory is
     removed before exit (`general/policy/shared-machine-resources`).
+<!-- change:verification-stamp-and-evidence-store -->
+- **Local isolated execution (Docker-free CLI/daemon/temp-home archetypes, or
+  explicit local-stack override):**
+  - Confirm ≥20 GiB free disk space before building binaries or containers
+    (`general/policy/shared-machine-resources`).
+  - Hold each slot — its isolated roots, ports, data and the Driver's raw
+    evidence location — in a temporary location outside the worktree that the
+    project's own test harness or its language's managed temporary-directory
+    facility creates and removes when the process holding it ends, following
+    the slot recipe Layer 1 names. Ending that process is the slot's teardown,
+    so the run never deletes a slot itself: a shell deletion trap stalls an
+    unattended session on a destructive-command approval.
+  - Boot the archetype's exact isolation primitive in that slot through
+    Layer 1's boot entrypoint (a container stack under its declared project
+    name and file on both boot and teardown; the candidate binary under
+    isolated temp homes for CLI/daemon stacks, honoring Layer 1 and
+    `sdlc/policy/testing` on inheriting the home and isolating application
+    roots; or a native simulator or ephemeral tenant).
+  - Run deterministic seed shortcuts to reach precondition state, and start
+    every process the run spawns in a tracked process group that is reaped on
+    both normal completion and error (`general/policy/shared-machine-resources`).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### 4. Driver — execute blind on the real surface
 
@@ -316,6 +368,7 @@ the ephemeral CI runner on subscription-backed agent execution for CI-hosted
 runs, or as fresh parallel subagents across isolated local slots per
 `general/principle/parallel-work`) providing **only**:
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - the booted surface address (URL, candidate binary path, API base URL,
   simulator ID, or sandbox channel) and seeded user role/credentials;
 - the user-goal mission brief and adversarial perturbations from Step 2;
@@ -326,6 +379,19 @@ runs, or as fresh parallel subagents across isolated local slots per
   the ephemeral CI VM prior to in-job Checker audit on public repos, or the
   local ephemeral temp directory outside Git), and report both goal pass/fail
   and an unprompted anomaly list of anything unexpected, slow, or broken.
+<!-- change:verification-stamp-and-evidence-store -->
+- the booted surface address (URL, candidate binary path, API base URL,
+  simulator ID, or sandbox channel) and seeded user role/credentials;
+- the user-goal mission brief and adversarial perturbations from Step 2;
+- instruction to interact exclusively through the real user/runtime surface,
+  save raw evidence (recordings, screenshots, transcripts, observed state) onto
+  an authorized non-public evidence surface (`sdlc/policy/live-verification`
+  publication boundary — private-repo CI artifacts, private authorized storage,
+  the ephemeral CI VM prior to in-job Checker audit on public repos, or the
+  local slot's managed temporary location from Step 3), and report both goal
+  pass/fail and an unprompted anomaly list of anything unexpected, slow, or
+  broken.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 Omit source code, repository file paths, git diffs, and implementation hints
 from the Driver brief (`sdlc/policy/live-verification`).
@@ -377,6 +443,7 @@ intent, and any firing Layer 2 triggers:
      reproduction steps for `deferrer` / `bug` intake, keeping this todo's
      scope bounded.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 ### 6. Tear down and return sanitized payloads
 
 1. For local runs, tear down every spawned verification slot, container,
@@ -401,6 +468,46 @@ intent, and any firing Layer 2 triggers:
   missing extension-point fills (if any), fired Layer 2 triggers, authorized
   evidence references/summaries, Driver honesty confirmation, actionable
   blocking defect records (when `FAIL`), and pre-existing observations.
+<!-- change:verification-stamp-and-evidence-store -->
+### 6. Tear down, record findings and the disposition
+
+1. For local runs, end each slot as Layer 1's recipe names: stop every process
+   group the run spawned (for a container stack, its declared teardown) and the
+   process holding the slot's managed temporary location, which removes the
+   slot and its raw evidence with it. Confirm zero orphaned processes remain
+   and that `git status --porcelain` in `<slug>/work` prints nothing.
+2. Enforce the publication boundary (`sdlc/policy/live-verification`,
+   `sdlc/policy/security-awareness`): strip machine-local absolute paths, raw
+   boot/environment dumps, unredacted payloads/headers, and sandbox credentials
+   from every artifact you write and anything uploaded to a public CI
+   artifact. Where a CI-hosted run retained raw evidence, the findings name the
+   authorized home that holds it.
+3. Write the publishable `verification-plan` (for Tier 1/2 runs) and
+   `verification-findings` in the report format below with
+   `instrukt todo artifacts write {slug} verification-plan '<content>'` and
+   `instrukt todo artifacts write {slug} verification-findings '<content>'`.
+4. From `<slug>/work` at the captured HEAD, record the disposition matching
+   the report's `Verdict:` line:
+   `instrukt todo stamp {slug} --verification pass|fail|blocked|tier_0_skip`.
+   It binds that HEAD and the `verification-findings` version you just wrote,
+   and releases your attempt; an attempt records one disposition. A refusal
+   names what it lacks — a clean tree, the captured HEAD, a findings report —
+   so restore that and record again, or report the refusal to
+   `todo-orchestrator`.
+5. Report the candidate SHA, the recorded disposition and any pre-existing
+   observations to `todo-orchestrator`.
+
+## Outputs
+
+- Sanitized, publishable `verification-plan` artifact (for Tier 1/2 runs).
+- Sanitized, publishable `verification-findings` artifact bound in its text to
+  the exact candidate HEAD SHA with verdict (`PASS | FAIL | BLOCKED | TIER_0_SKIP`),
+  missing extension-point fills (if any), fired Layer 2 triggers, authorized
+  evidence references/summaries, Driver honesty confirmation, actionable
+  blocking defect records (when `FAIL`), and pre-existing observations.
+- A `--verification` disposition stamp bound to that exact HEAD and that
+  `verification-findings` version, which released this `verifier` attempt.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### Report format
 

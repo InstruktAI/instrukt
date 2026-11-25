@@ -36,11 +36,24 @@ table.
 1. **No interference:** one active writer/child workspace attempt per todo
    worktree at a time (`instrukt todo attempt` / `bind`, atomically released on
    the role's completion stamp).
+<!-- planned-change:verification-stamp-and-evidence-store -->
 2. **Independent exact-SHA review gate at `integrate`:** only the standing
    `integrator` writes `main`, and only for an exact commit SHA that carries an
    **independent reviewer's `build_review` `approve` stamp** bound to that exact
    SHA and current `review-findings` report + green CI. Reviewers stamp their
    own verdicts; self-approval by the orchestrator or any writer is refused.
+<!-- change:verification-stamp-and-evidence-store -->
+2. **Independent exact-SHA handoff gate:** `--finalize-ready` hands an exact
+   commit SHA to `integrate` only when that SHA carries both an **independent
+   reviewer's `build_review` `approve` stamp** bound to it and the current
+   `review-findings` report, and a **current verification disposition** for it
+   that admits handoff (`pass`, `tier_0_skip` or `hotfix_deferred`, bound to
+   the current `verification-findings` report). Reviewers stamp their own
+   verdicts and independent verifiers their own `pass`, `fail` or `blocked`;
+   an approval or a `pass` recorded by the orchestrator or any writer is
+   refused. Only the standing `integrator` writes `main`, and only for that
+   handed-off SHA once its CI is green.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 3. **Human-owned approval gates:** configured `approvals.prd` (required for
    `feature` todos and any todo carrying a `prd` artifact before build or
    finalization) and `approvals.task` (required before `task-runner` executes a
@@ -54,6 +67,7 @@ unexpected blast radius or needs a contract/spec rewrite, pause implementation
 and route to `planner`, `intaker`, or doc updates cleanly in the same
 `<slug>/work` worktree.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Bounded 5-minute bug or small localized change:**
   1. Check blast radius yourself (`sdlc/procedure/blast-radius-discovery`). For
      a bug whose root cause is non-obvious, dispatch `diagnoser`
@@ -86,6 +100,39 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      fresh exact-SHA independent static review and live verification
      reclassification per Step 4b), then release your claim with
      `instrukt todo update <slug> --unclaim` to hand off to `integrate`.
+<!-- change:verification-stamp-and-evidence-store -->
+- **Bounded 5-minute bug or small localized change:**
+  1. Check blast radius yourself (`sdlc/procedure/blast-radius-discovery`). For
+     a bug whose root cause is non-obvious, dispatch `diagnoser`
+     (`sdlc/procedure/lifecycle/prepare/diagnose-peer`) and settle the
+     diagnosis first.
+  2. Dispatch `builder` (`sdlc/procedure/lifecycle/work/build`) directly in
+     `<slug>/work` — no mandatory `implementation-plan`, `setup`, or
+     `quality-checklist` ceremony.
+  3. Dispatch an independent `build-reviewer`
+     (`sdlc/procedure/lifecycle/work/review-build`) against the exact clean
+     committed HEAD, and execute live verification for that exact HEAD per
+     Step 4b (`sdlc/policy/live-verification`, pushing `origin/<slug>/work`
+     first whenever the resolved execution host is `ci`).
+  4. If static review returns `changes_requested` or `verifier` records `fail`,
+     dispatch admitted `builder`/`fixer`
+     (`sdlc/procedure/lifecycle/fix-review-findings`, naming `review-findings`
+     or `verification-findings`) to adjudicate and remediate findings, then
+     re-run independent `build-reviewer` and a new `verifier` attempt (Step 4b)
+     on the resulting exact HEAD (or on the unchanged exact HEAD after an
+     evidence-only rejection pass). If `verifier` records `blocked`, resolve the
+     missing substrate or prerequisite via Step 4b before proceeding.
+  5. Process any `deferrals` artifact via `deferrer`
+     (`sdlc/procedure/lifecycle/work/deferrals`) and complete any Escape
+     Ratchet obligation for real-occurrence `bug` todos (Step 5).
+  6. Push the exact verified HEAD to `origin/<slug>/work` (if not already pushed
+     for CI verification), stamp `instrukt todo stamp <slug> --finalize-ready`
+     (directly as the claim-holding `todo-orchestrator`, or via `finalizer`
+     when rebase/merge sync is needed — note that any new merge commit requires
+     fresh exact-SHA independent static review and live verification
+     reclassification per Step 4b), then release your claim with
+     `instrukt todo update <slug> --unclaim` to hand off to `integrate`.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 - **Non-trivial change, planned bug, or high blast radius:**
   1. Dispatch `planner` (`sdlc/procedure/lifecycle/prepare/plan-draft`) for
@@ -154,7 +201,10 @@ building, reviewing and fixing keeps its output.
 
 ### Workspace placement & delegation
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 <!-- @config: runtime.start_thread -->
+<!-- change:verification-stamp-and-evidence-store -->
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 <!-- @config: runtime.dispatch -->
 
@@ -248,6 +298,7 @@ building, reviewing and fixing keeps its output.
        additions, edits, replacements, or retirements; publication-checked
        `instrukt docs get <id>` from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
+<!-- planned-change:verification-stamp-and-evidence-store -->
 3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
@@ -262,6 +313,23 @@ building, reviewing and fixing keeps its output.
    per Step 4b in a separate one-off worktree session (`runtime.start_thread` /
    `runtime.inspect_thread`) so the shared-workspace admission guarantee remains
    unbroken.
+<!-- change:verification-stamp-and-evidence-store -->
+3. **Select and route the next primitive.** Every admitted role that shares
+   `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
+   `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `verifier`,
+   `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `deferrer`,
+   `finalizer`) reserves each round with
+   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`
+   and either continues a retained worker (`runtime.message_child`) or starts a
+   fresh shared-isolation child in `<slug>/work` (`runtime.dispatch`) under
+   `general/procedure/orchestration`. Only one workspace attempt may be active
+   at a time; completion stamps release it atomically. Live verification runs
+   the same way: `verifier` is a shared child in `<slug>/work` that follows
+   `build-reviewer` once its attempt is released (Step 4b), works at the
+   candidate HEAD it is bound to, and leaves no worktree, branch or thread
+   placement of its own.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
+<!-- planned-change:verification-stamp-and-evidence-store -->
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
    discloses each finding's `Method:` (finding format in
@@ -400,6 +468,163 @@ building, reviewing and fixing keeps its output.
            external paid/legal third-party credential, place an explicit hold
            (`instrukt todo update {slug} --hold --reason "..."`) naming the
            prerequisite or credential-pool request.
+<!-- change:verification-stamp-and-evidence-store -->
+4. **Verify review substance and contest invalid findings before acting on verdicts.**
+   Confirm the findings artifact exists, covers all applicable review lanes,
+   discloses each finding's `Method:` (finding format in
+   `sdlc/procedure/lifecycle/review`), and justifies clean approvals
+   specifically for the target. Maintain a bidirectional adversarial stance:
+   distrust unverified claims and audit every finding's `Method:` and premises
+   against its governing contract (`sdlc/concept/defect-evidence` for defect
+   claims) and the frozen intent rather than forwarding reviewer demands as
+   mandatory closures. Route review remediation through
+   `sdlc/procedure/lifecycle/fix-review-findings` (contest-first) so valid
+   findings are fixed, invalid or out-of-bounds findings are rejected on the
+   record by the producer, and repeated failures on the same mechanism or
+   invariant trigger re-derivation — cutting back to a simpler policy-compliant
+   boundary whenever it satisfies every approved criterion and eliminates the
+   failing interaction instead of layering defensive machinery
+   (prune-before-patch in `sdlc/procedure/lifecycle/review`).
+   - **4b. Live verification disposition for the exact candidate HEAD.** Load
+     `sdlc/policy/live-verification` (`instrukt docs get sdlc/policy/live-verification`)
+     and classify every clean candidate HEAD (including any replacement HEAD
+     produced by `fixer` or `finalizer`). Its disposition is a stamp bound to
+     that exact HEAD and the current `verification-findings` report, and
+     `--finalize-ready` is refused until the HEAD carries a current `pass`,
+     `tier_0_skip` or `hotfix_deferred`; the ledger's handoff gate line names
+     the disposition still owed. You record a Tier 0 skip or a hotfix deferral
+     yourself, from `<slug>/work` at its clean HEAD while no workspace attempt
+     is open; every other disposition comes from an independent `verifier`.
+     - **Tier 0:** write the concise Tier 0 `verification-findings` naming the
+       exact candidate HEAD SHA and reason
+       (`instrukt todo artifacts write {slug} verification-findings '<content>'`),
+       then record `instrukt todo stamp {slug} --verification tier_0_skip`. No
+       `verifier` is dispatched.
+     - **Emergency hotfix deferral:** Permitted solely under the
+       emergency-hotfix exception (`sdlc/policy/live-verification`) while
+       preserving every existing `sdlc/policy/definition-of-done` control. First
+       file the tracked follow-up todo that delivers post-hotfix live
+       verification (and `escape-assessment` when the hotfix is a
+       real-occurrence bug), then write `verification-findings` with
+       `Verdict: HOTFIX_DEFERRED` naming the exact candidate HEAD SHA and that
+       follow-up, and record
+       `instrukt todo stamp {slug} --verification hotfix_deferred --follow-up <follow-up-slug>`.
+     - **Tier 1 / Tier 2:**
+       - Whenever the resolved execution host (from Layer 1
+         `verification-substrate`, or when absent from the archetype matrix in
+         `sdlc/policy/live-verification`) is `ci`, push the clean candidate
+         HEAD to `origin/<slug>/work` (`git push origin HEAD:<slug>/work`)
+         before dispatching `verifier` so the CI runner can fetch and verify
+         that exact commit SHA.
+       - Once `build-reviewer` has released its attempt, dispatch an
+         independent `verifier` (`sdlc/procedure/lifecycle/work/verify`) as a
+         shared child in `<slug>/work` under Step 3: reserve it with
+         `instrukt todo attempt {slug} --role verifier --procedure sdlc/procedure/lifecycle/work/verify --args {slug} --brief -`,
+         start it with `runtime.dispatch` or continue a retained verifier with
+         `runtime.message_child`, and bind it. Give it a session distinct from
+         yours and from every writer of the change; a `pass`, `fail` or
+         `blocked` from any other session is refused. The verifier writes
+         `verification-plan` and `verification-findings` itself and records
+         its disposition with `--verification`, which releases its attempt;
+         read the outcome from `instrukt todo show {slug}`. When
+         `verification-findings` includes pre-existing observations, append
+         any not already recorded as new observation entries (`sdlc/procedure/lifecycle/work/deferrals`) to
+         `{slug}`'s `deferrals` artifact via
+         `instrukt todo artifacts write {slug} deferrals '<content>'` —
+         preserving all existing `deferrals` entries — so `deferrer` triages
+         every build and live-verification observation together before
+         finalization.
+       - On `fail`, dispatch an admitted workspace writer (`builder`/`fixer`
+         via `instrukt todo attempt` / `bind`) through
+         `sdlc/procedure/lifecycle/fix-review-findings` naming
+         `verification-findings`, then re-run static `build-reviewer` and a new
+         `verifier` attempt (Step 4b) on the resulting exact HEAD. While a
+         verifier's `fail` stands for a HEAD, your Tier 0 skip or hotfix
+         deferral for that HEAD is refused; a new candidate commit or a new
+         `verifier` attempt on it clears the `fail`.
+       - On `blocked`, resolve the named blocker below, then dispatch a new
+         `verifier` attempt on the resulting HEAD. After a verifier's `blocked`
+         your Tier 0 skip for that HEAD is refused; under the emergency-hotfix
+         exception a hotfix deferral naming its tracked follow-up is admitted
+         and lets that HEAD through:
+         - If the candidate SHA was not yet published to `origin/<slug>/work`
+           for CI verification, push the clean candidate HEAD to
+           `origin/<slug>/work` and dispatch a new `verifier` attempt.
+         - If detached post-merge publication lagged behind `<canonical-ref>` on
+           a required fill, re-check `instrukt docs index --project <project>`
+           briefly and dispatch a new `verifier` attempt once publication includes
+           `<canonical-ref>`'s fill commit; if publication still lags behind
+           `<canonical-ref>`, record the lag in `log` and release the claim
+           (`instrukt todo update {slug} --unclaim`, without `--hold`) so a
+           subsequent runner tick retries once publication catches up (placing
+           `--hold` only when canonical publication remains obstructed across
+           retries).
+         - If a retained `<slug>/work` candidate SHA (for either `ci` or `local`
+           hosts) is confirmed by `git merge-base --is-ancestor "<stack-commit>" HEAD`
+           (exit `1`, never conflated with fatal lookup errors) to predate
+           delivered `verification/` stack or seeder files on `<canonical-ref>`
+           — including when resuming after a standalone prerequisite bootstrap
+           or substrate-extension todo delivers onto `<canonical-ref>` —
+           process any unprocessed `deferrals` artifact first via `deferrer`
+           (`sdlc/procedure/lifecycle/work/deferrals`, satisfying `finalize`'s
+           deferral precondition), then synchronize through the post-review
+           synchronization owner, `finalizer` (`instrukt todo attempt` / `bind`
+           executing the merge-and-push synchronization path in
+           `sdlc/procedure/lifecycle/work/finalize`: merge accepted
+           `<canonical-ref>`, push `origin/<slug>/work`, and release via
+           `--role-complete` without stamping `--finalize-ready`), then
+           obtain fresh independent exact-SHA `build-reviewer` `APPROVE` and
+           a new `verifier` attempt (Step 4b) against that exact merged HEAD
+           before recording `--finalize-ready`.
+         - If missing **first-time CI verification workflow** (no default-branch
+           verification workflow exists yet) blocks an application todo, **always**
+           route it as a **standalone prerequisite bootstrap todo** (never
+           mixing application changes with first-time CI workflow creation,
+           `sdlc/policy/live-verification`): establish and unfreeze
+           `<bootstrap-slug>` with pre-entry reviewed pending Layer 1 and
+           Layer 2 fills pushed to `origin/<bootstrap-slug>/work` (leaving no
+           local `refs/heads/<bootstrap-slug>/work`) following the tracked
+           pre-entry sequence (`sdlc/procedure/verification-bootstrap`), append
+           `<bootstrap-slug>` to `{slug}`'s prerequisites without dropping
+           existing edges
+           (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
+           or `--after <bootstrap-slug>` when none exist), and release the
+           claim (`instrukt todo update {slug} --unclaim`, without `--hold` so
+           delivery of `<bootstrap-slug>` automatically re-enables this todo);
+           once `<bootstrap-slug>` delivers onto canonical main, synchronize the
+           retained `<slug>/work` through the deferrals-checked `finalizer`
+           synchronization -> fresh `build-reviewer` -> `verifier` path above so the
+           verified exact candidate SHA includes the delivered verification
+           stack and seeders.
+         - If an **existing** substrate needs an in-scope update (on a repo
+           whose default-branch verification workflow already exists, or on a
+           `local` repo):
+           - For a code-only stack or seeder fix within the already-approved
+             plan and Layer 1 contract (no Layer 1 / Layer 2 documentation
+             delta), reserve and bind `builder` (`--role builder --procedure sdlc/procedure/lifecycle/work/build`)
+             to update the substrate (`sdlc/procedure/verification-bootstrap`
+             when applicable) in `<slug>/work`, commit, and release
+             via `--build-complete`, then run static `build-reviewer` and live
+             verification (Step 4b).
+           - For any Layer 1 / Layer 2 pending contract update or plan revision
+             within approved intent, route through the owning preparation path:
+             reserve and bind `planner` (`--role planner --procedure sdlc/procedure/lifecycle/prepare/plan-draft`)
+             to update pending fills and `implementation-plan`
+             (`--role-complete`), obtain independent `plan-reviewer` approval
+             (`sdlc/procedure/lifecycle/prepare/review-plan`), and only after
+             plan approval dispatch `builder` (`work/build`, `--build-complete`)
+             for any implementation delta, followed by static `build-reviewer`
+             and live verification (Step 4b).
+           - Exceeding this todo's frozen scope, file a tracked prerequisite
+             substrate todo, preserve existing prerequisites with `--after`,
+             and unclaim (`--unclaim`, without `--hold`) as above.
+         - If blocked by external host tooling, missing private raw-evidence
+           storage for a public-repo workflow edit/bootstrap, or a brand-new
+           external paid/legal third-party credential, place an explicit hold
+           (`instrukt todo update {slug} --hold --reason "..."`) naming the
+           prerequisite or credential-pool request.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
+<!-- planned-change:verification-stamp-and-evidence-store -->
 5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
    no workspace attempt is active, `origin/<slug>/work` matches the exact
    independently approved HEAD commit SHA, current exact-SHA
@@ -424,6 +649,31 @@ building, reviewing and fixing keeps its output.
    (`general/policy/shared-machine-resources`). Keep this orchestrator thread
    wakeable (never retire it before delivery — `integrate` retires it once the
    todo is delivered).
+<!-- change:verification-stamp-and-evidence-store -->
+5. **Finalize and hand off to `integrate`.** Confirm the worktree is clean,
+   no workspace attempt is active, `origin/<slug>/work` matches the exact
+   independently approved HEAD commit SHA, the ledger's handoff gate admits
+   that HEAD (its independent build-review approval and a current `pass`,
+   `tier_0_skip` or `hotfix_deferred` disposition for it), and all required
+   approvals hold.
+   For every `kind: bug` todo originating from a real occurrence
+   (`sdlc/concept/defect-evidence`) on any route — except an emergency hotfix
+   carrying a `hotfix_deferred` disposition, whose tracked follow-up todo owns post-hotfix
+   `escape-assessment` — confirm `escape-assessment`
+   (`sdlc/policy/live-verification`) is persisted via
+   `instrukt todo artifacts write {slug} escape-assessment '<content>'` and
+   that `regression-graduated` tests ship on the reviewed candidate HEAD while
+   any `trigger-added` or `substrate-upgraded` work outside minimal bug-fix
+   scope (`sdlc/policy/definition-of-done-lanes`) is filed as a
+   tracked follow-up cited in `escape-assessment`. Record
+   `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
+   `workflow.finalized`). Then release the claim with
+   `instrukt todo update {slug} --unclaim`; the runner reclaims the build output
+   `<slug>/work` holds while the handoff waits
+   (`general/policy/shared-machine-resources`). Keep this orchestrator thread
+   wakeable (never retire it before delivery — `integrate` retires it once the
+   todo is delivered).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm
@@ -434,12 +684,22 @@ building, reviewing and fixing keeps its output.
 
 ## Outputs
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - Verified candidate commit pushed to `origin/<slug>/work` with an independent
   exact-SHA `build_review` `approve` stamp, current exact-SHA
   `verification-findings` (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED`),
   `escape-assessment` for real-occurrence bugs, `--finalize-ready` handoff to
   `integrate`, and released claim — or an approved `task-plan` ready for
   `task-runner`.
+<!-- change:verification-stamp-and-evidence-store -->
+- Verified candidate commit pushed to `origin/<slug>/work` with an independent
+  exact-SHA `build_review` `approve` stamp, a current exact-SHA verification
+  disposition (`pass`, `tier_0_skip` or `hotfix_deferred`) bound to its
+  `verification-findings`,
+  `escape-assessment` for real-occurrence bugs, `--finalize-ready` handoff to
+  `integrate`, and released claim — or an approved `task-plan` ready for
+  `task-runner`.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Recovery
 
