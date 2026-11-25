@@ -14,7 +14,7 @@ use instrukt_core::config::BoardRef;
 use super::_envelope::{self, TODO_LABEL};
 use super::_github::{Fetched, GitHub, GitHubError};
 use super::_model::{TodoRecord, digest_of};
-use super::_store::{IssueRef, LocalItem, ReflectionState};
+use super::_store::{IssueRef, KeptRefusal, LocalItem, ReflectionState, RefusedTarget};
 use crate::evidence::{StampFact, TodoStatus};
 
 /// The `/instrukt` command comments not yet answered.
@@ -186,7 +186,12 @@ pub(crate) fn flush(
     needs_you: bool,
 ) -> Result<(), GitHubError> {
     if item.reflection.pending {
-        let issue = ensure_issue(gh, item)?;
+        let Some(issue) = ensure_issue(gh, item)? else {
+            // GitHub refused the issue itself: kept with its reason, and
+            // not sent again until the record changes it.
+            item.reflection.pending = false;
+            return Ok(());
+        };
         upload_artifacts(gh, item, issue)?;
         let mut fields = _envelope::issue(&item.record);
         let snapshot = gh.read(&format!("/issues/{}", issue.number))?;
@@ -199,7 +204,14 @@ pub(crate) fn flush(
                     .map(str::to_owned),
             );
         }
-        gh.patch(&format!("/issues/{}", issue.number), &fields.update_json())?;
+        let path = format!("/issues/{}", issue.number);
+        let body = fields.update_json();
+        send(
+            &mut item.reflection,
+            RefusedTarget::Issue,
+            request_identity("PATCH", &path, &body, None),
+            || gh.patch(&path, &body),
+        )?;
         item.reflection.etag = None;
         item.reflection.pending = false;
         item.reflection.failure = None;
@@ -304,19 +316,96 @@ pub(crate) fn pull_request_owed(item: &LocalItem) -> bool {
     }
 }
 
-fn ensure_issue(gh: &GitHub, item: &mut LocalItem) -> Result<IssueRef, GitHubError> {
+/// The item's issue, created when GitHub holds none yet; `None` while
+/// GitHub refuses its creation.
+fn ensure_issue(gh: &GitHub, item: &mut LocalItem) -> Result<Option<IssueRef>, GitHubError> {
     if let Some(issue) = item.reflection.issue {
-        return Ok(issue);
+        return Ok(Some(issue));
     }
     let issue = match find_issue(gh, &item.record)? {
         Some(issue) => issue,
         None => {
-            let created = gh.post("/issues", &_envelope::issue(&item.record).create_json())?;
+            let body = _envelope::issue(&item.record).create_json();
+            let sent = send(
+                &mut item.reflection,
+                RefusedTarget::Issue,
+                request_identity("POST", "/issues", &body, None),
+                || gh.post("/issues", &body),
+            )?;
+            let Sent::Accepted(created) = sent else {
+                return Ok(None);
+            };
             issue_ref(&created, "/issues")?
         }
     };
     item.reflection.issue = Some(issue);
-    Ok(issue)
+    Ok(Some(issue))
+}
+
+/// What sending one request to a reflected target came to.
+enum Sent<T> {
+    /// GitHub accepted it, with its answer.
+    Accepted(T),
+    /// GitHub refused it as invalid, now or before: kept with its reason.
+    Refused,
+}
+
+/// Sends a request to a reflected `target` through `request`, unless the
+/// target's kept refusal has the same `identity`: content GitHub refused is
+/// not sent again until it changes (SC-12). A refused answer is kept for
+/// the target with GitHub's detail, and an accepted one drops the target's
+/// refusal. Any other failure is the request's and returned.
+fn send<T>(
+    reflection: &mut ReflectionState,
+    target: RefusedTarget,
+    identity: String,
+    request: impl FnOnce() -> Result<T, GitHubError>,
+) -> Result<Sent<T>, GitHubError> {
+    if refused_before(&reflection.refusals, &target, &identity) {
+        return Ok(Sent::Refused);
+    }
+    match request() {
+        Ok(answer) => {
+            reflection.refusals.retain(|kept| kept.target != target);
+            Ok(Sent::Accepted(answer))
+        }
+        Err(GitHubError::Invalid { detail, path, .. }) => {
+            tracing::warn!(
+                event = "work_reflection_refused",
+                path,
+                detail,
+                "GitHub refused reflected content; it is not sent again until it changes"
+            );
+            reflection.refusals.retain(|kept| kept.target != target);
+            reflection.refusals.push(KeptRefusal {
+                target,
+                identity,
+                detail,
+            });
+            Ok(Sent::Refused)
+        }
+        Err(err) => Err(err),
+    }
+}
+
+/// Whether `refusals` keeps a refusal of `target` for a request with
+/// `identity`.
+fn refused_before(refusals: &[KeptRefusal], target: &RefusedTarget, identity: &str) -> bool {
+    refusals
+        .iter()
+        .any(|kept| &kept.target == target && kept.identity == identity)
+}
+
+/// The identity of a request: a digest of its method, path and body, and of
+/// the branch head it concerns when it concerns one.
+fn request_identity(method: &str, path: &str, body: &Value, head: Option<&str>) -> String {
+    digest_of(&format!(
+        "{method} {path}\n{}\n{}",
+        head.unwrap_or_default(),
+        body
+    ))
+    .as_str()
+    .to_owned()
 }
 
 /// The issue already reflecting `record` (a retry after an answer that
@@ -411,24 +500,43 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 ));
                 break;
             };
-            match artifact.address {
+            let target = RefusedTarget::Artifact {
+                name: artifact.name.as_str().to_owned(),
+                sequence: version.sequence,
+            };
+            let sent = match artifact.address {
                 None => {
-                    let created = gh.post(
-                        &format!("/issues/{number}/artifacts"),
-                        &json!({
-                            "type": _envelope::artifact_type(artifact.name.as_str()),
-                            "name": artifact.name.as_str(),
-                            "body": content,
-                        }),
-                    )?;
-                    artifact.address = created["number"].as_u64();
+                    let path = format!("/issues/{number}/artifacts");
+                    let body = json!({
+                        "type": _envelope::artifact_type(artifact.name.as_str()),
+                        "name": artifact.name.as_str(),
+                        "body": content,
+                    });
+                    let identity = request_identity("POST", &path, &body, None);
+                    match send(&mut item.reflection, target, identity, || {
+                        gh.post(&path, &body)
+                    })? {
+                        Sent::Accepted(created) => {
+                            artifact.address = created["number"].as_u64();
+                            true
+                        }
+                        Sent::Refused => false,
+                    }
                 }
                 Some(address) => {
-                    gh.patch(
-                        &format!("/issues/{number}/artifacts/{address}"),
-                        &json!({"body": content}),
-                    )?;
+                    let path = format!("/issues/{number}/artifacts/{address}");
+                    let body = json!({"body": content});
+                    let identity = request_identity("PATCH", &path, &body, None);
+                    matches!(
+                        send(&mut item.reflection, target, identity, || gh
+                            .patch(&path, &body))?,
+                        Sent::Accepted(_)
+                    )
                 }
+            };
+            if !sent {
+                // A refused version is followed by the next.
+                continue;
             }
             let Some(address) = artifact.address else {
                 return Err(GitHubError::Decode {
@@ -561,27 +669,26 @@ fn reflect_pull_request(
                 }
                 Err(err) => return Err(err),
             }
-            let created = author.post(
+            let body = json!({
+                "title": item.record.slug.as_str(),
+                "head": branch,
+                "base": base,
+                "body": pull_body(&item.record, issue),
+            });
+            let identity = request_identity(
+                "POST",
                 "/pulls",
-                &json!({
-                    "title": item.record.slug.as_str(),
-                    "head": branch,
-                    "base": base,
-                    "body": pull_body(&item.record, issue),
-                }),
+                &body,
+                item.reflection.published_head.as_deref(),
             );
-            match created {
-                Ok(pull) => item.reflection.pull = pull["number"].as_u64(),
-                Err(GitHubError::Status {
-                    status: 422,
-                    message,
-                    ..
-                }) => {
-                    item.reflection.pull_outstanding =
-                        Some(format!("GitHub refused the pull request: {message}"));
-                    return Ok(());
-                }
-                Err(err) => return Err(err),
+            match send(
+                &mut item.reflection,
+                RefusedTarget::PullCreation,
+                identity,
+                || author.post("/pulls", &body),
+            )? {
+                Sent::Accepted(pull) => item.reflection.pull = pull["number"].as_u64(),
+                Sent::Refused => return Ok(()),
             }
         }
     }
@@ -624,10 +731,16 @@ fn reflect_pull_request(
                 && review["state"].as_str() == Some(state)
         });
         if !landed {
-            reviewer.post(
-                &format!("/pulls/{pull}/reviews"),
-                &json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body}),
-            )?;
+            let path = format!("/pulls/{pull}/reviews");
+            let review = json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body});
+            let identity = request_identity("POST", &path, &review, None);
+            let target = RefusedTarget::Review { verdict: *sequence };
+            if let Sent::Refused = send(&mut item.reflection, target, identity, || {
+                reviewer.post(&path, &review)
+            })? {
+                // A refused verdict holds back no other.
+                continue;
+            }
         }
         item.reflection.reviews.push(*sequence);
     }
@@ -728,7 +841,50 @@ pub(crate) fn output_label(label: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::walk_ends;
+    use super::{KeptRefusal, RefusedTarget, refused_before, request_identity, walk_ends};
+    use serde_json::json;
+
+    #[test]
+    fn a_request_is_identified_by_what_it_sends_and_the_head_it_concerns() {
+        let body = json!({"body": "the report"});
+        let same = request_identity("PATCH", "/issues/1/artifacts/2", &body, None);
+        assert_eq!(
+            same,
+            request_identity("PATCH", "/issues/1/artifacts/2", &body, None)
+        );
+        assert_ne!(
+            same,
+            request_identity(
+                "PATCH",
+                "/issues/1/artifacts/2",
+                &json!({"body": "changed"}),
+                None
+            )
+        );
+        assert_ne!(
+            request_identity("POST", "/pulls", &body, Some("aaa")),
+            request_identity("POST", "/pulls", &body, Some("bbb"))
+        );
+    }
+
+    #[test]
+    fn only_the_same_request_to_the_same_target_is_skipped_as_refused() {
+        let kept = [KeptRefusal {
+            target: RefusedTarget::Artifact {
+                name: "prd".into(),
+                sequence: 3,
+            },
+            identity: "same".into(),
+            detail: "Validation Failed".into(),
+        }];
+        let target = RefusedTarget::Artifact {
+            name: "prd".into(),
+            sequence: 3,
+        };
+        assert!(refused_before(&kept, &target, "same"));
+        assert!(!refused_before(&kept, &target, "changed"));
+        assert!(!refused_before(&kept, &RefusedTarget::Issue, "same"));
+    }
 
     #[test]
     fn a_version_walk_ends_where_the_history_ends() {

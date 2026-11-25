@@ -1589,6 +1589,22 @@ pub(crate) fn withdrawing_refusal(slug: &TodoSlug) -> WorkError {
 /// reflected to this command, `None` when it can.
 pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> ReflectionStatus {
     let reflection = &item.reflection;
+    // Content GitHub refused stays outstanding, with GitHub's reason, until
+    // it changes (`github-record`, Writer and convergence).
+    if !reflection.refusals.is_empty() {
+        let refused: Vec<String> = reflection
+            .refusals
+            .iter()
+            .map(|kept| {
+                format!(
+                    "GitHub refused {}: {}",
+                    refused_target(&kept.target),
+                    kept.detail
+                )
+            })
+            .collect();
+        return ReflectionStatus::Pending(PendingReason::Failed(refused.join("; ")));
+    }
     if let Some(error) = &reflection.failure {
         return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
     }
@@ -1616,6 +1632,20 @@ pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> Refl
                 .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
         ),
     })
+}
+
+/// A reflected target in words.
+fn refused_target(target: &_store::RefusedTarget) -> String {
+    match target {
+        _store::RefusedTarget::Issue => "the issue".to_owned(),
+        _store::RefusedTarget::PullCreation => "the pull request".to_owned(),
+        _store::RefusedTarget::Review { verdict } => {
+            format!("the review of build verdict {verdict}")
+        }
+        _store::RefusedTarget::Artifact { name, sequence } => {
+            format!("artifact `{name}` version {sequence}")
+        }
+    }
 }
 
 /// Why GitHub cannot be reached for `work` at `now`, read from this

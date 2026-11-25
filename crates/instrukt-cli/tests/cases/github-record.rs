@@ -52,6 +52,51 @@ fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
     );
 }
 
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
+#[test]
+fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reason() {
+    let project = Project::new();
+    project.create("nested-lists", "feature", INTENT);
+    project.github.respond_once(
+        "POST",
+        "/issues/1/artifacts",
+        CannedResponse {
+            status: 422,
+            headers: vec![],
+            body: serde_json::json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "IssueArtifact", "field": "body", "code": "too_long"}],
+                "documentation_url": "https://docs.github.com/rest/issues/artifacts"
+            }),
+        },
+    );
+
+    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    let read = project.ok(["artifacts", "read", "nested-lists", "prd"]);
+    let attempts = project
+        .github
+        .requests_to("POST", "/issues/1/artifacts")
+        .len();
+    // Another change reflects the todo again; the refused content is not
+    // sent again, and the rest of its reflection goes on.
+    project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/issues/1/artifacts")
+            .len(),
+        attempts,
+        "the refused content was sent again"
+    );
+    assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
+    let shown = project.ok(["show", "nested-lists"]);
+
+    insta::assert_snapshot!(
+        "refused-by-github",
+        redact(&format!("{recorded}---\n{read}---\n{shown}"))
+    );
+}
+
 // spec: project/instrukt/spec/feature/work/github-record UC-GR13
 #[test]
 fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_issue() {
