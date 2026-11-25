@@ -43,14 +43,6 @@ pub(super) const CATALOG: &str = ".claude-plugin/marketplace.json";
 /// The plugin's manifest, inside the plugin's folder.
 const MANIFEST: &str = ".claude-plugin/plugin.json";
 
-/// The version a plugin starts from where the repository holds no manifest
-/// for it.
-const FIRST_VERSION: PluginVersion = PluginVersion {
-    major: 0,
-    minor: 1,
-    patch: 0,
-};
-
 /// The skill's main file, inside the skill's folder.
 const SKILL_FILE: &str = "SKILL.md";
 
@@ -531,45 +523,65 @@ impl Carried {
 }
 
 /// A plugin's version: three numbers, of which instrukt raises only the
-/// last.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// last. Each number is held as the ASCII digits it is written with, so the
+/// first two stay exactly what the manifest holds and the last has no bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginVersion {
-    major: u64,
-    minor: u64,
-    patch: u64,
+    /// The first two numbers with the dot between them, as written.
+    series: String,
+    /// The last number's digits, as written.
+    patch: String,
 }
 
 impl PluginVersion {
     /// `text` as three numbers joined by dots, each of ASCII digits only;
     /// `None` for anything else.
     fn parse(text: &str) -> Option<Self> {
-        let mut numbers = text.split('.').map(|part| {
-            if !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()) {
-                part.parse::<u64>().ok()
-            } else {
-                None
-            }
-        });
-        let version = Self {
-            major: numbers.next()??,
-            minor: numbers.next()??,
-            patch: numbers.next()??,
-        };
-        numbers.next().is_none().then_some(version)
+        let number = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+        let (series, patch) = text.rsplit_once('.')?;
+        let (major, minor) = series.split_once('.')?;
+        [major, minor, patch].into_iter().all(number).then(|| Self {
+            series: series.to_owned(),
+            patch: patch.to_owned(),
+        })
     }
 
-    /// This version with its last number raised by one.
-    fn raised(self) -> Self {
+    /// The version a plugin starts from where the repository holds no
+    /// manifest for it: 0.1.0.
+    fn first() -> Self {
         Self {
-            patch: self.patch.saturating_add(1),
-            ..self
+            series: "0.1".to_owned(),
+            patch: "0".to_owned(),
+        }
+    }
+
+    /// This version with its last number raised by one, the first two as
+    /// they are.
+    fn raised(&self) -> Self {
+        let mut digits = self.patch.clone().into_bytes();
+        let mut carry = true;
+        for digit in digits.iter_mut().rev() {
+            if *digit == b'9' {
+                *digit = b'0';
+            } else {
+                *digit += 1;
+                carry = false;
+                break;
+            }
+        }
+        if carry {
+            digits.insert(0, b'1');
+        }
+        Self {
+            series: self.series.clone(),
+            patch: digits.into_iter().map(char::from).collect(),
         }
     }
 }
 
 impl std::fmt::Display for PluginVersion {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}.{}.{}", self.major, self.minor, self.patch)
+        write!(f, "{}.{}", self.series, self.patch)
     }
 }
 
@@ -608,7 +620,7 @@ pub struct PluginDrift {
 }
 
 /// The version the plugin's manifest holds, as far as it can be known.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Held {
     /// The repository holds no manifest for the plugin.
     Absent,
@@ -748,11 +760,12 @@ fn drift(
         .below(&prefix)
         .map(|(rel, bytes)| (format!("{prefix}{rel}"), bytes))
         .collect();
-    let mut version = held.unwrap_or(FIRST_VERSION);
-    files.insert(manifest_path.clone(), manifest(key, name, version)?);
-    if held.is_some() && !same(&files, &holds) {
+    let raise = held.is_some();
+    let mut version = held.unwrap_or_else(PluginVersion::first);
+    files.insert(manifest_path.clone(), manifest(key, name, &version)?);
+    if raise && !same(&files, &holds) {
         version = version.raised();
-        files.insert(manifest_path.clone(), manifest(key, name, version)?);
+        files.insert(manifest_path.clone(), manifest(key, name, &version)?);
     }
     let removals = holds
         .keys()
@@ -833,7 +846,7 @@ fn held_version(tree: &Committed, path: &str) -> Result<Option<PluginVersion>, P
 fn manifest(
     key: &ProjectSlug,
     name: &CompanyName,
-    version: PluginVersion,
+    version: &PluginVersion,
 ) -> Result<String, PublicationError> {
     let manifest = serde_json::json!({
         "name": key.as_str(),
@@ -1155,6 +1168,21 @@ mod tests {
         ] {
             assert_eq!(PluginVersion::parse(text), None, "{text:?}");
         }
+    }
+
+    #[test]
+    fn the_last_number_rises_by_one_without_bound_and_the_first_two_stay_as_written() {
+        let raised = |text: &str| PluginVersion::parse(text).unwrap().raised().to_string();
+        assert_eq!(
+            raised("2.7.18446744073709551615"),
+            "2.7.18446744073709551616"
+        );
+        assert_eq!(raised("2.7.99"), "2.7.100");
+        assert_eq!(raised("01.007.009"), "01.007.010");
+        assert_eq!(
+            raised("2.7.99999999999999999999999"),
+            "2.7.100000000000000000000000"
+        );
     }
 
     #[test]
