@@ -123,7 +123,10 @@ pub fn stage(
             Err(why) => left.push((entry.clone(), why)),
         }
     }
-    if admitted.is_empty() {
+    // The runner asks for no section with nothing to move. A session always
+    // asks: whether another session holds the worktree is its answer
+    // whatever there is to move.
+    if admitted.is_empty() && matches!(target.admission, SectionAdmission::Runner { .. }) {
         return Ok(Staged {
             moved: Vec::new(),
             left,
@@ -670,9 +673,6 @@ pub fn on_request(
         ));
     }
     let declared = project.config.regenerable()?;
-    if declared.is_empty() {
-        return Ok(OnRequest::NothingDeclared);
-    }
     let project = ProjectRef {
         slug: project.slug.clone(),
         root: project.checkout.clone(),
@@ -690,6 +690,9 @@ pub fn on_request(
             return Ok(OnRequest::NotRecorded);
         }
         Some(SectionOutcome::Ran) | None => {}
+    }
+    if declared.is_empty() {
+        return Ok(OnRequest::NothingDeclared);
     }
     let mut removed = Vec::with_capacity(staged.moved.len());
     for (entry, location) in staged.moved {
