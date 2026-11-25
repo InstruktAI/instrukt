@@ -122,7 +122,10 @@ impl Rule {
 
 #[derive(Debug, Clone, Copy)]
 enum Shape {
+    /// A positive integer.
     Version,
+    /// `schema_version`: a [`Shape::Version`] with that key's contract.
+    SchemaVersion,
     RedisTimeout,
     Webhooks,
     Members,
@@ -137,6 +140,8 @@ enum Shape {
     Credential,
     LocalRedisUrl,
     Slug,
+    /// `company`: a [`Shape::Slug`] naming the company home's folder.
+    CompanyName,
     Domain,
     Bool,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
@@ -148,6 +153,8 @@ enum Shape {
     Autostart,
     WatchList,
     StrList,
+    /// `profiles`: a [`Shape::StrList`] of the machine's profile names.
+    Profiles,
     BranchPrefixes,
     ModuleList,
     Identity,
@@ -175,13 +182,13 @@ fn schema() -> Node {
     use Node::Leaf;
     use Rule::{Both, GlobalOnly, ProjectOnly, ShippedAdapterInProject};
     map(vec![
-        ("schema_version", Leaf(Rule::Every, Shape::Version)),
+        ("schema_version", Leaf(Rule::Every, Shape::SchemaVersion)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
-        ("company", Leaf(Rule::CompanyOnly, Shape::Slug)),
+        ("company", Leaf(Rule::CompanyOnly, Shape::CompanyName)),
         // Later company-home keys: refused until this instrukt supports them.
         ("members", Leaf(Rule::CompanyOnly, Shape::Members)),
         ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
-        ("profiles", Leaf(Rule::CompanyOnly, Shape::StrList)),
+        ("profiles", Leaf(Rule::CompanyOnly, Shape::Profiles)),
         ("mcp", Leaf(Rule::GlobalOrCompany, Shape::Mcp)),
         ("mcp_clients", Leaf(GlobalOnly, Shape::McpClients)),
         ("issuer", Leaf(Rule::CompanyOnly, Shape::Issuer)),
@@ -509,12 +516,12 @@ fn check_shape(
                 out.push(invalid("must outlast the 10 second blocking read"));
             }
         }
-        Shape::Version => {
+        Shape::Version | Shape::SchemaVersion => {
             if value.as_u64().is_none_or(|v| v < 1) {
                 out.push(invalid("expected a positive integer"));
             }
         }
-        Shape::Slug => match value.as_str() {
+        Shape::Slug | Shape::CompanyName => match value.as_str() {
             Some(s) => {
                 if let Err(err) = ProjectSlug::parse(s) {
                     out.push(invalid(&err.to_string()));
@@ -581,7 +588,7 @@ fn check_shape(
                 out.push(invalid("expected a list of nonempty branch prefixes"));
             }
         }
-        Shape::StrList => {
+        Shape::StrList | Shape::Profiles => {
             if !value
                 .as_sequence()
                 .is_some_and(|seq| seq.iter().all(Value::is_string))
@@ -979,6 +986,39 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
     }
 }
 
+/// `schema` with `contract`, the key's contract the specification owning
+/// it states, as its description.
+fn described(mut schema: serde_json::Value, contract: &str) -> serde_json::Value {
+    schema["description"] = json!(contract);
+    schema
+}
+
+/// The JSON Schema `pattern` of an exact `${NAME}` secret reference.
+const SECRET_REFERENCE_PATTERN: &str = "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$";
+
+/// The JSON Schema of a key holding a `${NAME}` reference into `layer`'s
+/// secrets file: `contract`, then which file the reference resolves from
+/// and the `instrukt secrets set` command that writes its value.
+pub(super) fn secret_reference(contract: &str, layer: LayerKind) -> serde_json::Value {
+    let (file, command) = match layer {
+        LayerKind::Company => (
+            "the company home's secrets file",
+            "instrukt secrets set <NAME> --company <name>",
+        ),
+        LayerKind::Global | LayerKind::Project => (
+            "the machine's secrets file `~/.instrukt/secrets.env`",
+            "instrukt secrets set <NAME>",
+        ),
+    };
+    json!({
+        "type": "string",
+        "pattern": SECRET_REFERENCE_PATTERN,
+        "description": format!(
+            "{contract}; an exact ${{NAME}} reference into {file}, its value written with `{command}`"
+        ),
+    })
+}
+
 /// A JSON Schema `pattern` admitting exactly the strings
 /// [`Field::NonEmptyStr`] accepts: those holding a character outside Rust's
 /// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
@@ -987,7 +1027,7 @@ fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
 /// a complemented class of `\uXXXX` escapes, which ECMA-262 reads as exactly
 /// those code points; a validator using another regex dialect may not accept
 /// the `\uXXXX` escape.
-fn non_blank_pattern() -> String {
+pub(super) fn non_blank_pattern() -> String {
     let mut runs: Vec<(u32, u32)> = Vec::new();
     for code in (0..=u32::from(char::MAX))
         .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
@@ -1052,8 +1092,8 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
             );
             json!({ "type": "object", "additionalProperties": entry })
         }
-        Shape::Webhooks => super::_webhooks::editor_schema(),
-        Shape::Members => json!({ "type": "object" }),
+        Shape::Webhooks => super::_webhooks::editor_schema(layer),
+        Shape::Members => super::_company::members_schema(),
         Shape::Mcp => super::_mcp::mcp_json_schema(layer),
         Shape::McpClients => super::_mcp::mcp_clients_json_schema(),
         Shape::Issuer => super::_mcp::issuer_json_schema(),
@@ -1064,6 +1104,22 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),
         Shape::RedisTimeout => json!({ "type": "integer", "minimum": 11 }),
         Shape::Version => json!({ "type": "integer", "minimum": 1 }),
+        Shape::SchemaVersion => described(
+            json_shape(Shape::Version, layer),
+            "The schema version this document is written in; `instrukt config init` writes \
+             the current one, an older document is converted and a newer one refused.",
+        ),
+        Shape::CompanyName => described(
+            json_shape(Shape::Slug, layer),
+            "The company's identity on this computer: the name of its home folder \
+             `~/.instrukt/companies/<name>/`, following the grammar of a project slug.",
+        ),
+        Shape::Profiles => described(
+            json_shape(Shape::StrList, layer),
+            "The ordered profile names, declared in the machine's `agents.yaml`, that every \
+             session in the company's home starts on in place of the machine-wide order; \
+             an empty list is a finding, and without it the machine-wide order applies.",
+        ),
         Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
         Shape::Bool => json!({ "type": "boolean" }),
         Shape::Apps => json!({"type":"object", "additionalProperties":{"type":"object"}}),
@@ -1213,19 +1269,24 @@ mod tests {
             }),
             Some("object") => value.as_object().is_some_and(|map| {
                 let required = object.get("required").and_then(J::as_array);
-                required.is_none_or(|names| {
-                    names
-                        .iter()
-                        .all(|name| map.contains_key(name.as_str().unwrap()))
-                }) && map.iter().all(|(key, child)| {
-                    match object.get("properties").and_then(|p| p.get(key)) {
-                        Some(property) => fits(property, child),
-                        None => match &object["additionalProperties"] {
-                            J::Bool(open) => *open,
-                            other => fits(other, child),
-                        },
-                    }
-                })
+                let names = object.get("propertyNames");
+                names.is_none_or(|names| map.keys().all(|key| fits(names, &json!(key))))
+                    && required.is_none_or(|names| {
+                        names
+                            .iter()
+                            .all(|name| map.contains_key(name.as_str().unwrap()))
+                    })
+                    && map.iter().all(|(key, child)| {
+                        match object.get("properties").and_then(|p| p.get(key)) {
+                            Some(property) => fits(property, child),
+                            // An object without `additionalProperties` is open.
+                            None => match object.get("additionalProperties") {
+                                None => true,
+                                Some(J::Bool(open)) => *open,
+                                Some(other) => fits(other, child),
+                            },
+                        }
+                    })
             }),
             other => panic!("a type the editor schema does not write: {other:?}"),
         }
@@ -1377,6 +1438,44 @@ mod tests {
             check(&yaml(&format!("{BOTH}{PROJECT_ONLY}")), LayerKind::Project),
             []
         );
+    }
+
+    #[test]
+    fn a_company_homes_schema_admits_the_members_validation_admits() {
+        let schema = layer_json_schema(LayerKind::Company);
+        let head = "schema_version: 1\ncompany: acme\n";
+        let admitted = [
+            "members: {}\n",
+            "members: {alex: {name: Alex Example, email: alex@example.com, \
+             credentials: {erpnext: '${ALEX_ERPNEXT_LOGIN}'}}}\n",
+            "members: {alex: {email: ' alex@example.com '}, kim-2: {email: kim@example.com, credentials: {}}}\n",
+        ];
+        let refused = [
+            "members: [alex]\n",
+            "members: {Alex: {email: alex@example.com}}\n",
+            "members: {alex: email}\n",
+            "members: {alex: {name: Alex}}\n",
+            "members: {alex: {email: alex}}\n",
+            "members: {alex: {email: 7}}\n",
+            "members: {alex: {name: ' ', email: alex@example.com}}\n",
+            "members: {alex: {email: alex@example.com, role: admin}}\n",
+            "members: {alex: {email: alex@example.com, credentials: [erpnext]}}\n",
+            "members: {alex: {email: alex@example.com, credentials: {erpnext: hunter2}}}\n",
+            "members: {alex: {email: alex@example.com, credentials: {erpnext: '${A} ${B}'}}}\n",
+        ];
+        for (members, valid) in admitted
+            .iter()
+            .map(|m| (m, true))
+            .chain(refused.iter().map(|m| (m, false)))
+        {
+            let doc = format!("{head}{members}");
+            assert_eq!(
+                check(&yaml(&doc), LayerKind::Company).is_empty(),
+                valid,
+                "validation: {members}"
+            );
+            assert_eq!(fits(&schema, &as_json(&doc)), valid, "schema: {members}");
+        }
     }
 
     #[test]

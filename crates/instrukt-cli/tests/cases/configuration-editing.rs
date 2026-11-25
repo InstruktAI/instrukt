@@ -307,6 +307,82 @@ fn existing_configuration_of_a_newer_schema_is_refused() {
     assert_eq!(repo.read("instrukt.yaml"), layer);
 }
 
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE4
+#[test]
+fn each_company_home_key_shows_its_contract_and_each_reference_how_it_is_written() {
+    let env = TestEnv::new();
+    let here = env.path("");
+    let printed = |args: &[&str]| {
+        let mut all = vec!["config", "schema", "--company", "acme"];
+        all.extend_from_slice(args);
+        String::from_utf8(env.run(&here, all).success().get_output().stdout.clone()).unwrap()
+    };
+    let text = printed(&[]);
+    // One line per key, `<path> (<type>, …) — <contract>`. The entries of
+    // the connector kinds carry their kind's setup, which the connector
+    // declaration owns; the lines continuing it are indented.
+    let keys: Vec<(&str, &str)> = text
+        .lines()
+        .filter(|line| !line.starts_with(char::is_whitespace) && !line.is_empty())
+        .filter_map(|line| line.split_once(" ("))
+        .filter(|(path, _)| !path.starts_with("connectors."))
+        .collect();
+    for path in [
+        "company",
+        "schema_version",
+        "profiles",
+        "members",
+        "members.<name>",
+        "members.<name>.name",
+        "members.<name>.email",
+        "members.<name>.credentials",
+        "connectors",
+        "mcp",
+        "mcp.<name>",
+        "webhooks",
+        "webhooks.<name>",
+        "webhooks.<name>.verify",
+    ] {
+        assert!(
+            keys.iter().any(|(key, _)| *key == path),
+            "`{path}` is shown"
+        );
+    }
+    for (path, rest) in &keys {
+        assert!(rest.contains(") — "), "`{path}` shows its contract: {rest}");
+    }
+    for path in [
+        "members.<name>.credentials.<name>",
+        "mcp.<name>.sign_in.client.id",
+        "mcp.<name>.sign_in.client.secret",
+        "webhooks.<name>.secret",
+        "webhooks.<name>.previous_secret",
+    ] {
+        let (_, rest) = keys
+            .iter()
+            .find(|(key, _)| *key == path)
+            .unwrap_or_else(|| panic!("`{path}` is shown"));
+        assert!(
+            rest.starts_with("${NAME} secret reference") && rest.contains("instrukt secrets set"),
+            "`{path}` holds a reference written with `instrukt secrets set`: {rest}"
+        );
+    }
+
+    // The JSON Schema carries the same: a member entry as validation reads it.
+    let members: serde_json::Value =
+        serde_json::from_str(&printed(&["--json", "members"])).unwrap();
+    let whole: serde_json::Value = serde_json::from_str(&printed(&["--json"])).unwrap();
+    assert_eq!(whole["properties"]["members"], members);
+    let entry = &members["additionalProperties"];
+    assert_eq!(entry["required"], serde_json::json!(["email"]));
+    assert_eq!(entry["additionalProperties"], serde_json::json!(false));
+    assert!(
+        entry["properties"]["credentials"]["additionalProperties"]["description"]
+            .as_str()
+            .is_some_and(|contract| contract.contains("instrukt secrets set"))
+    );
+}
+
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
 #[test]
 fn a_patched_on_or_off_setting_is_written_as_a_string_every_yaml_reader_keeps() {
