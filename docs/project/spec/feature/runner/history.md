@@ -81,14 +81,12 @@ as `text`. An imported conversation's document is the document its import
 retained, with every text back in its place.
 
 History consumes the text read of the runtime adapter's optional durable
-conversation-source capability
-(`project/instrukt/spec/feature/runner/session-continuity`). Each item of a
-text read names one changed conversation by its native id and carries that
-conversation's own record, where the source holds one, with its title, parent
-link and native record, and the conversation's finished messages, each with
-its native id, role, available times, text and the source's record of the
-message without that text. History uses no other read of that capability. It
-stores the adapter's source position opaquely. A runtime without the
+conversation-source capability, and no other read of it; the text read and
+what each of its items carries are defined by
+`project/instrukt/spec/feature/runner/session-continuity`. History retains each
+item's conversation from that conversation's own record when the item carries
+one, and each of the item's messages as the item gives it. It stores the
+adapter's source position opaquely. A runtime without the
 capability reports extraction as unsupported. History does not implement
 conversation relay or runtime lifecycle.
 <!-- /planned-change:history-text-only-messages -->
