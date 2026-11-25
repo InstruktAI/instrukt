@@ -18,6 +18,8 @@ use instrukt_connector::{
 use jiff::Timestamp;
 use serde_json::Value;
 
+use crate::_manifest::{MANIFEST, manifest_bot_scopes};
+
 /// The target every log statement of the connector carries: the module the
 /// host and Slack shared before the cut, so the same settings select it.
 const LOG_TARGET: &str = "instrukt_runner::connectors";
@@ -84,10 +86,6 @@ const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
 
 /// What `context_messages` is, as its finding and editor schema say it.
 const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
-
-/// The manifest the company's Slack app is created from, in full; its bot
-/// scopes are the ones admission requires.
-const MANIFEST: &str = include_str!("app-manifest.yaml");
 
 /// The fields a `connectors.slack` entry takes.
 pub static SLACK_DECLARATION: Declaration = Declaration {
@@ -870,24 +868,6 @@ fn cached_names<T>(
     })
 }
 
-/// The bot scopes the app's manifest requests: the scopes admission requires
-/// the bot token to hold (`slack-connector` spec, Connection).
-fn manifest_bot_scopes() -> Result<Vec<String>, serde_yaml_ng::Error> {
-    #[derive(serde::Deserialize)]
-    struct Manifest {
-        oauth_config: OauthConfig,
-    }
-    #[derive(serde::Deserialize)]
-    struct OauthConfig {
-        scopes: Scopes,
-    }
-    #[derive(serde::Deserialize)]
-    struct Scopes {
-        bot: Vec<String>,
-    }
-    serde_yaml_ng::from_str::<Manifest>(MANIFEST).map(|manifest| manifest.oauth_config.scopes.bot)
-}
-
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
     ConnectorError {
         cause: error.to_string(),
@@ -901,6 +881,7 @@ fn own_message(message: &Value, me: &Me) -> bool {
         || message["user"].as_str() == Some(me.user.as_str())
 }
 
+mod _manifest;
 mod read_back;
 
 impl Connector for Slack {
@@ -1426,16 +1407,9 @@ fn render_context(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Me, SlackEndpoint, admission, manifest_bot_scopes, notice, split_conversation, ts_micros,
-    };
+    use super::{Me, SlackEndpoint, admission, notice, split_conversation, ts_micros};
     use serde_json::{Value, json};
     use std::collections::HashMap;
-
-    #[test]
-    fn the_shipped_manifest_names_the_bot_scopes_admission_requires() {
-        assert!(!manifest_bot_scopes().unwrap().is_empty());
-    }
 
     fn system() -> super::Clock {
         std::sync::Arc::new(jiff::Timestamp::now)
