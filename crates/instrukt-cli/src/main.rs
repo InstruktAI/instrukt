@@ -203,7 +203,10 @@ fn run() -> ExitCode {
     } else if authorization::state_inspection(&matches) {
         // A documentation read, and its admission, inspect the state database.
         Ctx::inspection()
-    } else if authorization::read_only(&matches) || authorization::repository_local(&matches) {
+    } else if authorization::read_only(&matches)
+        || authorization::repository_local(&matches)
+        || authorization::deferred_writing(&matches)
+    {
         Ctx::configuration_read()
     } else {
         Ctx::from_process()
