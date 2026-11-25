@@ -412,6 +412,21 @@ impl Store {
         db.write(|tx| change(tx, &path, &self.project))
     }
 
+    /// Runs `within` with the stored record of `id` (`None` when there is
+    /// none or it belongs to another project) inside one write transaction
+    /// under the writer lock, so no other write lands while it runs. It
+    /// writes nothing.
+    pub fn hold_record<T>(
+        &self,
+        id: &TodoId,
+        within: impl FnOnce(Option<&TodoRecord>) -> T,
+    ) -> Result<T, WorkError> {
+        self.write(|tx, path, project| {
+            let item = load_own(tx, path, project, id)?;
+            Ok(within(item.as_ref().map(|item| &item.record)))
+        })
+    }
+
     /// Every local item of the project, in identity order.
     pub fn items(&self) -> Result<Vec<LocalItem>, WorkError> {
         self.read(Vec::new(), load_items)

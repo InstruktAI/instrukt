@@ -572,6 +572,84 @@ pub trait RetentionPurge: Send + Sync {
 }
 
 // ---------------------------------------------------------------------
+// Worktree reclamation
+// ---------------------------------------------------------------------
+
+/// Who asks for a section of the work record free of role attempts on a
+/// todo's worktree, and what admits it there (`worktree-reclamation`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionAdmission {
+    /// The runner: admitted while no role attempt is open on the worktree
+    /// and the record is still at the revision the runner observed before
+    /// its git checks.
+    Runner { revision: u64 },
+    /// A session the todo's assignment binds: admitted unless another
+    /// session holds the worktree.
+    Session(SessionRef),
+}
+
+/// A session that holds a todo's worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorktreeHolder {
+    /// A role attempt open on the worktree.
+    Attempt {
+        role: RoleName,
+        attempt: u64,
+        session: Option<SessionRef>,
+    },
+    /// The todo's execution claim, with no role attempt open.
+    Claim { session: Option<SessionRef> },
+}
+
+impl std::fmt::Display for WorktreeHolder {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let by = |session: &Option<SessionRef>| {
+            session
+                .as_ref()
+                .map_or_else(|| "no recorded session".to_owned(), ToString::to_string)
+        };
+        match self {
+            Self::Attempt {
+                role,
+                attempt,
+                session,
+            } => write!(f, "the role attempt {role}/{attempt} ({})", by(session)),
+            Self::Claim { session } => write!(f, "the execution claim ({})", by(session)),
+        }
+    }
+}
+
+/// What asking for an attempt-free section came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SectionOutcome {
+    /// The action ran inside the section.
+    Ran,
+    /// The worktree is held, so the action did not run.
+    Held(WorktreeHolder),
+    /// The record changed after the revision the runner observed, so the
+    /// action did not run.
+    RecordChanged,
+    /// The project's record holds no todo with that identity.
+    NotRecorded,
+}
+
+/// Work's part in worktree reclamation (`work` domain, "Work → runner
+/// (worktree reclamation)"): a section free of role attempts.
+pub trait WorktreeReclamation: Send + Sync {
+    /// Runs `action` inside one write transaction of the work record, under
+    /// the writer lock, in which no role attempt opens on `todo`'s
+    /// worktree, when `admission` admits it; the section writes nothing,
+    /// and `action` is all it holds the lock for.
+    fn attempt_free(
+        &self,
+        project: &ProjectRef,
+        todo: &TodoIdentity,
+        admission: &SectionAdmission,
+        action: &mut dyn FnMut(),
+    ) -> Result<SectionOutcome, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
 // Workflow
 // ---------------------------------------------------------------------
 
@@ -739,6 +817,7 @@ pub struct WorkPorts {
     pub firings: Arc<dyn TaskFirings>,
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
+    pub reclamation: Arc<dyn WorktreeReclamation>,
 }
 
 impl std::fmt::Debug for WorkPorts {
