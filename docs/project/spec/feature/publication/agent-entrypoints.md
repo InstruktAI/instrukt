@@ -33,8 +33,8 @@ A project's root `AGENTS.md` is the selection in `docs/project/index.yaml`; a
 company home's `AGENTS.md` is the selection its `docs/index.yaml` makes from
 the company's own documents. No instruction file below a repository's root is
 rendered. A company's repository also carries the company's plugin, which
-instrukt renders from the same index when asked and which no agent program
-loads from a checkout
+instrukt renders from the same index when asked and which is no instruction
+file: it is installed from the repository as a plugin catalog
 (`project/instrukt/spec/feature/publication/company-plugin`).
 The project that owns `docs/general/` also renders a user-scope global file
 for each agent runtime the user has configured, found by asking the selected
@@ -544,10 +544,20 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   be parsed is left untouched and named, and the sync goes on: that file is
   the user's (`general/policy/agent-artifact-governance`: an agent's user
   settings belong to its user).
+<!-- planned-change:native-company-skill-rendering -->
 - **No other agent configuration.** instrukt writes no skill, MCP server, hook
   or other agent setting. Agents reach declared MCP servers through
   `instrukt mcp` (`project/instrukt/spec/feature/runner/mcp-access`), which
   writes none either.
+<!-- change:native-company-skill-rendering -->
+- **No other agent configuration.** A sync writes no skill, MCP server, hook
+  or other agent setting into an agent runtime's home. Agents reach declared
+  MCP servers through `instrukt mcp`
+  (`project/instrukt/spec/feature/runner/mcp-access`), which writes none
+  either. The skill instrukt renders is the one in a company's plugin, into
+  the company's repository and on request, which no sync renders
+  (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- /planned-change:native-company-skill-rendering -->
 
 ## Use cases
 

@@ -5,6 +5,7 @@ description: Publication — a project publishes its general, domain and project
 
 ## What it is
 
+<!-- planned-change:native-company-skill-rendering -->
 The publication context turns a project's committed documentation into what
 agents on this computer read. `instrukt sync` publishes the project the caller
 stands in, and only that project: from the committed state of its canonical
@@ -25,6 +26,30 @@ projects, and after configuration migration converges: it writes only what is
 missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
+<!-- change:native-company-skill-rendering -->
+The publication context turns a project's committed documentation into what
+agents on this computer read. `instrukt sync` publishes the project the caller
+stands in, and only that project: from the committed state of its canonical
+main it publishes the project's general, domain and project positions
+into the home, claims each of them for the project, patches the
+global index so that exactly the project's own entries change, and records
+the commit it published beside the project's checkout path. The project that
+owns `docs/general/` also renders a global agent file for each agent runtime
+the selected runtime reports as configured, from what is published on the
+computer, and sets the one settings key each needs to load project
+instruction files. A repository carries one rendered instruction file, its root
+`AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
+the `pre-commit` hook section and by `instrukt docs render`, never by a sync. A company's repository also carries the company's plugin,
+which `instrukt docs plugin` renders on request from the same company index, with the plugin's one entry in the repository's plugin catalog.
+Every sync that publishes recomputes the eval fingerprint
+and regenerates the editor schemas and modelines in the project's primary
+worktree, which `instrukt init` also writes through the same operation.
+Publication never reads another project's repository, keeps no registry of
+projects, and after configuration migration converges: it writes only what is
+missing or different, whether or not main has moved. It
+does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
+retrieval, the configuration it reads, or the git hooks that trigger it.
+<!-- /planned-change:native-company-skill-rendering -->
 
 ## Ubiquitous language
 
@@ -96,6 +121,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    home, which selects from the company's own documents
    (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
+<!-- planned-change:native-company-skill-rendering -->
 **Rendering**
 :  Producing one instruction file from documentation: selected snippets in
    full with their closure, listing lines, triggered-procedure lines, planned
@@ -104,6 +130,18 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    `@config`; a committed entrypoint inlines only what its repository holds,
    names other repositories' doctrine by the command that reads it, and
    admits no configured value.
+<!-- change:native-company-skill-rendering -->
+**Rendering**
+:  Producing one instruction file from documentation: selected snippets in
+   full with their closure, listing lines, triggered-procedure lines, planned
+   material dropped, no import left for an agent program to resolve. A
+   global agent file inlines what is published on the computer and resolves
+   `@config`; a committed entrypoint inlines only what its repository holds,
+   names other repositories' doctrine by the command that reads it, and
+   admits no configured value. Producing a company plugin from the company
+   index is a rendering too: the same selection, held as the files of the
+   plugin.
+<!-- /planned-change:native-company-skill-rendering -->
 
 **Committed entrypoint**
 :  The `AGENTS.md` at the root of a repository that holds its entry index, a
@@ -111,6 +149,28 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    the generated line that marks it as a rendering, and a function of the
    repository's committed content and the rendering instrukt release only. A
    repository has at most one.
+
+<!-- planned:native-company-skill-rendering -->
+**Company plugin**
+:  The Claude plugin a company's repository carries in `plugins/<key>/`,
+   `<key>` being the company's key: the selection the company index makes,
+   held as one skill with a manifest. It is no instruction file
+   (`project/instrukt/spec/feature/publication/company-plugin`).
+
+**Plugin catalog**
+:  `.claude-plugin/marketplace.json` at the root of a company's repository,
+   from which Claude installs the plugins it lists. The repository's own
+   file.
+
+**Catalog entry**
+:  The one member of the plugin catalog that lists the company plugin,
+   named by the company's key.
+
+**Visibility**
+:  A company document's `visibility`: `internal` or `public`. Not the
+   `visibility` of a snippet, which is docs'
+   (`project/instrukt/spec/domain/docs`).
+<!-- /planned:native-company-skill-rendering -->
 
 **Configured agent runtime**
 :  An agent runtime the runtime `runner.runtime` selects reports as configured
@@ -138,6 +198,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 ## Ownership boundary
 
+<!-- planned-change:native-company-skill-rendering -->
 - **Owns** — reading a project's committed main for publication; the
   published-commit and checkout-path record and convergence; the ownership
   record and its refusals (a second claimant, a reserved domain name);
@@ -180,6 +241,62 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- change:native-company-skill-rendering -->
+- **Owns** — reading a project's committed main for publication; the
+  published-commit and checkout-path record and convergence; the ownership
+  record and its refusals (a second claimant, a reserved domain name);
+  index patching by owner with its duplicate-id refusal; retraction;
+  rendering of the committed root `AGENTS.md` — a project's and a company
+  home's — and of the global agent files; rendering of a company's plugin
+  from the company index, its version rule, and the merge of the plugin's
+  one entry into the repository's plugin catalog; a company document's
+  `visibility` and its findings; the choice of global
+  file targets from the configured agent runtimes; writing those files whole,
+  with no record of what was written;
+  merging the entrypoint-loading keys; the editor
+  schemas in a repository's `.instrukt/schemas/` and their modelines, which
+  sync and `instrukt init` write; the eval
+  fingerprint; owner-scoped publication and retraction of domain workflow
+  definitions, roles, actions and templates as non-snippet files; the
+  `instrukt status` report, which reads this state together with the
+  configuration layers and the repository's hook sections, and changes
+  nothing.
+- **Does not own** — snippet identity, the reference forms, the `@config`
+  directive grammar, pending carriers, `index.yaml` and `schema.yaml` and
+  their findings, structural validation, `instrukt docs get --domain` and
+  every other read of the home (docs,
+  `project/instrukt/spec/domain/docs`); the layered configuration, its
+  schema migration and runtime choice (configuration,
+  `project/instrukt/spec/domain/configuration`); the hook sections that
+  start a sync, adoption and its claims report (repository,
+  `project/instrukt/spec/domain/repository`);
+  stamps that carry the eval fingerprint (work,
+  `project/instrukt/spec/domain/work`); an agent runtime's installed
+  skills, its MCP configuration and every other agent setting on a computer
+  (outside instrukt); the plugin catalog's own name and owner and every
+  entry but the company plugin's (the company's repository); committing and
+  pushing what a rendering changed (its caller); whether and when a Claude
+  client takes a new copy of a plugin (Claude).
+- **Published contracts** — `instrukt sync`; the home's published tree
+  (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
+  `index.yaml` and `schema.yaml` when the position has them); the global
+  index `~/.instrukt/state/index.yaml`; the ownership record, published
+  commits and checkout paths under
+  `~/.instrukt/state/publication/`; the eval fingerprint per published commit
+  under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
+  of a repository and `instrukt docs render [--check]`; a company's plugin
+  under `plugins/<key>/` with its entry in `.claude-plugin/marketplace.json`,
+  and `instrukt docs plugin --key <key> --name <name>`, which asks for a
+  rendering, with `--check` for a check and with `--validate` for a
+  validation, the two flags excluding each other
+  (`project/instrukt/spec/feature/publication/company-plugin`); whether a
+  repository's `docs/index.yaml` is its company index, which docs
+  validation asks before reading the file; the global
+  agent files; `.instrukt/schemas/` and the modeline
+  form (`project/instrukt/spec/feature/publication/editor-schemas`);
+  `instrukt status [--json]` and its report
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:native-company-skill-rendering -->
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
@@ -271,6 +388,41 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   workflow; removed with its entry index
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
+<!-- planned:native-company-skill-rendering -->
+#### Company plugin (aggregate)
+
+- **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
+  being the company's key.
+- **Contains:** the manifest with the plugin's version; the skill's main
+  file; one file for each other document the plugin carries; the plugin's
+  entry in the repository's plugin catalog.
+- **Invariants:**
+  - A function of the repository's company index and documents, the key and
+    the name its caller gives, the plugin the repository already holds and
+    the rendering instrukt release: nothing published on the computer, no
+    configuration layer and no environment enters it.
+  - It holds the selection the company index makes, as the repository's
+    committed `AGENTS.md` does, and carries every document it names.
+  - The version is the one thing a rendering takes from the plugin the
+    repository holds. Its last number is raised by one exactly when the
+    rendering differs from that plugin; instrukt never changes the first
+    two.
+  - Changes only in the working tree, through `instrukt docs plugin`; no
+    commit, sync, checkout, start or tick writes it, and rendering a
+    repository's `AGENTS.md` writes none.
+  - The folder is written whole, whatever it held, and never removed.
+    Nothing is read, written or removed through a symbolic link.
+  - Of the plugin catalog, a rendering changes the plugin's entry and
+    nothing else; it creates no catalog.
+  - With a finding, no file is written or removed.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the company's key, in its repository.
+- **Lifecycle:** rendered when a caller asks for it; committed by that
+  caller; left as it is where the repository holds no company index
+  (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- /planned:native-company-skill-rendering -->
+
 ### Domain events emitted
 
 None. A sync's outcome is its exit status, its output and the state it
@@ -293,6 +445,9 @@ This context emits no events.
 - **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
+<!-- planned:native-company-skill-rendering -->
+- **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version changes exactly when the knowledge does.
+<!-- /planned:native-company-skill-rendering -->
 
 ## Governing designs and decisions
 
@@ -333,6 +488,13 @@ This context emits no events.
 - **distribution** — Published language. `instrukt status` is the state the
   instrukt cockpit skill reads on every visit
   (`project/instrukt/spec/domain/distribution`).
+<!-- planned:native-company-skill-rendering -->
+- **Claude's plugin formats** — Conformist. The company plugin, its skill
+  and its catalog entry follow Claude's plugin, skill and plugin catalog
+  formats as their vendor states them
+  (`project/instrukt/spec/feature/publication/company-plugin`). instrukt
+  writes files in those formats and runs no Claude program.
+<!-- /planned:native-company-skill-rendering -->
 
 ## Known caveats
 

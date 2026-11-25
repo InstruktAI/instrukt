@@ -181,6 +181,7 @@ contract without executing its operation: what the command, each flag and
 each setting it touches is for, and when to choose it. `instrukt -h` lists the
 commands. Docs name `-h`.
 
+<!-- planned-change:native-company-skill-rendering -->
 A command that fails ends with one readable line on stderr, `instrukt: `
 and then what failed, where, and what to run when there is a door; it is
 printed once and the exit status is non-zero. An error's causes follow it
@@ -191,7 +192,20 @@ configured value it could not resolve, `docs schema` with findings, a
 `history search` that could not reach every computer — ends the same way,
 after its output, exit status 1; its line points at what that output holds
 in the mode it was asked for, text or JSON.
+<!-- change:native-company-skill-rendering -->
+A command that fails ends with one readable line on stderr, `instrukt: `
+and then what failed, where, and what to run when there is a door; it is
+printed once and the exit status is non-zero. An error's causes follow it
+on that line, each once; findings that read as a list are joined with `; `.
+A command that meant to act and could not — a writing `docs render` or
+`docs plugin` left with findings, a converging `install` left incomplete, `docs get` with a
+configured value it could not resolve, `docs schema` with findings, a
+`history search` that could not reach every computer — ends the same way,
+after its output, exit status 1; its line points at what that output holds
+in the mode it was asked for, text or JSON.
+<!-- /planned-change:native-company-skill-rendering -->
 
+<!-- planned-change:native-company-skill-rendering -->
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
 validate`, `docs validate`, `docs render --check`, `install --check` and
@@ -204,9 +218,25 @@ rendered, and its output says why.
 Nothing on the terminal is a program's debug rendering of a value: durations
 are whole seconds, kinds and verdicts their plain names. Usage errors keep
 the command-line parser's own text and exit status 2.
+<!-- change:native-company-skill-rendering -->
+A command whose job is to report findings keeps its report as its output
+and adds no line: its exit status says there are findings. `config
+validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
+`docs plugin --validate`, `install --check` and `specs coverage --check`
+exit 1 with findings; `status` exits 0 whatever its
+report says once every part was read, and 1 when a part could not be read
+(`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
+exits 1 when the todo cannot be claimed or its factual ledger cannot be
+rendered, and its output says why.
+Nothing on the terminal is a program's debug rendering of a value: durations
+are whole seconds, kinds and verdicts their plain names. Usage errors keep
+the command-line parser's own text and exit status 2.
+<!-- /planned-change:native-company-skill-rendering -->
 
 ### External surfaces
 
+<!-- planned-change:native-company-skill-rendering -->
 | Surface | Used by | How |
 | --- | --- | --- |
 | git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
@@ -220,6 +250,22 @@ the command-line parser's own text and exit status 2.
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
+<!-- change:native-company-skill-rendering -->
+| Surface | Used by | How |
+| --- | --- | --- |
+| git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
+| GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
+| Configured agent runtimes | publication | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
+| Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
+| Configured graph engine | blueprint | an adapter emitting the node-link contract |
+| Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
+| OS scheduler | runner | `instrukt tick` each minute |
+| OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
+| Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
+| GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
+| Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
+| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository on request: the company plugin under `plugins/<key>/` and its one entry in `.claude-plugin/marketplace.json` (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
+<!-- /planned-change:native-company-skill-rendering -->
 
 ## Invariants
 

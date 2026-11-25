@@ -38,7 +38,8 @@ catalog formats (See Also), which decide where each of its files stands.
   its required reads, each before the document that requires it and each
   once.
 - **Each other document** the index selects or a required read reaches is a
-  file of its own inside the skill. The main file names each `listed`
+  file of its own inside the skill, under one folder of the skill at the
+  document's path relative to `docs/`. The main file names each `listed`
   document by one line: that file's path inside the skill and the document's
   `description`. A document that requires another names it by where the
   plugin carries it.
@@ -55,6 +56,10 @@ catalog formats (See Also), which decide where each of its files stands.
   descriptions say whose knowledge the plugin holds and when an agent uses
   the skill. They take the company's name and nothing else: no document and
   no index replaces, extends or removes them.
+- **Each file opens as its format requires.** No file of the plugin carries
+  the generated line of an instruction file
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
+  generated line).
 
 ### What the documents may say
 
@@ -66,11 +71,14 @@ naming the document and what is wrong:
 
 - **The index.** A repository without `docs/index.yaml` holds no knowledge
   to render: that is a finding naming the file, for a rendering, a check and
-  a validation alike.
+  a validation alike. So does a repository whose root `instrukt.yaml` makes
+  it a project
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, What makes
+  a repository a company home): that is a finding naming that file.
 - **Nothing the plugin names lies outside it.** A reference in a document's
   text to a company document the plugin does not carry — one the index does
-  not select and no required read reaches — is a finding naming the document
-  and the reference.
+  not select and no required read reaches — or to a file under `docs/` that
+  is no company document is a finding naming the document and the reference.
 - **Frontmatter.** Frontmatter that is not a YAML mapping, in any document
   the plugin carries, is a finding naming the document and why.
 - **Visibility.** A company document's frontmatter may carry `visibility`,
@@ -92,6 +100,8 @@ With a finding, no file is written or removed.
 - Rendering twice in a row changes nothing the second time.
 - A manifest in the repository that cannot be read, or whose version is not
   three numbers, is a finding naming it.
+- A file git ignores is no part of what `plugins/<key>/` holds: it is neither
+  compared nor removed.
 
 ### What the rendering is a function of
 
@@ -102,6 +112,17 @@ Nothing else from the computer enters: no home, no publication, no
 configuration layer and no environment. A fresh clone and the binary are
 enough, and a home and a clone of the repository render the same bytes.
 
+The caller gives the key and the name with every request, for a rendering, a
+check and a validation alike. instrukt takes neither from the repository's
+name, the folder it lies in, a settings document or the environment.
+
+- **The key** follows the grammar of a company's key
+  (`project/instrukt/spec/feature/configuration/company-homes`).
+- **The name** is one line of text that is not blank. Whatever characters it
+  holds, each file that carries it stays valid in its format.
+- A request without one of them, or with one that breaks its form, is a usage
+  error: nothing is read.
+
 ### The catalog entry
 
 `.claude-plugin/marketplace.json` at the repository's root is the
@@ -109,13 +130,20 @@ repository's plugin catalog. A rendering sets the company's plugin's entry in
 it and nothing else:
 
 - The entry names the plugin by the company's key, gives the plugin's folder
-  by its path in the repository as its source, and carries the plugin's
-  description.
+  as its source, in the form Claude's catalog format gives a folder of the
+  catalog's own repository (See Also), and carries the plugin's description.
+  It carries no version of instrukt's: the plugin's version is the
+  manifest's alone.
 - An entry already listed under that name receives those values and keeps
   every other field it holds; without one, the entry is added after the
   others.
 - Every other entry, and every other part of the catalog, keeps its value and
   its place.
+- The catalog is compared by its values, never by its bytes. Where the entry
+  already holds those values, the file is left byte for byte, whatever its
+  formatting. Where it does not, the catalog is written as one JSON document:
+  every member in the order it stood in, indented by two spaces, ending in
+  one newline.
 - A repository without a catalog is a finding naming the file. instrukt
   creates none: a catalog's own name and owner are its repository's. A
   catalog that cannot be read as one is a finding, and is left as it is.
@@ -136,6 +164,12 @@ A caller asks for one of three things in a company's repository:
 - **A validation** writes nothing and compares no file. It reports each
   finding and exits non-zero only when there is one, so it answers for a
   branch whose plugin is behind its documents.
+
+The three read the same repository and report the same findings. Nothing is
+read, written or removed through a symbolic link: one at or above
+`plugins/<key>/`, anywhere inside it, or at or above the catalog is a finding
+naming it. The command that asks for each of the three is the publication
+context's (`project/instrukt/spec/domain/publication`).
 
 The `pre-commit` section, a sync, a start and a tick render no plugin, and
 rendering a repository's `AGENTS.md` renders none. A commit on a branch
@@ -210,6 +244,16 @@ And no file is changed
   receives each renderer's bytes in turn.
 - When and whether a Claude client takes a new copy of an installed plugin is
   Claude's (See Also).
+- What Claude does with a skill's main file before an agent reads it, and how
+  much of it Claude keeps in an agent's context, is Claude's (See Also).
+  Text of an `expanded` document in a form Claude replaces or runs there is
+  not delivered as written. A document the index lists stays out of the main
+  file.
+- Whether Claude accepts a plugin under the company's key is Claude's (See
+  Also): the key is held to the grammar of a company's key and to nothing
+  else.
+- A `version` an operator sets on the plugin's catalog entry stays as it is,
+  and so does not follow the manifest's.
 
 ## See Also
 
