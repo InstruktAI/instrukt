@@ -566,7 +566,7 @@ impl Deployment {
                     event = "agents_deployment_record_unreadable",
                     record = %state.display(),
                     %error,
-                    "agents.yaml is kept as it is; remove the record if agents.yaml is an unedited copy of earlier defaults"
+                    "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want"
                 );
                 return None;
             }
@@ -578,7 +578,7 @@ impl Deployment {
                     event = "agents_deployment_record_invalid",
                     record = %state.display(),
                     %cause,
-                    "agents.yaml is kept as it is; remove the record if agents.yaml is an unedited copy of earlier defaults"
+                    "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want"
                 );
                 None
             }
