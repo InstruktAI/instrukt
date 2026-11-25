@@ -167,26 +167,39 @@ admitted and the reservation is a worktree-less `Child` assignment with no
 `worktree`, `branch`, or `base`. The command records facts and calls no runtime.
 Setup admits its setup-only brief; other roles match the procedure's declared role.
 
+The reply also names the role's prior session when the record holds one: the
+native identity and attempt number of the role's most recent earlier attempt
+that was bound on the reservation's runtime, with that attempt's recorded
+selection and the session that dispatched it where the record holds them. It
+is read from the record's session bindings when the reply is made and is absent
+when the role has no such attempt. Whether that session is still usable is the
+orchestrator's native evidence, not a recorded fact.
+
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
 `approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
-current shared `<slug>/work` head. The orchestrator delegates with shared
-isolation through `runtime.dispatch`.
+current shared `<slug>/work` head. Whether the reserved round starts a fresh
+worker or continues the role's prior session, and the order of the
+orchestrator's native operations, belong to `general/procedure/orchestration`.
 
-Immediately after delegation it records `instrukt todo bind <slug> --role <role>
---attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
-[--base <sha>]`. Binding requires the reservation, same claim holder and selected
-runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
-(and matching worktree, branch, and clean initial head) are required and every
-child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
-worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
-`--branch`, and `--base` must be omitted. Bind
-before workspace work, record writes or stamps. If a child starts before binding,
-it reports that prerequisite and awaits its parent's native follow-up. Exact
-replay succeeds; changed child identity or workspace refuses. Binding neither
-calls the runtime nor transfers the orchestrator's claim to the child.
+`instrukt todo bind <slug> --role <role> --attempt <n> --session <runtime:id>
+[--worktree <path>] [--branch <branch>] [--base <sha>]` records the native
+session that works the reserved attempt. Binding requires the reservation, same
+claim holder and selected runtime, and exact role/attempt. For repository todos,
+`--branch` and `--base` (and matching worktree, branch, and clean initial head)
+are required and every child inherits `todo-orchestrator`'s single
+`<slug>/work` worktree. For worktree-less `kind: task` (`task-preparer`)
+reservations, `--worktree`, `--branch`, and `--base` must be omitted. The
+binding is the prerequisite for the attempt's workspace work, record writes and
+stamps; a session that starts before its binding reports that prerequisite.
+Exact replay succeeds; changed child identity or
+workspace refuses. A later attempt of a role may bind the native session an
+earlier attempt of that role was bound to: the earlier attempt keeps its
+recorded completion and release, and the session's evidence is attributed to
+the new attempt. Binding neither calls the runtime nor transfers the
+orchestrator's claim to the child.
 
 An interrupted dispatch or bind leaves the reservation outstanding. Recover the
 existing child through the parent's native task evidence and bind it; project
@@ -394,6 +407,16 @@ Given an agent files a defect as ordinary work of the bug kind
 When the filing is made, confirmed or not
 Then nothing is filed
 And the agent is told that a bug is reported through the bug front door, and how to reach it
+```
+
+### UC-TD13: A developer's further round assigned to the earlier worker keeps its context
+
+```gherkin
+Given a developer's todo whose worker completed an earlier round in its role
+When that role's further round is assigned to the same worker
+Then the further round is recorded on that worker's conversation, where its earlier context lives
+And each round's evidence is attributed to its own round
+And the earlier round's record stays as it was
 ```
 
 ## Known caveats

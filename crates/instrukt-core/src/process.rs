@@ -90,6 +90,16 @@ impl Limit {
         self.limit
     }
 
+    /// The part of the limit still left, zero once it has passed.
+    pub fn remaining(&self) -> Duration {
+        self.remaining_at(Instant::now())
+    }
+
+    /// The part of the limit left at `now`, zero once it has passed.
+    fn remaining_at(&self, now: Instant) -> Duration {
+        self.deadline.saturating_duration_since(now)
+    }
+
     /// Judges the latest look at the program, giving completion precedence.
     pub fn judge<T>(&self, ended: Option<T>) -> Look<T> {
         match ended {
@@ -614,6 +624,25 @@ mod stop_hook_tests {
             Box::new(move || ran.store(true, Ordering::SeqCst)),
         ]);
         assert!(later.load(Ordering::SeqCst));
+    }
+}
+
+#[cfg(test)]
+mod limit_tests {
+    use super::{Limit, Look};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn a_limit_has_what_its_window_has_left_and_nothing_once_passed() {
+        let limit = Duration::from_secs(10);
+        let started = Instant::now();
+        let window = Limit::from(limit, started);
+        let left = Duration::from_secs(6);
+        assert_eq!(window.remaining_at(started + Duration::from_secs(4)), left);
+        assert_eq!(window.remaining_at(started + limit), Duration::ZERO);
+        assert_eq!(window.remaining_at(started + limit * 2), Duration::ZERO);
+        let passed = Limit::from(limit, started - limit * 2);
+        assert_eq!(passed.judge(None::<()>), Look::Passed);
     }
 }
 

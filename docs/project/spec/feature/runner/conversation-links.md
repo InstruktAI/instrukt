@@ -149,9 +149,11 @@ header-looking text they quote. Reading discipline is
 ### Stream reader and durable progress
 
 The relay is one more independent reader hosted by the existing long-lived
-`instrukt run`. Its T3 adapter reads the runtime's durable conversation source: the same
-read-only T3 projection-database reader, per-conversation fingerprints and
-native database change notifications used by history. Each link is an
+`instrukt run`. Its T3 adapter reads the runtime's durable conversation source through the
+turn read (`project/instrukt/spec/feature/runner/session-continuity`): the
+read-only T3 projection-database reader and native database change
+notifications that history's extraction also uses, with per-conversation
+fingerprints over every record the source holds of a conversation. Each link is an
 independent consumer with its own opaque source position; it never borrows
 history's extraction position. Native reads used for acceptance and native
 sends run in a worker for that link. A slow target can delay its own link's

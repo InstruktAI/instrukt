@@ -222,7 +222,7 @@ may expose crossings, but no path-name or prose scanner determines ownership.
 
 #### Paradigm-fit assessment
 
-**Authority:** `design-fundamentals`, `backward-compatibility-hygiene`, `substrate-anchoring`, `state-storage`.
+**Authority:** `design-fundamentals`, `backward-compatibility-hygiene`, `substrate-anchoring`, `general/principle/grounding`, `state-storage`.
 
 Check whether the implementation follows existing codebase paradigms:
 
@@ -249,6 +249,18 @@ Check whether the implementation follows existing codebase paradigms:
    project consumes — shared workflows, presets, packages — is part of the
    system it already has, and a local mechanism reproducing one is a parallel
    to it.
+
+   The existing path can also be an established solution outside the system
+   (`sdlc/policy/substrate-anchoring`, `general/principle/grounding`): input whose validity
+   an external specification defines — a data or markup grammar, a protocol, a
+   format — is read through a conforming implementation, unless the change
+   declares a subset the project owns and refuses everything outside it. A
+   hand-built implementation of such a specification with no grounded
+   adopt-vs-build judgment is an undeclared parallel (**Critical**); a
+   constraint offered as the reason to diverge is grounded at its source like
+   any other reason (**Important** when it does not hold). A reviewer checking
+   the change against a canonical implementation of the same grammar has
+   already found the existing path.
 
 7. **State placement**: Does every piece of durable state the change
    introduces, relocates or changes live where the reviewed design placed it,

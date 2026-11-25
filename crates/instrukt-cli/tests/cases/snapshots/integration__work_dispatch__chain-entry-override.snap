@@ -25,7 +25,7 @@ expression: "serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::
   ],
   "premium": [
     {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.2-astra",
       "effort": "high"
     },
     {

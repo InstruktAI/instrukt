@@ -13,6 +13,7 @@ use instrukt_runner::interfaces::{
 };
 use jiff::Timestamp;
 
+use super::_envelope::ShownStatus;
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
@@ -1289,6 +1290,22 @@ pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisi
     out
 }
 
+/// Whether the todo waits on a person (`github-record`, the `Needs you`
+/// marker): it shows as held, or a current approval gate waits for a
+/// human. Work decides this once; the board marker and workflow's
+/// assignment relay it. `awaiting_human_approval` answers whether an
+/// approval gate waits for a human under the configured `prd` and `task`
+/// approvers; it is asked only when the shown status leaves that open.
+pub(crate) fn waits_on_person<E>(
+    shown: ShownStatus,
+    awaiting_human_approval: impl FnOnce() -> Result<bool, E>,
+) -> Result<bool, E> {
+    if shown == ShownStatus::Held {
+        return Ok(true);
+    }
+    awaiting_human_approval()
+}
+
 pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) -> TodoEvidence {
     TodoEvidence {
         branch: record.branch.clone(),
@@ -1377,4 +1394,64 @@ fn timing(record: &TodoRecord) -> Option<TaskTiming> {
         catch_up: record.catch_up,
         last_fired,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use instrukt_core::config::Approver;
+    use instrukt_runner::interfaces::TodoKind;
+
+    use super::{ShownStatus, waits_on_person};
+    use crate::evidence::{
+        PreparationReview, ReviewVerdict, StampFact, TodoEvidence, TodoStatus, artifact_names,
+    };
+    use crate::workflow::_testing::{digest, todo};
+    use crate::workflow::waiting_for_human_approval;
+
+    fn waits(evidence: &TodoEvidence, approver: Approver) -> bool {
+        let shown = ShownStatus::of(evidence.status, evidence.hold.is_some());
+        let Ok(waits) = waits_on_person(shown, || {
+            Ok::<_, Infallible>(waiting_for_human_approval(evidence, approver, approver))
+        });
+        waits
+    }
+
+    #[test]
+    fn a_hold_waits_on_a_person_while_the_todo_shows_as_held() {
+        let held = todo(TodoKind::Change).held().build();
+        assert!(waits(&held, Approver::Human));
+        assert!(waits(&held, Approver::Peer));
+
+        let delivered = todo(TodoKind::Change)
+            .held()
+            .status(TodoStatus::Delivered)
+            .build();
+        assert!(!waits(&delivered, Approver::Human));
+        assert!(!waits(&delivered, Approver::Peer));
+    }
+
+    #[test]
+    fn a_todo_shown_as_held_waits_without_asking_about_approval() {
+        assert_eq!(waits_on_person(ShownStatus::Held, || Err(())), Ok(true));
+        assert_eq!(waits_on_person(ShownStatus::Active, || Err(())), Err(()));
+    }
+
+    #[test]
+    fn an_unapproved_reviewed_prd_waits_on_a_person_only_under_a_human_approver() {
+        let reviewed = todo(TodoKind::Feature)
+            .artifact(artifact_names::PRD, "prd-v1")
+            .artifact(artifact_names::PRD_REVIEW_FINDINGS, "ok")
+            .stamped(StampFact::PreparationVerdict {
+                phase: PreparationReview::PrdReview,
+                verdict: ReviewVerdict::Approve,
+                target: digest("prd-v1"),
+                report: digest("ok"),
+            })
+            .build();
+        assert!(waits(&reviewed, Approver::Human));
+        assert!(!waits(&reviewed, Approver::Peer));
+        assert!(!waits(&todo(TodoKind::Feature).build(), Approver::Human));
+    }
 }

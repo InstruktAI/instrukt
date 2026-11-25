@@ -5,7 +5,7 @@ expression: marks
 [
   {
     "profile": "claude",
-    "model": "claude-fable-5-1",
+    "model": "claude-fable-5-2",
     "status": "unavailable",
     "until": "2099-01-01T00:00:00Z",
     "reason": "quota: window weekly at 100%"

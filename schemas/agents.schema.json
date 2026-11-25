@@ -474,7 +474,7 @@
                   "gpt-6-luna",
                   "gpt-6-sol",
                   "gpt-6.1-sol",
-                  "gpt-6-astra"
+                  "gpt-6.2-astra"
                 ]
               },
               {
@@ -523,7 +523,7 @@
                   "claude-haiku-5-5",
                   "claude-sonnet-5-5",
                   "claude-opus-5-5",
-                  "claude-fable-5-1"
+                  "claude-fable-5-2"
                 ]
               },
               {
@@ -572,8 +572,8 @@
             "anyOf": [
               {
                 "enum": [
-                  "gemini-3.8-flash-high",
-                  "gemini-pro-agent"
+                  "gemini-3.8-flash",
+                  "gemini-4-neon"
                 ]
               },
               {

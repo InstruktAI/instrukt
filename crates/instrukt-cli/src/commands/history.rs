@@ -35,7 +35,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Read a retained source document by conversation id or legacy alias.
+    /// Read a retained conversation's document by conversation id or legacy alias: a runtime conversation's thread and messages, or the document its import retained.
     Show {
         source: String,
         conversation: String,

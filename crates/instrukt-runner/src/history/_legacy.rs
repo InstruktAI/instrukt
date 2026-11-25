@@ -1,5 +1,5 @@
 use super::{
-    _db,
+    _db, _earlier,
     _store::{self, Conversation},
     Extraction, HistoryError,
 };
@@ -117,7 +117,12 @@ fn read_batch(db: &mut Connection, cursor: Option<i64>) -> Result<Batch, History
                 .as_i64()
                 .ok_or_else(|| HistoryError::Source("mirror lacks integer id".into()))?;
             let conversation = conversation(&tx, id, mirror, version)?;
-            let size = conversation.document.to_string().len() + conversation.body.len();
+            let size = conversation.document.to_string().len()
+                + conversation
+                    .texts
+                    .iter()
+                    .map(|t| t.text.len())
+                    .sum::<usize>();
             if !batch.conversations.is_empty() && bytes + size > BATCH_BYTES {
                 batch.more = true;
                 break;
@@ -130,7 +135,8 @@ fn read_batch(db: &mut Connection, cursor: Option<i64>) -> Result<Batch, History
     Ok(batch)
 }
 
-/// The retained view of mirror `id`, with its session, sources and messages.
+/// The retained view of mirror `id`, with its session, sources and
+/// messages: the document the import builds, retained by the mirror rule.
 fn conversation(
     tx: &Connection,
     id: i64,
@@ -151,10 +157,11 @@ fn conversation(
         id,
     )?;
     let mut aliases = Vec::new();
-    let mut body = mirror["conversation_text"]
-        .as_str()
-        .ok_or_else(|| HistoryError::Source("mirror lacks conversation text".into()))?
-        .to_owned();
+    if !mirror["conversation_text"].is_string() {
+        return Err(HistoryError::Source(
+            "mirror lacks conversation text".into(),
+        ));
+    }
     for record in std::iter::once(&mirror)
         .chain(std::iter::once(&session))
         .chain(sources.iter())
@@ -170,7 +177,6 @@ fn conversation(
             }
         }
     }
-    let needs_source_text = body.is_empty();
     for source in &mut sources {
         let id = source["id"]
             .as_i64()
@@ -180,20 +186,13 @@ fn conversation(
             "SELECT * FROM mirror_messages WHERE source=?1 ORDER BY ordinal",
             id,
         )?;
-        if needs_source_text && let Some(s) = source["archival_text"].as_str() {
-            body.push('\n');
-            body.push_str(s);
-        }
-        for message in &messages {
-            if needs_source_text && let Some(s) = message["text"].as_str() {
-                body.push('\n');
-                body.push_str(s);
-            }
-        }
         source["messages"] = json!(messages);
     }
     aliases.sort();
     aliases.dedup();
+    let retained = _earlier::mirror(
+        json!({"mirror":mirror,"session":session,"sources":sources,"source_revision":version}),
+    );
     Ok(Conversation {
         native_id: session["session_id"]
             .as_str()
@@ -209,8 +208,8 @@ fn conversation(
             .into(),
         parent: session["initiator_session_id"].as_str().map(str::to_owned),
         aliases,
-        document: json!({"mirror":mirror,"session":session,"sources":sources,"source_revision":version}),
-        body,
+        document: retained.document,
+        texts: retained.texts,
         limitations: vec![
             "Legacy archive: only material retained by the TeleClaude mirror is available.".into(),
         ],

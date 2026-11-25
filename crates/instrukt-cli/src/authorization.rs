@@ -122,6 +122,14 @@ pub fn repository_local(matches: &ArgMatches) -> bool {
     )
 }
 
+/// The documentation reads, as the catalog classifies them: they inspect the
+/// state database, so an older one is read through its migrated in-memory
+/// image and the file stays as found
+/// (`project/instrukt/spec/feature/work/state-database`).
+pub fn state_inspection(matches: &ArgMatches) -> bool {
+    action(&command_path(matches).0) == Some(Action::DocsRead)
+}
+
 /// The commands that write no log: `docs render [--check]`, so a check
 /// writes nothing anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {

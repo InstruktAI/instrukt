@@ -86,7 +86,7 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 | Discovery and readiness | The real runtime descriptor, short-lived read-scoped token issue/revoke and negotiated `server.getConfig` response pass the production readiness acquisition and shape validation. Unready provider facts remain unready; no successful provider login or quota observation is invented. Revocation is checked, including denial of reuse of the revoked credential. The same response's provider instances decode into the configured agent runtimes and their homes (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
 | Thread identity and state | Provider-free thread creation supplies real list and show responses. The adapter decodes identity, title/key, project, status, native activity, settled/archive and available workspace metadata; the tested fixture determines which values are expected. Unknown-thread responses retain failure meaning. |
 | Accepted input | A provider-free deferred run supplies a busy target for native CLI queue delivery. Real show responses and persisted user-message/run relationships demonstrate acceptance separately from entry consumption. The deferred run is never released to a provider. |
-| Persistence and conversation source | The production source opens the real migrated database, validates every table/column/type it consumes and reads T3-written thread, deferred-run, user-message and turn-item payloads. An unchanged second read adds no duplicate records; a later durable change is observed through the normal source/notification boundary. Empty provider-generated tables still undergo shape validation. |
+| Persistence and conversation source | The production source opens the real migrated database and each of its reads validates every table/column/type that read consumes. The turn read, scoped to the fixture thread, reads T3-written thread, deferred-run, user-message and turn-item payloads; an unchanged second read adds no duplicate records, and a later durable change is observed through the normal source/notification boundary. The text read, through the real `instrukt history extract`, retains the fixture thread with its user messages and nothing else T3 wrote of it, and an unchanged second extraction loads nothing. Empty provider-generated tables still undergo shape validation by the read that consumes them. |
 
 Each disposable server start waits for the runtime descriptor to report
 that server's assigned port before connecting, including after a restart.
@@ -232,10 +232,13 @@ And it leaves the maintainer's runtime and home untouched
   streaming/completion, reasoning/tool/diff payload generation, provider-created
   subagents, native child results, actual token/quota accounting and authenticated
   provider readiness are not live exercised. Completed-turn relay attribution
-  and ordering over provider-produced records, and the running turn's newest
-  assistant message a conversation's status shows, therefore remain outside
-  this live guarantee; passing an empty-table shape check proves no such
-  payload.
+  and ordering over provider-produced records, the running turn's newest
+  assistant message a conversation's status shows, and history's retention of
+  provider-produced assistant messages therefore remain outside this live
+  guarantee; passing an empty-table shape check proves no such payload. The
+  check of history's extraction covers thread and message payloads, the
+  payloads its text read consumes
+  (`project/instrukt/spec/feature/runner/history`).
 - CLI start with an opening message starts execution. Its successful model turn,
   ready-thread send/consumption, automatic wake after completion and their fake
   success paths are not verified by provider-free help or queue acceptance.

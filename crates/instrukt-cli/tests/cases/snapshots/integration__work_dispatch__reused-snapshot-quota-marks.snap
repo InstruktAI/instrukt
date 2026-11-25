@@ -1,18 +1,18 @@
 ---
 source: crates/instrukt-cli/tests/cases/work-dispatch.rs
-expression: marks
+expression: availability()
 ---
 [
   {
     "profile": "antigravity",
-    "model": "gemini-pro-agent",
+    "model": "gemini-4-neon",
     "status": "unavailable",
     "until": "2099-01-01T00:00:00Z",
     "reason": "operator restriction"
   },
   {
     "profile": "claude",
-    "model": "claude-fable-5-1",
+    "model": "claude-fable-5-2",
     "status": "unavailable",
     "until": "2030-01-01T01:00:00Z",
     "reason": "quota: window session at 100%; one-hour default expiry (resetsAt missing)"
