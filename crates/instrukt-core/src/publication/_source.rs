@@ -256,6 +256,32 @@ impl Committed {
     /// `AGENTS.override.md` read whether ignored or not; elsewhere every
     /// file below `root`.
     pub(super) fn working_tree(root: &Path) -> Result<Self, PublicationError> {
+        Self::working_tree_with(root, None)
+    }
+
+    /// The files of the working tree whose root is `root`, as
+    /// [`Committed::working_tree`] reads them, and with `places` also the
+    /// files of its folder and its file, by the same rule: tracked files
+    /// and untracked ones git does not ignore, regular files only. For
+    /// those two places every symbolic link the file system holds at or
+    /// above them, and anywhere inside the folder, is recorded, whether git
+    /// ignores it or not, so nothing is ever read or written through one.
+    #[expect(
+        dead_code,
+        reason = "the company plugin's planning is its first caller"
+    )]
+    pub(super) fn working_tree_places(
+        root: &Path,
+        places: Places<'_>,
+    ) -> Result<Self, PublicationError> {
+        Self::working_tree_with(root, Some(places))
+    }
+
+    fn working_tree_with(
+        root: &Path,
+        places: Option<Places<'_>>,
+    ) -> Result<Self, PublicationError> {
+        let read = |path: &str| is_read(path) || places.is_some_and(|places| places.holds(path));
         let mut paths: BTreeSet<String> = BTreeSet::new();
         if git::worktree_root(root)?.is_some() {
             let listed = |args: &[&str]| -> Result<Vec<String>, PublicationError> {
@@ -299,7 +325,7 @@ impl Committed {
         for path in paths {
             // A link is recorded wherever it stands, a linked `docs` folder
             // included, so a read through it can say so.
-            if !is_read(&path) {
+            if !read(&path) {
                 // The walk outside git lists the root itself, as an empty path.
                 let linked = safe_relative(&path).is_ok_and(|relative| {
                     !path.is_empty()
@@ -329,6 +355,12 @@ impl Committed {
             let bytes = std::fs::read(&full)
                 .map_err(|source| PublicationError::Io { path: full, source })?;
             files.insert(path, bytes);
+        }
+        if let Some(places) = places {
+            for place in [places.folder, places.file] {
+                links.extend(links_at_or_above(root, place)?);
+            }
+            links.extend(links_inside(root, places.folder)?);
         }
         Ok(Self { files, links })
     }
@@ -424,6 +456,78 @@ impl Committed {
         }
         Ok(())
     }
+}
+
+/// One folder and one file of a working tree, by repository-relative path,
+/// that a view holds beside what publication reads
+/// ([`Committed::working_tree_places`]).
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Places<'a> {
+    /// The folder, without a trailing `/`.
+    pub folder: &'a str,
+    pub file: &'a str,
+}
+
+impl Places<'_> {
+    /// Whether `path` is the file, or lies inside the folder.
+    fn holds(&self, path: &str) -> bool {
+        path == self.file
+            || path
+                .strip_prefix(self.folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+    }
+}
+
+/// Each symbolic link at `place` or at a folder above it below `root`, by
+/// its repository-relative path.
+fn links_at_or_above(root: &Path, place: &str) -> Result<Vec<String>, PublicationError> {
+    let mut links = Vec::new();
+    let mut prefix = String::new();
+    for part in place.split('/') {
+        if !prefix.is_empty() {
+            prefix.push('/');
+        }
+        prefix.push_str(part);
+        let full = root.join(safe_relative(&prefix)?);
+        match std::fs::symlink_metadata(&full) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                links.push(prefix.clone());
+                // Nothing below a link is looked at through it.
+                break;
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(source) => return Err(PublicationError::Io { path: full, source }),
+        }
+    }
+    Ok(links)
+}
+
+/// Each symbolic link anywhere inside the folder `folder` below `root`, by
+/// its repository-relative path; none when the folder is absent or is
+/// itself no folder.
+fn links_inside(root: &Path, folder: &str) -> Result<Vec<String>, PublicationError> {
+    let dir = root.join(safe_relative(folder)?);
+    match std::fs::symlink_metadata(&dir) {
+        Ok(meta) if meta.is_dir() => {}
+        Ok(_) => return Ok(Vec::new()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(PublicationError::Io { path: dir, source }),
+    }
+    let mut links = Vec::new();
+    for entry in walkdir::WalkDir::new(&dir).follow_links(false).min_depth(1) {
+        let entry = entry.map_err(|err| PublicationError::Io {
+            path: err.path().unwrap_or(&dir).to_path_buf(),
+            source: err.into(),
+        })?;
+        if entry.file_type().is_symlink()
+            && let Ok(rel) = entry.path().strip_prefix(root)
+            && let Some(rel) = rel.to_str()
+        {
+            links.push(rel.replace(std::path::MAIN_SEPARATOR, "/"));
+        }
+    }
+    Ok(links)
 }
 
 /// `path` as a relative path of normal components; anything else is
