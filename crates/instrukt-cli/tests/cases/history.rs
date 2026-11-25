@@ -27,6 +27,15 @@ fn remove_history_store(env: &TestEnv) {
     }
 }
 
+/// How many conversations one explicit extraction loaded.
+fn extracted(env: &TestEnv) -> u64 {
+    let out = env
+        .run(env.home(), ["history", "extract", "--json"])
+        .success();
+    let report: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    report["loaded"].as_u64().unwrap()
+}
+
 fn search(env: &TestEnv, query: &str) -> Value {
     let out = env.run(env.home(), ["history", "search", query, "--json"]);
     let out = out.success();
@@ -83,6 +92,20 @@ fn extracted_conversations_survive_restart_and_source_deletion() {
             .len(),
         41
     );
+    // A current state database without history tables, and no history store:
+    // creating the store, catching up and searching take no writer lock.
+    remove_history_store(&env);
+    {
+        let _writer = instrukt_core::fsx::LockGuard::acquire(
+            &env.instrukt_home().join("state/writer.lock"),
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(
+            search(&env, "jewels")["matches"].as_array().unwrap().len(),
+            2
+        );
+    }
     source.remove_threads();
     let retained = search(&env, "jewels");
     assert_eq!(retained["matches"].as_array().unwrap().len(), 2);
@@ -107,120 +130,6 @@ fn search_refreshes_active_children_even_when_shell_transcript_events_are_suppre
             .len(),
         1
     );
-}
-
-// spec: project/instrukt/spec/feature/runner/history UC-HI2
-#[test]
-fn legacy_import_resumes_in_batches_and_keeps_aliases_once_without_a_continuing_mirror_dependency()
-{
-    let env = TestEnv::new();
-    let t3 = fixture::T3Store::new(&env);
-    let mirror = fixture::mirrors(&env);
-    let import = |expect_success: bool| {
-        let before = std::fs::read(&mirror).unwrap();
-        let run = env.run(
-            env.home(),
-            [
-                "history",
-                "import-teleclaude",
-                "--source",
-                mirror.to_str().unwrap(),
-                "--json",
-            ],
-        );
-        if expect_success {
-            run.success();
-        } else {
-            run.failure();
-        }
-        assert_eq!(std::fs::read(&mirror).unwrap(), before);
-    };
-    let batched = |env: &TestEnv, term: &str| -> Vec<String> {
-        let out = env
-            .run(
-                env.home(),
-                ["history", "search", term, "--limit", "1000", "--json"],
-            )
-            .success();
-        let found: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-        let mut conversations: Vec<String> = found["matches"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|m| m["conversation"].as_str().unwrap().to_owned())
-            .collect();
-        conversations.sort();
-        conversations
-    };
-    // A current state database without history tables, and no history store;
-    // nothing the import, a catch-up or a search does may take its writer lock.
-    env.run(env.home(), ["history", "extract", "--json"])
-        .success();
-    remove_history_store(&env);
-    let _writer = instrukt_core::fsx::LockGuard::acquire(
-        &env.instrukt_home().join("state/writer.lock"),
-        Duration::from_secs(5),
-    )
-    .unwrap();
-    // The import stops at a mirror it cannot read; what it committed stays.
-    import(false);
-    let first = batched(&env, fixture::BATCHED_TERM);
-    assert!(!first.is_empty());
-    assert!(first.len() < fixture::batched_ids().count());
-    // The first batch starts at the lowest mirror id, below zero.
-    assert_eq!(
-        batched(&env, fixture::NONPOSITIVE_TERM).len(),
-        fixture::batched_ids().filter(|id| *id <= 0).count()
-    );
-    // A rerun continues after the committed mirrors without reading them.
-    fixture::retitle(&mirror, fixture::UNREADABLE, Some("Repaired"));
-    fixture::retitle(&mirror, -5, None);
-    import(true);
-    let mut all = batched(&env, fixture::BATCHED_TERM);
-    let found = all.len();
-    all.dedup();
-    assert_eq!(
-        (found, all.len()),
-        (
-            fixture::batched_ids().count(),
-            fixture::batched_ids().count()
-        )
-    );
-    std::fs::remove_file(&mirror).unwrap();
-    env.run(
-        env.home(),
-        [
-            "history",
-            "import-teleclaude",
-            "--source",
-            mirror.to_str().unwrap(),
-            "--json",
-        ],
-    )
-    .success();
-    t3.message(
-        "child",
-        "after-import",
-        "Postimport native message.",
-        "2026-11-08T12:00:00.000Z",
-        false,
-    );
-    assert_eq!(
-        search(&env, "Postimport")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    let found = search(&env, "archive");
-    assert_eq!(found["matches"].as_array().unwrap().len(), 1);
-    let source = found["matches"][0]["source"].as_str().unwrap();
-    let out = env
-        .run(env.home(), ["history", "show", source, "source-alias"])
-        .success();
-    let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    assert_eq!(document["sources"].as_array().unwrap().len(), 1);
-    insta::assert_json_snapshot!("legacy-history", stable_sources(found));
 }
 
 // spec: project/instrukt/spec/feature/runner/history UC-HI1
@@ -587,7 +496,7 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
     let env = TestEnv::new();
     let _source = fixture::T3Store::new(&env);
     let found = search(&env, "jewels");
-    let source_id = found["matches"][0]["source"].as_str().unwrap();
+    let source_id = found["matches"][0]["source"].as_str().unwrap().to_owned();
     let file = env.instrukt_home().join("state/instrukt.db");
     std::fs::remove_file(&file).unwrap();
     remove_history_store(&env);
@@ -598,22 +507,23 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
         .unwrap();
     let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"messages":[{"id":"pre-upgrade","threadId":"child","role":"assistant","text":"Upgradetoken retained only in history."}],"turnItems":[{"id":"retained-tool","threadId":"child","type":"command_execution","text":"Textonlytoken","input":"Inputonlytoken","output":"Outputonlytoken","markdown":"Markdownonlytoken","diffStr":"Diffonlytoken"}]});
     db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Upgradetoken retained only in history. Textonlytoken Inputonlytoken Outputonlytoken Markdownonlytoken Diffonlytoken','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
-    // A TeleClaude import that completed before upgrading, whose mirror store
-    // is gone since.
-    let mirrors = env.home().join("retired/mirrors.db");
-    let teleclaude = format!(
-        "teleclaude:{}",
-        hex::encode(<sha2::Sha256 as sha2::Digest>::digest(
-            mirrors.to_str().unwrap().as_bytes()
-        ))
-    );
-    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'archive-session','old-computer','Retained archive',NULL,'[\"source-alias\"]','{}','Archivedtoken kept from the mirrors.','[]')",[&teleclaude]).unwrap();
+    // A conversation an earlier import retained from a source instrukt no
+    // longer reads, under an alias that differs from its native id.
+    let retired = "archive:retired";
+    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'archive-session','old-computer','Retained archive',NULL,'[\"source-alias\"]','{}','Archivedtoken kept from the archive.','[]')",[retired]).unwrap();
     db.execute(
         "INSERT INTO history_sources(source,position,imported) VALUES(?1,1,1)",
-        [&teleclaude],
+        [retired],
     )
     .unwrap();
     drop(db);
+    // The retained conversation keeps its thread and its message, its text
+    // once, and nothing its tool records held.
+    let out = env
+        .run(env.home(), ["history", "show", &source_id, "child"])
+        .success();
+    let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    insta::assert_json_snapshot!("upgraded-document", document);
     assert_eq!(
         search(&env, "Upgradetoken")["matches"]
             .as_array()
@@ -633,18 +543,8 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
         .unwrap();
     drop(db);
     assert_eq!((tables, free, pages * page), (0, 0, length));
-    // The completed import is preserved without its mirror store.
-    env.run(
-        env.home(),
-        [
-            "history",
-            "import-teleclaude",
-            "--source",
-            mirrors.to_str().unwrap(),
-            "--json",
-        ],
-    )
-    .success();
+    // The retained conversation is found, and its alias reads the same
+    // conversation its native id does.
     assert_eq!(
         search(&env, "Archivedtoken")["matches"]
             .as_array()
@@ -652,40 +552,23 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
             .len(),
         1
     );
+    let shown = |conversation: &str| {
+        env.run(env.home(), ["history", "show", retired, conversation])
+            .success()
+            .get_output()
+            .stdout
+            .clone()
+    };
+    assert_eq!(shown("source-alias"), shown("archive-session"));
     assert_eq!(
-        search(&env, "Textonlytoken")["matches"]
+        search(
+            &env,
+            "Textonlytoken OR Inputonlytoken OR Outputonlytoken OR Markdownonlytoken OR Diffonlytoken"
+        )["matches"]
             .as_array()
             .unwrap()
             .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Inputonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Outputonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Markdownonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Diffonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+        0
     );
     assert_eq!(
         search(&env, "jewels")["matches"].as_array().unwrap().len(),
@@ -750,110 +633,46 @@ fn same_time_lower_ids_and_in_place_edits_change_the_conversation_fingerprint() 
 }
 // spec: project/instrukt/spec/feature/runner/history UC-HI1
 #[test]
-fn conforming_turn_items_runs_and_subagents_are_retained_without_message_roles() {
+fn only_conversation_records_and_messages_are_read_and_retained() {
     let env = TestEnv::new();
     let source = fixture::T3Store::new(&env);
     source.native_records();
-    assert_eq!(
-        search(&env, "Useritemtoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
+    source.background_reports();
+    // The messages and a delegated task's report are found; what a
+    // background command's report, a tool call, a reasoning trace, a
+    // run, a subagent or captured terminal, diff and page context held is not.
+    for said in [
+        "Useritemtoken",
+        "Assistantitemtoken",
+        "Delegatedresulttoken",
+    ] {
+        assert_eq!(search(&env, said)["matches"].as_array().unwrap().len(), 1);
+    }
+    let result = search(
+        &env,
+        "Toolitemtoken OR Reasonitemtoken OR Subagenttoken OR Terminalonlytoken OR Diffonlytoken OR Htmlonlytoken OR Shelloutputtoken",
     );
-    assert_eq!(
-        search(&env, "Assistantitemtoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Toolitemtoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Reasonitemtoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    let result = search(&env, "Subagenttoken");
-    assert_eq!(result["matches"].as_array().unwrap().len(), 1);
-    let source_id = result["matches"][0]["source"].as_str().unwrap();
+    assert_eq!(result["matches"].as_array().unwrap().len(), 0);
+    let source_id = search(&env, "Useritemtoken")["matches"][0]["source"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let out = env
-        .run(env.home(), ["history", "show", source_id, "child"])
+        .run(env.home(), ["history", "show", &source_id, "child"])
         .success();
     let document: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
-    assert_eq!(document["turnItems"].as_array().unwrap().len(), 4);
-    assert_eq!(document["runs"].as_array().unwrap().len(), 1);
-    assert_eq!(document["subagents"].as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!("text-only-document", document);
+    // A change to a run, a subagent or a turn item is no change to history.
+    source.rewrite_runs_subagents_and_turn_items();
+    assert_eq!(extracted(&env), 0);
+    // Nor is the loss of their tables: no part of the read consumes them.
+    source.remove_runs_subagents_and_turn_items();
+    assert_eq!(extracted(&env), 0);
+    // A new message is read, without them.
     source.complete();
+    assert_eq!(extracted(&env), 1);
     assert_eq!(
         search(&env, "Finished")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-}
-
-// spec: project/instrukt/spec/feature/runner/history UC-HI1
-#[test]
-fn repairing_v8_recovers_retained_only_output_and_diff_without_source_refresh() {
-    let env = TestEnv::new();
-    let source = fixture::T3Store::new(&env);
-    let found = search(&env, "jewels");
-    let source_id = found["matches"][0]["source"].as_str().unwrap();
-    let file = env.instrukt_home().join("state/instrukt.db");
-    std::fs::remove_file(&file).unwrap();
-    remove_history_store(&env);
-    let db = instrukt_core::state_db::rusqlite::Connection::open(&file).unwrap();
-    db.execute_batch(include_str!("../fixtures/state-v6.sql"))
-        .unwrap();
-    db.execute_batch(include_str!("../fixtures/history-v7.sql"))
-        .unwrap();
-    let native = serde_json::json!({"id":"retained-output","threadId":"child","type":"command_execution","text":"Textonlytoken","input":"Inputonlytoken","output":"Outputonlytoken","markdown":"Markdownonlytoken","diffStr":"Diffonlytoken"});
-    let document = serde_json::json!({"thread":{"id":"child","title":"Retained child","lineage":{"parentThreadId":"parent"}},"turnItems":[native]});
-    db.execute("INSERT INTO history_conversations(source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(?1,'child','aaaaaaaaaaaaaaaa','Retained child','parent','[]',?2,'Textonlytoken','[]')",instrukt_core::state_db::rusqlite::params![source_id,document.to_string()]).unwrap();
-    db.execute_batch(include_str!("../fixtures/history-v8.sql"))
-        .unwrap();
-    drop(db);
-    source.remove_threads();
-    assert_eq!(
-        search(&env, "Textonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Inputonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Outputonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Markdownonlytoken")["matches"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        search(&env, "Diffonlytoken")["matches"]
             .as_array()
             .unwrap()
             .len(),

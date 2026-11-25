@@ -84,7 +84,7 @@ requirements; different bots alone do not prove review occurred.
 
 ### Configuration skill and installation
 
-The configuration skill reuses the three existing TeleClaude Apps on the
+The configuration skill reuses the three Apps on an
 installation that already has them, verifying their configured identity and
 repository installation instead of creating duplicates. On other installations
 it guides creation and installation of the three Apps and records their actual

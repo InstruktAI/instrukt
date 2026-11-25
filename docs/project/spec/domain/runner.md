@@ -143,7 +143,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
-  `instrukt history extract|import-teleclaude|search|show`,
+  `instrukt history extract|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
@@ -171,6 +171,15 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+
+The runner also owns worktree reclamation: that and when the disk todo
+worktrees hold is reclaimed on a computer, the removal of a project's declared
+regenerable output, and the reporting of what stays owed. Its published
+contract there is `instrukt repo reclaim`. It does not own a todo worktree's
+standing, owned by workflow; the attempt lock and the release of a delivered
+todo's worktree and work branch, owned by work; or the declaration of
+regenerable output and its validation, owned by configuration
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
@@ -299,8 +308,7 @@ the activating computer fails visibly without forwarding.
 Published general/domain procedures reach every home of their declared kind:
 one published procedure runs in each company's own home, wherever its publishing
 project is checked out.
-A project-local subscribed procedure reaches only that project's origin; this
-preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
+A project-local subscribed procedure reaches only that project's origin.
 
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
@@ -329,6 +337,21 @@ to enabled blueprint. A dirty, misplaced or diverged checkout is reported and
 preserved, and a later tick retries. This is mechanical runner work, independent
 of event enablement and without a GitHub API call or a main-ahead event.
 
+### Mechanical worktree reclamation
+
+On each invocation, after its dispatch and event work, the runner reclaims the
+disk todo worktrees hold on its computer, for each considered project whose
+work tracking is admitted there. It removes the project's declared regenerable
+output from the worktrees workflow reports idle, and has work release the
+worktree and work branch of each delivered todo. `instrukt repo reclaim` gives
+a session working a todo the same removal in its own worktree; it is the
+runner's command in the `repo` namespace, beside repository's commit
+composition (`project/instrukt/spec/domain/repository`). The contract is
+`project/instrukt/spec/feature/runner/worktree-reclamation`: this work starts
+no session, emits no event and keeps no state of its own. It reaches only the
+worktrees the work record assigns to todos; every other checkout stays with
+its creator.
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -337,7 +360,7 @@ Existing vocabulary is retained explicitly: `runner.upstream_changed` →
 `runner.main_failing`, `runner.dependency_failing` → `runner.dependency_failing`,
 and `workflow.finalized` → `workflow.finalized`.
 The producing contexts remain owners of these facts; subscriptions keep
-these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
+these names. Event-platform types use `instrukt.*`.
 No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
@@ -376,8 +399,7 @@ in data.
 
 ### Event-platform facts emitted
 
-`instrukt.system.event.dead_lettered` ports
-`teleclaude.system.event.dead_lettered`: subject is the failing stream entry,
+For `instrukt.system.event.dead_lettered`, subject is the failing stream entry,
 origin is none, and data declares string fields `attempt_count`, `consumer`,
 `consumer_id`, `dlq_destination`, `failing_stage`, `original_entry_id` and
 `original_stream`. It reports a parked act, not a failing lifecycle state.
@@ -409,7 +431,7 @@ has no origin, as declared in Canonical fields.
 
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
 
-- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3, one-time TeleClaude mirror import and merged search across computers.
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
@@ -445,6 +467,9 @@ has no origin, as declared in Canonical fields.
 - **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
+
+- **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
+  — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
 
 ## Governing designs and decisions
 
@@ -511,6 +536,13 @@ writing per-role session bindings. Work owns validation and persistence of
 those writes, and what a tick's reflection publishes.
 <!-- /planned-change:github-human-agent-reflection -->
 
+For worktree reclamation the runner asks its suppliers and derives none of
+their answers: configuration supplies the project's admitted declaration of
+regenerable output, workflow each todo worktree's standing and what a
+delivered todo still owes, and work the section of its record in which no
+role attempt opens, together with the release of a delivered todo's worktree
+and work branch (`project/instrukt/spec/domain/context-map`).
+
 ## Known caveats
 
 - The target delivery contract requires durable acceptance, bounded batch
@@ -520,14 +552,14 @@ those writes, and what a tick's reflection publishes.
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
 <!-- planned-change:github-human-agent-reflection -->
-- A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
-  harness, one-time layout migrations, experiment matching, dsh upgrades,
+- A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
+  one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. GitHub-backed todos cover work movement without a separate
   computer-transfer feature.
 <!-- change:github-human-agent-reflection -->
-- A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
-  harness, one-time layout migrations, experiment matching, dsh upgrades,
+- A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
+  one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. Moving a todo between computers is not supported: the runner picks
   up only the todos of its own computer's work record, and GitHub carries no

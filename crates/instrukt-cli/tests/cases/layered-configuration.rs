@@ -208,6 +208,49 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
     assert_eq!(fake.calls().len(), 0);
 }
 
+// spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL9
+#[test]
+fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withholds_reclamation() {
+    let env = TestEnv::new();
+    write_global(&env, MACHINE);
+    let repo = documented::project(&env, "demo", &[]);
+    documented::sync(&env, &repo);
+    let declare = |entry: &str| {
+        repo.write(
+            "instrukt.yaml",
+            &format!(
+                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nregenerable: [{entry}]\n"
+            ),
+        );
+    };
+    // The installation findings that name the declaration.
+    let reclamation_findings = || {
+        let checked = env.run(env.home(), ["install", "--check", "--json"]);
+        let report: serde_json::Value =
+            serde_json::from_slice(&checked.get_output().stdout).unwrap();
+        report["findings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|finding| shown(&env, finding.as_str().unwrap().as_bytes()))
+            .filter(|finding| finding.contains("`regenerable`"))
+            .collect::<Vec<_>>()
+    };
+
+    declare("build/output");
+    env.run(repo.path(), ["config", "validate"]).success();
+    assert!(reclamation_findings().is_empty());
+
+    declare("../elsewhere");
+    let validated = env.run(repo.path(), ["config", "validate"]).failure();
+    insta::assert_snapshot!(stdout(&env, &validated), @"[TMP]/demo/instrukt.yaml: regenerable: the entry `../elsewhere` steps to a parent directory; an entry names a location inside the checkout");
+    insta::assert_json_snapshot!(reclamation_findings(), @r#"
+    [
+      "[TMP]/demo/instrukt.yaml `regenerable`: the entry `../elsewhere` steps to a parent directory; an entry names a location inside the checkout; reclaiming the declared output of this project's idle worktrees is withheld on this computer, and a delivered todo's worktree is still released"
+    ]
+    "#);
+}
+
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
 #[test]
 fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {

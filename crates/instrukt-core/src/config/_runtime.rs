@@ -159,7 +159,7 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     ),
     (
         "message_child",
-        "Send a bounded follow-up, findings or recovery to this parent's identified child.",
+        "Send a bounded follow-up, findings or recovery within an outstanding attempt, or a newly bound attempt's brief, to this parent's identified child.",
     ),
     (
         "message_peer",

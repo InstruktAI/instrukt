@@ -107,6 +107,11 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     match args.command {
         Command::Clients { json } => {
             let is_session = require_operator_or_admin_dm(ctx, &caller, asked.as_ref())?;
+            // The local operator's listing materializes registrations: it
+            // writes. An admin's direct message stays a read.
+            if !is_session {
+                ctx.enter_writing()?;
+            }
             let clients = if let Some(ref company) = asked {
                 mcp::list_company_clients(&ctx.home, company, is_session, Timestamp::now())?
             } else {

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/company-plugin.rs
+expression: printed(&refused)
+---
+docs/teams/suppliers.md: is `public` but requires or references docs/teams/contracts.md, which is `internal`; make docs/teams/contracts.md `public`, make docs/teams/suppliers.md `internal`, or remove the dependency
+docs/teams/suppliers.md: is `public` but requires or references docs/people.md, which is `internal`; make docs/people.md `public`, make docs/teams/suppliers.md `internal`, or remove the dependency

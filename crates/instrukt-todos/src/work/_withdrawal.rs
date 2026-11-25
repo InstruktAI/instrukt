@@ -71,6 +71,7 @@ use super::_store::{
     BranchRelease, Checkout, IntentWorktree, Store, WithdrawalIntent, WorkspaceRelease,
     WorktreeStage, WorktreeTie,
 };
+use super::_worktrees::{self, Kept, Worktree, ref_tip, worktrees};
 
 /// The working resources a withdrawal releases, as checked before any is
 /// released (`todos`, "Parking, withdrawal and delivery").
@@ -132,120 +133,42 @@ impl From<git::GitError> for Stop {
     }
 }
 
-/// A worktree of the project as git lists it.
-#[derive(Debug, Clone)]
-struct Worktree {
-    path: PathBuf,
-    /// The commit it has checked out.
-    head: Option<CommitSha>,
-    /// The branch it has checked out.
-    branch: Option<String>,
-    /// Why it is locked, when it is (`""` for no reason given).
-    locked: Option<String>,
-    /// Whether git reports it prunable: the directory git records for it is
-    /// gone.
-    prunable: bool,
-}
-
-impl Worktree {
-    /// What it has checked out: its branch, else the commit it is
-    /// detached at.
-    fn checkout(&self) -> Option<Checkout> {
-        match (&self.branch, &self.head) {
-            (Some(branch), _) => Some(Checkout::Branch(branch.clone())),
-            (None, Some(head)) => Some(Checkout::Detached(head.clone())),
-            (None, None) => None,
-        }
-    }
-}
-
-/// The project's worktrees, the primary one first.
-fn worktrees(root: &Path) -> Result<Vec<Worktree>, git::GitError> {
-    Ok(parse_worktrees(&git::run(
-        root,
-        ["worktree", "list", "--porcelain"],
-    )?))
-}
-
-/// The worktrees `git worktree list --porcelain` printed as `listed`.
-fn parse_worktrees(listed: &str) -> Vec<Worktree> {
-    let mut found: Vec<Worktree> = Vec::new();
-    for line in listed.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            found.push(Worktree {
-                path: PathBuf::from(path),
-                head: None,
-                branch: None,
-                locked: None,
-                prunable: false,
-            });
-        } else if let Some(last) = found.last_mut() {
-            if let Some(head) = line.strip_prefix("HEAD ") {
-                last.head = CommitSha::parse(head).ok();
-            } else if let Some(branch) = line.strip_prefix("branch refs/heads/") {
-                last.branch = Some(branch.to_owned());
-            } else if line == "locked" {
-                last.locked = Some(String::new());
-            } else if let Some(reason) = line.strip_prefix("locked ") {
-                last.locked = Some(reason.to_owned());
-            } else if line == "prunable" || line.starts_with("prunable ") {
-                last.prunable = true;
-            }
-        }
-    }
-    found
-}
+/// The prefix of a withdrawal's staging location beside a worktree.
+const STAGING_PREFIX: &str = ".instrukt-wd-";
 
 /// Refuses releasing `worktree` when git keeps it by its lock or it holds
 /// uncommitted work, naming it as the worktree at `named`, where it is
 /// released from (`UC-TD5`). A status git could not read is no answer.
 fn check_worktree(worktree: &Worktree, named: &Path) -> Result<(), Stop> {
-    if let Some(reason) = &worktree.locked {
-        let why = if reason.is_empty() {
-            String::new()
-        } else {
-            format!(" ({reason})")
-        };
-        return Err(Stop::refused(format!(
-            "the worktree {} is locked{why}; unlock it with `git worktree unlock`, then withdraw again",
-            named.display()
-        )));
-    }
-    let changes = git::run(&worktree.path, ["status", "--porcelain"])?;
-    if !changes.trim().is_empty() {
-        return Err(Stop::refused(format!(
+    match _worktrees::kept(worktree)? {
+        None => Ok(()),
+        Some(Kept::Locked(reason)) => {
+            let why = if reason.is_empty() {
+                String::new()
+            } else {
+                format!(" ({reason})")
+            };
+            Err(Stop::refused(format!(
+                "the worktree {} is locked{why}; unlock it with `git worktree unlock`, then withdraw again",
+                named.display()
+            )))
+        }
+        Some(Kept::Uncommitted) => Err(Stop::refused(format!(
             "the worktree {} holds uncommitted changes; commit or discard them, then withdraw again",
             named.display()
-        )));
+        ))),
     }
-    Ok(())
 }
 
 /// Where the withdrawal of `todo` moves the worktree at `path` to release
-/// it: beside it, in the same directory, so git moves it with one rename.
+/// it ([`_worktrees::staging_path`]).
 fn staging_path(path: &Path, todo: &TodoId) -> Result<PathBuf, Stop> {
-    match (path.parent(), path.file_name()) {
-        (Some(parent), Some(_)) => Ok(parent.join(staging_name(path, todo))),
-        _ => Err(Stop::Unverified(WorkError::refused(format!(
+    _worktrees::staging_path(path, STAGING_PREFIX, todo).ok_or_else(|| {
+        Stop::Unverified(WorkError::refused(format!(
             "the worktree {} has no directory beside it to be released from",
             path.display()
-        )))),
-    }
-}
-
-/// The name of the staging location of the worktree at `path`: the todo's
-/// identity and a digest of the worktree's whole path, so it has the same
-/// short length whatever the worktree is called — well within the 255
-/// bytes a file name may have — and differs for each worktree of the todo
-/// in one directory.
-fn staging_name(path: &Path, todo: &TodoId) -> String {
-    use sha2::Digest as _;
-    let digest = sha2::Sha256::digest(path.as_os_str().as_encoded_bytes());
-    format!(
-        ".instrukt-wd-{}-{}",
-        todo.as_str(),
-        hex::encode(&digest[..8])
-    )
+        )))
+    })
 }
 
 /// The git directory of the worktree at `path`: its administrative
@@ -263,14 +186,12 @@ fn git_dir(path: &Path) -> Result<PathBuf, git::GitError> {
 
 /// Whether anything is at `path`; a look that fails is no answer.
 fn exists(path: &Path) -> Result<bool, Stop> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(source) => Err(Stop::Unverified(WorkError::Io {
+    _worktrees::exists(path).map_err(|source| {
+        Stop::Unverified(WorkError::Io {
             path: path.to_path_buf(),
             source,
-        })),
-    }
+        })
+    })
 }
 
 /// Where a worktree the intent records is, as far as the withdrawal can
@@ -694,32 +615,6 @@ fn marker_step(state: BranchRelease, at: Option<CommitSha>) -> MarkerStep {
         (BranchRelease::Pending, Some(at)) => MarkerStep::Deletion(at),
         (BranchRelease::PartialMarker | BranchRelease::Deleted, Some(at)) => MarkerStep::Remove(at),
     }
-}
-
-/// The commit ref `reference` points at; `None` when git reports no such
-/// ref. A failure to read it is an error.
-fn ref_tip(root: &Path, reference: &str) -> Result<Option<CommitSha>, WorkError> {
-    let listed = git::run(
-        root,
-        [
-            "for-each-ref",
-            "--format=%(objectname) %(refname)",
-            reference,
-        ],
-    )?;
-    for line in listed.lines() {
-        if let Some((sha, name)) = line.split_once(' ')
-            && name == reference
-        {
-            let sha = CommitSha::parse(sha).map_err(|err| {
-                WorkError::refused(format!(
-                    "git reports {reference} at {sha}, not a commit: {err}"
-                ))
-            })?;
-            return Ok(Some(sha));
-        }
-    }
-    Ok(None)
 }
 
 /// Whether `tip` is `recorded` or descends from it. A `recorded` commit
@@ -2303,17 +2198,6 @@ mod tests {
     }
 
     #[test]
-    fn a_worktree_git_reports_prunable_is_parsed_prunable() {
-        let listed = parse_worktrees(
-            "worktree /repo\nHEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbranch refs/heads/main\n\nworktree /work/tree\nHEAD aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ndetached\nprunable gitdir file points to non-existent location\n",
-        );
-        assert_eq!(
-            listed.iter().map(|w| w.prunable).collect::<Vec<_>>(),
-            [false, true]
-        );
-    }
-
-    #[test]
     fn an_intent_with_nothing_released_or_under_way_is_abandonable() {
         assert!(intent(sha('a')).abandonable());
     }
@@ -2334,17 +2218,5 @@ mod tests {
             ..intent(sha('a'))
         };
         assert!(!moving.abandonable());
-    }
-
-    #[test]
-    fn the_staging_name_of_a_worktree_named_at_the_file_name_limit_fits_in_a_file_name() {
-        let path = PathBuf::from("/work").join("w".repeat(240));
-        assert!(staging_name(&path, &todo()).len() <= 255);
-    }
-
-    #[test]
-    fn worktrees_of_one_todo_in_one_directory_have_distinct_staging_names() {
-        let (one, two) = (PathBuf::from("/work/one"), PathBuf::from("/work/two"));
-        assert_ne!(staging_name(&one, &todo()), staging_name(&two, &todo()));
     }
 }

@@ -90,7 +90,7 @@ The questions, each with the sources it names:
 | --- | --- |
 | Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
 | Validity | Have the intended outcome and every contract it rests on converged, with no pending authoring, review or commit still expected to change them? A todo enters the lifecycle valid (`sdlc/policy/todo-creation-discipline`); work that has not converged is not filed through this door yet. |
-| Fix in context or file | Is the repair settled work the filer already holds authority for: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff, with authority from an explicit execution request, a bounded brief, or a completed human conversation in which every active participant agreed the outcome and the human released the edit (`sdlc/policy/todo-creation-discipline`, Execute settled code work in context)? Then it is made in context and nothing is filed. Human presence alone supplies no authority, and a change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
+| Fix in context or file | Is the repair settled work the filer already holds authority for: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff, with authority from an explicit execution request, a bounded brief, or a completed human conversation in which every active participant agreed the outcome and the human released the edit (`sdlc/policy/todo-creation-discipline`)? Then it is made in context and nothing is filed. Human presence alone supplies no authority, and a change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
 | Evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
 | Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
 | Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
@@ -186,26 +186,39 @@ admitted and the reservation is a worktree-less `Child` assignment with no
 `worktree`, `branch`, or `base`. The command records facts and calls no runtime.
 Setup admits its setup-only brief; other roles match the procedure's declared role.
 
+The reply also names the role's prior session when the record holds one: the
+native identity and attempt number of the role's most recent earlier attempt
+that was bound on the reservation's runtime, with that attempt's recorded
+selection and the session that dispatched it where the record holds them. It
+is read from the record's session bindings when the reply is made and is absent
+when the role has no such attempt. Whether that session is still usable is the
+orchestrator's native evidence, not a recorded fact.
+
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
 `approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
-current shared `<slug>/work` head. The orchestrator delegates with shared
-isolation through `runtime.dispatch`.
+current shared `<slug>/work` head. Whether the reserved round starts a fresh
+worker or continues the role's prior session, and the order of the
+orchestrator's native operations, belong to `general/procedure/orchestration`.
 
-Immediately after delegation it records `instrukt todo bind <slug> --role <role>
---attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
-[--base <sha>]`. Binding requires the reservation, same claim holder and selected
-runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
-(and matching worktree, branch, and clean initial head) are required and every
-child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
-worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
-`--branch`, and `--base` must be omitted. Bind
-before workspace work, record writes or stamps. If a child starts before binding,
-it reports that prerequisite and awaits its parent's native follow-up. Exact
-replay succeeds; changed child identity or workspace refuses. Binding neither
-calls the runtime nor transfers the orchestrator's claim to the child.
+`instrukt todo bind <slug> --role <role> --attempt <n> --session <runtime:id>
+[--worktree <path>] [--branch <branch>] [--base <sha>]` records the native
+session that works the reserved attempt. Binding requires the reservation, same
+claim holder and selected runtime, and exact role/attempt. For repository todos,
+`--branch` and `--base` (and matching worktree, branch, and clean initial head)
+are required and every child inherits `todo-orchestrator`'s single
+`<slug>/work` worktree. For worktree-less `kind: task` (`task-preparer`)
+reservations, `--worktree`, `--branch`, and `--base` must be omitted. The
+binding is the prerequisite for the attempt's workspace work, record writes and
+stamps; a session that starts before its binding reports that prerequisite.
+Exact replay succeeds; changed child identity or
+workspace refuses. A later attempt of a role may bind the native session an
+earlier attempt of that role was bound to: the earlier attempt keeps its
+recorded completion and release, and the session's evidence is attributed to
+the new attempt. Binding neither calls the runtime nor transfers the
+orchestrator's claim to the child.
 
 An interrupted dispatch or bind leaves the reservation outstanding. Recover the
 existing child through the parent's native task evidence and bind it; project
@@ -286,14 +299,39 @@ does not remove them automatically.
 Repository-work delivery requires the actual delivered commit, supplied by the
 integrator after the integration gate succeeds. Delivery evidence belongs in
 the record; deciding whether a candidate passes the integration gate belongs
-to workflow. Delivered entries are read-only. `instrukt todo work <slug>` may derive and
-return the delivered workspace-removal obligation from retained evidence; it
-changes no delivered record. The integrator executes removal outside evaluation.
+to workflow. Delivered entries are read-only. `instrukt todo work <slug>` derives and
+returns what a delivered todo still owes of its worktree and work branch from
+retained evidence; it changes no delivered record.
 Claim release belongs to the work lane before integration handoff. After delivery
 or withdrawal, the work record retains its recorded `sessions:` bindings and
 attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
 for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
+Work releases a delivered todo's worktree and work branch when the runner
+asks, on each computer that holds any of them
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
+goes first, through the release a withdrawal uses
+(`project/instrukt/spec/feature/work/state-database`): read and checked at
+its path, moved aside with git's own worktree move, read and checked again,
+then removed with git's own worktree remove or moved back. A worktree that
+holds uncommitted changes, is locked, has a role attempt open or is no longer
+the todo's stays where it is. The work branch is then deleted locally and on
+origin, each only where it holds no commit beyond the head the todo handed to
+integration; a branch that holds more stays. The cleanup is owed while the
+worktree, the local work branch or the origin work branch remains, whichever
+of them the computer holds, and an origin branch already gone counts as
+removed. This release records no intent and writes no marker:
+git shows of the worktree and of each branch whether it is still there, and a
+release that stopped part-way is continued by the next from what git shows
+(`sdlc/policy/state-storage`).
+
+One such release runs at a time on a computer. Work holds the per-computer
+lock `~/.instrukt/state/delivered-release.lock` for the length of a release,
+across its git and network steps and outside the writer lock. It takes the
+lock without waiting: a release asked for while another holds it does nothing,
+the cleanup stays owed, and the runner asks again on its next invocation. No
+command takes this lock.
 
 <!-- planned-change:github-human-agent-reflection -->
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
@@ -417,6 +455,16 @@ Given an agent files a defect as ordinary work of the bug kind
 When the filing is made, confirmed or not
 Then nothing is filed
 And the agent is told that a bug is reported through the bug front door, and how to reach it
+```
+
+### UC-TD13: A developer's further round assigned to the earlier worker keeps its context
+
+```gherkin
+Given a developer's todo whose worker completed an earlier round in its role
+When that role's further round is assigned to the same worker
+Then the further round is recorded on that worker's conversation, where its earlier context lives
+And each round's evidence is attributed to its own round
+And the earlier round's record stays as it was
 ```
 
 ## Known caveats

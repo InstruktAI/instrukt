@@ -9,6 +9,7 @@ visibility: public
 
 - [general/policy/commits](../../policy/commits.md)
 - [general/policy/snippet-value-contract](../../policy/snippet-value-contract.md)
+- [general/policy/onboarding](../../policy/onboarding.md)
 
 ## Goal
 

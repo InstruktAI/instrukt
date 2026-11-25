@@ -101,7 +101,7 @@ Then the ordinary platform event has declared domain dot header type, that proje
 
 ## Known caveats
 
-- UC-GH7's TeleClaude self-deployment effect is not imported or repurposed.
+- UC-GH7's self-deployment effect is not provided or repurposed.
 - Provider headers are not independently authenticated by raw-body HMAC. Header/body contradictions remain visible; body structure never substitutes a different type.
 - Common nullable properties do not enable payload matching in procedure subscription routing.
 - The normalizer owns mapping only; it installs no maintenance bindings, provider registry or conversation handler.

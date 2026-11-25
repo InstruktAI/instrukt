@@ -52,7 +52,9 @@ Repository todos share `<slug>/work` from freshly fetched `origin/main` (or
 `origin/<slug>/work` when resuming on another computer). After `integrate`
 promotes the exact verified commit and records `instrukt todo deliver <slug> --commit <sha>`,
 the clean worktree and local/origin `<slug>/work` branch are removed while
-retaining thread and attempt records.
+retaining thread and attempt records. instrukt removes them itself on each
+computer that holds them, and no session issues a removal command
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
 **In-flight migration from the retired two-phase model:**
 - When creating `<slug>/work` for an existing todo that still has an
@@ -156,9 +158,11 @@ But dirty or conflicted work keeps the original attempt outstanding for recovery
 
 ```gherkin
 Given a developer's reviewed work branch has integrated and the todo is delivered
-When cleanup removes the worktree and branch
+When the runner next runs on the computer that holds the todo's worktree
 Then the recorded worktree and merged work branch are removed locally and on origin
+And no agent session issued a removal command
 And retained native thread and role-attempt evidence remains readable
+But a worktree holding uncommitted changes stays and the todo's record still shows it
 ```
 
 ### UC-DC9: Fast-track a bounded change while enforcing the three integrity invariants

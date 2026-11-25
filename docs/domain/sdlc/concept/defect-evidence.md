@@ -58,14 +58,24 @@ review — uses them.
   a producer the code actually receives input from that emits it. The
   theoretical range of an input's type is not evidence that real use produces
   any particular value in it.
+- **Design derivation** — for a preparation target where no implementation has
+  executed yet, a defect shown by stepping directly from current files,
+  measurements, or contracts: arithmetic against measured substrate, a concrete
+  sequence of ordinary operations (including concurrent branches or updates),
+  or a direct contradiction with the target's own success criteria. A design
+  derivation remains bound by the **Tail risk** and **External-substrate
+  boundary** exclusions below; speculative risks without shown substrate steps
+  carry no defect evidence.
 - **Reachable condition** — a condition that has occurred, that real-use input
-  produces, or that a dangerous path reaches. Any other condition is
-  unreachable, including one real use might produce but no shown real-use input
-  or dangerous path reaches. A condition resting on synthetic fault injection,
-  extreme tail risk, or missing guarantees across an external-substrate
-  boundary is not a reachable defect condition. Having been produced so far
-  only by tests decides nothing either way; for code that has not shipped, a
-  producer it actually receives input from shows its real-use input.
+  produces, that a dangerous path reaches, or — for an unbuilt preparation
+  target — that a design derivation establishes. Any other condition is
+  unreachable, including one real use might produce but no shown real-use input,
+  dangerous path, or design derivation reaches. A condition resting on synthetic
+  fault injection, extreme tail risk, or missing guarantees across an
+  external-substrate boundary is not a reachable defect condition. Having been
+  produced so far only by tests decides nothing either way; for code that has
+  not shipped, a producer it actually receives input from shows its real-use
+  input.
 - **Tail risk** — a theoretically constructible interleaving or compounded
   chain of independent rare faults whose real-world likelihood sits in the
   extreme tail, especially where no irrecoverable human-owned asset is lost.

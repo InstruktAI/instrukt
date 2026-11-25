@@ -21,10 +21,12 @@ parameters:
 
 ## Goal
 
-Validate that the architecture preserves the independently reviewed and
-human-approved target while reconciling it with current code, credible intended
-state, relevant solution evidence, and platform defaults. Reject both
-unsupported invention and status-quo absorption.
+Validate that the architecture preserves and can reach the independently
+reviewed and human-approved target while reconciling it with current code,
+credible intended state, relevant solution evidence, operational concurrency,
+and platform defaults. Reject unsupported invention, status-quo absorption, and
+designs whose measured premises or standing-principle compliance fail to reach
+the target.
 
 ## Preconditions
 
@@ -174,9 +176,13 @@ boundaries from `sdlc/procedure/lifecycle/review`.
 ## Recovery
 
 - If the PRD is ambiguous about product intent, flag a blocker — the PRD must
-  be re-engaged before the architecture can advance. A technical realization
-  the architecture chose within an unambiguous outcome is judged against the
-  approved outcome, governing contracts and verified substrate, not blocked as
+  be re-engaged before the architecture can advance. If verified substrate or a
+  standing principle shows an approved PRD outcome cannot be reached or carries
+  a principle violation (`general/policy/conflict-resolution`), record a
+  blocking finding stating the compliant target state and its evidence
+  (`sdlc/procedure/lifecycle/review`). A technical realization the architecture
+  chose within an unambiguous, reachable outcome is judged against the approved
+  outcome, governing contracts and verified substrate, not blocked as
   ambiguity.
 - If the architecture diverges from the defaults with an unstated rationale,
   mark `needs_work` rather than guessing the rationale.

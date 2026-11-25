@@ -8,12 +8,15 @@
 use crate::common::{self, TestEnv};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-use instrukt_core::{home::Home, ids::SessionRef};
+use instrukt_core::{
+    home::Home,
+    ids::{SessionId, SessionRef},
+};
 use instrukt_runner::{
     process,
     runtime::{
         InputState, RuntimeAdapter, T3,
-        conversations::{Scope, SourceWake},
+        conversations::{Role, SourceWake},
     },
     sessions::SessionState,
 };
@@ -897,10 +900,11 @@ pub fn real(root: &Path) -> Result<()> {
         None,
     )?)?;
     let source = adapter.conversation_source(&home, &env)?;
+    let only = [SessionId::parse(id)?];
     let mut position = None;
     let mut records = Vec::new();
     loop {
-        let changes = source.changed_since(position.as_ref(), Scope::All)?;
+        let changes = source.changed_since(position.as_ref(), &only)?;
         position = Some(changes.position);
         records.extend(changes.records);
         if !changes.has_more {
@@ -911,7 +915,7 @@ pub fn real(root: &Path) -> Result<()> {
         records.iter().any(|r| r.conversation_id == id),
         "real projection payloads absent"
     );
-    let mut unchanged = source.changed_since(position.as_ref(), Scope::All)?;
+    let mut unchanged = source.changed_since(position.as_ref(), &only)?;
     ensure!(
         unchanged.records.is_empty() && !unchanged.has_more,
         "unchanged source duplicated records"
@@ -934,7 +938,7 @@ pub fn real(root: &Path) -> Result<()> {
     }
     let mut changed = false;
     loop {
-        let changes = source.changed_since(Some(&unchanged.position), Scope::All)?;
+        let changes = source.changed_since(Some(&unchanged.position), &only)?;
         changed |= !changes.records.is_empty();
         unchanged = changes;
         if !unchanged.has_more {
@@ -951,17 +955,87 @@ pub fn real(root: &Path) -> Result<()> {
             == SessionState::Gone,
         "unknown thread meaning"
     );
-    let mut history = Command::new(env!("CARGO_BIN_EXE_instrukt"));
-    history
-        .current_dir(root.join("project"))
-        .args(["history", "extract", "--json"]);
-    let output = process::output(&mut history, None, BOUND)?;
-    ensure!(
-        output.status.success(),
-        "real instrukt history boundary failed"
-    );
     token.revoke()?;
+    // History reads T3's database at rest: the text read retains the
+    // fixture thread with every user message T3 persisted of it, each with
+    // its role and text as T3 holds them, and nothing else T3 wrote of it;
+    // an unchanged second extraction loads nothing.
     drop(_server);
+    let history = |args: &[&str]| -> Result<Value> {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_instrukt"));
+        command.current_dir(root.join("project")).args(args);
+        let output = process::output(&mut command, None, BOUND)?;
+        ensure!(
+            output.status.success(),
+            "real instrukt history boundary failed"
+        );
+        Ok(serde_json::from_slice(&output.stdout)?)
+    };
+    let extracted = history(&["history", "extract", "--json"])?;
+    ensure!(
+        extracted["loaded"]
+            .as_u64()
+            .is_some_and(|loaded| loaded > 0),
+        "history extraction loaded nothing"
+    );
+    let retained = history(&["history", "show", source.identity(), id])?;
+    ensure!(
+        retained["thread"]["id"] == id,
+        "history retained another thread"
+    );
+    let users = |messages: Vec<Value>| -> Result<Vec<(String, String)>> {
+        let mut users = Vec::new();
+        for message in messages {
+            if serde_json::from_value::<Role>(message["role"].clone())? == Role::User {
+                let id = message["id"].as_str().context("message id")?.to_owned();
+                let text = message["text"].as_str().context("message text")?.to_owned();
+                users.push((id, text));
+            }
+        }
+        users.sort();
+        Ok(users)
+    };
+    let persisted = {
+        let db = input_database()?;
+        let mut statement = db.prepare(
+            "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id=?1",
+        )?;
+        let payloads = statement
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        users(
+            payloads
+                .iter()
+                .map(|payload| serde_json::from_str(payload))
+                .collect::<Result<_, _>>()?,
+        )?
+    };
+    ensure!(
+        persisted
+            .iter()
+            .any(|(message, _)| message == "contract-input"),
+        "T3 persisted no fixture user message"
+    );
+    ensure!(
+        users(
+            retained["messages"]
+                .as_array()
+                .context("retained messages")?
+                .clone()
+        )? == persisted,
+        "history retained other user messages than T3 persisted"
+    );
+    ensure!(
+        ["runs", "subagents", "turnItems"]
+            .iter()
+            .all(|kind| retained.get(kind).is_none()),
+        "history retained records beside messages"
+    );
+    let again = history(&["history", "extract", "--json"])?;
+    ensure!(
+        again["loaded"] == 0,
+        "unchanged history extraction loaded again"
+    );
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),

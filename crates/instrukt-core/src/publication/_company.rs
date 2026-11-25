@@ -13,7 +13,7 @@
 //! link, a cycle of required reads, and an `@config`, `@exec` or `@include`
 //! are findings, and a home with a finding is not rendered.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
@@ -29,7 +29,7 @@ use crate::docs::{self, CompanyDocument, CompanyFrontmatter, CompanyReference, D
 use crate::ids::{DomainName, SnippetId};
 
 /// The home's documents are below this folder.
-const DOCS: &str = "docs/";
+pub(super) const DOCS: &str = "docs/";
 
 /// The company index, which selects the home's rendering.
 pub(super) const COMPANY_INDEX: &str = "docs/index.yaml";
@@ -273,51 +273,108 @@ impl CompanyReadProblem {
     }
 }
 
-/// Renders the company home in `tree` into `plan`: its root `AGENTS.md`
-/// from `docs/index.yaml`, or the findings that leave that file as it is.
-/// Without the index there is nothing to render; with a linked index,
-/// nothing is read through it.
-pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut RenderPlan) {
-    let path = PathBuf::from(AGENTS_FILE);
+/// The passage every company rendering carries before the first document:
+/// one fixed text, the same for every company and taking no input, naming
+/// the home and no repository host or organization. `<slug>` is literal
+/// placeholder text, never substituted.
+pub(super) const COMPANY_PASSAGE: &str = concat!(
+    "This is the company's knowledge, rendered from the company's repository: its `docs/index.yaml` and the Markdown documents under `docs/` that index selects. A document named below by one line, its path and what it holds, is read at that path when the work calls for it. The checkout of that repository at `~/.instrukt/companies/<slug>/`, where `<slug>` is the company's key, is the company's home: it serves the company's agents and stays on the repository's default branch.",
+    "\n\n",
+    "An agent with access to the repository improves this knowledge by editing the Markdown documents (`*.md`) under `docs/`, subfolders included, and the index that selects them. It edits on a branch, in a separate worktree of the company's home or in a clone of the repository (by convention named `company-<slug>`), and opens a pull request. Someone other than the pull request's author reviews it before it merges to the default branch, and through that branch the change reaches the company's agents. The change is made in those documents and that index alone: `AGENTS.md` and any skill published from them are generated output and are left as rendered.",
+    "\n\n",
+    "Each of those documents carries a non-empty `description` in its frontmatter and states what is true of the company now, in the present tense; what was true before stays in the repository's history.",
+    "\n\n",
+    "The company's own documents name any live agents and messaging channels the company operates, what each one handles, and who may reach it. A cloud agent reading this knowledge cannot invoke those agents or relay to them, and does not push the company's software directly: when a person needs a live company service or software built, it helps them frame the request clearly and follows the company's documented routing and access rules — directing them to address a documented agent only when that agent handles the work and admits them, or otherwise routing them as the company's documents say or noting that no live agent is documented for it.",
+);
+
+/// What reading a company's index found: the documents it selects, as far
+/// as they could be read, and the findings that leave every rendering of
+/// them as it is.
+pub(super) struct Reading {
+    pub selection: Selection,
+    pub findings: Vec<RenderFinding>,
+}
+
+/// What the company index and the documents it selects say, read once for
+/// every rendering of a company's knowledge.
+#[derive(Default)]
+pub(super) struct Selection {
+    /// Each document held in full, by its repository-relative path, in
+    /// traversal order: each `expanded` document after its required reads,
+    /// each once.
+    pub held: Vec<String>,
+    /// Each `listed` document, by its repository-relative path, with its
+    /// description, in the index's order.
+    pub listed: Vec<(String, String)>,
+    /// Every document the index selects or a required read reaches, by its
+    /// repository-relative path.
+    pub documents: BTreeMap<String, SelectedDocument>,
+}
+
+/// One document a company's index selects or a required read reaches.
+pub(super) struct SelectedDocument {
+    /// Its whole text, as the view holds it.
+    pub text: String,
+    /// Its text as a company rendering reads it.
+    pub document: CompanyDocument,
+}
+
+impl Selection {
+    /// The text of each held document without its required reads, in order.
+    pub(super) fn held_bodies(&self) -> impl Iterator<Item = &str> + '_ {
+        self.held
+            .iter()
+            .filter_map(|path| self.documents.get(path))
+            .map(|selected| selected.document.body.as_str())
+    }
+}
+
+/// Reads the company index of `tree` and the documents it selects: `None`
+/// without an index, else the documents as far as they could be read, with
+/// the findings, each naming `path`, the rendering they leave as it is. An
+/// index that cannot be read selects nothing; with a linked index, nothing
+/// is read through it.
+pub(super) fn read(tree: &Committed, path: &Path) -> Option<Reading> {
     let found = |kind| RenderFinding {
-        path: path.clone(),
+        path: path.to_path_buf(),
         kind,
     };
+    let unread = |findings| Reading {
+        selection: Selection::default(),
+        findings,
+    };
     let text = match tree.entry_index(COMPANY_INDEX) {
-        EntryIndex::Absent => return,
+        EntryIndex::Absent => return None,
         EntryIndex::Linked => {
-            plan.findings.push(found(RenderFindingKind::LinkedIndex {
+            return Some(unread(vec![found(RenderFindingKind::LinkedIndex {
                 index: COMPANY_INDEX.to_owned(),
-            }));
-            return;
+            })]));
         }
         EntryIndex::Present(bytes) => String::from_utf8_lossy(bytes).into_owned(),
     };
-    if override_beside_root {
-        plan.findings.push(RenderFinding {
-            path: PathBuf::from(OVERRIDE_FILE),
-            kind: RenderFindingKind::OverrideBesideRoot,
-        });
-    }
     let index = match read_index(&text) {
         Ok(index) => index,
         Err(problems) => {
-            plan.findings.extend(problems.into_iter().map(|problem| {
-                found(RenderFindingKind::CompanyIndex {
-                    index: COMPANY_INDEX.to_owned(),
-                    problem,
-                })
-            }));
-            return;
+            return Some(unread(
+                problems
+                    .into_iter()
+                    .map(|problem| {
+                        found(RenderFindingKind::CompanyIndex {
+                            index: COMPANY_INDEX.to_owned(),
+                            problem,
+                        })
+                    })
+                    .collect(),
+            ));
         }
     };
     let mut walk = Walk {
         tree,
-        path: &path,
+        path,
         visiting: Vec::new(),
-        done: BTreeSet::new(),
+        documents: BTreeMap::new(),
         carrier: BTreeMap::new(),
-        order: Vec::new(),
+        held: Vec::new(),
         findings: Vec::new(),
     };
     for entry in &index.expanded {
@@ -326,7 +383,7 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         };
         walk.bring(&document, Traversal::Held { carrier: &document });
     }
-    let mut lines = Vec::new();
+    let mut listed = Vec::new();
     for entry in &index.listed {
         let Some(document) = walk.entry(CompanyIndexKey::Listed, entry) else {
             continue;
@@ -340,8 +397,14 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         match docs::company_document(&text).frontmatter {
             CompanyFrontmatter::Read {
                 description: Some(description),
-            } => lines.push(listed_line(&document, &description)),
-            CompanyFrontmatter::Read { description: None } => {
+                ..
+            } => listed.push((document.clone(), description)),
+            // A block holding only `null` names no description, as no block
+            // does.
+            CompanyFrontmatter::Read {
+                description: None, ..
+            }
+            | CompanyFrontmatter::Null => {
                 walk.found(RenderFindingKind::CompanyListedWithoutDescription {
                     document: document.clone(),
                 });
@@ -355,25 +418,43 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         }
         walk.bring(&document, Traversal::Checked);
     }
-    if !walk.findings.is_empty() {
-        plan.findings.extend(walk.findings);
+    Some(Reading {
+        selection: Selection {
+            held: walk.held,
+            listed,
+            documents: walk.documents,
+        },
+        findings: walk.findings,
+    })
+}
+
+/// Renders the company home in `tree` into `plan`: its root `AGENTS.md`
+/// from `docs/index.yaml`, or the findings that leave that file as it is.
+/// Without the index there is nothing to render; with a linked index,
+/// nothing is read through it.
+pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut RenderPlan) {
+    let path = PathBuf::from(AGENTS_FILE);
+    let Some(reading) = read(tree, &path) else {
+        return;
+    };
+    if override_beside_root && matches!(tree.entry_index(COMPANY_INDEX), EntryIndex::Present(_)) {
+        plan.findings.push(RenderFinding {
+            path: PathBuf::from(OVERRIDE_FILE),
+            kind: RenderFindingKind::OverrideBesideRoot,
+        });
+    }
+    if !reading.findings.is_empty() {
+        plan.findings.extend(reading.findings);
         return;
     }
-    // The passage every company rendering carries between the generated line
-    // and the first document: one fixed text, the same for every company and
-    // taking no input, naming the home and no repository host or organization.
-    // `<slug>` is literal placeholder text, never substituted.
-    let passage = concat!(
-        "This is the company's knowledge, rendered from the company's repository: its `docs/index.yaml` and the Markdown documents under `docs/` that index selects. A document named below by one line, its path and what it holds, is read at that path when the work calls for it. The checkout of that repository at `~/.instrukt/companies/<slug>/`, where `<slug>` is the company's key, is the company's home: it serves the company's agents and stays on the repository's default branch.",
-        "\n\n",
-        "An agent with access to the repository improves this knowledge by editing the Markdown documents (`*.md`) under `docs/`, subfolders included, and the index that selects them. It edits on a branch, in a separate worktree of the company's home or in a clone of the repository (by convention named `company-<slug>`), and opens a pull request. Someone other than the pull request's author reviews it before it merges to the default branch, and through that branch the change reaches the company's agents. The change is made in those documents and that index alone: `AGENTS.md` and any skill published from them are generated output and are left as rendered.",
-        "\n\n",
-        "Each of those documents carries a non-empty `description` in its frontmatter and states what is true of the company now, in the present tense; what was true before stays in the repository's history.",
-        "\n\n",
-        "The company's own documents name any live agents and messaging channels the company operates, what each one handles, and who may reach it. A cloud agent reading this knowledge cannot invoke those agents or relay to them, and does not push the company's software directly: when a person needs a live company service or software built, it helps them frame the request clearly and follows the company's documented routing and access rules — directing them to address a documented agent only when that agent handles the work and admits them, or otherwise routing them as the company's documents say or noting that no live agent is documented for it.",
-    );
-    let mut blocks = vec![passage.to_owned()];
-    blocks.extend(walk.order.into_iter().map(|body| body.trim().to_owned()));
+    let selection = reading.selection;
+    let mut blocks = vec![COMPANY_PASSAGE.to_owned()];
+    blocks.extend(selection.held_bodies().map(|body| body.trim().to_owned()));
+    let lines: Vec<String> = selection
+        .listed
+        .iter()
+        .map(|(document, description)| listed_line(document, description))
+        .collect();
     if !lines.is_empty() {
         blocks.push(lines.join("\n"));
     }
@@ -387,7 +468,7 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
 
 /// The one line naming a listed document: its path from the repository's
 /// root and its description, each run of whitespace read as one space.
-fn listed_line(document: &str, description: &str) -> String {
+pub(super) fn listed_line(document: &str, description: &str) -> String {
     let description = description.split_whitespace().collect::<Vec<_>>().join(" ");
     format!("- {document}: {description}")
 }
@@ -402,22 +483,21 @@ enum Traversal<'a> {
     Checked,
 }
 
-/// The documents a company rendering holds in full, in order, and what it
-/// found on the way.
+/// The documents a company's index selects and its required reads reach,
+/// and what it found on the way.
 struct Walk<'t> {
     tree: &'t Committed,
     /// The rendering the findings leave as it is.
     path: &'t Path,
     /// The documents being brought in, each requiring the next.
     visiting: Vec<String>,
-    /// The documents already brought in.
-    done: BTreeSet<String>,
+    /// The documents already brought in, each read.
+    documents: BTreeMap<String, SelectedDocument>,
     /// Each document an `expanded` entry brought in, with that entry's
     /// document.
     carrier: BTreeMap<String, String>,
-    /// Each document held in full: its text without its required reads, in
-    /// traversal order.
-    order: Vec<String>,
+    /// Each document held in full, in traversal order.
+    held: Vec<String>,
     findings: Vec<RenderFinding>,
 }
 
@@ -450,7 +530,7 @@ impl Walk<'_> {
             self.found(RenderFindingKind::CompanyCycle { documents });
             return;
         }
-        if self.done.contains(path) {
+        if self.documents.contains_key(path) {
             return;
         }
         let text = String::from_utf8_lossy(self.tree.file(path).unwrap_or_default()).into_owned();
@@ -468,11 +548,12 @@ impl Walk<'_> {
             }
         }
         self.visiting.pop();
-        self.done.insert(path.to_owned());
         if let Traversal::Held { carrier } = traversal {
             self.carrier.insert(path.to_owned(), carrier.to_owned());
-            self.order.push(document.body);
+            self.held.push(path.to_owned());
         }
+        self.documents
+            .insert(path.to_owned(), SelectedDocument { text, document });
     }
 
     /// The findings of the document at `path` itself: its directives and
@@ -518,18 +599,7 @@ impl Walk<'_> {
     /// document at `reader`, names: its repository-relative path, or why it
     /// names none.
     fn file(&self, reader: &str, file: &str) -> Result<String, CompanyReadProblem> {
-        let file = file.strip_prefix('@').unwrap_or(file);
-        let path = relative_to(reader, file).ok_or(CompanyReadProblem::OutsideDocs)?;
-        if !path.starts_with(DOCS) {
-            return Err(CompanyReadProblem::OutsideDocs);
-        }
-        if self.tree.is_link(&path) {
-            return Err(CompanyReadProblem::Link);
-        }
-        if self.tree.file(&path).is_none() {
-            return Err(CompanyReadProblem::Missing);
-        }
-        Ok(path)
+        resolve(self.tree, reader, file)
     }
 
     fn found(&mut self, kind: RenderFindingKind) {
@@ -538,6 +608,28 @@ impl Walk<'_> {
             kind,
         });
     }
+}
+
+/// The home's file in `tree` that the file reference `file`, written in
+/// the file at `reader`, names: its repository-relative path, or why it
+/// names none. The one rule every company rendering resolves a path by.
+pub(super) fn resolve(
+    tree: &Committed,
+    reader: &str,
+    file: &str,
+) -> Result<String, CompanyReadProblem> {
+    let file = file.strip_prefix('@').unwrap_or(file);
+    let path = relative_to(reader, file).ok_or(CompanyReadProblem::OutsideDocs)?;
+    if !path.starts_with(DOCS) {
+        return Err(CompanyReadProblem::OutsideDocs);
+    }
+    if tree.is_link(&path) {
+        return Err(CompanyReadProblem::Link);
+    }
+    if tree.file(&path).is_none() {
+        return Err(CompanyReadProblem::Missing);
+    }
+    Ok(path)
 }
 
 /// What the name `name` (its `@` aside) references outside the home: a

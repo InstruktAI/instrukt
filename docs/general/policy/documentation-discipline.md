@@ -139,7 +139,8 @@ it.
 An author reviewing their own snippet believes it correct, which is no review.
 A reviewer handed only the diff can judge form, and a directive change can be
 well formed while it steers every later session the wrong way. Carrying that
-intent in the commit body — corroborated against the recorded conversation —
+intent in the commit body — checked at commit review against what the human
+directed in the producing conversation —
 gives both delegated and event-triggered reviewers the same durable, untrusted
 basis without letting author prose or author classification enter the
 reviewer's mandate. A change that only refines what a snippet establishes steers

@@ -147,11 +147,12 @@ fn findings_in_scope(
                 "name a profile in github.apps",
             ));
         }
+        // The effective selection, so the shipped roles' App references are
+        // checked when there is no agents.yaml; one that cannot be read or
+        // is invalid leaves them unchecked.
         let declared = match given.agents {
             Some(agents) => Some(agents.clone()),
-            None => std::fs::read_to_string(home.agents_file())
-                .ok()
-                .and_then(|text| super::Agents::parse(&text).ok()),
+            None => super::Agents::load(&home.for_inspection()).ok(),
         };
         if let Some(agents) = declared {
             for (role, selection) in agents.roles {

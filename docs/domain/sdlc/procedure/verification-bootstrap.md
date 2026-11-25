@@ -45,9 +45,11 @@ surface to its cheapest honest oracle and execution host using
   **ephemeral CI runner** (`execution_host: ci`, avoiding Docker-in-Docker
   inside company containers and keeping compute portable across hosted and
   self-hosted runners).
-- Docker-free archetypes (CLI/daemon temp-home smokes, libraries, pipelines,
-  and prose/doctrine repositories) use native lightweight oracles without
-  scaffolding container or browser machinery.
+- Docker-free archetypes (CLI/daemon temp-home smokes, libraries and
+  pipelines) use native lightweight oracles without scaffolding container or
+  browser machinery.
+- A repository that holds prose only has no real surface to map: record that
+  in Layer 1 and end the bootstrap there.
 
 ### 2. Author the verification stack by archetype (when earned)
 
@@ -96,9 +98,9 @@ surface to its cheapest honest oracle and execution host using
   provisioning and deterministic seed helpers under `verification/seed/`
   (adding Compose definitions only when the ERP stack itself runs locally as
   containers).
-- **CLI / daemon / libraries / doctrine archetypes:** omit container stacks and
-  document the exact candidate-binary, isolated-root, corpus, or behavioral
-  replay entrypoints directly in Layer 1.
+- **CLI / daemon / libraries archetypes:** omit container stacks and document
+  the exact candidate-binary, isolated-root or corpus entrypoints directly in
+  Layer 1.
 
 ### 3. Resolve dependencies, probe live, and self-heal
 
@@ -195,17 +197,17 @@ Following `general/procedure/doc-snippet-authoring`,
         enters `<slug>` into the active lifecycle via
         `instrukt todo unfreeze <slug>`.
 
-     In the active lifecycle, `planner` (`plan-draft`) plans only Steps 2–3
+     In the active lifecycle, `planner` (`sdlc/procedure/lifecycle/prepare/plan-draft`) plans only Steps 2–3
      against those reviewed fills without assigning documentation tasks to
-     `builder` (`plan-draft` Step 4b), and `plan-reviewer` approves
+     `builder` (`sdlc/procedure/lifecycle/prepare/plan-draft`), and `plan-reviewer` approves
      `implementation-plan` before build. During build, `builder` executes only
      Steps 2–3 (stack authoring and live probe); if the live probe discovers an
      irreducible contract delta to Layer 1 or Layer 2 (such as an uncovered
      declared blind spot or changed execution host / isolation primitive),
      `builder` stops and escalates to `todo-orchestrator` so the owning
-     preparation route (`planner` Step 4b → `plan-reviewer`) updates and
+     preparation route (`planner` → `plan-reviewer`) updates and
      re-reviews the pending fills and plan. At delivery
-     (`sdlc/procedure/lifecycle/integrate`, Step 2.4), `integrate` runs
+     (`sdlc/procedure/lifecycle/integrate`), `integrate` runs
      `instrukt docs fold <slug>`, adds any newly delivered fill IDs under
      `listed` in `docs/project/index.yaml`, runs `instrukt docs render`, and
      verifies with `instrukt docs validate` and `instrukt docs render --check`

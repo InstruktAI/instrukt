@@ -67,7 +67,7 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
 
 ### 1. Read and ground
 
-Apply the artifact-discovery rule from `preparation-artifact-quality`
+Apply the artifact-discovery rule from `sdlc/policy/preparation-artifact-quality`
 (`instrukt todo artifacts list {slug}`) before assuming the list below is
 everything present — read `log` when it exists, and any other artifact this
 todo's history left behind that bears on grounding.
@@ -105,7 +105,7 @@ Read the full context before writing anything:
 - Definition of Done — every plan task must produce output that satisfies DoD gates.
 
 Walk the governing-contracts entry points before drafting begins
-(`sdlc/policy/preparation-artifact-quality`, Governing contracts). Where an
+(`sdlc/policy/preparation-artifact-quality`). Where an
 approved architecture carries the Governing contracts section, the plan
 references it; otherwise the plan carries that section itself.
 
@@ -125,7 +125,7 @@ dispatch-reason header or token selects behavior.
   entry with no prior review. Treat it as the draft basis, not an oracle:
   run grounding (step 1), atomicity (step 2) and blast radius (step 2c), verify
   every task against the code, input and domain specs, and record divergences
-  under `preparation-artifact-quality`. Reflect doc snippets (step 4b), add
+  under `sdlc/policy/preparation-artifact-quality`. Reflect doc snippets (step 4b), add
   their references and blast-radius-informed verification, and refine the
   seed in step 3. It skips neither grounding nor plan review.
 - **Substantive re-derivation** — the current record invalidates the plan's
@@ -154,10 +154,11 @@ dispatch-reason header or token selects behavior.
 ### 1c. Situate the premise in the existing todo landscape (fresh derivation only)
 
 Applies only on fresh derivation, for `change` and `bug` — a
-`feature` already does this at intake step 1.6 before it ever reaches this
-phase. Before drafting, compare this premise against the existing todo
-landscape: the same collecting discipline as intake step 1.6, pointed at the
-todo list instead of the domain, and distinct from a `bug`'s diagnose Step 1
+`feature` already does this at intake (`sdlc/procedure/lifecycle/prepare/intake`)
+before it ever reaches this phase. Before drafting, compare this premise
+against the existing todo landscape: the same collecting discipline intake
+applies, pointed at the todo list instead of the domain, and distinct from a
+`bug`'s diagnosis (`sdlc/procedure/lifecycle/prepare/diagnose`)
 (which retires an exact-defect duplicate earlier in the lifecycle, before this
 phase runs) — this step catches broader scope overlap with _unrelated_ todos,
 not same-defect duplicates.
@@ -222,7 +223,7 @@ unspecified and outside _Intent & scope_.
 When the plan makes a structural decision that no reviewed architecture
 carries — in a `change` or `bug`, or in a `feature` whose architecture was
 skipped — it carries the architecture reasoning itself
-(`sdlc/policy/preparation-artifact-quality`, Structural decisions carry
+(`sdlc/policy/preparation-artifact-quality`: a structural decision carries
 architecture review): the governing paradigms with every operation callers see
 placed in them, the alternatives with the paradigm-native one among them, and
 the durable design authored into its snippets through pending carriers naming
@@ -362,20 +363,20 @@ worktree predating a recently landed bootstrap or substrate extension:
 
 - **Standalone verification bootstrap or CI workflow path migration:** When this
   todo's approved `input` IS a standalone verification bootstrap or CI
-  verification workflow path migration (`sdlc/policy/live-verification`,
-  Standalone CI workflow bootstrap or path-migration rule — carrying zero mixed
-  application changes), do **not** stop on the missing default-branch workflow.
+  verification workflow path migration (`sdlc/policy/live-verification`:
+  a standalone CI workflow bootstrap or path migration carries no application
+  change), do **not** stop on the missing default-branch workflow.
   Verify the pre-entry reviewed pending Layer 1 and Layer 2 fills committed on
   `<slug>/work` (`sdlc/policy/todo-creation-discipline` for pre-entry authoring
   and independent review; `general/spec/snippet-authoring-schema`,
   `general/procedure/doc-snippet-authoring`, and
-  `sdlc/procedure/verification-bootstrap` Step 4 for `delivered_by: [{slug}]`
+  `sdlc/procedure/verification-bootstrap` for `delivered_by: [{slug}]`
   omitted from `docs/project/index.yaml` while pending, or pending markers and
   companions on edits; if a standalone bootstrap entered without those reviewed
   pending fills, stop and surface the entry-boundary gap in `log` rather than
   planning against unreviewed contracts). Draft `implementation-plan` strictly
-  for the implementation work (Steps 2–3 of
-  `sdlc/procedure/verification-bootstrap`: `verification/` stack, seeders, CI
+  for the implementation work (`sdlc/procedure/verification-bootstrap`'s
+  implementation: `verification/` stack, seeders, CI
   workflow exposing the checked-in branch/`pull_request` exact-SHA baseline
   smoke required by `sdlc/procedure/lifecycle/work/verify`, and live
   self-healing probe), adding **no** builder documentation or pending-marker
@@ -386,15 +387,15 @@ worktree predating a recently landed bootstrap or substrate extension:
   When an application delivery touches a surface resolving to
   `execution_host: ci` and `<canonical-ref>` has no default-branch CI
   verification workflow yet, do not embed first-time CI workflow creation inside
-  the application plan (`sdlc/policy/live-verification`, Standalone CI workflow
-  bootstrap or path-migration rule) and do not draft a stale plan against the
+  the application plan (`sdlc/policy/live-verification`: a standalone CI
+  workflow bootstrap or path migration carries no application change) and do not draft a stale plan against the
   unbootstrapped repository: leave `<slug>/work` clean (discarding any
   uncommitted scratch edits while preserving legitimate committed preparation
   work), record the missing default-branch workflow in `log`, and stop without
   writing `implementation-plan` or stamping `--role-complete` so
   `todo-orchestrator` resolves this stopped attempt cleanly (`--failed`) and
   orders `{slug}` after the standalone prerequisite bootstrap todo (`--after` +
-  `--unclaim`, Step 2 of `sdlc/procedure/lifecycle/overview`).
+  `--unclaim`, `sdlc/procedure/lifecycle/overview`).
 - **Existing substrate extension and retained-worktree synchronization:** When
   the default-branch verification workflow already exists on `<canonical-ref>`
   (or the resolved host is `local`):
@@ -455,12 +456,12 @@ policy. Structure the plan as an ordered task list. Each task must include:
   the builder, but they are not a drift contract unless they appear in this
   block.
 
-Apply the structural ratchet (`definition-of-done` §2) to the change path
+Apply the structural ratchet (`sdlc/policy/definition-of-done`) to the change path
 derived in step 2c. Where a preparatory deepening meets its five conditions —
 behavior-preserving, owner-local, contract-preserving, one coherent reviewable
 commit, within the todo's cost cap — add it as its own task before the
 behavioral task it prepares, anchored to the module it deepens per
-`substrate-anchoring`. Where it does not, record the deepening candidate and
+`sdlc/policy/substrate-anchoring`. Where it does not, record the deepening candidate and
 the reason for deferral in the plan, so deferral processing decides it rather
 than losing it. A plan with neither on a change path that carries structural debt
 is incomplete.
@@ -474,9 +475,10 @@ are also defective, even when the proposed layer is otherwise correct.
 
 ### 3b. Intelligence-boundary check
 
-Per `principle/intelligence-boundaries`, scan every task you've drafted with
-this question: does the task prescribe code that classifies, scores, judges,
-evaluates, or auto-edits content semantics? If yes, that task is intelligence
+Per `general/principle/intelligence-boundaries`, scan every task you've drafted
+with this question: does the task prescribe code that classifies, scores,
+judges, evaluates, or auto-edits content semantics, or a check whose subject is
+prose? If yes, that task is intelligence
 in the wrong layer — the rule belongs in the agent's briefing, not in code
 the agent wraps. Strike the task, or restate it as a briefing change.
 
@@ -489,6 +491,8 @@ Detection patterns to refuse in plan tasks:
   rubric."
 - Predicates on natural language: `is_meaningful`, `should_emit`,
   `is_actionable`, `is_ack`, `classify_*` on free text.
+- "Test, replay or score [a document / a prompt / a skill]", whether code or
+  staged agent sessions would run it.
 
 The defining test: would this task be unnecessary if the agent's briefing
 said the right thing? If yes, the task is policy in the wrong layer — fix
@@ -511,7 +515,7 @@ scope violations to strike before the plan is written, regardless of how
 prudent they look. Tracing a task to a scenario or
 snippet this same prepare pass authored does not create scope; the `diagnosis`
 and the `input` symptom are the only scope authorities for a bug
-(`sdlc/policy/definition-of-done-lanes`, Bug-fix review).
+(`sdlc/policy/definition-of-done-lanes`).
 
 State the operation's observable outcome and relevant effects after the fix
 under the diagnosed triggering conditions. If the settled diagnosis cannot
@@ -520,7 +524,7 @@ narrower outcome. Record any unresolved part of the
 reported concern as undelivered; naming follow-up work does not discharge it.
 
 A structural-ratchet deepening on the bug's direct change path is authorized
-HOW when all five ratchet conditions hold (`definition-of-done` §2). Other
+HOW when all five ratchet conditions hold (`sdlc/policy/definition-of-done`). Other
 structural work the investigation surfaced remains out of scope: record it as a
 deferral with its reason; it never rides the fix.
 
@@ -668,7 +672,7 @@ If the todo is grouped instead:
 - Deliver exactly the intent of the approved artifact (`prd` for a feature;
   the verified input basis, sharpened by `diagnosis`, for a change/bug) and
   preserve the existing documented and working behavior the change touches —
-  see "Scope is bounded" in `preparation-artifact-quality`. A forced technical
+  scope is bounded (`sdlc/policy/preparation-artifact-quality`). A forced technical
   decision that stays within scope follows established behavior; one that would
   shift product or business scope is surfaced to the human.
 - Do not rewrite approved or reviewer-approved upstream artifacts unless the plan is blocked by a genuine

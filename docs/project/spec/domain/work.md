@@ -95,8 +95,7 @@ runner owns dispatch, and the configured runtime owns conversations.
   reviewer. A head verdict covers the whole range from it, and covers the
   canonical branch only when its pinned base lies on that branch. A review
   request carries the pinned base the runner selected
-  (`project/instrukt/spec/feature/runner/pull-request-review`, Review
-  requests).
+  (`project/instrukt/spec/feature/runner/pull-request-review`).
 
 **Exemption**
 : The recorded decision that a commit owes no independent review under
@@ -149,7 +148,6 @@ runner owns dispatch, and the configured runtime owns conversations.
   record. The GitHub boundary's credential interface is shared through CLI
   wiring with runner and repository consumers, not a reverse core dependency.
 <!-- /planned-change:github-human-agent-reflection -->
-
 - **Does not own:** workflow definitions and next-action derivation, execution
   and integration decisions, runner scheduling and dispatch, runtime thread
   status and conversation storage, or documentation publication. Those
@@ -401,3 +399,14 @@ owning design snippet or decision record is declared.
   controls on an issue into attributed record mutations. Local operations keep
   their domain model.
 <!-- /planned-change:github-human-agent-reflection -->
+
+- **Work → runner (worktree reclamation)** — customer-supplier. Through its
+  command contract work gives the runner two things for
+  `project/instrukt/spec/feature/runner/worktree-reclamation`. The first is a
+  section of the work record in which no role attempt is open on a todo's
+  worktree and none opens: the runner moves regenerable output out of the
+  worktree inside it and holds it for nothing else. The second is the release
+  of a delivered todo's worktree and work branch
+  (`project/instrukt/spec/feature/work/todos`), which work performs when the
+  runner asks. Work owns the attempt lock and the release; the runner owns
+  when it asks.
