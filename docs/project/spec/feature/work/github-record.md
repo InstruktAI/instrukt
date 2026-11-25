@@ -39,6 +39,7 @@ ever fetches, and no command has a `--refresh` flag.
 
 On each runner tick, each computer polls, with conditional requests:
 
+<!-- planned-change:github-human-agent-reflection -->
 - the todos it holds claims on, so that what a human does on GitHub (an
   approval, a change request, a record comment) reaches the worker holding
   the claim;
@@ -46,6 +47,22 @@ On each runner tick, each computer polls, with conditional requests:
   `todos`: the project's todo issues, whose result replaces that project's
   listing copies;
 - the prerequisites its own claimed work is blocked on.
+<!-- change:github-human-agent-reflection -->
+- the todos it holds claims on, so that what a human does on GitHub (an
+  approval, a change request, a hold) and what another computer recorded
+  reach the worker holding the claim;
+- one pickup listing per project whose effective configuration enables
+  `todos`: the project's todo issues, whose result replaces that project's
+  listing copies;
+- the prerequisites its own claimed work is blocked on.
+<!-- /planned-change:github-human-agent-reflection -->
+
+<!-- planned:github-human-agent-reflection -->
+A todo's record is read as its latest reflected revision alone, with a
+conditional request. An unchanged record transfers no content, and a changed
+one transfers that one revision, however many revisions and artifact versions
+the todo has accumulated.
+<!-- /planned:github-human-agent-reflection -->
 
 A list read follows pages up to its page limit (`crates/instrukt-todos/src/work/_github.rs`);
 reaching it with a full last page is stated in the command's report as an
@@ -79,6 +96,13 @@ group relationships and prerequisites, and beside each open approval gate a
 short prefix of the current evidence digest. Delivery closes it as completed and
 names the delivery evidence; removal closes it as withdrawn; restoration
 reopens it.
+
+<!-- planned:github-human-agent-reflection -->
+The issue's conversation belongs to the people working on the todo. It holds
+their comments, their `/instrukt` commands and instrukt's short replies to
+those commands. Reflecting the record adds no comment to it, at any revision:
+the record travels in the issue's `state` artifact (Writer and convergence).
+<!-- /planned:github-human-agent-reflection -->
 
 The GitHub project board and its views are the developer's cockpit. With todos
 enabled, instrukt sets them up and repairs them automatically, without an opt-in.
@@ -136,11 +160,32 @@ board reflection failures remain visible and retryable independently of issue an
 local-record writes; missing GitHub permissions are a reported setup failure,
 never an implicit opt-out.
 
+<!-- planned-change:github-human-agent-reflection -->
 Repository implementation has a linked pull request during its build and
 review path. It carries the reviewed commits and recorded verdicts. If the
 branch is not available on GitHub, creation remains pending. Delivery closes
 the pull request with the delivered commit. The integrator owns merging and
 the integration gate; pull-request state alone never proves delivery.
+<!-- change:github-human-agent-reflection -->
+Repository implementation has a linked pull request during its build and
+review path, opened as soon as the todo's branch is on GitHub. When that
+branch is published belongs to
+`project/instrukt/spec/feature/workflow/delivery-cycle`; while the branch is
+not available on GitHub, creation remains pending. The pull request carries
+the commits under review and each recorded build-review verdict as a native
+review of the exact reviewed commit, written by the reviewing role's App
+(`project/instrukt/spec/feature/work/github-apps`).
+
+A review is written for a person. Its body states the verdict and what the
+reviewer found, readable in place, and links the version of the todo's
+review report the verdict is bound to. A report longer than a review body
+holds is carried up to that length and marked as shortened; the linked
+report gives it whole.
+
+Delivery closes the pull request with the delivered commit. The integrator
+owns merging and the integration gate; pull-request state alone never proves
+delivery.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Artifacts and stamps
 
@@ -163,6 +208,13 @@ contains. A version uploaded without a committed referencing revision is not
 accepted as committed evidence. A similarly named artifact or an unrelated
 edit does not replace a recorded version. Restoration verifies the recorded
 content; missing or unverifiable evidence is reported rather than fabricated.
+
+<!-- planned:github-human-agent-reflection -->
+An artifact's saved versions are read completely, across as many pages as
+GitHub serves them in. Reflecting a new version costs the same whatever the
+artifact's history: the upload is confirmed against the version GitHub saved
+for it, without reading the content of earlier versions.
+<!-- /planned:github-human-agent-reflection -->
 
 The `instrukt todo artifacts` command family provides `list <slug>`,
 `read <slug> <name>`, `write <slug> <name> <content>` and
@@ -219,6 +271,7 @@ is not reflected and the item is marked conflicted. Commands on that item
 refuse with the door `instrukt todo refresh <slug>`; after refreshing, the
 agent re-applies its change.
 
+<!-- planned-change:github-human-agent-reflection -->
 Remote serialization retains the extracted GitHub store’s record and revision
 envelopes, artifact-version references and stamp ledger within the
 artifacts-and-stamps boundary. A mutation spanning several todos commits
@@ -231,6 +284,32 @@ actor matches a configured App bot under
 for record restoration even with association `NONE`. Any other author is logged
 and never applied. Envelope trust does not grant human approval or hold-label
 authority; those controls retain their actor checks below.
+<!-- change:github-human-agent-reflection -->
+The reflected record is the issue's `state` artifact: one native issue
+artifact per todo, whose latest saved version is the committed remote
+revision and whose earlier saved versions are the earlier revisions. It
+carries what another computer needs to recover the todo or to continue it:
+its identity, status, claim, holds, relationships, stamp ledger and each
+artifact's version references. No issue comment carries the record.
+
+What has meaning only on the computer that produced it stays in that
+computer's state database and is no part of the reflected record: dispatch
+briefs, the runtime and session plumbing of role attempts, and filesystem
+paths. A change to that state alone creates no remote revision and sends
+nothing to GitHub. The grounding of an artifact's versions is carried without
+repeating for each retained version what those versions share.
+
+A mutation spanning several todos commits locally in one transaction and is
+reflected per item, not atomically.
+
+A revision of the record is applied when its writer is the repository's
+owner, a member or a collaborator, or a configured App bot whose verified
+stable actor matches under `project/instrukt/spec/feature/work/github-apps`.
+Configured bots are trusted for record restoration even with association
+`NONE`. A revision from any other writer is logged and never applied. Record
+trust does not grant human approval or hold-label authority; those controls
+retain their actor checks below.
+<!-- /planned-change:github-human-agent-reflection -->
 
 Inbound approvals and change requests are accepted only from logins in the
 project layer’s `github.approvers` with write access to the repository. An
@@ -293,6 +372,15 @@ and artifact content are not rewritten. Re-reading a converted record converges
 without duplicating decisions. Offline operation keeps the existing local-leading
 contract; it cannot claim to have checked an unavailable remote version.
 
+<!-- planned:github-human-agent-reflection -->
+A todo whose record was reflected as record comments on its issue stays
+readable. Its record is read from that comment chain under the same writer
+trust and converted like any supported older version. The todo's next
+reflection writes its `state` artifact, and that artifact is its record from
+then on; no further record comment is posted. A reflection that GitHub had
+refused for the size of a record comment completes with that reflection.
+<!-- /planned:github-human-agent-reflection -->
+
 ### GitHub hold label and output labels
 
 `hold` is the one inbound control label. Adding it on the todo's issue by a
@@ -326,10 +414,20 @@ artifact, pull-request and board progress are recoverable without
 claiming that a failed request had no remote effect. A retry reconciles against
 the remote record before creating duplicate evidence.
 
+<!-- planned:github-human-agent-reflection -->
+Content GitHub refuses as invalid is a refusal of that content, where an
+unreachable or rate-limiting GitHub is a wait. The refusal is kept with the
+validation detail GitHub gave and reported with the todo as the reason its
+reflection is outstanding. The same content is not sent again; reflection of
+that todo resumes when what it sends has changed. The local record continues
+and other todos reflect independently.
+<!-- /planned:github-human-agent-reflection -->
+
 ## Use cases
 
 ### UC-GR1: Continue recording work during a GitHub outage
 
+<!-- planned-change:github-human-agent-reflection -->
 ```gherkin
   Given a developer has a todo available on their computer
   And GitHub is unreachable
@@ -342,6 +440,23 @@ the remote record before creating duplicate evidence.
   But when GitHub is limiting their requests
   Then the reflection waits and completes once GitHub accepts requests again
 ```
+<!-- change:github-human-agent-reflection -->
+```gherkin
+  Given a developer has a todo available on their computer
+  And GitHub is unreachable
+  When they record progress on that todo
+  Then the accepted progress remains available locally
+  And its GitHub reflection remains pending
+  But when no GitHub credentials are available on their computer
+  Then the progress is still recorded locally
+  And its reflection is reported as pending for lack of credentials
+  But when GitHub is limiting their requests
+  Then the reflection waits and completes once GitHub accepts requests again
+  But when GitHub refuses the reflected content as invalid
+  Then the progress is still recorded locally
+  And the refusal is reported with the reason GitHub gave for it
+```
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### UC-GR2: Inspect a delivery's evidence on GitHub
 
@@ -467,6 +582,38 @@ Then instrukt sets up the board and it stays private
 And their todos appear on it with their record status
 ```
 
+<!-- planned:github-human-agent-reflection -->
+### UC-GR13: Discuss a todo on its issue
+
+```gherkin
+Given a developer's todo is reflected to GitHub while agents keep recording progress on it
+When the developer and collaborators discuss the todo on its issue
+Then the conversation holds their comments, their instrukt commands and the replies to those commands
+And the recorded progress adds no comment to it
+```
+
+### UC-GR14: Read a build review on the todo's pull request
+
+```gherkin
+Given a developer's repository todo has its branch on GitHub while it is built and reviewed
+When an independent reviewer records a verdict on a commit of that branch
+Then the todo's pull request is open and shows the reviewer bot's review of that commit
+And the review states the verdict and what the reviewer found, readable in place
+And it links the complete review report
+```
+
+### UC-GR15: Continue a todo that was reflected as record comments
+
+```gherkin
+Given a developer's todo was reflected to GitHub as record comments on its issue
+When they record progress on it
+Then the todo continues from its reflected record with its evidence and attribution intact
+And its record is reflected to the todo's state artifact without a further record comment
+But when GitHub had refused that todo's reflection for the size of a record comment
+Then the outstanding progress is reflected with it
+```
+<!-- /planned:github-human-agent-reflection -->
+
 ## Known caveats
 
 - A new board is made public in a request that follows its creation. When that
@@ -488,6 +635,13 @@ And their todos appear on it with their record status
   on a replacement computer. Native artifact availability and accepted
   content size also bound remote reflection; failure leaves the local evidence
   and pending reflection visible.
+
+<!-- planned:github-human-agent-reflection -->
+- What stays in one computer's state database alone, such as dispatch briefs,
+  the runtime plumbing of role attempts and filesystem paths, is not
+  recoverable from GitHub. A replacement computer continues from the reflected
+  record and the todo's published branch.
+<!-- /planned:github-human-agent-reflection -->
 
 ## See Also
 - [project/instrukt/spec/domain/work](../../domain/work.md)
