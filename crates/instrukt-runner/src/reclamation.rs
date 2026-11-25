@@ -443,7 +443,11 @@ impl Deferred {
                 }
                 let what = format!("delivered todo {}", todo.todo);
                 match self.reclamation.release_delivered(project, todo) {
-                    Ok(DeliveredRelease::Busy) => {}
+                    Ok(DeliveredRelease::Busy) => reported.owed(
+                        &project.slug,
+                        &what,
+                        "another delivered release runs on this computer; it is asked again on a later invocation",
+                    ),
                     Ok(DeliveredRelease::Done { released, kept }) => {
                         for resource in &released {
                             tracing::info!(event = "delivered_worktree_released", project = %project.slug, todo = %todo.todo, released = %resource);
