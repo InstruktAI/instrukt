@@ -442,8 +442,8 @@ apply to a checkout still in active build or awaiting review before handoff.
    scope (`sdlc/policy/definition-of-done-lanes`, Bug-fix review) is filed as a
    tracked follow-up cited in `escape-assessment`. Record
    `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
-   `workflow.finalized`). Because `<slug>/work` now waits for integration,
-   remove the regenerable build output created there by this todo's work
+   `workflow.finalized`). Then remove the regenerable build output created in
+   `<slug>/work` by this todo's work
    sessions and their delegates (`general/policy/shared-machine-resources`),
    leaving the clean committed tree, the todo branch and the published head
    intact as bound by the readiness record; if removal cannot complete, record
