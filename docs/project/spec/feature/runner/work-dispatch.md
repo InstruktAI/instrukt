@@ -203,11 +203,19 @@ A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
 
+<!-- planned-change:github-human-agent-reflection -->
 The responsible orchestrator delegates the intent checker natively on the
 computer where the originating conversation is readable, using the configured
 native instruction. Work records the attempt and native child id through
 `todo attempt` and `todo bind`. The runtime delivers its result to its parent;
 GitHub carries the checked record and stamp, not the conversation.
+<!-- change:github-human-agent-reflection -->
+The responsible orchestrator delegates the intent checker natively on the
+computer where the originating conversation is readable, using the configured
+native instruction. Work records the attempt and native child id through
+`todo attempt` and `todo bind`. The runtime delivers its result to its parent;
+the work record carries the checked record and stamp, not the conversation.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Dispatch evidence
 

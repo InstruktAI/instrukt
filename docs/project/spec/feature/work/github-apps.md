@@ -5,11 +5,19 @@ description: Role-selected GitHub App bot identities, protected keys and install
 
 ## What it is
 
+<!-- planned-change:github-human-agent-reflection -->
 instrukt writes to GitHub as configured GitHub Apps. The bot is visible on
 records, issues, bugs, board updates, pull requests and reviews. Authoring and
 review use separate bots, so GitHub's native prohibition on author self-approval
 does not prevent independent review. Account lineage is distinct from who did
 the work (`general/concept/lineage-vs-authorship`).
+<!-- change:github-human-agent-reflection -->
+instrukt writes to GitHub as configured GitHub Apps. The bot is visible on
+issues, their artifacts, bugs, board updates, pull requests and reviews.
+Authoring and review use separate bots, so GitHub's native prohibition on
+author self-approval does not prevent independent review. Account lineage is
+distinct from who did the work (`general/concept/lineage-vs-authorship`).
+<!-- /planned-change:github-human-agent-reflection -->
 
 ## Canonical fields
 
@@ -25,6 +33,7 @@ Configuration validates shapes, distinct App/bot identities and all references;
 the GitHub boundary verifies the configured actor against GitHub.
 
 
+<!-- planned-change:github-human-agent-reflection -->
 The actual recorded session role selects `roles.<role>.github_app` in
 `~/.instrukt/agents.yaml`. Work recorded under a retired split orchestrator role
 (`prepare-orchestrator`, `work-orchestrator`) selects the current mapping of
@@ -44,6 +53,27 @@ account association or runtime permission mode.
 | `project` | `instruktai[bot]` | Shared records, issues, bugs and the board; roles without a specific mapping. |
 | `author` | `instruktai-author[bot]` | Authoring roles, their pull requests and bot-authored commits. |
 | `reviewer` | `instruktai-reviewer[bot]` | Reviewer roles and their native GitHub reviews. |
+<!-- change:github-human-agent-reflection -->
+The actual recorded session role selects `roles.<role>.github_app` in
+`~/.instrukt/agents.yaml`. Work recorded under a retired split orchestrator role
+(`prepare-orchestrator`, `work-orchestrator`) selects the current mapping of
+`todo-orchestrator`, the role agents migration replaces the split entries with.
+An omitted mapping uses `github.project_app`, including an unknown role resolved
+through `default`. No per-task model override,
+command argument or profile order selects the GitHub actor. Background issue,
+artifact, bug and board maintenance uses the project identity. Role-driven pull
+request authoring and reviews use the selected role identity. Human work
+performed directly on GitHub keeps its human identity; instrukt's issue and
+board maintenance still uses the project App. This contract changes no human
+login/account association or runtime permission mode.
+
+
+| Profile reference | Shipped identity | Responsibility |
+| --- | --- | --- |
+| `project` | `instruktai[bot]` | Issues, their artifacts, bugs and the board; roles without a specific mapping. |
+| `author` | `instruktai-author[bot]` | Authoring roles, their pull requests and bot-authored commits. |
+| `reviewer` | `instruktai-reviewer[bot]` | Reviewer roles and their native GitHub reviews. |
+<!-- /planned-change:github-human-agent-reflection -->
 
 The shipped role compositions live in
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`. An
@@ -63,12 +93,21 @@ It writes private keys only through `instrukt secrets set`, into
 `~/.instrukt/secrets.env` under the owned-files contract. No key or token is
 carried in a configuration report, repo file or assignment brief.
 
+<!-- planned-change:github-human-agent-reflection -->
 Setup verifies the App installation reaches the project's repository and has
 the permissions required by the operation: records/issues/artifacts and board
 maintenance, code/pull-request authoring, or reviews/check observation as
 applicable. Missing installation, permissions or an API capability remains an
 explicit incomplete setup with its repair door. No personal token or `gh`
 login is silently substituted for the selected App.
+<!-- change:github-human-agent-reflection -->
+Setup verifies the App installation reaches the project's repository and has
+the permissions required by the operation: issues/artifacts and board
+maintenance, code/pull-request authoring, or reviews/check observation as
+applicable. Missing installation, permissions or an API capability remains an
+explicit incomplete setup with its repair door. No personal token or `gh`
+login is silently substituted for the selected App.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Installation credentials
 
@@ -102,10 +141,17 @@ shares, an issuance GitHub throttles, may be throttling or cannot serve, a rate
 limit, an unreachable GitHub and GitHub refusing an issued credential are
 command-wide. What a failure stops depends on the operation it interrupts:
 
+<!-- planned-change:github-human-agent-reflection -->
 - Record, issue, pull request and review reflection: a command-wide failure
   stops the command's remaining GitHub requests; a local failure keeps the
   todo's remaining reflection in that pass pending with the cause, and the pass
   continues with the next todo.
+<!-- change:github-human-agent-reflection -->
+- Issue, artifact, pull request and review reflection: a command-wide failure
+  stops the command's remaining GitHub requests; a local failure keeps the
+  todo's remaining reflection in that pass pending with the cause, and the pass
+  continues with the next todo.
+<!-- /planned-change:github-human-agent-reflection -->
 - Board setup at the start of reflection: when it cannot obtain the board
   account's credential or the board, board updates stay pending with the cause;
   a rate limit stops the command's remaining GitHub requests, and any other
@@ -115,6 +161,7 @@ command-wide. What a failure stops depends on the operation it interrupts:
   requests, and any other failure, an App setup mismatch or refusal and a
   refused credential included, lets the pass continue.
 
+<!-- planned-change:github-human-agent-reflection -->
 Rate limits retain their retry boundary: GitHub's `Retry-After` delay, counted
 from when the throttled answer is received, or without one its reset, and the
 later of the two when no requests remain. A secondary limit GitHub reports in the
@@ -126,10 +173,25 @@ headers name, and any other 403 stays a refusal. Locally accepted
 work and its pending reflection survive; no credential failure is reported as
 remote success or as proof that an ambiguous write had no effect. The record's existing
 revision and retry-convergence rules remain in force.
+<!-- change:github-human-agent-reflection -->
+Rate limits retain their retry boundary: GitHub's `Retry-After` delay, counted
+from when the throttled answer is received, or without one its reset, and the
+later of the two when no requests remain. A secondary limit GitHub reports in the
+errors of a successful GraphQL answer without a `Retry-After` waits a minute from
+receipt instead of the reset, unless no requests remain. An HTTP 403 or 429
+refusal is judged by its headers alone, never by its body: a 429, or a 403 with no
+requests remaining or a `Retry-After`, is a rate limit with the boundary its
+headers name, and any other 403 stays a refusal. Locally accepted
+work and its pending reflection survive; no credential failure is reported as
+remote success or as proof that an ambiguous write had no effect. Reflection's
+existing retry-convergence rules remain in force
+(`project/instrukt/spec/feature/work/github-record`).
+<!-- /planned-change:github-human-agent-reflection -->
 
 
 ### Read-only reflection readiness
 
+<!-- planned-change:github-human-agent-reflection -->
 Work verifies the project App, protected key, repository installation,
 record and account-board permission scopes, expiry and stable bot identities.
 It reads repository issues, existing issue artifacts when an issue is available,
@@ -137,6 +199,15 @@ and the configured board or its account's project listing. Newer pages containin
 only pull requests do not exclude older issues from artifact readiness checks.
 Unavailable access or reflection capabilities are unmet findings with the
 configuration repair door.
+<!-- change:github-human-agent-reflection -->
+Work verifies the project App, protected key, repository installation,
+issue and account-board permission scopes, expiry and stable bot identities.
+It reads repository issues, existing issue artifacts when an issue is available,
+and the configured board or its account's project listing. Newer pages containing
+only pull requests do not exclude older issues from artifact readiness checks.
+Unavailable access or reflection capabilities are unmet findings with the
+configuration repair door.
+<!-- /planned-change:github-human-agent-reflection -->
 Read-only readiness creates no issues, artifacts, boards, fields or views.
 It establishes declared write permissions and available read surfaces; it cannot
 prove a future remote write, or artifact access on an empty repository, without
@@ -667,6 +738,7 @@ permissions.
 
 ## Use cases
 
+<!-- planned-change:github-human-agent-reflection -->
 ### UC-GA1: See bot authorship and receive an independent native review
 
 ```gherkin
@@ -675,6 +747,16 @@ When an author role opens its implementation pull request and a reviewer role ap
 Then GitHub shows the author bot and the different reviewer bot
 And shared record, issue and board maintenance shows the project bot
 ```
+<!-- change:github-human-agent-reflection -->
+### UC-GA1: See bot authorship and receive an independent native review
+
+```gherkin
+Given a developer has configured distinct project, author and reviewer Apps
+When an author role opens its implementation pull request and a reviewer role approves it
+Then GitHub shows the author bot and the different reviewer bot
+And issue and board maintenance shows the project bot
+```
+<!-- /planned-change:github-human-agent-reflection -->
 
 <!-- planned-change:github-human-agent-reflection -->
 ### UC-GA2: Recover reflected work written by the configured bots
