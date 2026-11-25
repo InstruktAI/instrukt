@@ -7,7 +7,10 @@
     reason = "test: a failed step fails the test"
 )]
 
+use crate::common;
 use crate::fixtures::work as support;
+use crate::fixtures::workflow::Crew;
+use instrukt_todos::evidence::artifact_names;
 use support::{Project, redact, stdout};
 
 /// The identity a `create` reported (its last word).
@@ -522,4 +525,159 @@ fn a_bug_filed_as_ordinary_work_is_sent_to_the_front_door() {
         }
     }
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");
+}
+
+/// Runs `instrukt <args>` in `tree` as the worker session `session`.
+fn as_worker(crew: &Crew, tree: &std::path::Path, session: &str, args: &[&str]) {
+    crew.project
+        .env
+        .instrukt(tree)
+        .env("T3CODE_THREAD_ID", session.strip_prefix("t3:").unwrap())
+        .args(args)
+        .assert()
+        .success();
+}
+
+/// The lines `todo show` prints for one role attempt, from its header to the
+/// next entry.
+fn attempt_record(shown: &str, attempt: &str) -> String {
+    let header = format!("  {attempt}: ");
+    shown
+        .lines()
+        .skip_while(|line| !line.starts_with(&header))
+        .enumerate()
+        .take_while(|(at, line)| *at == 0 || line.starts_with("    "))
+        .map(|(_, line)| line)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// spec: project/instrukt/spec/feature/work/todos UC-TD13
+#[test]
+fn a_further_round_keeps_the_worker_that_did_the_earlier_one() {
+    let mut crew = Crew::new();
+    let slug = "retained-planner";
+    crew.project
+        .env
+        .set_env("INSTRUKT_NOW", "2030-01-05T08:00:00Z");
+    common::agent_profiles(
+        &crew.project.env,
+        "default: {order: [claude], tier: standard}\nprofiles:\n  claude:\n    standard: [{model: claude-opus-5-5, effort: high}]\n",
+    );
+    crew.project
+        .create(slug, "change", "Keep list depth inside block quotes.");
+    crew.next("prepare", slug);
+
+    // The planner's earlier round completes and its plan is sent back.
+    let first = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let session = first["session"].as_str().unwrap().to_owned();
+    let tree = std::path::PathBuf::from(first["worktree"].as_str().unwrap());
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first.",
+        ],
+    );
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &["todo", "stamp", slug, "--role-complete"],
+    );
+    crew.write(
+        slug,
+        artifact_names::PLAN_REVIEW_FINDINGS,
+        "Nested quotes are unplanned.",
+    );
+    crew.stamp(slug, &["--verdict", "needs_work", "--phase", "plan_review"]);
+    let earlier = attempt_record(&crew.todo(["show", slug]), "planner/1");
+    assert!(!earlier.is_empty());
+
+    // An hour later the role is given a further round, which names the
+    // earlier round's conversation and is recorded on it without the runtime.
+    crew.project
+        .env
+        .set_env("INSTRUKT_NOW", "2030-01-05T09:00:00Z");
+    crew.next("prepare", slug);
+    let reserved = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "planner",
+            "--procedure",
+            "crew/procedure/plan",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Answer the plan review findings.")
+        .assert()
+        .success();
+    let further: serde_json::Value = serde_json::from_slice(&reserved.get_output().stdout).unwrap();
+    assert_eq!(further["prior_session"]["session"], first["session"]);
+    assert_eq!(further["prior_session"]["attempt"], first["attempt"]);
+    assert_eq!(further["prior_session"]["selection"], first["selection"]);
+    let calls = crew.runtime.calls();
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "bind",
+            slug,
+            "--role",
+            "planner",
+            "--attempt",
+            &further["attempt"].to_string(),
+            "--session",
+            &session,
+            "--worktree",
+            further["worktree"].as_str().unwrap(),
+            "--branch",
+            further["branch"].as_str().unwrap(),
+            "--base",
+            further["base"].as_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(crew.runtime.calls(), calls);
+
+    // The further round's evidence lands on it; the earlier round's record,
+    // its release time included, stays as it was.
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first, nested quotes included.",
+        ],
+    );
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &["todo", "stamp", slug, "--role-complete"],
+    );
+    let shown = crew.todo(["show", slug]);
+    assert_eq!(attempt_record(&shown, "planner/1"), earlier);
+    insta::assert_snapshot!("continued-worker-record", redact(&shown));
 }

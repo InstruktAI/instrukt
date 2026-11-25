@@ -201,10 +201,12 @@ impl Work {
             ),
             None => None,
         };
-        let id = TodoId::new(machine::random_hex(16).map_err(|source| WorkError::Io {
+        let hex = machine::random_hex(16).map_err(|source| WorkError::Io {
             path: "/dev/urandom".into(),
             source,
-        })?);
+        })?;
+        let id = TodoId::parse(&hex)
+            .ok_or_else(|| WorkError::refused("a fresh todo identity was not 32 hex digits"))?;
         let now = s.now;
         let content = request.content.clone();
         let record = TodoRecord {
@@ -2072,7 +2074,7 @@ fn view(s: &mut Session<'_>, record: TodoRecord, local: bool) -> TodoView {
         }
     }
     TodoView {
-        record_status: super::_envelope::record_status(&record),
+        record_status: super::_envelope::record_status(&record).as_str(),
         record,
         local,
         reflection: None,

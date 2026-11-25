@@ -191,6 +191,16 @@ pub enum StoreLock {
     Exclusive(PathBuf, Duration),
 }
 
+/// Which copy of a store a migration brings forward.
+#[derive(Debug, Clone, Copy)]
+enum Image {
+    /// The store's file itself: the new version is durable.
+    File,
+    /// An in-memory image, such as an inspection read's copy of the file;
+    /// the file keeps its version.
+    Memory,
+}
+
 /// What reading a store found when it holds a schema.
 pub enum Read {
     /// A connection at the store's current schema version.
@@ -250,7 +260,7 @@ impl Store {
             });
         }
         if snapshot {
-            migrate_store(&mut conn, self)?;
+            migrate_store(&mut conn, self, Image::Memory)?;
             conn.pragma_update(None, "query_only", true)
                 .map_err(StoreError::sqlite(self.name, path))?;
         } else if found < known {
@@ -352,7 +362,7 @@ impl StoreDb {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(StoreError::sqlite(store.name, &path))?;
         protect(&path)?;
-        migrate_store(&mut conn, store)?;
+        migrate_store(&mut conn, store, Image::File)?;
         Ok(Self {
             conn,
             path,
@@ -389,6 +399,26 @@ impl StoreDb {
         let value = change(&tx)?;
         tx.commit().map_err(StoreError::sqlite(store, &path))?;
         Ok(value)
+    }
+
+    /// Reclaims the store's free pages under the lock this handle holds: a
+    /// rewrite without them (`VACUUM`), then one passive checkpoint. Once
+    /// the rewrite has committed no free page remains. The checkpoint
+    /// shortens the file unless a reader holds a snapshot from before the
+    /// rewrite; it waits for no reader, stopping short of the end of the log
+    /// is not a failure, and the log is not truncated.
+    pub fn reclaim(&mut self) -> Result<(), StoreError> {
+        let sql = StoreError::sqlite(self.store, &self.path);
+        self.conn.execute_batch("VACUUM").map_err(&sql)?;
+        // (busy, frames in the log, frames checkpointed): a short or busy
+        // checkpoint leaves the shortening to SQLite's next one.
+        let _: (i64, i64, i64) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(&sql)?;
+        Ok(())
     }
 }
 
@@ -447,23 +477,9 @@ impl StateDb {
     }
 
     /// Reclaims the database's free pages under the writer lock this handle
-    /// holds: a rewrite without them (`VACUUM`), then one passive checkpoint.
-    /// Once the rewrite has committed no free page remains. The checkpoint
-    /// shortens the file unless a reader holds a snapshot from before the
-    /// rewrite; it waits for no reader, stopping short of the end of the log
-    /// is not a failure, and the log is not truncated.
+    /// holds, as [`StoreDb::reclaim`] does for any store.
     pub fn reclaim(&mut self) -> Result<(), StateDbError> {
-        let sql = StateDbError::sqlite(self.db.path());
-        self.conn().execute_batch("VACUUM").map_err(&sql)?;
-        // (busy, frames in the log, frames checkpointed): a short or busy
-        // checkpoint leaves the shortening to SQLite's next one.
-        let _: (i64, i64, i64) = self
-            .conn()
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .map_err(&sql)?;
-        Ok(())
+        Ok(self.db.reclaim()?)
     }
 }
 
@@ -537,8 +553,9 @@ fn stored_version(conn: &Connection, store: &'static str, path: &Path) -> Result
 }
 
 /// Applies each of `store`'s migrations past the stored version, each in
-/// its own transaction that sets `user_version` too.
-fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError> {
+/// its own transaction that sets `user_version` too. Only a migration of
+/// the store's file is reported as the store moving to a new version.
+fn migrate_store(conn: &mut Connection, store: &Store, image: Image) -> Result<(), StoreError> {
     let path = &store.file;
     let sql = StoreError::sqlite(store.name, path);
     let found = stored_version(conn, store.name, path)?;
@@ -564,13 +581,15 @@ fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError>
         tx.pragma_update(None, "user_version", version)
             .map_err(&sql)?;
         tx.commit().map_err(&sql)?;
-        tracing::info!(
-            event = "state_db_migrated",
-            store = store.name,
-            path = %path.display(),
-            version,
-            "a store moved to a new schema version"
-        );
+        if let Image::File = image {
+            tracing::info!(
+                event = "state_db_migrated",
+                store = store.name,
+                path = %path.display(),
+                version,
+                "a store moved to a new schema version"
+            );
+        }
     }
     Ok(())
 }
@@ -588,7 +607,7 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
         file: path.to_path_buf(),
         ..Store::state(&Home::at_user_home(PathBuf::from("/")))
     };
-    Ok(migrate_store(conn, &store)?)
+    Ok(migrate_store(conn, &store, Image::Memory)?)
 }
 
 /// Inspect an existing SQLite store without opening a disk connection or
@@ -845,7 +864,7 @@ mod tests {
         let mut retained = at_31();
         retained
             .execute(
-                "INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:kept',1,1)",
+                "INSERT INTO history_sources(source,position,imported) VALUES('archive:kept',1,1)",
                 [],
             )
             .unwrap();
@@ -853,7 +872,7 @@ mod tests {
         assert_eq!(history(&retained), [true; 5]);
         let kept: (i64, bool) = retained
             .query_row(
-                "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
+                "SELECT position,imported FROM history_sources WHERE source='archive:kept'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
@@ -875,7 +894,7 @@ mod tests {
             migrations: &_schema::MIGRATIONS[..35],
             ..Store::state(&Home::at_user_home(PathBuf::from("/")))
         };
-        migrate_store(&mut conn, &at_35).unwrap();
+        migrate_store(&mut conn, &at_35, Image::Memory).unwrap();
         assert_eq!(user_version(&conn, path).unwrap(), 35);
         let request = |key: &str, selection: serde_json::Value| {
             serde_json::json!({

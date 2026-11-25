@@ -38,9 +38,17 @@ description: How an agent understands what the human wants, what it decides on i
   reads the conversation and checks the record against it. It confirms the
   record, rewrites it where it was captured unclearly, or brings it back to the
   human where it was captured wrongly. No wrong interpretation enters the work.
-- After that check, every agent takes the recorded intent as given and passes it
-  on unchanged — never re-interpreted, never re-verified. Naming the human adds
-  no authority beyond the recorded intent.
+- After that check, every agent takes the recorded behavioral intent as given
+  and passes it on unchanged — never re-interpreted, never re-verified. Naming
+  the human adds no authority beyond the recorded intent.
+- Facts cited in recorded intent are evidence to verify against their source,
+  and technical mechanisms named in it are leads to evaluate
+  (`general/principle/grounding`); grounding or replacing either is technical
+  stewardship, not re-verifying intent. When a stated outcome or named mechanism
+  contradicts a standing principle, its own goal, or verified reality, resolve
+  policy-settled technical mechanics within the agent's lane and return any
+  resulting change to the intended behavioral outcome to the human with a
+  grounded recommendation (`general/policy/leadership`).
 
 ## Rationale
 
@@ -49,7 +57,9 @@ anything else hands work to the one least equipped for it, and guessing new
 intent puts words in their mouth. Intent re-interpreted at every hop drifts
 from what the human meant; one check where it enters the work, by an agent that
 was not part of the conversation, catches a wrong reading before anything is
-built on it.
+built on it. Treating cited facts as evidence to ground and named mechanisms as
+leads keeps fidelity to behavioral intent from shielding unverified claims or
+standing-principle violations.
 
 ## Scope
 

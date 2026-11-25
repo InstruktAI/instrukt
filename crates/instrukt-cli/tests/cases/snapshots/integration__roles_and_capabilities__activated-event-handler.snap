@@ -20,14 +20,14 @@ Commands:
   sync       Publish the current project's committed docs into the home
   init       Adopt instrukt in the current git repository
   hooks      Install, remove, inspect and run instrukt's git hook sections
-  repo       Attributed commits in an authoring worktree
+  repo       Attributed commits and reclaimed build output in the acting agent's authoring worktree
   specs      Use-case coverage, reservation and trace
   blueprint  Structural graph queries (blueprint module)
   todo       The work record and workflow (todos module)
   eval       Evaluation reports from the work record
   review     Independent review evidence of exact commits, and moving it between computers
   events     Discover producer-declared event types and their schemas
-  history    Extract, import and search retained conversations across computers
+  history    Extract and search retained conversations across computers
   webhooks   Internal signed loopback webhook receiver (installation is separate)
   run        Run the runner until stopped
   tick       One runner wake-up, as the OS scheduler invokes it

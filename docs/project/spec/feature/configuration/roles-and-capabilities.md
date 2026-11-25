@@ -63,7 +63,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Family | Actions | Objects and current instrukt surface |
 | --- | --- | --- |
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
-| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`, Bug reports); at `own` that is the assignment's project. |
+| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
@@ -82,12 +82,18 @@ Review evidence belongs to the Evidence family: `instrukt review record` and
 `artifact-read`, addressing the review evidence of the project the caller
 stands in. The grant reaches the command; what a caller may record is decided
 by the evidence's own admission invariants, which bind every caller alike
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence). `instrukt review export` and `instrukt review import` move a
+(`project/instrukt/spec/feature/work/github-apps`). `instrukt review export` and `instrukt review import` move a
 computer's review evidence for a project and are `installation-write`,
 addressing this computer's installation
-(`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
-computer changes).
+(`project/instrukt/spec/feature/work/github-apps`).
+
+`instrukt repo reclaim` belongs to the Repository family: it is `code-commit`,
+so the roles that commit in a todo's worktree are the roles that reclaim it.
+Its object is the workspace the caller's assignment records, wherever the
+caller stands: `own` reaches it for every caller whose assignment records
+one. The grant reaches the command; which session may reclaim at a given
+moment is decided by the worktree's own writer admission, which binds every
+caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
 <!-- planned:fixed-shape-commit-review-dispatch -->
 
@@ -110,6 +116,13 @@ reaches only objects bound by the recorded assignment. For machine-wide
 objects, `own` is empty unless that machine-wide configuration or installation
 responsibility is explicitly part of the recorded assignment; being in a
 project does not own the machine.
+
+`instrukt hooks run`, the call in each of instrukt's hook sections
+(`project/instrukt/spec/feature/repository/hook-sections`), belongs to the
+Repository family: it is `code-commit`, addressing the working tree the hook
+runs in, so `own` reaches it in the workspace the caller's assignment records.
+The detached `hooks worker` a post-hook starts remains `runner-execute`, and
+the sync it runs remains `publication`.
 
 ### Caller and object resolution
 
@@ -188,7 +201,7 @@ computer, which its own assignment never binds; `report` therefore reaches any
 project at `any`. It is the company agent's only work-record write: it holds no
 `todo-write`, so it creates, changes and withdraws no other todo. What a
 report files is the work context's
-(`project/instrukt/spec/feature/work/todos`, Bug reports).
+(`project/instrukt/spec/feature/work/todos`).
 
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
@@ -280,6 +293,15 @@ Then reporting a defect into any project on its computer and reading which defec
 And creating, changing or withdrawing any other work is not
 ```
 
+### UC-RCAP4: A focused author's hook runs are admitted in its own workspace
+
+```gherkin
+Given a focused author holding code-commit at own, bound to its assigned worktree, with instrukt's hooks installed
+When it commits there
+Then the hook runs its commit triggers are admitted
+But a hook run it starts outside its assigned worktree is refused before it runs, with its reporting path
+```
+
 ## Known caveats
 
 - Capabilities cover instrukt commands only. File edits, raw git, `gh` and
@@ -290,9 +312,11 @@ And creating, changing or withdrawing any other work is not
 - `company-agent` is a `standing` role, so its grants shape its help and
   briefing and refuse nothing: an instrukt command outside `read`, `tools` and
   `report` is held back by its procedure
-  (`general/procedure/company-assistance`), not refused by this layer. A
-  `focused` company agent would also be refused the instrukt hook run its own
-  commits trigger in the company home.
+  (`general/procedure/company-assistance`), not refused by this layer.
+- A `focused` role without `code-commit`, such as a reviewer, is refused the
+  hook run a commit of its own triggers, and that commit is made without what
+  instrukt generates. Every shipped `focused` role that commits holds
+  `code-commit` through `worker`.
 
 ## See Also
 

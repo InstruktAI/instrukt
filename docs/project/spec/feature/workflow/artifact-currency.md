@@ -95,7 +95,7 @@ rewritten against current grounding.
 | Owning artifact | Derivation owed | Reviews invalidated |
 | --- | --- | --- |
 | Product requirements | Intake re-derives the product requirements from current input and grounding. | Product requirements, architecture and implementation plan. |
-| Architecture | Architecture re-derives its design and index artifact. | Architecture and implementation plan. |
+| Architecture | Architecture re-derives its design snippets and `architecture` artifact. | Architecture and implementation plan. |
 | Diagnosis | Diagnosis is settled against its current content before planning continues. | Implementation plan. |
 | Implementation plan | Planning re-derives the implementation plan. | Implementation plan. |
 

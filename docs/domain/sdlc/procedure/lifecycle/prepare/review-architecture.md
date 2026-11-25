@@ -21,10 +21,12 @@ parameters:
 
 ## Goal
 
-Validate that the architecture preserves the independently reviewed and
-human-approved target while reconciling it with current code, credible intended
-state, relevant solution evidence, and platform defaults. Reject both
-unsupported invention and status-quo absorption.
+Validate that the architecture preserves and can reach the independently
+reviewed and human-approved target while reconciling it with current code,
+credible intended state, relevant solution evidence, operational concurrency,
+and platform defaults. Reject unsupported invention, status-quo absorption, and
+designs whose measured premises or standing-principle compliance fail to reach
+the target.
 
 ## Preconditions
 
@@ -51,11 +53,14 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
   durable state the PRD's outcomes require under `sdlc/policy/state-storage`
   and place it: nature, owner, loss cost, medium, write isolation, scope and
   lifecycle. Step 2 compares the design against this classification.
-- `instrukt todo artifacts read {slug} architecture` — the index of the design
+- `instrukt todo artifacts read {slug} architecture` — the delivery reasoning
   under review.
-- Every indexed snippet in its pending view, `instrukt docs get <id> --target {slug}`,
-  compared with its current contract — the design under review is the pending
-  material, not the live text.
+- Discover the complete documentation change set directly from the worktree's
+  diff under `docs/` against its merge base with canonical main (covering new
+  pending snippets, companions, in-body pending markers, ADRs, frontmatter
+  edits, and `index.yaml`), then read each pending snippet in its pending view
+  via `instrukt docs get <id> --target {slug}` compared with its current
+  contract — the design under review is the pending material, not the live text.
 - Relevant code paths cited by the artifact.
 - Walk the governing-contracts entry points yourself before you read the
   artifact's Governing contracts section, then compare
@@ -82,10 +87,10 @@ the relationship only; it cannot be the sole home of a participating domain
 rule.
 
 For every piece of durable state the design introduces, relocates or changes,
-compare its placement in the indexed snippets with your own classification from
-step 1. A piece of state your classification did not anticipate is classified
-before you read its reasoning. Verify the design's loss cost, write pattern and
-existing store against source.
+compare its placement in the changed design snippets with your own
+classification from step 1. A piece of state your classification did not
+anticipate is classified before you read its reasoning. Verify the design's loss
+cost, write pattern and existing store against source.
 
 ### 3. Reject undocumented divergence and unsupported invention
 
@@ -128,6 +133,11 @@ Reject durable state the design leaves unclassified, and storage that breaks
 inside a derived store, is Critical. Any other breach is Important: a medium
 that does not fit the state's shape, a write-isolation unit shared with a path
 people or agents wait on, or an undeclared scope, bound or transfer.
+
+Verify that documentation edits stay within `architecture`'s structural-design
+ownership (`sdlc/procedure/lifecycle/prepare/architecture`): consequential
+reflection updates belong to plan drafting, and a needed feature-spec change
+returns to intake rather than editing intake's pending block in place.
 
 ### 4. Write the complete review report
 
@@ -174,9 +184,13 @@ boundaries from `sdlc/procedure/lifecycle/review`.
 ## Recovery
 
 - If the PRD is ambiguous about product intent, flag a blocker — the PRD must
-  be re-engaged before the architecture can advance. A technical realization
-  the architecture chose within an unambiguous outcome is judged against the
-  approved outcome, governing contracts and verified substrate, not blocked as
+  be re-engaged before the architecture can advance. If verified substrate or a
+  standing principle shows an approved PRD outcome cannot be reached or carries
+  a principle violation (`general/policy/conflict-resolution`), record a
+  blocking finding stating the compliant target state and its evidence
+  (`sdlc/procedure/lifecycle/review`). A technical realization the architecture
+  chose within an unambiguous, reachable outcome is judged against the approved
+  outcome, governing contracts and verified substrate, not blocked as
   ambiguity.
 - If the architecture diverges from the defaults with an unstated rationale,
   mark `needs_work` rather than guessing the rationale.

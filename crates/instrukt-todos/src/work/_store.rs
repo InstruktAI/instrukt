@@ -2,9 +2,11 @@
 //! (`state-database`, "Work tables"): each local item is one `todos` row
 //! with its prerequisites, artifacts and versions, stamps, holds, session
 //! bindings, reflection state and answered inbound commands. Reads take no
-//! lock (a database behind this build's schema migrates once under the
-//! writer lock); each write takes the per-computer writer lock for its one
-//! transaction alone, and one accepted change commits in one transaction.
+//! lock: an ordinary read of a database behind this build's schema migrates
+//! it once under the writer lock, while an inspection read, the existence
+//! read always among them, brings it forward in memory only. Each write
+//! takes the per-computer writer lock for its one transaction alone, and
+//! one accepted change commits in one transaction.
 //! GitHub reflection serializes on the separate reflection lock, taken
 //! before the writer lock and never while it is held.
 
@@ -408,6 +410,70 @@ impl Store {
         let mut db = StateDb::open(&self.home)?;
         let path = db.path().to_path_buf();
         db.write(|tx| change(tx, &path, &self.project))
+    }
+
+    /// Runs `within` with the stored record of `id` (`None` when there is
+    /// none or it belongs to another project) inside one write transaction
+    /// under the writer lock, so no other write lands while it runs. It
+    /// writes nothing.
+    pub fn hold_record<T>(
+        &self,
+        id: &TodoId,
+        within: impl FnOnce(Option<&TodoRecord>) -> T,
+    ) -> Result<T, WorkError> {
+        self.write(|tx, path, project| {
+            let item = load_own(tx, path, project, id)?;
+            Ok(within(item.as_ref().map(|item| &item.record)))
+        })
+    }
+
+    /// The local items of the project a binding of which recorded one of
+    /// `worktrees`, or whose work branch, recorded on the todo or on one of
+    /// its attempts, is one of `branches`. Other items are not read.
+    pub fn items_naming(
+        &self,
+        worktrees: &[String],
+        branches: &[String],
+    ) -> Result<Vec<LocalItem>, WorkError> {
+        let worktrees =
+            serde_json::to_string(worktrees).map_err(|e| WorkError::refused(e.to_string()))?;
+        let branches =
+            serde_json::to_string(branches).map_err(|e| WorkError::refused(e.to_string()))?;
+        self.read(Vec::new(), |conn, path, project| {
+            let sql = StateDbError::sqlite(path);
+            let mut statement = conn
+                // Each arm starts from the listed values and reaches the
+                // matching rows by index; no other todo is visited.
+                .prepare_cached(
+                    "SELECT t.id FROM json_each(?3) AS r
+                     CROSS JOIN todos AS t ON t.branch = r.value
+                     WHERE t.project = ?1
+                     UNION
+                     SELECT t.id FROM json_each(?3) AS r
+                     CROSS JOIN session_bindings AS b ON b.branch = r.value
+                     CROSS JOIN todos AS t ON t.id = b.todo_id
+                     WHERE t.project = ?1
+                     UNION
+                     SELECT t.id FROM json_each(?2) AS r
+                     CROSS JOIN session_bindings AS b ON b.worktree = r.value
+                     CROSS JOIN todos AS t ON t.id = b.todo_id
+                     WHERE t.project = ?1
+                     ORDER BY 1",
+                )
+                .map_err(&sql)?;
+            let ids = statement
+                .query_map(params![project.as_str(), worktrees, branches], |row| {
+                    row.get::<_, String>(0)
+                })
+                .map_err(&sql)?
+                .collect::<Result<Vec<String>, _>>()
+                .map_err(&sql)?;
+            let mut items = Vec::with_capacity(ids.len());
+            for id in ids {
+                items.extend(load_rows(conn, path, "id = ?1", &id)?);
+            }
+            Ok(items)
+        })
     }
 
     /// Every local item of the project, in identity order.
@@ -1501,12 +1567,14 @@ pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<Local
 }
 
 /// Local items, listing copies and provider state of `project`, read
-/// without the writer lock; no database yet is empty state.
+/// through an inspection snapshot: without the writer lock, and with older
+/// state brought forward in memory only, so the file stays as found; no
+/// database yet is empty state.
 pub(crate) fn read_existence_state(
     home: &Home,
     project: &ProjectSlug,
 ) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
-    Store::new(home, project).existence()
+    Store::new(&home.for_inspection(), project).existence()
 }
 
 /// Writes every row of `item` inside `tx`: the `todos` row first, then the

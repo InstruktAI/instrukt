@@ -342,7 +342,7 @@ fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
     let f = admission_fixture();
     let agents = f.home.agents_file();
     let mut configured: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(&agents).unwrap()).unwrap();
+        serde_yaml_ng::from_str(instrukt_core::config::SHIPPED_AGENTS).unwrap();
     configured["roles"]["plan-reviewer"]["class"] = "agent".into();
     std::fs::write(agents, serde_yaml_ng::to_string(&configured).unwrap()).unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(f.home.state_db_file()).unwrap();
@@ -367,7 +367,7 @@ fn a_workers_recorded_dispatcher_relationship_survives_a_later_claim_change() {
 fn a_migrated_nonfocused_worker_keeps_scoped_commands_but_cannot_link_to_its_dispatcher() {
     let f = admission_fixture();
     let mut agents: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(f.home.agents_file()).unwrap()).unwrap();
+        serde_yaml_ng::from_str(instrukt_core::config::SHIPPED_AGENTS).unwrap();
     agents["roles"]["plan-reviewer"]["class"] = "agent".into();
     std::fs::write(
         f.home.agents_file(),

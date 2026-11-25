@@ -93,10 +93,13 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     tagged release publication, not pull requests.
   - A pull request runs, of the checks above, only those its changed files
     reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
-    release runs every check. A change to documents and configuration alone,
-    root `instrukt.yaml` among them, reaches no Rust input: Linux builds the
-    CLI binary and runs the document,
-    configuration, use-case coverage and instruction-file checks with it,
+    release runs every check. A shipped document or configuration file a
+    workspace test reads is a Rust input, and a change to it runs the Rust
+    checks alongside the document checks. A change confined to documents and
+    configuration that no Rust check or test reads, root `instrukt.yaml`
+    among them, reaches no Rust input:
+    Linux builds the CLI binary and runs the document, configuration,
+    use-case coverage and instruction-file checks with it,
     without the workspace test suite, doctests, macOS, the dependency audit,
     the pinned contracts, or the commit checks whose inputs did not change.
     Among the commit checks, fmt, clippy and the unit tests run when a Rust
@@ -112,8 +115,6 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     its pull request.
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
-- Parity against the corpus instrukt was extracted from is a one-off
-  acceptance run, not a CI dependency.
 - Code is synchronous by default; a crate that needs concurrent network I/O
   keeps it behind its own interface. Clippy runs with `-D warnings`, denying
   `dbg_macro` and `print_stdout` outside the command output writer.
@@ -184,8 +185,10 @@ once for parallel shards, and scoping macOS pull-request runs to
 platform-specific surfaces keeps pull-request feedback fast while preserving
 full cross-platform verification on `main` and every tagged release.
 Running, of those checks, only the ones a pull request's files reach spares a
-document change the workspace test suite, macOS and every check its files do
-not reach; an unnamed, unreadable or unclassified change runs everything, so a
+change to documents no test reads the workspace test suite, macOS and every
+check its files do not reach. A document a test reads is that test's input:
+sparing its change the suite would let a pull request pass that then turns
+`main` red. An unnamed, unreadable or unclassified change runs everything, so a
 gap in the classification costs time, never a missed check.
 
 ## Scope

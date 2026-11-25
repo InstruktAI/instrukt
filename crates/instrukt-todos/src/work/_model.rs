@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+pub use instrukt_core::ids::TodoId;
 use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::machine::MachineId;
 use instrukt_runner::interfaces::{AgentPreference, CatchUp, TaskSchedule, TodoKind};
@@ -16,36 +17,6 @@ use crate::evidence::{
 
 /// The record schema this build writes and reads.
 pub(crate) const SCHEMA: u32 = 3;
-
-/// A todo's durable identity: survives rename, removal and recovery.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct TodoId(String);
-
-impl TodoId {
-    pub(crate) fn new(hex: String) -> Self {
-        Self(hex)
-    }
-
-    /// Validates `value` as an identity: 32 lowercase hex characters.
-    pub fn parse(value: &str) -> Option<Self> {
-        let ok = value.len() == 32
-            && value
-                .chars()
-                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
-        ok.then(|| Self(value.to_owned()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for TodoId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
 
 /// How a command addresses a todo (`todos`, "Identity and creation"): a
 /// plain slug means the live item; `<slug>@<identity-prefix>` addresses
@@ -432,6 +403,24 @@ pub struct Binding {
     pub worktree: Option<PathBuf>,
     #[serde(flatten)]
     pub attempt: Attempt,
+}
+
+impl Binding {
+    /// Whether this is a role attempt open on the todo's worktree: an
+    /// unreleased workspace or child assignment. A driver binding is not
+    /// one. While it is open no other role starts there, readiness is
+    /// refused and the runner reclaims nothing there. Work's holder guard
+    /// refuses reclaiming to every session but the attempt's own; it decides
+    /// nothing about who may run the command. For a focused role the command
+    /// also needs the `code-commit` grant, which a read-only reviewer lacks,
+    /// so nobody reclaims during a review.
+    pub(crate) fn is_open_role_attempt(&self) -> bool {
+        matches!(
+            self.attempt.assignment,
+            instrukt_runner::interfaces::AssignmentKind::Workspace
+                | instrukt_runner::interfaces::AssignmentKind::Child
+        ) && self.attempt.released_at.is_none()
+    }
 }
 
 /// Immutable assignment facts and retained completion/failure evidence.

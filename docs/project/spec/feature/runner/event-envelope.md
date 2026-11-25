@@ -96,7 +96,7 @@ Within a version, changes are additive: readers tolerate unknown fields and
 absent optional fields. Nonadditive change creates a new version; retained
 local records migrate forward under instrukt's versioned migrations. Different
 instrukt versions preserve occurrence identity and unknown facts at the codec
-boundary. No TeleClaude-specific legacy fields enter the canonical envelope.
+boundary.
 
 ### Delivery classification and pending state
 
@@ -265,7 +265,7 @@ And a declaration without a recognized classification is invalid
 
 - A person home is vocabulary only; its resolution fails visibly. A company origin names the company home of that name. Project-owner metadata stays unresolved and supplies no owner registry.
 - Reference vocabulary does not install the subsystems it names. Signal emitters and correlation are outside this port.
-- Cross-version compatibility is between compatible instrukt codecs; no TeleClaude fleet negotiation or pre-release legacy-wire compatibility is claimed.
+- Cross-version compatibility is between compatible instrukt codecs; no fleet negotiation or pre-release legacy-wire compatibility is claimed.
 
 ## See Also
 

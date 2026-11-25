@@ -7,12 +7,19 @@ visibility: 'public'
 
 ## Rules
 
-- Resolve conflicts by priority: specificity → intent → applicability → recency.
+- Resolve conflicts between governing contracts by priority: specificity → rule
+  intent → applicability → recency.
+- Work artifacts (such as task inputs, requirements, architectures, and plans)
+  authorize delivery scope; they stand outside this precedence ladder and grant
+  no exemption from standing principles, policies, or verified substrate reality
+  (`general/policy/human-contract`).
 - Treat documentation as direction; use code to confirm behavior.
 
 ## Rationale
 
 - Consistent priority prevents indecision and hidden rule‑picking.
+- Delivery inputs are authored before full grounding; separating them from
+  governing contracts preserves standing invariants across every review gate.
 - Code is the ground truth when docs and behavior diverge.
 
 ## Scope

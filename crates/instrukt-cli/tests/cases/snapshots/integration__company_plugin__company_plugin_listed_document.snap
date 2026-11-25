@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/company-plugin.rs
+expression: "repo.read(\"plugins/acme/skills/acme/references/teams/suppliers.md\")"
+---
+---
+description: >-
+  Who supplies Acme's frames,
+  and on what terms.
+---
+
+# Suppliers
+
+The people who order frames are in [People](../../SKILL.md).
+
+## Required reads
+
+- contracts.md

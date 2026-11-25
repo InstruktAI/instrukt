@@ -1,0 +1,156 @@
+---
+source: crates/instrukt-cli/tests/cases/history.rs
+assertion_line: 772
+expression: document
+---
+{
+  "messages": [
+    {
+      "id": "message-child",
+      "threadId": "child",
+      "role": "assistant",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "runId": null,
+      "nodeId": null,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "provider",
+      "text": "Keep the jewels searchable."
+    },
+    {
+      "id": "native-assistant-message",
+      "threadId": "child",
+      "runId": "native-run",
+      "nodeId": null,
+      "role": "assistant",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "provider",
+      "text": "Assistantitemtoken text."
+    },
+    {
+      "id": "native-user-message",
+      "threadId": "child",
+      "runId": "native-run",
+      "nodeId": null,
+      "role": "user",
+      "createdAt": "2026-11-08T10:00:00.000Z",
+      "updatedAt": "2026-11-08T10:00:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "user",
+      "creationSource": "web",
+      "context": {
+        "version": 1,
+        "records": [
+          {
+            "version": 1,
+            "contextId": "terminal-fixture",
+            "kind": "terminal",
+            "label": "Terminal 1 lines 1-2",
+            "terminalId": "terminal-1",
+            "terminalLabel": "Terminal 1",
+            "lineStart": 1,
+            "lineEnd": 2
+          },
+          {
+            "version": 1,
+            "contextId": "review-comment-fixture",
+            "kind": "review-comment",
+            "label": "src/lib.rs lines 3-4",
+            "sectionId": "working-tree",
+            "sectionTitle": "Working tree",
+            "filePath": "src/lib.rs",
+            "startIndex": 3,
+            "endIndex": 4,
+            "rangeLabel": "Lines 3-4",
+            "text": "Keep this comment."
+          },
+          {
+            "version": 1,
+            "contextId": "annotation-fixture",
+            "kind": "preview-annotation",
+            "label": "Fixture page",
+            "annotationId": "annotation-1",
+            "pageUrl": "http://localhost:3000/",
+            "pageTitle": "Fixture page",
+            "comment": "Make this button bigger.",
+            "targetSummary": "1 selected element",
+            "styleChanges": [],
+            "elements": [
+              {
+                "pageUrl": "http://localhost:3000/",
+                "pageTitle": "Fixture page",
+                "tagName": "button",
+                "selector": "#save",
+                "componentName": "SaveButton",
+                "source": null,
+                "styles": "color: red;"
+              }
+            ],
+            "elementIds": [
+              "element-1"
+            ],
+            "styleChangeDetails": []
+          },
+          {
+            "version": 1,
+            "contextId": "element-fixture",
+            "kind": "element",
+            "label": "button#save",
+            "pageUrl": "http://localhost:3000/",
+            "pageTitle": "Fixture page",
+            "tagName": "button",
+            "selector": "#save",
+            "componentName": "SaveButton",
+            "source": null,
+            "styles": "color: red;"
+          }
+        ]
+      },
+      "text": "Useritemtoken text."
+    },
+    {
+      "id": "delegated-task-report",
+      "threadId": "child",
+      "runId": null,
+      "nodeId": null,
+      "role": "user",
+      "createdAt": "2026-11-08T10:30:00.000Z",
+      "updatedAt": "2026-11-08T10:30:00.000Z",
+      "streaming": false,
+      "attachments": [],
+      "createdBy": "agent",
+      "creationSource": "server",
+      "notification": {
+        "source": {
+          "kind": "delegated_task",
+          "taskIds": [
+            "node-fixture"
+          ]
+        },
+        "outcome": "completed",
+        "summary": "Background work finished"
+      },
+      "text": "Background command completed: Delegatedresulttoken done."
+    }
+  ],
+  "thread": {
+    "id": "child",
+    "projectId": "project",
+    "title": "Local jewels",
+    "lineage": {
+      "parentThreadId": "parent",
+      "relationshipToParent": "subagent"
+    },
+    "createdAt": "2026-11-08T10:00:00.000Z",
+    "updatedAt": "2026-11-08T10:00:00.000Z",
+    "archivedAt": null,
+    "deletedAt": null
+  }
+}

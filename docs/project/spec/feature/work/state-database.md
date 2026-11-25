@@ -81,7 +81,7 @@ meaning and the writes of the conversation tables.
   reflection → writer; a local writer releases the writer lock before acquiring
   the reflection lock. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
-  before consuming it, except during status inspection.
+  before consuming it, except status inspection and documentation reads.
 - A withdrawal holds the per-computer withdrawal lock
   `~/.instrukt/state/withdrawal.lock` from before it records its intent
   (`withdrawal_intents`) until it has committed or abandoned it, or returned
@@ -140,6 +140,12 @@ adapter; an actor as JSON text, one of
   newer one as a finding while still reporting independently readable sections.
   Neither `instrukt status` nor `instrukt events status` takes the writer lock
   or changes the database, WAL or shared-memory files.
+- Documentation reads — `instrukt docs validate`, `docs get`, `docs index`
+  and `docs schema`, with their caller's admission, the todo-existence lookup
+  and a `--target` lookup — read an older database the same way, through a
+  migrated in-memory image: they take no writer lock and leave the database
+  and its sidecars as found. The todo-existence lookup reads that way for
+  every caller.
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -211,6 +217,13 @@ holds `thinking_level` to carry it as T3's `thought_level`.
 
 Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
 withdrawal whose working resources are being released. It starts empty.
+
+Version 38 adds lookups of `session_bindings` by `worktree` and by `branch`,
+of `todos` by `branch`, and of `holds` and `github_label_actions` by todo, so
+the todos a computer's worktrees and work branches name, and their records,
+are read without reading the rest of the record
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
+table, column or row.
 
 ### Work tables
 
