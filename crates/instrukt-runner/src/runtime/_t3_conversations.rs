@@ -689,6 +689,15 @@ fn payload_time(value: &Value, name: &str) -> Result<Option<jiff::Timestamp>, So
         })
         .transpose()
 }
+/// When a native record was created: its `createdAt`, else its
+/// `requestedAt`; both reads take a record's creation time from here.
+fn created_at(value: &Value) -> Result<Option<jiff::Timestamp>, SourceError> {
+    Ok(payload_time(value, "createdAt")?.or(payload_time(value, "requestedAt")?))
+}
+/// A native message's role; both reads decode it here.
+fn message_role(value: &Value) -> Result<Role, SourceError> {
+    Ok(serde_json::from_value::<Role>(value["role"].clone())?)
+}
 fn row_time(row: &Row) -> Result<jiff::Timestamp, SourceError> {
     row.updated_at
         .parse()
@@ -705,7 +714,7 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         Projection::TurnItems => RecordKind::TurnItem,
     };
     let role = if matches!(projection, Projection::Messages) {
-        Some(serde_json::from_value::<Role>(value["role"].clone())?)
+        Some(message_role(value)?)
     } else {
         None
     };
@@ -744,7 +753,7 @@ fn normalized(projection: Projection, row: Row) -> Result<ConversationRecord, So
         role,
         title: value["title"].as_str().map(str::to_owned),
         text: (!texts.is_empty()).then(|| texts.join("\n\n")),
-        created_at: timestamp("createdAt")?.or(timestamp("requestedAt")?),
+        created_at: created_at(value)?,
         updated_at,
         completed,
         native: row.payload,
@@ -846,9 +855,8 @@ fn text(
             }
             Projection::Messages => {
                 let updated_at = Some(row_time(&row)?);
-                let created_at = payload_time(&row.payload, "createdAt")?
-                    .or(payload_time(&row.payload, "requestedAt")?);
-                let role = serde_json::from_value::<Role>(row.payload["role"].clone())?;
+                let created_at = created_at(&row.payload)?;
+                let role = message_role(&row.payload)?;
                 messages.push(
                     MessageText::from_record(
                         row.native_id,
