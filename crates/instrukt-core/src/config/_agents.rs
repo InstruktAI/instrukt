@@ -123,85 +123,84 @@ fn invalid(message: impl Into<String>) -> ConfigError {
     }
 }
 
-/// Fill only absent capability fields; authored values and files remain unchanged.
-fn inherit_capabilities(value: &mut serde_yaml_ng::Value) -> Result<(), ConfigError> {
-    use serde_yaml_ng::{Mapping, Value};
-    let shipped: Value =
+/// The maps the file merges into the shipped defaults key by key.
+const KEYED_MAPS: [&str; 3] = ["roles", "profiles", "bundles"];
+
+/// The effective selection document: the shipped defaults with `file` laid
+/// over them. Maps merge by key, a field the file sets replaces the shipped
+/// one and a field it leaves out is inherited, and any other value (a list
+/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
+/// entries names nothing, so a bare `roles:` keeps every shipped role.
+fn effective(mut file: Value) -> Result<Value, ConfigError> {
+    let mut merged: Value =
         serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
-    fn fill(entry: &mut Value, fallback: &Value) {
-        if let Some(fields) = entry.as_mapping_mut() {
-            for field in ["class", "can"] {
-                if !fields.contains_key(field)
-                    && let Some(default) = fallback.get(field)
-                {
-                    fields.insert(field.into(), default.clone());
+    if let Some(fields) = file.as_mapping_mut() {
+        for key in KEYED_MAPS {
+            if fields
+                .get(key)
+                .is_some_and(|map| map.is_null() || map.as_mapping().is_some_and(|m| m.is_empty()))
+            {
+                fields.remove(key);
+            }
+        }
+    }
+    // A role with no shipped entry takes its omitted class and grants from
+    // the effective `default`; a shipped role takes them from its own entry
+    // through the overlay.
+    let unshipped: Vec<Value> = file
+        .get("roles")
+        .and_then(Value::as_mapping)
+        .into_iter()
+        .flat_map(|roles| roles.keys())
+        .filter(|name| merged["roles"].get(*name).is_none())
+        .cloned()
+        .collect();
+    super::_merge::overlay(&mut merged, &file);
+    let default = merged.get("default").cloned().unwrap_or(Value::Null);
+    if let Some(roles) = merged.get_mut("roles").and_then(Value::as_mapping_mut) {
+        for name in &unshipped {
+            if let Some(fields) = roles.get_mut(name).and_then(Value::as_mapping_mut) {
+                for field in ["class", "can"] {
+                    if !fields.contains_key(field)
+                        && let Some(inherited) = default.get(field)
+                    {
+                        fields.insert(field.into(), inherited.clone());
+                    }
                 }
             }
         }
     }
-    if let Some(default) = value.get_mut("default") {
-        fill(default, &shipped["default"]);
-    }
-    let effective_default = value.get("default").cloned().unwrap_or(Value::Null);
-    if let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) {
-        for (name, entry) in roles {
-            let fallback = shipped["roles"].get(name).unwrap_or(&effective_default);
-            fill(entry, fallback);
-        }
-    }
-    let entries = value.get("default").into_iter().chain(
-        value
-            .get("roles")
-            .and_then(Value::as_mapping)
-            .into_iter()
-            .flat_map(|roles| roles.values()),
-    );
-    let needed = entries
-        .flat_map(|entry| {
-            entry
-                .get("can")
-                .and_then(Value::as_sequence)
-                .into_iter()
-                .flatten()
-        })
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<std::collections::BTreeSet<_>>();
-    if let Some(root) = value.as_mapping_mut() {
-        let bundles = root
-            .entry(Value::String("bundles".into()))
-            .or_insert_with(|| Value::Mapping(Mapping::new()));
-        if let Some(bundles) = bundles.as_mapping_mut() {
-            for name in needed {
-                if !bundles.contains_key(name.as_str())
-                    && let Some(default) = shipped["bundles"].get(name.as_str())
-                {
-                    bundles.insert(name.into(), default.clone());
-                }
-            }
-        }
-    }
-    Ok(())
+    Ok(merged)
 }
 
 impl Agents {
+    /// The effective selection `text` states: the shipped defaults with the
+    /// file's overrides merged over them, validated as one document. The
+    /// file's own `schema_version` names the shape of its overrides, so it is
+    /// required and never inherited.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let mut value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
-        if let Some(found) = value
-            .get("schema_version")
-            .and_then(serde_yaml_ng::Value::as_u64)
-            && found > VERSION
-        {
-            return Err(ConfigError::NewerSchema {
-                path: "agents.yaml".into(),
-                found,
-                current: VERSION,
-            });
+        let mut value: Value = serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
+        match value.get("schema_version") {
+            None => {
+                return Err(ConfigError::UnknownSchema {
+                    path: "agents.yaml".into(),
+                });
+            }
+            Some(found) => {
+                if let Some(found) = found.as_u64()
+                    && found > VERSION
+                {
+                    return Err(ConfigError::NewerSchema {
+                        path: "agents.yaml".into(),
+                        found,
+                        current: VERSION,
+                    });
+                }
+            }
         }
         super::_agents_migrate::retire_session_recover(&mut value);
-        inherit_capabilities(&mut value)?;
-        let result: Self = serde_yaml_ng::from_value(value).map_err(|e| invalid(e.to_string()))?;
+        let result: Self =
+            serde_yaml_ng::from_value(effective(value)?).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(
                 "unsupported agents schema_version; upgrade instrukt",
@@ -421,11 +420,12 @@ impl Agents {
         Self::parse(&text)
     }
 
-    /// The profiles as a read command sees them, from `agents.yaml`'s bytes
-    /// (`None` when there is no file) and the global layer as read (`None`
-    /// when there is none), without reading or writing anything: an older
-    /// `agents.yaml` converted in memory, the selection of an older global
-    /// layer carried over, the shipped profiles when neither declares any.
+    /// The effective selection from `agents.yaml`'s bytes (`None` when there
+    /// is no file) and the global layer as read (`None` when there is none),
+    /// without reading or writing anything: an older `agents.yaml` converted
+    /// in memory, the selection of an older global layer carried over, each
+    /// merged over the shipped defaults, and the shipped defaults alone when
+    /// neither states any.
     pub(crate) fn from_documents(
         home: &Home,
         agents: Option<Vec<u8>>,
@@ -930,6 +930,59 @@ mod tests {
             .capabilities("builder")
             .unwrap();
         assert_eq!(role.scope(Action::DocsWrite), None);
+    }
+
+    #[test]
+    fn a_file_naming_one_field_of_a_shipped_role_inherits_its_other_fields() {
+        let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let edited = Agents::parse("schema_version: 3\nroles: {builder: {tier: light}}\n").unwrap();
+        let (before, after) = (&shipped.roles["builder"], &edited.roles["builder"]);
+        assert_eq!(after.tier, Some(super::Tier::Light));
+        assert_eq!(after.order, before.order);
+        assert_eq!(after.class, before.class);
+        assert_eq!(after.github_app, before.github_app);
+        assert_eq!(
+            edited.capabilities("builder").unwrap().grants,
+            shipped.capabilities("builder").unwrap().grants
+        );
+    }
+
+    #[test]
+    fn a_list_the_file_sets_replaces_the_shipped_list_whole() {
+        let edited =
+            Agents::parse("schema_version: 3\nroles: {builder: {order: [antigravity]}}\n").unwrap();
+        let order: Vec<&str> = edited.roles["builder"]
+            .order
+            .iter()
+            .flatten()
+            .map(|profile| profile.as_str())
+            .collect();
+        assert_eq!(order, ["antigravity"]);
+    }
+
+    #[test]
+    fn a_roles_key_with_no_entries_keeps_every_shipped_role() {
+        let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let bare = Agents::parse("schema_version: 3\nroles:\n").unwrap();
+        assert_eq!(
+            bare.roles.keys().collect::<Vec<_>>(),
+            shipped.roles.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            bare.capabilities("technical-coordinator").unwrap().grants,
+            shipped
+                .capabilities("technical-coordinator")
+                .unwrap()
+                .grants
+        );
+    }
+
+    #[test]
+    fn a_file_stating_no_schema_version_is_refused() {
+        assert!(matches!(
+            Agents::parse("roles: {builder: {tier: light}}\n"),
+            Err(ConfigError::UnknownSchema { .. })
+        ));
     }
 
     #[test]

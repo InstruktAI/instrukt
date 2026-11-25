@@ -134,68 +134,67 @@ fn open_models_accept_native_options_but_reject_malformed_shapes() {
     assert!(Agents::parse(&CONFIG.replace("effort: high", "effort: invalid")).is_err());
     assert!(Agents::parse(&CONFIG.replace("effort: high", "reasoningEffort: high")).is_err());
     assert!(Agents::parse(&CONFIG.replace("kind: codex", "kind: unknown")).is_err());
+    // The file names `builder`; every other role it configures through the
+    // shipped defaults has an installed procedure here.
     let agents = Agents::parse(CONFIG).unwrap();
-    assert_eq!(agents.undeclared_roles(&[]), vec!["builder"]);
+    let installed: Vec<&str> = agents
+        .roles
+        .keys()
+        .map(String::as_str)
+        .filter(|role| *role != "builder")
+        .collect();
+    assert_eq!(agents.undeclared_roles(&installed), vec!["builder"]);
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS4
 #[test]
-fn defaults_upgrade_replaces_only_the_deployed_unedited_version() {
+fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_selection() {
     use instrukt_core::config::SHIPPED_AGENTS;
-    use sha2::{Digest, Sha256};
-    let env = TestEnv::new();
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    let file = env.instrukt_home().join("agents.yaml");
-    let record = env.instrukt_home().join("state/agents-deployment.json");
-    let prior = SHIPPED_AGENTS.replace("gpt-6.1-sol", "prior-strong-model");
-    let digest = hex::encode(Sha256::digest(prior.as_bytes()));
-    let deployed = serde_json::json!({"schema_version":1,"digest":digest});
-    std::fs::write(&file, &prior).unwrap();
-    std::fs::write(&record, deployed.to_string()).unwrap();
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
-    let edited = format!("{prior}# user customization\n");
-    std::fs::write(&file, &edited).unwrap();
-    std::fs::write(&record, deployed.to_string()).unwrap();
-    let result = env
-        .run(env.home(), ["config", "init", "--global"])
-        .success();
-    insta::assert_snapshot!(
-        "edited-defaults-upgrade",
-        String::from_utf8_lossy(&result.get_output().stdout).replace(
-            env.path("").to_str().unwrap().trim_end_matches('/'),
-            "[TMP]"
+    let mut crew = crate::fixtures::workflow::Crew::new();
+    std::fs::write(
+        crew.project.env.instrukt_home().join("agents.yaml"),
+        "schema_version: 3\nroles:\n  planner: {order: [antigravity]}\n",
+    )
+    .unwrap();
+    // Each start is its own todo led from its own session: an outstanding
+    // role attempt holds its todo's workspace.
+    let mut start = |lead: &str, slug: &str, role: &str, procedure: &str| {
+        crew.project.env.set_env("T3CODE_THREAD_ID", lead);
+        crew.project
+            .create(slug, "change", "Keep one choice, receive the rest.");
+        crew.worker(slug, role, Some(procedure))
+    };
+    let chosen = start("lead-1", "own-choice", "planner", "crew/procedure/plan");
+    let untouched = start(
+        "lead-2",
+        "shipped-choice",
+        "plan-reviewer",
+        "crew/procedure/review-plan",
+    );
+    let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+    let profile = |selection: &serde_json::Value| {
+        (
+            selection["selection"]["profile"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            selection["selection"]["model"].as_str().unwrap().to_owned(),
         )
-    );
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), edited);
-    // The defaults a release with the version-two file shape deployed: left
-    // unedited, they still receive the new defaults through the shape's
-    // conversion, and the record names what was deployed.
-    let older = include_str!("../fixtures/agents-shipped-v2.yaml");
-    let older_record = serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(older.as_bytes()))});
-    std::fs::write(&file, older).unwrap();
-    std::fs::write(&record, older_record.to_string()).unwrap();
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), SHIPPED_AGENTS);
-    let recorded: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&record).unwrap()).unwrap();
+    };
+    let planner_tier = shipped.order(Some("planner"), None, None, None).unwrap()[0].1;
+    let antigravity = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
+    let own = &shipped.model_chain(&antigravity, planner_tier).unwrap()[0];
     assert_eq!(
-        recorded,
-        serde_json::json!({"schema_version":1,"digest":hex::encode(Sha256::digest(SHIPPED_AGENTS.as_bytes()))})
+        profile(&chosen),
+        (own.profile.to_string(), own.model.clone())
     );
-    // Edited, the older file keeps its settings through the conversion: the
-    // edited profile as the agents configuration shows it afterwards.
-    let edited_older = older.replace("gpt-6.1-sol", "edited-strong-model");
-    std::fs::write(&file, &edited_older).unwrap();
-    std::fs::write(&record, older_record.to_string()).unwrap();
-    env.run(env.home(), ["config", "init", "--global"])
-        .success();
-    let shown = env.run(env.home(), ["config", "show", "agents"]).success();
-    let shown: serde_json::Value = serde_json::from_slice(&shown.get_output().stdout).unwrap();
-    insta::assert_json_snapshot!("edited-older-defaults-kept", shown["profiles"]["codex"]);
+    let default = &shipped
+        .select(Some("plan-reviewer"), None, None, None)
+        .unwrap()[0];
+    assert_eq!(
+        profile(&untouched),
+        (default.profile.to_string(), default.model.clone())
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
