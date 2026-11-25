@@ -1412,7 +1412,9 @@ impl<'w> Session<'w> {
     /// push; each outcome is committed in a brief writer transaction. A
     /// branch the remote moved away from is left there and its reason kept;
     /// a remote that cannot be reached keeps its reason too, so the todo
-    /// shows its publication pending, and the next tick tries again.
+    /// shows its publication pending, and the next tick tries again. A
+    /// failure is warned about when its reason changes; an unchanged repeat
+    /// is a debug record.
     /// A todo no longer owed publication has its reason cleared.
     pub fn publish(&mut self) -> Result<(), WorkError> {
         let remote = github::tracked_remote(&self.project.root, &self.base)?;
@@ -1476,6 +1478,15 @@ impl<'w> Session<'w> {
                     let why = format!(
                         "branch `{branch}` on `{remote}` moved where this computer's branch cannot follow it, so its commits are not published; the branch on `{remote}` is left as it is"
                     );
+                    if self.items[index]
+                        .reflection
+                        .publication_outstanding
+                        .as_deref()
+                        == Some(why.as_str())
+                    {
+                        tracing::debug!(event = "work_branch_diverged", project = %self.project.slug, todo = %self.items[index].record.slug, branch, "the remote work branch is still moved");
+                        continue;
+                    }
                     tracing::warn!(
                         event = "work_branch_diverged",
                         project = %self.project.slug,
@@ -1486,6 +1497,18 @@ impl<'w> Session<'w> {
                     self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
                 }
                 super::_publication::Pushed::Unreached(reason) => {
+                    let why = format!(
+                        "branch `{branch}` could not reach `{remote}` ({reason}); the next tick publishes it"
+                    );
+                    if self.items[index]
+                        .reflection
+                        .publication_outstanding
+                        .as_deref()
+                        == Some(why.as_str())
+                    {
+                        tracing::debug!(event = "work_branch_unpublished", project = %self.project.slug, todo = %self.items[index].record.slug, branch, reason, "the work branch still cannot reach its remote");
+                        continue;
+                    }
                     tracing::warn!(
                         event = "work_branch_unpublished",
                         project = %self.project.slug,
@@ -1493,9 +1516,6 @@ impl<'w> Session<'w> {
                         branch,
                         reason,
                         "the work branch could not reach its remote; the next tick tries again"
-                    );
-                    let why = format!(
-                        "branch `{branch}` could not reach `{remote}` ({reason}); the next tick publishes it"
                     );
                     self.amend(index, |r| r.publication_outstanding = Some(why.clone()))?;
                 }
