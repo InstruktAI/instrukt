@@ -195,8 +195,8 @@ fn the_loggers_own_files_are_refused_before_they_land() {
     assert_eq!(env.refusals().len(), 1);
 }
 
-/// A live T3 database under the live home's `userdata`, which keeps a
-/// write-ahead log; closed, it has no sidecars.
+/// A live T3 database where the runtime locates it under the live home,
+/// which keeps a write-ahead log; closed, it has no sidecars.
 fn live_database(live: &Live) -> std::path::PathBuf {
     let database = live.path().join("userdata/statev2.sqlite");
     std::fs::create_dir_all(database.parent().unwrap()).unwrap();
