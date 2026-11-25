@@ -266,10 +266,6 @@ impl Committed {
     /// those two places every symbolic link the file system holds at or
     /// above them, and anywhere inside the folder, is recorded, whether git
     /// ignores it or not, so nothing is ever read or written through one.
-    #[expect(
-        dead_code,
-        reason = "the company plugin's planning is its first caller"
-    )]
     pub(super) fn working_tree_places(
         root: &Path,
         places: Places<'_>,
@@ -398,6 +394,11 @@ impl Committed {
             self.file(path)
                 .map_or(EntryIndex::Absent, EntryIndex::Present)
         }
+    }
+
+    /// Every symbolic link the view records, by repository-relative path.
+    pub(super) fn links(&self) -> impl Iterator<Item = &str> + '_ {
+        self.links.iter().map(String::as_str)
     }
 
     /// Whether `path`, or a folder above it, is a symbolic link, through

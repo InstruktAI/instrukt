@@ -47,7 +47,7 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
-pub use _plugin::{CompanyName, CompanyNameError, PluginFinding};
+pub use _plugin::{CompanyName, CompanyNameError, PluginFinding, PluginPlan, PluginVersion};
 pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
@@ -160,6 +160,57 @@ pub fn write_rendering(root: &Path, plan: &RenderPlan) -> Result<Vec<PathBuf>, P
                 });
             }
         }
+    }
+    Ok(changed)
+}
+
+/// Plans the rendering of the company plugin of `key`, named `name`, from
+/// the working tree whose root is `root`
+/// (`project/instrukt/spec/feature/publication/company-plugin`): what to
+/// write, what to remove and what it found, read from the working tree
+/// alone, the plugin's folder and the catalog included. Writes nothing.
+pub fn plan_plugin(
+    root: &Path,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<PluginPlan, PublicationError> {
+    let folder = _plugin::folder(key);
+    let tree = _source::Committed::working_tree_places(
+        root,
+        _source::Places {
+            folder: &folder,
+            file: _plugin::CATALOG,
+        },
+    )?;
+    _plugin::plan(&tree, key, name)
+}
+
+/// Applies `plan` to the working tree whose root is `root`: first each
+/// removal, so a new file never meets an old one on its way; then each
+/// write in the plan's order, the manifest after the plugin's other files and the
+/// catalog last, so a rendering cut short keeps the version it found and
+/// the next one raises it once. Each write is atomic and nothing passes
+/// through a symbolic link. Returns the paths it changed, relative to
+/// `root`.
+pub fn write_plugin(root: &Path, plan: &PluginPlan) -> Result<Vec<PathBuf>, PublicationError> {
+    let mut changed = Vec::new();
+    for path in &plan.removals {
+        let target = _tx::own_destination(root, path)?;
+        match crate::fsx::remove_file(&target) {
+            Ok(()) => changed.push(path.clone()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: target,
+                    source,
+                });
+            }
+        }
+    }
+    for file in &plan.writes {
+        let target = _tx::own_destination(root, &file.path)?;
+        crate::fsx::atomic_write(&target, file.text.as_bytes())?;
+        changed.push(file.path.clone());
     }
     Ok(changed)
 }
