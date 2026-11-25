@@ -251,9 +251,9 @@ configured `runtime.retire_thread` action. Converge idempotently on
 already-retired threads (distinguishing an already-retired thread from a failed
 observation), preserve any unfinished human or worker obligations, and never
 retire standing agents (including this integrator session). A worktree or
-branch whose removal is still owed shows in that ledger with its cause; it does
-not gate retiring the delivered todo's orchestrator threads. Preserve the
-runtime thread record and retained attempt evidence.
+branch whose removal is still owed shows in that ledger; it does not gate
+retiring the delivered todo's orchestrator threads. Preserve the runtime thread
+record and retained attempt evidence.
 <!-- /planned-change:runner-owned-workspace-cleanup -->
 
 When all current work is settled, park as the standing integrator. The next
