@@ -27,8 +27,9 @@ that declares nothing has no regenerable output, and reclamation removes
 nothing from its worktrees short of a delivered worktree as a whole.
 
 A declaration reaches only inside a checkout of the declaring project. One
-that reaches outside it is a configuration finding where the declaration is
-written and removes nothing (`project/instrukt/policy/checks-and-guards`).
+that reaches outside it is a configuration finding at each point where
+configuration enters, and removes nothing
+(`project/instrukt/policy/checks-and-guards`).
 
 Reclaiming regenerable output leaves the rest of the worktree as it was: the
 same commit, the same branch, and a worktree that was clean stays clean.
@@ -62,8 +63,8 @@ A session reclaims the regenerable output of the worktree its own todo
 assignment binds it to. The command removes exactly what the runner removes
 from that worktree, and its caller cannot direct it at any other location. It
 is a write to that worktree and is admitted as one
-(`project/instrukt/spec/domain/work`). Its answer names what it removed, or
-states that the project declares nothing.
+(`project/instrukt/spec/feature/configuration/roles-and-capabilities`). Its
+answer names what it removed, or states that the project declares nothing.
 
 A caller no todo assignment binds to a worktree is refused, and the refusal
 names the assignment that would bind it.
