@@ -80,6 +80,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
         ["review", "record" | "exempt"] => Stamp,
+        ["review", "start"] => AssignmentWrite,
         ["review", "show"] => ArtifactRead,
         ["review", "export" | "import"] => InstallationWrite,
         [
@@ -309,7 +310,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     use Action::*;
     let owned = match action {
         // Review evidence addresses the project the caller stands in.
-        ArtifactRead | Stamp if path.first() == Some(&"review") => in_project,
+        ArtifactRead | Stamp | AssignmentWrite if path.first() == Some(&"review") => in_project,
         ArtifactRead | ArtifactWrite | Stamp | AssignmentWrite | Integration
         | TodoOrchestration => own_todo,
         TodoRead | TodoWrite => {
