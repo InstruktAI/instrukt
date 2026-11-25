@@ -434,7 +434,7 @@ impl Deferred {
                     continue;
                 }
                 let what = format!("delivered todo {}", todo.todo);
-                match self.reclamation.release_delivered(project, &todo.identity) {
+                match self.reclamation.release_delivered(project, todo) {
                     Ok(DeliveredRelease::Busy) => {}
                     Ok(DeliveredRelease::Done { released, kept }) => {
                         for resource in &released {

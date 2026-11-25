@@ -22,8 +22,9 @@ use instrukt_core::fsx::LockGuard;
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
 use instrukt_runner::interfaces::{
-    DeliveredRelease, DeliveredResource, Lane, ProjectRef, SectionAdmission, SectionOutcome,
-    WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
+    DeliveredRelease, DeliveredRemains, DeliveredResource, Lane, ProjectRef, SectionAdmission,
+    SectionOutcome, TodoWorktree, WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
+    WorktreeStanding,
 };
 
 use super::_error::WorkError;
@@ -66,8 +67,16 @@ impl WorktreeReclamation for Work {
     fn release_delivered(
         &self,
         project: &ProjectRef,
-        todo: &TodoId,
+        delivered: &TodoWorktree,
     ) -> Result<DeliveredRelease, WorkInterfaceError> {
+        let WorktreeStanding::Delivered(remains) = delivered.standing else {
+            return Err(WorkError::refused(format!(
+                "{} is not a delivered todo's worktree",
+                delivered.todo
+            ))
+            .into());
+        };
+        let todo = &delivered.identity;
         let Some(_lock) = LockGuard::try_acquire(&self.home().delivered_release_lock_file())
             .map_err(WorkError::from)?
         else {
@@ -83,7 +92,9 @@ impl WorktreeReclamation for Work {
             root: &project.root,
             store: &store,
             record: &record,
-            branch: work_branch(&record),
+            attributed: delivered.worktree.clone(),
+            branch: delivered.branch.clone(),
+            remains,
             released: Vec::new(),
             kept: Vec::new(),
         };
@@ -107,7 +118,14 @@ struct Release<'a> {
     root: &'a Path,
     store: &'a Store,
     record: &'a TodoRecord,
+    /// The worktree workflow attributes to the todo: at a path its
+    /// bindings recorded.
+    attributed: Option<PathBuf>,
+    /// The work branch workflow attributes to the todo; `None` when a live
+    /// todo holds that name.
     branch: Option<String>,
+    /// What git listed of the todo when workflow answered.
+    remains: DeliveredRemains,
     released: Vec<DeliveredResource>,
     kept: Vec<(DeliveredResource, String)>,
 }
@@ -117,32 +135,54 @@ impl Release<'_> {
         self.kept.push((resource, cause.into()));
     }
 
-    /// The todo's worktree as git lists it: its work branch checked out, at
-    /// a path its bindings recorded or at that path's staging location.
-    /// The primary checkout and a worktree git reports prunable are never
-    /// it. With the original path it was released from.
+    /// The todo's worktree as git lists it: at the path workflow attributes
+    /// to it, or at the staging location of a path its bindings recorded,
+    /// where an earlier release moved it. The primary checkout and a
+    /// worktree git reports prunable are never it. With the original path
+    /// it was released from.
     fn locate(&self) -> Result<Option<(Worktree, PathBuf)>, WorkError> {
-        let recorded: Vec<&PathBuf> = self
+        let id = &self.record.id;
+        let staged_from: Vec<(PathBuf, PathBuf)> = self
             .record
             .bindings
             .iter()
             .filter_map(|binding| binding.worktree.as_ref())
+            .filter_map(|path| {
+                _worktrees::staging_path(path, STAGING_PREFIX, id)
+                    .map(|staging| (staging, path.clone()))
+            })
             .collect();
-        let id = &self.record.id;
         let found = worktrees(self.root)?
             .into_iter()
             .skip(1)
             .filter(|listed| !listed.prunable)
             .find_map(|listed| {
-                let original = recorded.iter().find(|path| {
-                    **path == &listed.path
-                        || _worktrees::staging_path(path, STAGING_PREFIX, id).as_ref()
-                            == Some(&listed.path)
-                })?;
-                let ours = self.branch.is_some() && listed.branch == self.branch;
-                ours.then(|| (listed, (*original).clone()))
+                let original = if self.attributed.as_ref() == Some(&listed.path) {
+                    listed.path.clone()
+                } else {
+                    staged_from
+                        .iter()
+                        .find(|(staging, _)| *staging == listed.path)
+                        .map(|(_, original)| original.clone())?
+                };
+                Some((listed, original))
             });
         Ok(found)
+    }
+
+    /// Why `worktree` is no longer the todo's: it does not have the work
+    /// branch workflow attributes to the todo checked out.
+    fn not_ours(&self, worktree: &Worktree) -> Option<String> {
+        match (&self.branch, &worktree.branch) {
+            (Some(branch), Some(checked_out)) if branch == checked_out => None,
+            (Some(branch), Some(checked_out)) => Some(format!(
+                "it has {checked_out} checked out, not the work branch {branch}"
+            )),
+            (Some(branch), None) => {
+                Some(format!("it is detached, not on the work branch {branch}"))
+            }
+            (None, _) => Some("no work branch is attributed to the todo".to_owned()),
+        }
     }
 
     /// Why the worktree must stay where it is now; `None` when it may go.
@@ -183,6 +223,10 @@ impl Release<'_> {
             );
             return Ok(false);
         };
+        if let Some(cause) = self.not_ours(&found) {
+            self.keep(resource, cause);
+            return Ok(false);
+        }
         if found.path == original {
             if let Some(cause) = self.held(&found)? {
                 self.keep(resource, cause);
@@ -255,7 +299,12 @@ impl Release<'_> {
         };
         let handed = handed_head(self.record);
         let local = DeliveredResource::LocalBranch(branch.clone());
-        if let Some(tip) = ref_tip(self.root, &format!("refs/heads/{branch}"))? {
+        let listed_local = if self.remains.local_branch {
+            ref_tip(self.root, &format!("refs/heads/{branch}"))?
+        } else {
+            None
+        };
+        if let Some(tip) = listed_local {
             match worktrees(self.root)?
                 .iter()
                 .find(|listed| listed.branch.as_deref() == Some(branch.as_str()))
@@ -278,7 +327,12 @@ impl Release<'_> {
         }
         let origin = DeliveredResource::OriginBranch(branch.clone());
         let tracking = format!("refs/remotes/{REMOTE}/{branch}");
-        if let Some(tip) = ref_tip(self.root, &tracking)? {
+        let listed_origin = if self.remains.origin_branch {
+            ref_tip(self.root, &tracking)?
+        } else {
+            None
+        };
+        if let Some(tip) = listed_origin {
             if let Some(cause) = self.beyond(&tip, handed)? {
                 self.keep(origin, cause);
                 return Ok(());

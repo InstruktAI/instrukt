@@ -680,13 +680,15 @@ pub trait WorktreeReclamation: Send + Sync {
         action: &mut dyn FnMut(),
     ) -> Result<SectionOutcome, WorkInterfaceError>;
 
-    /// Releases what the delivered todo `todo` still holds on this
-    /// computer: its worktree, then its work branch locally and on origin
-    /// (`todos`, "Parking, withdrawal and delivery").
+    /// Releases what workflow attributes to the delivered todo `delivered`
+    /// on this computer, and nothing else: its worktree, then its work
+    /// branch locally and on origin (`todos`, "Parking, withdrawal and
+    /// delivery"). A worktree or branch workflow attributes to a live todo
+    /// is not among them.
     fn release_delivered(
         &self,
         project: &ProjectRef,
-        todo: &TodoId,
+        delivered: &TodoWorktree,
     ) -> Result<DeliveredRelease, WorkInterfaceError>;
 
     /// Whether `project`'s work record on this computer holds the todo
