@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Hunt for code that violates documented design principles. Surface structural issues that a surface review would miss.'
+description: 'Hunt for code, preparation artifacts, or pending contracts that violate documented design principles. Surface structural issues that a surface review would miss.'
 visibility: 'public'
 ---
 

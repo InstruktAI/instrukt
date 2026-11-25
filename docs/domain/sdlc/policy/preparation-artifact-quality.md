@@ -269,8 +269,8 @@ execute**. The author consuming it owns the HOW.
   contradict a standing principle, its own goal, or verified substrate reality,
   resolves the conflict under `general/policy/human-contract` and
   `general/policy/conflict-resolution` rather than copying the defect forward.
-  Recording an ungrounded divergence as HOW, however well argued, is the
-  invention this policy exists to catch.
+  Recording such a divergence as HOW, however well argued, is the invention
+  this policy exists to catch.
 - **Inputs are never rejected for carrying HOW.** The lead is kept and tested,
   not gated away — the mechanism hint is signal even when it is wrong.
 

@@ -21,11 +21,14 @@ it to one of three things:
   factual or quantitative claims cited inside it still resolve through
   inspected evidence (`general/policy/human-contract`).
 - **An inference or assumption** — labelled, with the premise it rests on
-  visible, for what cannot be inspected against current substrate now.
+  visible.
 
-There is no fourth option. A claim checkable against current substrate is
-inspected before entering a durable requirement or criterion; only what cannot
-be inspected now is stated as the assumption it is.
+There is no fourth option. A claim that resolves to none of these is not
+withheld pending research; it is stated as the assumption it is — except that a
+checkable factual or quantitative claim carried in `input` or `prd`, or
+entering a durable requirement or criterion, is inspected against current
+substrate first, and only what cannot be inspected now remains a labelled
+assumption.
 
 ### Provenance is not intent
 
