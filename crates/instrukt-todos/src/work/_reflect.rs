@@ -33,15 +33,18 @@ fn commands(comments: &[Value], seen: &[u64]) -> Vec<Value> {
 
 /// Answers on the todo's issue. A reply already posted — by an author who
 /// can write to the repository or by the configured bot, as its verified
-/// identity — is recognized by its text and not posted twice.
+/// identity — is recognized by its text among the comments updated since
+/// `since`, the command's time (the whole conversation without it), and
+/// not posted twice.
 pub(crate) fn reply(
     gh: &GitHub,
     issue: IssueRef,
     source: u64,
+    since: Option<&str>,
     text: &str,
 ) -> Result<(), GitHubError> {
     let text = format!("{text}\n\n<!-- instrukt:command-reply:{source} -->");
-    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
+    let comments = gh.list(&comments_path(issue, since))?;
     let bot = gh.bot().ok();
     if comments.iter().any(|comment| {
         (has_write_access(comment)
@@ -59,35 +62,116 @@ pub(crate) fn reply(
     .map(|_| ())
 }
 
+/// The path of the comments of `issue` updated since `since`, all of them
+/// without it.
+fn comments_path(issue: IssueRef, since: Option<&str>) -> String {
+    match since {
+        Some(since) => format!("/issues/{}/comments?since={}", issue.number, encode(since)),
+        None => format!("/issues/{}/comments", issue.number),
+    }
+}
+
+/// What a read of a changed issue found: the issue, and the comments
+/// updated since the stored position as (identity, update time), in the
+/// order GitHub lists them. Its `/instrukt` commands not yet answered are
+/// `inbound` on the reflection read; its `ETag` is the reflection's
+/// `etag`, kept only once every control read is applied or answered.
+pub(crate) struct IssueRead {
+    pub issue: Value,
+    pub comments: Vec<(u64, jiff::Timestamp)>,
+}
+
 /// Reads the item's issue for people's controls: a conditional request
-/// (an unchanged issue is not read further), then its conversation, whose
-/// unanswered `/instrukt` commands become `reflection.inbound`. A gone
-/// issue leaves the item to be reflected again by the next flush. Nothing
-/// read changes the record.
-pub(crate) fn read_issue(gh: &GitHub, reflection: &mut ReflectionState) -> Result<(), GitHubError> {
+/// (an unchanged issue is not read further, `None`), then the comments
+/// updated since the stored position. A gone issue leaves the item to be
+/// reflected again by the next flush. Nothing read changes the record.
+pub(crate) fn read_issue(
+    gh: &GitHub,
+    reflection: &mut ReflectionState,
+) -> Result<Option<IssueRead>, GitHubError> {
     let Some(issue) = reflection.issue else {
-        return Ok(());
+        return Ok(None);
     };
-    let etag = match gh.get(
+    let (body, etag) = match gh.get(
         &format!("/issues/{}", issue.number),
         reflection.etag.as_deref(),
     ) {
-        Ok(Fetched::NotModified) => return Ok(()),
-        Ok(Fetched::Fresh { etag, .. }) => etag,
+        Ok(Fetched::NotModified) => return Ok(None),
+        Ok(Fetched::Fresh { body, etag }) => (body, etag),
         Err(GitHubError::NotFound { .. }) => {
             // The issue is gone; the next flush reflects the item again.
             *reflection = ReflectionState {
                 pending: true,
                 ..ReflectionState::default()
             };
-            return Ok(());
+            return Ok(None);
         }
         Err(err) => return Err(err),
     };
-    let comments = gh.list(&format!("/issues/{}/comments", issue.number))?;
-    reflection.inbound = commands(&comments, &reflection.commands_seen);
+    let path = comments_path(issue, reflection.comments_since.as_deref());
+    let listed = gh.list(&path)?;
+    let mut comments = Vec::with_capacity(listed.len());
+    for comment in &listed {
+        let (Some(id), Some(at)) = (
+            comment["id"].as_u64(),
+            comment["updated_at"]
+                .as_str()
+                .and_then(|at| at.parse::<jiff::Timestamp>().ok()),
+        ) else {
+            return Err(GitHubError::Decode {
+                path,
+                message: "a comment without an id or update time".to_owned(),
+            });
+        };
+        comments.push((id, at));
+    }
+    reflection.inbound = commands(&listed, &reflection.commands_seen);
     reflection.etag = etag;
-    Ok(())
+    Ok(Some(IssueRead {
+        issue: body,
+        comments,
+    }))
+}
+
+/// The events of `issue` from the stored position on, as (page, event)
+/// in order: from the stored page while it still holds the last event
+/// read, else once in full from the first page.
+pub(crate) fn read_events(
+    gh: &GitHub,
+    issue: IssueRef,
+    reflection: &ReflectionState,
+) -> Result<Vec<(u64, Value)>, GitHubError> {
+    use super::_positions::{EVENTS_PAGE, resumes_at};
+    let read_page = |page: u64| -> Result<Vec<Value>, GitHubError> {
+        let path = format!(
+            "/issues/{}/events?per_page={EVENTS_PAGE}&page={page}",
+            issue.number
+        );
+        match gh.read(&path)? {
+            Value::Array(events) => Ok(events),
+            _ => Err(GitHubError::Decode {
+                path,
+                message: "expected a list".to_owned(),
+            }),
+        }
+    };
+    let mut page = reflection.events_page.unwrap_or(1).max(1);
+    let mut events = read_page(page)?;
+    let ids: Vec<u64> = events.iter().filter_map(|e| e["id"].as_u64()).collect();
+    if !resumes_at(page, &ids, reflection.events_last) {
+        page = 1;
+        events = read_page(page)?;
+    }
+    let mut read = Vec::new();
+    loop {
+        let full = events.len() as u64 >= EVENTS_PAGE;
+        read.extend(events.into_iter().map(|event| (page, event)));
+        if !full {
+            return Ok(read);
+        }
+        page += 1;
+        events = read_page(page)?;
+    }
 }
 
 /// Writes the item's pending changes to GitHub: its issue, any artifact

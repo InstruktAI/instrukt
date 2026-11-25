@@ -523,14 +523,19 @@ impl Store {
         })
     }
 
-    pub fn pending_replies(&self, todo: &str) -> Result<Vec<(u64, String)>, WorkError> {
+    /// The replies of `todo` still to be posted, as (command comment, the
+    /// command's time when recorded, reply), oldest first.
+    pub fn pending_replies(
+        &self,
+        todo: &str,
+    ) -> Result<Vec<(u64, Option<String>, String)>, WorkError> {
         self.read(Vec::new(), |conn, path, _| {
             query(
                 conn,
                 path,
-                "SELECT comment_id,reply FROM inbound_commands WHERE todo_id=?1 AND reply_pending=1 ORDER BY comment_id",
+                "SELECT comment_id,commanded_at,reply FROM inbound_commands WHERE todo_id=?1 AND reply_pending=1 ORDER BY comment_id",
                 todo,
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
         })
     }

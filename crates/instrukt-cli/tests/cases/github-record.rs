@@ -665,16 +665,13 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         "feature",
         "Retain this work through a dispatch pause.",
     );
-    let action = |id: u64, event: &str, login: &str| serde_json::json!({"id":id,"event":event,"label":{"name":"hold"},"actor":{"login":login},"created_at":"2026-11-06T10:00:00Z"});
-    let respond = |actions: Vec<Value>, login: &str, permission: &str| {
-        project.github.respond_once(
-            "GET",
-            "/issues/1/events",
-            CannedResponse {
-                status: 200,
-                headers: vec![],
-                body: actions.into(),
-            },
+    // People's label actions are the issue's events, read from where the
+    // last read stopped; each actor's access is GitHub's answer.
+    let label = |event: &str, login: &str, permission: &str| {
+        project.github.seed_event(
+            REPOSITORY,
+            1,
+            serde_json::json!({"event":event,"label":{"name":"hold"},"actor":{"login":login},"created_at":"2026-11-06T10:00:00Z"}),
         );
         project.github.respond_once(
             "GET",
@@ -689,11 +686,7 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
     project
         .github
         .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
-    respond(
-        vec![action(801, "labeled", "maintainer")],
-        "maintainer",
-        "write",
-    );
+    label("labeled", "maintainer", "write");
     let held = project.ok(["show", "held-work"]);
     project.ok([
         "artifacts",
@@ -708,19 +701,13 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         issue.labels.push("status:delivered".into());
         issue.labels.push("team-owned".into());
     });
-    respond(
-        vec![
-            action(801, "labeled", "maintainer"),
-            action(802, "unlabeled", "collaborator"),
-        ],
-        "collaborator",
-        "write",
-    );
+    label("unlabeled", "collaborator", "write");
     let released = project.ok(["show", "held-work"]);
     // A subsequent write reflects the accepted release and restores output labels.
     project.ok(["update", "held-work"]);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
-    respond(vec![action(803, "labeled", "outsider")], "outsider", "read");
+    project.github.edit_issue(REPOSITORY, 1, |_| {});
+    label("labeled", "outsider", "read");
     let refused = project.ok(["show", "held-work"]);
     insta::assert_snapshot!(
         "github-hold-label-audit",

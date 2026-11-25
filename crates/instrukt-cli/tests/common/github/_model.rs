@@ -151,6 +151,7 @@ impl State {
                 blocked_by: Vec::new(),
                 artifacts: BTreeMap::new(),
                 next_artifact: 0,
+                events: Vec::new(),
                 pull: None,
             },
         );
@@ -219,6 +220,8 @@ pub(super) struct Issue {
     pub(super) artifacts: BTreeMap<u64, Artifact>,
     pub(super) next_artifact: u64,
     pub(super) pull: Option<Pull>,
+    /// The issue's events, oldest first, as GitHub serves them.
+    pub(super) events: Vec<Value>,
 }
 
 pub(super) struct Pull {

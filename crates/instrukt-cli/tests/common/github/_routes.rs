@@ -484,11 +484,18 @@ fn issue_route(
             issue_reply(state)
         }
         ("GET", ["comments"]) => {
+            // `since`: only comments updated at or after it.
+            let since = query_param(query, "since").map(decode);
             let items = state
                 .repo(full)
                 .comments
                 .values()
                 .filter(|c| c.issue == n)
+                .filter(|c| {
+                    since
+                        .as_deref()
+                        .is_none_or(|since| c.updated_at.as_str() >= since)
+                })
                 .map(|c| c.json(base, full))
                 .collect();
             paginate(base, path, query, items)
@@ -509,7 +516,10 @@ fn issue_route(
                 None => Reply::not_found(),
             }
         }
-        ("GET", ["events"]) => Reply::ok(json!([])),
+        ("GET", ["events"]) => {
+            let items = state.repo(full).issues[&n].events.clone();
+            paginate(base, path, query, items)
+        }
         ("GET", ["labels"]) => {
             let r = state.repo(full);
             let items = r.issues[&n]

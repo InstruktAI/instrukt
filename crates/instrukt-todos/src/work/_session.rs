@@ -252,16 +252,20 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// Reads item `index`'s issue for people's controls and applies them:
-    /// `hold` label actions and `/instrukt` commands, each once, and output
-    /// labels someone changed are reflected again. Nothing read from GitHub
-    /// changes the record otherwise. A GitHub that cannot be read leaves the
-    /// item as this computer holds it.
+    /// Reads item `index`'s issue for people's controls and applies them
+    /// (`github-record`, Reading GitHub): `hold` label actions and
+    /// `/instrukt` commands, each once, and output labels someone changed
+    /// are reflected again. An unchanged issue is not read further; a
+    /// changed one is read from the stored comment and event positions on.
+    /// The positions, and the issue's `ETag`, move only past controls
+    /// applied or answered: a control still outstanding is read again.
+    /// Nothing read from GitHub changes the record otherwise, and a GitHub
+    /// that cannot be read leaves the item as this computer holds it.
     ///
-    /// No writer lock is held across the request: the row is re-read before
-    /// it, and what the read learned of the issue is committed onto the live
-    /// row's reflection state. An item carrying this command's uncommitted
-    /// change is not read.
+    /// No writer lock is held across the requests: the row is re-read
+    /// before them, and what the read learned of the issue is committed
+    /// onto the live row's reflection state. An item carrying this
+    /// command's uncommitted change is not read.
     pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
         let id = self.items[index].record.id.clone();
         if self.uncommitted(index) {
@@ -272,35 +276,33 @@ impl<'w> Session<'w> {
         }
         let mut read = self.items[index].reflection.clone();
         let result = match &self.remote {
-            Remote::Client { gh, down: None } => Some(_reflect::read_issue(gh, &mut read)),
-            _ => None,
+            Remote::Client { gh, down: None } => _reflect::read_issue(gh, &mut read),
+            _ => return Ok(()),
         };
-        let inbound = std::mem::take(&mut read.inbound);
-        match result {
-            Some(Err(err)) => self.note(err),
-            Some(Ok(())) => {
-                if read.issue.is_some() {
-                    read.refreshed_at = Some(self.now);
-                }
-                if read != self.items[index].reflection {
-                    let learned = read.clone();
-                    let row = self.store.amend_reflection(&id, |r| {
-                        if learned.issue.is_none() {
-                            *r = learned.clone();
-                        } else {
-                            r.etag.clone_from(&learned.etag);
-                            r.refreshed_at = learned.refreshed_at;
-                        }
-                    })?;
-                    match row {
-                        Some(row) => self.take_row(index, row),
-                        None => return Err(self.absent(&self.items[index].record.slug.clone())),
-                    }
-                }
+        let fresh = match result {
+            Err(err) => {
+                self.note(err);
+                return Ok(());
             }
-            None => {}
-        }
-        self.items[index].reflection.inbound = inbound;
+            Ok(Some(fresh)) => fresh,
+            Ok(None) => {
+                if read.issue.is_none() && self.items[index].reflection.issue.is_some() {
+                    // The issue is gone: the next flush reflects the item
+                    // again.
+                    let row = self.store.amend_reflection(&id, |r| *r = read.clone())?;
+                    self.learned(row);
+                    return Ok(());
+                }
+                return self.post_pending_replies(index);
+            }
+        };
+        let fresh_etag = read.etag.take();
+        let commands: Vec<u64> = read
+            .inbound
+            .iter()
+            .filter_map(|comment| comment["id"].as_u64())
+            .collect();
+        self.items[index].reflection.inbound = std::mem::take(&mut read.inbound);
         // While the todo's withdrawal is open, what the issue asks of it
         // waits: the first read after the withdrawal commits answers it as
         // the withdrawn todo (`state-database`, `withdrawal_intents`). An
@@ -310,9 +312,55 @@ impl<'w> Session<'w> {
             self.items[index].reflection.inbound.clear();
             return Ok(());
         }
-        self.answer_label_actions(index)?;
+        let events = self.answer_label_actions(index)?;
         self.answer_commands(index)?;
-        self.restore_output_labels(index)
+        self.restore_output_labels(index, &fresh.issue)?;
+        let seen = &self.items[index].reflection.commands_seen;
+        let comments: Vec<(Timestamp, bool)> = fresh
+            .comments
+            .iter()
+            .map(|(comment, at)| (*at, commands.contains(comment) && !seen.contains(comment)))
+            .collect();
+        let held = self.items[index].reflection.clone();
+        let comments_since = super::_positions::next_comments_since(
+            held.comments_since
+                .as_deref()
+                .and_then(|at| at.parse::<Timestamp>().ok()),
+            &comments,
+        )
+        .map(|at| at.to_string());
+        let (events_page, events_last, events_outstanding) = match &events {
+            Some(events) => {
+                let (page, last) = super::_positions::next_events_position(
+                    (held.events_page, held.events_last),
+                    events,
+                );
+                (
+                    page,
+                    last,
+                    events.iter().any(|(_, _, outstanding)| *outstanding),
+                )
+            }
+            None => (held.events_page, held.events_last, true),
+        };
+        let outstanding =
+            events_outstanding || comments.iter().any(|(_, outstanding)| *outstanding);
+        let etag = (!outstanding).then_some(fresh_etag).flatten();
+        tracing::debug!(
+            event = "work_issue_read",
+            project = %self.project.slug,
+            todo = %self.items[index].record.slug,
+            comments = fresh.comments.len(),
+            events = events.as_ref().map_or(0, Vec::len),
+            outstanding,
+            "people's controls read from the todo's issue"
+        );
+        self.amend(index, |r| {
+            r.comments_since.clone_from(&comments_since);
+            r.events_page = events_page;
+            r.events_last = events_last;
+            r.etag.clone_from(&etag);
+        })
     }
 
     /// Whether item `index` carries a change of this command not yet
@@ -439,10 +487,15 @@ impl<'w> Session<'w> {
                 break;
             }
         }
-        // Replies are posted only by the holder of the reflection lock. A
-        // busy lock leaves them pending: a later flush of this project that
-        // takes the lock attempts the pending replies of each item, and any
-        // it cannot post stay pending for the flush after it.
+        self.post_pending_replies(index)
+    }
+
+    /// Posts item `index`'s replies still pending, also when its issue
+    /// read as unchanged. Replies are posted only by the holder of the
+    /// reflection lock. A busy lock leaves them pending: a later flush of
+    /// this project that takes the lock attempts the pending replies of each
+    /// item, and any it cannot post stay pending for the flush after it.
+    fn post_pending_replies(&mut self, index: usize) -> Result<(), WorkError> {
         let todo = self.items[index].record.id.to_string();
         let Some(issue) = self.items[index].reflection.issue else {
             return Ok(());
@@ -504,9 +557,11 @@ impl<'w> Session<'w> {
         todo: &str,
         _proof: &ReflectionLock,
     ) -> Result<(), WorkError> {
-        for (source, text) in self.store.pending_replies(todo)? {
+        for (source, commanded_at, text) in self.store.pending_replies(todo)? {
             let result = match &self.remote {
-                Remote::Client { gh, down: None } => _reflect::reply(gh, issue, source, &text),
+                Remote::Client { gh, down: None } => {
+                    _reflect::reply(gh, issue, source, commanded_at.as_deref(), &text)
+                }
                 _ => break,
             };
             match result {
@@ -521,21 +576,13 @@ impl<'w> Session<'w> {
         Ok(())
     }
 
-    fn restore_output_labels(&mut self, index: usize) -> Result<(), WorkError> {
-        let Some(issue) = self.items[index].reflection.issue else {
-            return Ok(());
-        };
-        let snapshot = match &self.remote {
-            Remote::Client { gh, down: None } => gh.read(&format!("/issues/{}", issue.number)),
-            _ => return Ok(()),
-        };
-        let snapshot = match snapshot {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.note(error);
-                return Ok(());
-            }
-        };
+    /// Marks item `index` pending when `snapshot`, its issue as just read,
+    /// carries other output labels than the record shows.
+    fn restore_output_labels(
+        &mut self,
+        index: usize,
+        snapshot: &serde_json::Value,
+    ) -> Result<(), WorkError> {
         let expected = super::_envelope::issue(&self.items[index].record).labels;
         let actual = snapshot["labels"]
             .as_array()
@@ -553,113 +600,142 @@ impl<'w> Session<'w> {
         Ok(())
     }
 
-    /// Apply attributable label actions once, preserving their source ordering.
-    fn answer_label_actions(&mut self, index: usize) -> Result<(), WorkError> {
+    /// Applies the attributable `hold` label actions read from item
+    /// `index`'s issue once each, in their source order. Returns each event
+    /// read as (page, identity, outstanding) — an action not yet applied or
+    /// recorded as ignored is outstanding, and so is every event after it —
+    /// or `None` when the events could not be read.
+    fn answer_label_actions(
+        &mut self,
+        index: usize,
+    ) -> Result<Option<Vec<super::_positions::EventRead>>, WorkError> {
         let Some(issue) = self.items[index].reflection.issue else {
-            return Ok(());
+            return Ok(Some(Vec::new()));
         };
         let result = match &self.remote {
             Remote::Client { gh, down: None } => {
-                gh.list(&format!("/issues/{}/events", issue.number))
+                _reflect::read_events(gh, issue, &self.items[index].reflection)
             }
-            _ => return Ok(()),
+            _ => return Ok(None),
         };
-        let mut actions = match result {
-            Ok(actions) => actions,
+        let events = match result {
+            Ok(events) => events,
             Err(error) => {
                 tracing::warn!(event="github_label_actions_unreadable",issue=issue.number,error=%error);
-                return Ok(());
+                self.note(error);
+                return Ok(None);
             }
         };
-        actions.sort_by_key(|a| a["id"].as_u64().unwrap_or(0));
-        for action in actions {
-            if action["label"]["name"].as_str() != Some("hold") {
+        let mut read = Vec::with_capacity(events.len());
+        let mut blocked = false;
+        for (page, action) in events {
+            let Some(id) = action["id"].as_u64() else {
+                continue;
+            };
+            if blocked {
+                read.push((page, id, true));
                 continue;
             }
-            let (Some(id), Some(login), Some(kind), Some(at)) = (
-                action["id"].as_u64(),
-                action["actor"]["login"].as_str(),
-                action["event"].as_str(),
-                action["created_at"].as_str(),
-            ) else {
-                tracing::warn!(event = "github_hold_unattributed", issue = issue.number);
-                continue;
-            };
-            if !matches!(kind, "labeled" | "unlabeled")
-                || self.items[index]
-                    .record
-                    .label_actions
-                    .iter()
-                    .any(|a| a.issue == issue.number && a.id == id)
-                || self.store.label_seen(issue.number, id)?
-            {
-                continue;
-            }
-            let source_at = match at.parse::<Timestamp>() {
-                Ok(at) => at,
-                Err(error) => {
-                    tracing::warn!(event="github_hold_invalid_time",error=%error);
-                    continue;
-                }
-            };
-            let permission = match &self.remote {
-                Remote::Client { gh, down: None } => gh.can_write(login),
-                _ => return Ok(()),
-            };
-            let allowed = match permission {
-                Ok(allowed) => allowed,
-                Err(error) => {
-                    tracing::warn!(event="github_hold_actor_unverified",login,error=%error);
-                    break;
-                }
-            };
-            let admitted =
-                allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
-            if !admitted {
-                if !self.store.ignore_label(
-                    &self.items[index].record,
-                    issue.number,
-                    id,
-                    kind,
-                    login,
-                    at,
-                )? {
-                    return Ok(());
-                }
-                continue;
-            }
-            let actor = Actor::GitHub {
-                login: login.to_owned(),
-            };
-            self.commit("github hold label", |s| {
-                let record = &mut s.items[index].record;
-                if let Some(previous) = record.hold.take() {
-                    record.hold_history.push(super::_model::ReleasedHold {
-                        hold: previous,
-                        released: source_at,
-                        by: actor.clone(),
-                    });
-                }
-                if kind == "labeled" {
-                    record.hold = Some(crate::evidence::HoldRecord {
-                        source: crate::evidence::HoldSource::GitHub,
-                        reason: format!("held from GitHub by {login}"),
-                        by: actor,
-                        at: source_at,
-                    });
-                }
-                record.label_actions.push(super::_model::LabelAction {
-                    issue: issue.number,
-                    id,
-                    action: kind.into(),
-                    login: login.into(),
-                    at: at.into(),
-                    outcome: "accepted".into(),
-                });
-                Ok(())
-            })?;
+            let applied = self.answer_label_action(index, issue, id, &action)?;
+            blocked = !applied;
+            read.push((page, id, !applied));
         }
-        Ok(())
+        Ok(Some(read))
+    }
+
+    /// Applies one event `action` (identity `id`) read from item `index`'s
+    /// `issue`; `false` while it stays outstanding: its actor's access
+    /// could not be verified, GitHub stopped answering, or the todo's
+    /// record changed or its withdrawal opened before the outcome was
+    /// recorded.
+    fn answer_label_action(
+        &mut self,
+        index: usize,
+        issue: IssueRef,
+        id: u64,
+        action: &serde_json::Value,
+    ) -> Result<bool, WorkError> {
+        if action["label"]["name"].as_str() != Some("hold") {
+            return Ok(true);
+        }
+        let (Some(login), Some(kind), Some(at)) = (
+            action["actor"]["login"].as_str(),
+            action["event"].as_str(),
+            action["created_at"].as_str(),
+        ) else {
+            tracing::warn!(event = "github_hold_unattributed", issue = issue.number);
+            return Ok(true);
+        };
+        if !matches!(kind, "labeled" | "unlabeled")
+            || self.items[index]
+                .record
+                .label_actions
+                .iter()
+                .any(|a| a.issue == issue.number && a.id == id)
+            || self.store.label_seen(issue.number, id)?
+        {
+            return Ok(true);
+        }
+        let source_at = match at.parse::<Timestamp>() {
+            Ok(at) => at,
+            Err(error) => {
+                tracing::warn!(event="github_hold_invalid_time",error=%error);
+                return Ok(true);
+            }
+        };
+        let permission = match &self.remote {
+            Remote::Client { gh, down: None } => gh.can_write(login),
+            _ => return Ok(false),
+        };
+        let allowed = match permission {
+            Ok(allowed) => allowed,
+            Err(error) => {
+                tracing::warn!(event="github_hold_actor_unverified",login,error=%error);
+                return Ok(false);
+            }
+        };
+        let admitted = allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
+        if !admitted {
+            return self.store.ignore_label(
+                &self.items[index].record,
+                issue.number,
+                id,
+                kind,
+                login,
+                at,
+            );
+        }
+        let actor = Actor::GitHub {
+            login: login.to_owned(),
+        };
+        self.commit("github hold label", |s| {
+            let record = &mut s.items[index].record;
+            if let Some(previous) = record.hold.take() {
+                record.hold_history.push(super::_model::ReleasedHold {
+                    hold: previous,
+                    released: source_at,
+                    by: actor.clone(),
+                });
+            }
+            if kind == "labeled" {
+                record.hold = Some(crate::evidence::HoldRecord {
+                    source: crate::evidence::HoldSource::GitHub,
+                    reason: format!("held from GitHub by {login}"),
+                    by: actor,
+                    at: source_at,
+                });
+            }
+            record.label_actions.push(super::_model::LabelAction {
+                issue: issue.number,
+                id,
+                action: kind.into(),
+                login: login.into(),
+                at: at.into(),
+                outcome: "accepted".into(),
+            });
+            Ok(())
+        })?;
+        Ok(true)
     }
 
     /// Records an approver's command; returns the answer for the issue.

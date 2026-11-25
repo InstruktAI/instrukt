@@ -438,6 +438,22 @@ impl FakeGitHub {
             .unwrap()
     }
 
+    /// Adds an event to issue `number`, after its existing ones; returns
+    /// its id. `event` is GitHub's issue event without its `id`.
+    pub fn seed_event(&self, repo: &str, number: u64, mut event: Value) -> u64 {
+        let mut state = self.lock();
+        let id = state.next_id();
+        event["id"] = id.into();
+        state
+            .repo(repo)
+            .issues
+            .get_mut(&number)
+            .unwrap()
+            .events
+            .push(event);
+        id
+    }
+
     /// Changes a comment's body out of band.
     pub fn edit_comment(&self, repo: &str, id: u64, body: &str) {
         let mut state = self.lock();
