@@ -345,40 +345,62 @@ impl Release<'_> {
         } else {
             None
         };
-        if let Some(tip) = listed_origin {
-            if let Some(cause) = self.beyond(&tip, handed)? {
-                self.keep(origin, cause);
+        let Some(listed) = listed_origin else {
+            return Ok(());
+        };
+        // Origin's own answer decides, not the tracking ref: another
+        // computer may have published the branch since this one fetched.
+        let remote_ref = format!("refs/heads/{branch}");
+        let advertised = match git::run(self.root, ["ls-remote", REMOTE, remote_ref.as_str()]) {
+            Ok(advertised) => advertised,
+            Err(error) => {
+                self.keep(origin, format!("origin could not be read: {error}"));
                 return Ok(());
             }
-            let lease = format!("--force-with-lease={branch}:{tip}");
-            match git::run(
-                self.root,
-                [
-                    "push",
-                    "--quiet",
-                    lease.as_str(),
-                    REMOTE,
-                    "--delete",
-                    &branch,
-                ],
-            ) {
-                Ok(_) => {
-                    // A successful delete also removes the tracking ref.
-                    self.released.push(origin);
-                }
-                Err(pushed) => {
-                    let listed = format!("refs/heads/{branch}");
-                    match git::run(self.root, ["ls-remote", REMOTE, listed.as_str()]) {
-                        Ok(remote) if remote.trim().is_empty() => {
-                            // Already gone on origin: the stale tracking ref
-                            // goes so git stops listing it.
-                            git::run(self.root, ["update-ref", "-d", &tracking, tip.as_str()])?;
-                            self.released.push(origin);
-                        }
-                        _ => self.keep(origin, pushed.to_string()),
-                    }
-                }
+        };
+        let on_origin = advertised.lines().find_map(|line| {
+            let (sha, name) = line.split_once('\t')?;
+            (name == remote_ref)
+                .then(|| CommitSha::parse(sha).ok())
+                .flatten()
+        });
+        let Some(tip) = on_origin else {
+            // Already gone on origin: the stale tracking ref goes so git
+            // stops listing it.
+            git::run(self.root, ["update-ref", "-d", &tracking, listed.as_str()])?;
+            self.released.push(origin);
+            return Ok(());
+        };
+        if tip != listed && !git::answers(self.root, ["cat-file", "-e", tip.as_str()])? {
+            let refspec = format!("+{remote_ref}:{tracking}");
+            if let Err(error) = git::run(self.root, ["fetch", "--quiet", REMOTE, refspec.as_str()])
+            {
+                self.keep(
+                    origin,
+                    format!("origin's tip {tip} could not be fetched: {error}"),
+                );
+                return Ok(());
             }
+        }
+        if let Some(cause) = self.beyond(&tip, handed)? {
+            self.keep(origin, cause);
+            return Ok(());
+        }
+        let lease = format!("--force-with-lease={branch}:{tip}");
+        match git::run(
+            self.root,
+            [
+                "push",
+                "--quiet",
+                lease.as_str(),
+                REMOTE,
+                "--delete",
+                &branch,
+            ],
+        ) {
+            // A successful delete also removes the tracking ref.
+            Ok(_) => self.released.push(origin),
+            Err(error) => self.keep(origin, error.to_string()),
         }
         Ok(())
     }
