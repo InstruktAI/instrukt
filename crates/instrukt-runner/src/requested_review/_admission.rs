@@ -560,9 +560,10 @@ fn standing_verdict(head: &CommitSha, verdict: HeadVerdictValue, recorder: &Sess
     )
 }
 
-/// Review state, before the key is held: the head's verdict standing is as
-/// the kind of ask requires. A dispute's recorder is compared with the
-/// requested reviewer under the key ([`dispute_recorder`]).
+/// Review state, under the head's key once the ask is known not to repeat
+/// an outstanding one: the head's verdict standing is as the kind of ask
+/// requires. A dispute's recorder is then compared with the requested
+/// reviewer ([`dispute_recorder`]).
 pub(super) fn review_state(
     kind: Kind,
     head: &CommitSha,
