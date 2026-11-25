@@ -132,12 +132,12 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 - **Start fresh (`attempt` → configured delegation instruction → `bind`):**
   Every other admitted new round starts fresh — delegate through the configured
   delegation instruction and immediately record `instrukt todo bind` with the
-  new native child id and recorded shared placement. This is the default for
+  new native child id and any recorded placement. This is the default for
   attempt 1, roles outside the continuation lists above (such as `diagnoser` or
   `drift-analyzer`), a confirmed unusable or former-orchestrator `prior_session`
-  (chosen before binding), a changed selection, any mixed or substantive
-  reviewer target change, a deadlocked review loop, or a runtime requiring fresh
-  delegation for that role.
+  (chosen before binding), a changed selection, any reviewer target change that
+  includes unrelated edits or a substantive scope or design rewrite, a
+  deadlocked review loop, or a runtime requiring fresh delegation for that role.
 - **Mid-attempt recovery:** While an attempt is still active (such as a missing
   stamp or bounded recovery on a stopped turn), continue directly on that active
   attempt through the configured child-messaging instruction without reserving a
