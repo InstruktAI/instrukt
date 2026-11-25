@@ -43,6 +43,7 @@ shared delegation keeps all workers in that single recorded workspace.
 derive current facts directly from the work record and repository without
 persisting a phase or dictating a next step:
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - Identity, kind, status, claim, hold, and delivery commit.
 - Workspace/git state (`branch`, `worktree_path`, cleanliness, worktree/branch/remote heads, push sync).
 - Active attempts (interference lock status).
@@ -50,6 +51,16 @@ persisting a phase or dictating a next step:
 - Preparation and build review verdicts, open findings, exact-SHA binding, and reviewer independence.
 - Configured `approvals.prd` / `approvals.task` status and `integrate` review gate readiness.
 - Prerequisite standings.
+<!-- change:verification-stamp-and-evidence-store -->
+- Identity, kind, status, claim, hold, and delivery commit.
+- Workspace/git state (`branch`, `worktree_path`, cleanliness, worktree/branch/remote heads, push sync).
+- Active attempts (interference lock status).
+- Recorded artifacts, digests, and drift status.
+- Preparation and build review verdicts, open findings, exact-SHA binding, and reviewer independence.
+- Verification dispositions with their exact-commit and report binding, and whether one is current for the worktree head.
+- Configured `approvals.prd` / `approvals.task` status and `integrate` review gate readiness.
+- Prerequisite standings.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Use cases
 

@@ -9,15 +9,24 @@ description: Unified delivery cycle enforced by three hard integrity invariants 
 
 ## What it is
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 A repository todo runs end-to-end under the unified `todo-orchestrator` in one
 `<slug>/work` worktree. Code enforces three hard integrity invariants and
 exposes a facts-only ledger; prose procedures own when to diagnose, plan,
 build, review, fix, process deferrals, and finalize.
+<!-- change:verification-stamp-and-evidence-store -->
+A repository todo runs end-to-end under the unified `todo-orchestrator` in one
+`<slug>/work` worktree. Code enforces three hard integrity invariants and the
+verification disposition a handoff requires, and exposes a facts-only ledger;
+prose procedures own when to diagnose, plan, build, review, verify, fix,
+process deferrals, and finalize.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## Canonical fields
 
 ### Three hard integrity invariants
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 1. **No interference (attempt lock):** at most one active `Workspace` or `Child`
    attempt may be open on `<slug>/work` at a time. Attempt reservation
    (`instrukt todo attempt`) requires a clean worktree on the recorded branch;
@@ -35,26 +44,58 @@ build, review, fix, process deferrals, and finalize.
 3. **Human-owned approval gates:** configured `approvals.prd` is enforced on
    `builder`, `fixer`, and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact.
+<!-- change:verification-stamp-and-evidence-store -->
+1. **No interference (attempt lock):** at most one active `Workspace` or `Child`
+   attempt may be open on `<slug>/work` at a time. Attempt reservation
+   (`instrukt todo attempt`) requires a clean worktree on the recorded branch;
+   completion stamps (`--role-complete`, `--build-complete`, review verdicts,
+   verification dispositions, `--deferrals-processed`) release the attempt
+   atomically.
+2. **Independent exact-SHA review gate:** `--verdict approve --phase build_review`
+   requires an independent reviewer session distinct from the orchestrator and
+   all writer roles (`builder`, `fixer`, `setup`, `finalizer`, `intaker`,
+   `architect`, `planner`). `--finalize-ready` (callable by a retained completed
+   `finalizer` or directly by the claim-holding `todo-orchestrator`) requires
+   no open workspace attempt, a clean worktree matching local and published
+   `origin/<slug>/work` HEAD, and a current independent `build_review` `approve`
+   stamp bound to that **exact commit SHA** and current `review-findings`
+   digest. `--finalize-ready` appends `workflow.finalized` atomically.
+3. **Human-owned approval gates:** configured `approvals.prd` is enforced on
+   `builder`, `fixer`, and `finalizer` reservations and on `--finalize-ready`
+   whenever the todo is a `feature` or carries a `prd` artifact.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 <!-- planned:verification-stamp-and-evidence-store -->
 ### Live verification disposition
 
 `--finalize-ready` also requires a current verification disposition for the
 exact candidate commit: a pass, a Tier 0 skip or a hotfix deferral bound to
-that commit and to the current `verification-findings` report
-(`project/instrukt/spec/feature/work/stamps`, Verification dispositions). A
+that commit and to the current `verification-findings` report, the deferral
+naming its tracked follow-up (`project/instrukt/spec/feature/work/stamps`). A
 candidate whose current disposition is fail or blocked, or that carries none
 for its commit, is refused readiness, and the refusal names the disposition
 owed.
 
-A pass is admitted only from a bound `verifier` session distinct from the
+The three dispositions that admit readiness have closed caller admission. A
+pass is admitted only from a bound `verifier` session distinct from the
 orchestrator and from every writer role, as a build-review approval is
-admitted only from an independent reviewer. The claim-holding
-`todo-orchestrator` may record a Tier 0 skip or a hotfix deferral itself,
-with no verifier attempt. Whether a candidate warrants a skip, a deferral or a
-live run is the orchestrator's judgment under `sdlc/policy/live-verification`;
-code admits the record and judges no diff
-(`general/principle/intelligence-boundaries`).
+admitted only from an independent reviewer. A Tier 0 skip is admitted from
+that bound `verifier` or from the claim-holding `todo-orchestrator`, and a
+hotfix deferral from the claim-holding `todo-orchestrator` alone; the
+orchestrator records either with no verifier attempt. From any other session,
+whether a writer role, a session that does not hold the claim or an unbound
+session, each of the three is refused and nothing is recorded.
+
+The orchestrator's own disposition never clears what a verifier recorded for
+the same commit. While the latest disposition a `verifier` recorded for a
+commit is fail, the orchestrator's Tier 0 skip or hotfix deferral for that
+commit is refused; while it is blocked, its Tier 0 skip is refused. The
+refusal names what clears it: a new candidate commit, or a new `verifier`
+attempt on that commit.
+
+Whether a candidate warrants a skip, a deferral or a live run is the
+orchestrator's judgment under `sdlc/policy/live-verification`; code admits the
+record and judges no diff (`general/principle/intelligence-boundaries`).
 
 `verifier` is a shared-worktree role under the attempt lock. Its attempt is
 reserved, bound and released like every other role's, and it works in
@@ -63,6 +104,7 @@ reserved, bound and released like every other role's, and it works in
 
 ### Fast-track and reversible routing
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 Code imposes no mandatory `implementation-plan`, `setup`, `--build-started`,
 `quality-checklist`, or separate `finalizer` gate on bounded bugs or localized
 changes. The orchestrator may dispatch `builder` directly in `<slug>/work`,
@@ -70,6 +112,16 @@ follow with independent `build-reviewer`, push the exact reviewed HEAD, stamp
 `--finalize-ready`, and unclaim to hand off to `integrate`. If unexpected blast
 radius surfaces mid-build, the orchestrator routes to planning or doc updates in
 prose without skip-flag proliferation.
+<!-- change:verification-stamp-and-evidence-store -->
+Code imposes no mandatory `implementation-plan`, `setup`, `--build-started`,
+`quality-checklist`, or separate `finalizer` gate on bounded bugs or localized
+changes. The orchestrator may dispatch `builder` directly in `<slug>/work`,
+follow with independent `build-reviewer` and the verification disposition the
+candidate owes, push the exact reviewed HEAD, stamp `--finalize-ready`, and
+unclaim to hand off to `integrate`. If unexpected blast radius surfaces
+mid-build, the orchestrator routes to planning or doc updates in prose without
+skip-flag proliferation.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### Single workspace, cleanup & in-flight legacy migration
 
@@ -188,6 +240,7 @@ And retained native thread and role-attempt evidence remains readable
 
 ### UC-DC9: Fast-track a bounded change while enforcing the three integrity invariants
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 ```gherkin
 Given a developer has a bounded change or bug in its single todo worktree
 When the unified todo-orchestrator dispatches a builder directly without an implementation plan, setup, or quality checklist
@@ -196,6 +249,16 @@ And finalization is refused until an independent reviewer approves the exact pub
 When the independent reviewer approves that exact commit SHA
 Then the claim-holding orchestrator can record finalize readiness directly for integration
 ```
+<!-- change:verification-stamp-and-evidence-store -->
+```gherkin
+Given a developer has a bounded change or bug in its single todo worktree
+When the unified todo-orchestrator dispatches a builder directly without an implementation plan, setup, or quality checklist
+Then concurrent workspace attempts are refused by the interference lock
+And finalization is refused until an independent reviewer approves the exact published commit SHA
+When the independent reviewer approves that exact commit SHA and its verification disposition admits handoff
+Then the claim-holding orchestrator can record finalize readiness directly for integration
+```
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 <!-- planned:verification-stamp-and-evidence-store -->
 ### UC-DC10: Hand off a candidate whose live behavior is accounted for

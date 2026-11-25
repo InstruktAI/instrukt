@@ -154,15 +154,6 @@ composition is:
 | `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
 
-<!-- planned:verification-stamp-and-evidence-store -->
-`verifier`, the role `sdlc/procedure/lifecycle/work/verify` declares, ships
-with the reviewer roles' entry: class `focused`, the `read` and `review`
-bundles, the reviewer App identity, and the reviewer roles' model selection
-under `project/instrukt/spec/feature/configuration/agent-selection`. Its
-grants reach reading, its own findings artifacts and its own stamp; committing
-code and writing documentation are outside them.
-<!-- /planned:verification-stamp-and-evidence-store -->
-
 A company connector may declare `role: technical-coordinator`; its sessions
 then start from `general/procedure/technical-coordinator`, the procedure
 declaring that role, rather than from company assistance. Its shipped entry
@@ -192,6 +183,7 @@ They share the model `order`/`tier` defaults of agent-selection, except
 `premium`; the table's App column names the identity reference, not another
 model/provider choice.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
 | `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
@@ -206,6 +198,25 @@ model/provider choice.
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
+<!-- change:verification-stamp-and-evidence-store -->
+| Roles | Class | `can` bundles | App |
+| --- | --- | --- | --- |
+| `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
+| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
+| `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
+| `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
+| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
+| `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
+| `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
+| `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
+| `event-handler` | `standing` | `all` | project |
+| `company-agent` | `standing` | `read`, `tools`, `report` | project |
+| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
+| `default` | `agent` | `all` | project |
+
+`verifier` takes the reviewer roles' model `order` and `tier`
+(`project/instrukt/spec/feature/configuration/agent-selection`).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role
