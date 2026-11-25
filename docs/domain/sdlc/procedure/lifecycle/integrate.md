@@ -224,9 +224,12 @@ through `runtime.finish_thread` under `sdlc/policy/todo-creation-discipline`
 still owed shows in that ledger and does not gate finishing. Preserve the
 runtime thread record and retained attempt evidence.
 
-When all current work is settled, park as the standing integrator. The next
-`workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
-binding.
+When all current work is settled — no open candidate in verification, no
+pending delivery or conflict, and no open human question — park as the standing
+integrator and finish this thread under `general/procedure/event-handling/overview`.
+The next `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or
+`runner.dependency_failing` resumes this session in place; its mandate continues
+across idle turns under the recorded standing-session binding.
 
 ## Outputs
 

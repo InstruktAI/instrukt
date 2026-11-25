@@ -607,3 +607,116 @@ fn state_db(env: &TestEnv) -> instrukt_core::state_db::rusqlite::Connection {
     )
     .unwrap()
 }
+
+/// A project policy with every required section, whose rule is `rule`.
+fn policy(title: &str, rule: &str) -> String {
+    format!(
+        "---\ndescription: The {title} policy.\n---\n\n# {title} — Policy\n\n## Rules\n\n{rule}\n\n\
+         ## Rationale\n\nBecause.\n\n## Scope\n\nAll work.\n\n## Enforcement\n\nReview.\n\n\
+         ## Exceptions\n\nNone.\n"
+    )
+}
+
+// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP4
+#[test]
+fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
+    let mut crew = workflow::Crew::new();
+    // The hook sections call `instrukt` by name, as an installed one would.
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        crew.project.env.injected("PATH").unwrap()
+    );
+    crew.project.env.set_env("PATH", &path);
+    crew.project
+        .env
+        .instrukt(crew.root())
+        .args(["hooks", "install"])
+        .assert()
+        .success();
+    crew.project
+        .create("guidance", "change", "Select the house policy.");
+    let builder = crew.worker("guidance", "builder", Some("crew/procedure/build"));
+    let session = builder["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap();
+    let workspace = std::path::Path::new(builder["worktree"].as_str().unwrap());
+    std::fs::create_dir_all(workspace.join("docs/project/policy")).unwrap();
+    std::fs::write(
+        workspace.join("docs/project/policy/house.md"),
+        policy("House", "Be kind."),
+    )
+    .unwrap();
+    std::fs::write(
+        workspace.join("docs/project/index.yaml"),
+        "expanded:\n  - project/demo/policy/house\n",
+    )
+    .unwrap();
+    let env = &crew.project.env;
+    env.instrukt(workspace)
+        .env("T3CODE_THREAD_ID", session)
+        .args([
+            "repo",
+            "commit",
+            "--todo",
+            "guidance",
+            "--message",
+            "Select the house policy\n\nThe project's agents follow it.",
+            "--only",
+            "docs/project/policy/house.md",
+            "docs/project/index.yaml",
+        ])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "focused-author-committed-rendering",
+        env.git(workspace, ["show", "HEAD:AGENTS.md"])
+    );
+    let base = env.path("").display().to_string();
+    let head = env.git(workspace, ["rev-parse", "HEAD"]);
+    let status = env
+        .instrukt(workspace)
+        .env("T3CODE_THREAD_ID", session)
+        .args(["hooks", "status"])
+        .assert()
+        .success();
+    insta::assert_snapshot!(
+        "focused-author-hooks-status",
+        String::from_utf8_lossy(&status.get_output().stdout)
+            .replace(base.trim_end_matches('/'), "[TMP]")
+            .replace(&head, "[SHA]")
+    );
+
+    // Outside its worktree, in the primary checkout, the same run is refused
+    // before it runs: a staged selection change would otherwise have the
+    // rendered `AGENTS.md` staged beside it.
+    let root = crew.root();
+    std::fs::create_dir_all(root.join("docs/project/policy")).unwrap();
+    std::fs::write(
+        root.join("docs/project/policy/house.md"),
+        policy("House", "Be kind."),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("docs/project/index.yaml"),
+        "expanded:\n  - project/demo/policy/house\n",
+    )
+    .unwrap();
+    env.git(root, ["add", "docs/project"]);
+    let refused = env
+        .instrukt(root)
+        .env("T3CODE_THREAD_ID", session)
+        .args(["hooks", "run", "pre-commit"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(String::from_utf8_lossy(&refused.get_output().stderr), @"instrukt: role `builder` (focused) cannot perform code-commit on hooks run with its own scope; return the required action to the dispatcher in your own output or assigned artifact");
+    insta::assert_snapshot!(env.git(root, ["status", "--porcelain"]), @r"
+    A  docs/project/index.yaml
+    A  docs/project/policy/house.md
+    ");
+}

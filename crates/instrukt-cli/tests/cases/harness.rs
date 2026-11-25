@@ -127,11 +127,43 @@ impl Live {
     fn path(&self) -> std::path::PathBuf {
         self.dir.path().canonicalize().unwrap()
     }
+
+    /// The test machine of a session that ran with this stand-in as its
+    /// home and a temporary directory inside its fenced `.t3`, as a T3
+    /// provider session does, with live data beside the way down to that
+    /// directory at its top and at an intermediate level.
+    fn session(&self) -> TestEnv {
+        for sibling in [TOP_SIBLING, INNER_SIBLING] {
+            let dir = self.path().join(sibling);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("keep"), "live data\n").unwrap();
+        }
+        let temp_dir = self.path().join(SESSION_TEMP_DIR);
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        TestEnv::in_stand_in_session(&self.path(), &temp_dir)
+    }
+
+    /// The stand-in's live data beside the session's temporary directory;
+    /// the rest of the stand-in holds the test's own fixture.
+    fn untouched(&self) -> Snapshot {
+        let trees = [".instrukt", TOP_SIBLING, INNER_SIBLING]
+            .iter()
+            .map(|tree| self.path().join(tree))
+            .collect();
+        Snapshot::over(Vec::new(), trees)
+    }
 }
+
+/// The temporary directory of a session under the stand-in home, inside
+/// its fenced `.t3`, and the live data beside the way down to it.
+const SESSION_TEMP_DIR: &str = ".t3/userdata/agent-tmp/run";
+const TOP_SIBLING: &str = ".t3/worktrees";
+const INNER_SIBLING: &str = ".t3/userdata/state";
 
 /// Runs `instrukt config init --global` and returns its exit status and the
 /// first line of its stderr, the fence's own refusal, with the stand-in live
-/// home and the test's home named.
+/// home and the test's home named. The test's home is named first: in a
+/// stand-in session it lies inside the stand-in.
 fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
     let output = env
         .instrukt(env.home())
@@ -142,8 +174,8 @@ fn initialize(env: &TestEnv, live: &Live) -> (Option<i32>, String) {
         .lines()
         .next()
         .unwrap_or_default()
-        .replace(&live.path().display().to_string(), "[LIVE]")
-        .replace(&env.home().display().to_string(), "[TEST HOME]");
+        .replace(&env.home().display().to_string(), "[TEST HOME]")
+        .replace(&live.path().display().to_string(), "[LIVE]");
     (output.status.code(), stderr)
 }
 
@@ -174,6 +206,120 @@ fn a_write_through_a_symbolic_link_is_refused_before_it_lands() {
     let (status, stderr) = initialize(&env, &live);
     assert_eq!(status, Some(i32::from(FENCE_EXIT)));
     insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/.instrukt/locks, under [LIVE] which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_write_where_a_fenced_symbolic_link_leads_is_refused_before_it_lands() {
+    let live = Live::new();
+    let target = live.path().join("target");
+    std::fs::create_dir(&target).unwrap();
+    std::os::unix::fs::symlink(&target, live.path().join("link")).unwrap();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path().join("link"));
+    std::os::unix::fs::symlink(&target, env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/target/locks, under [LIVE]/link which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_write_to_a_hard_link_beside_a_fenced_file_is_admitted() {
+    let live = Live::new();
+    let mut env = TestEnv::new();
+    assert_eq!(initialize(&env, &live).0, Some(0));
+    // The global configuration a patch rewrites, and a fenced second name
+    // for the same file in the same directory.
+    let config = env.instrukt_home().join("instrukt.yaml");
+    let fenced = env.instrukt_home().join("fenced.yaml");
+    std::fs::hard_link(&config, &fenced).unwrap();
+    let kept = std::fs::read(&fenced).unwrap();
+    env.fence(&fenced);
+    let read = env
+        .instrukt(env.home())
+        .args(["config", "get", "--global", "--revision"])
+        .output()
+        .unwrap();
+    assert!(read.status.success());
+    let revision = String::from_utf8(read.stdout).unwrap();
+    let patched = env
+        .instrukt(env.home())
+        .args(["config", "patch", "--global", "--revision", revision.trim()])
+        .args(["--yaml", "ticks: 'off'"])
+        .output()
+        .unwrap();
+    assert_eq!(patched.status.code(), Some(0));
+    assert!(env.refusals().is_empty());
+    assert_eq!(std::fs::read(&fenced).unwrap(), kept);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_write_inside_a_fenced_location_spelled_otherwise_than_stored_is_refused() {
+    let live = Live::new();
+    let composed = live.path().join("caf\u{e9}");
+    std::fs::create_dir(&composed).unwrap();
+    let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
+    let mut env = TestEnv::new();
+    env.fence(&live.path().join("cafe\u{301}"));
+    std::os::unix::fs::symlink(&composed, env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/caf\u{e9}/locks, under [LIVE]/cafe\u{301} which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_test_whose_temporary_directory_lies_under_a_fenced_location_runs() {
+    let live = Live::new();
+    let env = live.session();
+    let untouched = live.untouched();
+    let care = documented::snippet("policy", "Care", "Care.", "", &[], "First.\n");
+    let repo = documented::project(
+        &env,
+        "platform",
+        &[
+            (
+                "docs/general/index.yaml",
+                "expanded:\n  - general/policy/care\n".to_owned(),
+            ),
+            ("docs/general/policy/care.md", care),
+        ],
+    );
+    // Publishing works in a temporary checkout under the session's
+    // temporary directory.
+    documented::sync(&env, &repo);
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert!(env.refusals().is_empty());
+}
+
+#[test]
+fn a_write_beside_the_temporary_directory_at_the_top_of_a_fenced_location_is_refused() {
+    let live = Live::new();
+    let env = live.session();
+    let untouched = live.untouched();
+    std::os::unix::fs::symlink(live.path().join(TOP_SIBLING), env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/.t3/worktrees/locks, under [LIVE]/.t3/worktrees which INSTRUKT_WRITE_FENCE keeps off limits");
+    assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
+    assert_eq!(env.refusals().len(), 1);
+}
+
+#[test]
+fn a_write_beside_the_temporary_directory_inside_a_fenced_location_is_refused() {
+    let live = Live::new();
+    let env = live.session();
+    let untouched = live.untouched();
+    std::os::unix::fs::symlink(live.path().join(INNER_SIBLING), env.instrukt_home()).unwrap();
+    let (status, stderr) = initialize(&env, &live);
+    assert_eq!(status, Some(i32::from(FENCE_EXIT)));
+    insta::assert_snapshot!(stderr, @"instrukt: write refused at the fence: [TEST HOME]/.instrukt/locks resolves to [LIVE]/.t3/userdata/state/locks, under [LIVE]/.t3/userdata/state which INSTRUKT_WRITE_FENCE keeps off limits");
     assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
     assert_eq!(env.refusals().len(), 1);
 }

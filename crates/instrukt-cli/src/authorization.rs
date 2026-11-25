@@ -71,7 +71,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["secrets", "set" | "generate"] => SecretsWrite,
         ["hooks", "status"] => RepositoryRead,
         ["hooks", "install" | "remove"] | ["init"] | ["dev-seed"] => RepositoryWrite,
-        ["repo", "commit" | "reclaim"] => CodeCommit,
+        ["repo", "commit" | "reclaim"] | ["hooks", "run"] => CodeCommit,
         ["sync"] => Publication,
         ["specs", "coverage" | "reserve" | "trace"] => CodeCheck,
         [
@@ -89,11 +89,9 @@ pub fn action(path: &[&str]) -> Option<Action> {
         | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
-        ["run"]
-        | ["tick"]
-        | ["hooks", "run" | "worker"]
-        | ["blueprint", "worker"]
-        | ["webhooks", ..] => RunnerExecute,
+        ["run"] | ["tick"] | ["hooks", "worker"] | ["blueprint", "worker"] | ["webhooks", ..] => {
+            RunnerExecute
+        }
         _ => return None,
     })
 }

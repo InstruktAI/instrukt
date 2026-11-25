@@ -419,11 +419,12 @@ building, reviewing and fixing keeps its output.
    tracked follow-up cited in `escape-assessment`. Record
    `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
    `workflow.finalized`). Then release the claim with
-   `instrukt todo update {slug} --unclaim`; the runner reclaims the build output
-   `<slug>/work` holds while the handoff waits
-   (`general/policy/shared-machine-resources`). Keep this orchestrator thread
-   wakeable until delivery — `integrate` finishes it once the todo is
-   delivered.
+   `instrukt todo update {slug} --unclaim` and finish this orchestrator thread
+   via `runtime.finish_thread` under `sdlc/policy/todo-creation-discipline`
+   (the thread remains wakeable in place if `integrate` kicks it back, and
+   `integrate` converges idempotently at delivery); the runner reclaims the
+   build output `<slug>/work` holds while the handoff waits
+   (`general/policy/shared-machine-resources`).
 6. **Finish on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    confirm all record writes (`log`, `instrukt todo remove {slug}`) first and
