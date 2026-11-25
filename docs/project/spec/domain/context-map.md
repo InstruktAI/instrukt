@@ -24,7 +24,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
 | configuration | Layered settings, company homes with their own settings and secrets, role classes/scoped bundles/model selection, App declarations, secrets, validation, migration and interpolation | `project/instrukt/spec/domain/configuration` |
-| publication | Committed-state publication, index patching, rendering of the global agent files and of committed `AGENTS.md` files, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
+| publication | Committed-state publication, index patching, rendering of the global agent files, of committed `AGENTS.md` files and of a company's plugin with its catalog entry, agent settings, adoption claims, editor schemas and the `instrukt status` report | `project/instrukt/spec/domain/publication` |
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
@@ -144,6 +144,10 @@ additional contexts.
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
+
+Publication is **Conformist** to Claude's plugin, skill and plugin catalog
+formats, for the company plugin it renders into a company's repository
+(`project/instrukt/spec/domain/publication`).
 
 ## Governing designs and decisions
 

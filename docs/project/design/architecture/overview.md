@@ -186,8 +186,8 @@ A command that fails ends with one readable line on stderr, `instrukt: `
 and then what failed, where, and what to run when there is a door; it is
 printed once and the exit status is non-zero. An error's causes follow it
 on that line, each once; findings that read as a list are joined with `; `.
-A command that meant to act and could not — a writing `docs render` left
-with findings, a converging `install` left incomplete, `docs get` with a
+A command that meant to act and could not — a writing `docs render` or
+`docs plugin` left with findings, a converging `install` left incomplete, `docs get` with a
 configured value it could not resolve, `docs schema` with findings, a
 `history search` that could not reach every computer — ends the same way,
 after its output, exit status 1; its line points at what that output holds
@@ -195,8 +195,9 @@ in the mode it was asked for, text or JSON.
 
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
-validate`, `docs validate`, `docs render --check`, `install --check` and
-`specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
+validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
+`docs plugin --validate`, `install --check` and `specs coverage --check`
+exit 1 with findings; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
 exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
@@ -221,6 +222,7 @@ the command-line parser's own text and exit status 2.
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
+| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository on request: the company plugin under `plugins/<key>/` and its one entry in `.claude-plugin/marketplace.json` (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
 
 ## Invariants
 

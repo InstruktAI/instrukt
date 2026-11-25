@@ -1,4 +1,4 @@
-//! Docs commands: `instrukt docs validate|schema|fold|index|get|render`.
+//! Docs commands: `instrukt docs validate|schema|fold|index|get|render|plugin`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,7 +9,7 @@ use instrukt_core::docs::{
 };
 use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
-use instrukt_core::publication::{self, RenderPlan, RepositoryView};
+use instrukt_core::publication::{self, CompanyName, PlannedFile, RepositoryView};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -78,6 +78,48 @@ enum DocsCommand {
     /// from its rendering or is missing, each rendering no longer rendered
     /// and each finding, and exits non-zero when it prints any.
     Render(RenderArgs),
+    /// Render the company's Claude plugin from the repository's working tree.
+    ///
+    /// The plugin `plugins/<key>/` is rendered from the company index
+    /// `docs/index.yaml`, the documents it selects, the key and the name
+    /// given here and what the working tree holds, nothing else: no home,
+    /// publication or configuration is read, so a fresh clone and the
+    /// binary are enough. Writes each file of the plugin whose content
+    /// differs, removes each file under `plugins/<key>/` that the rendering
+    /// does not hold, sets the plugin's entry in
+    /// `.claude-plugin/marketplace.json`, then prints the plugin's version
+    /// and one line per file changed. The version is kept when the
+    /// rendering equals what the folder holds and its last number is raised
+    /// otherwise. A finding leaves every file as it is and fails the run.
+    /// Stages nothing.
+    ///
+    /// With `--check`, writes nothing: prints each file that differs from
+    /// the rendering or is missing, each file a rendering would remove and
+    /// each finding, and exits non-zero when it prints any.
+    ///
+    /// With `--validate`, writes nothing and compares no file: prints each
+    /// finding and exits non-zero only when there is one, so a branch whose
+    /// plugin is behind its documents passes.
+    Plugin(PluginArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct PluginArgs {
+    /// The company's key: the name of the plugin and of its skill, and the
+    /// plugin's folder under `plugins/`.
+    #[arg(long, value_name = "KEY")]
+    key: ProjectSlug,
+    /// The name people write the company by, as one line: the skill's title
+    /// and the plugin's author.
+    #[arg(long, value_name = "NAME")]
+    name: CompanyName,
+    /// Write nothing; report each file a rendering would change and each
+    /// finding.
+    #[arg(long, conflicts_with = "validate")]
+    check: bool,
+    /// Write nothing and compare no file; report each finding.
+    #[arg(long)]
+    validate: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -169,6 +211,7 @@ pub fn run(args: DocsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         DocsCommand::Index(args) => index(args, ctx),
         DocsCommand::Get(args) => get(args, ctx),
         DocsCommand::Render(args) => render(&args, ctx),
+        DocsCommand::Plugin(args) => plugin(&args, ctx),
     }
 }
 
@@ -179,7 +222,7 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let plan = publication::render_repository(RepositoryView::WorkingTree(&root))?;
     let mut failed = !plan.findings.is_empty();
     if args.check {
-        for line in check_lines(&plan) {
+        for line in check_lines(&plan.writes, &plan.removals, "instrukt docs render") {
             ctx.out.line(&line)?;
             failed = true;
         }
@@ -213,21 +256,85 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     })
 }
 
-/// One line per entrypoint whose file differs from its rendering or is
-/// missing, and per rendering that is no longer rendered.
-fn check_lines(plan: &RenderPlan) -> Vec<String> {
-    let mut lines = Vec::new();
-    for file in plan.writes.iter().filter(|file| file.differs()) {
-        let what = if file.current.is_some() {
-            "differs from its rendering; `instrukt docs render` writes it"
+/// Renders the company's plugin from the working tree, or with `--check`
+/// reports what that would change, or with `--validate` reports only what
+/// it finds.
+fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    if args.validate {
+        let findings = publication::validate_plugin(&root, &args.key, &args.name)?;
+        for finding in &findings {
+            ctx.out.line(&finding.to_string())?;
+        }
+        return Ok(if findings.is_empty() {
+            ExitCode::SUCCESS
         } else {
-            "missing; `instrukt docs render` writes it"
+            ExitCode::FAILURE
+        });
+    }
+    let plan = publication::plan_plugin(&root, &args.key, &args.name)?;
+    let mut failed = !plan.findings.is_empty();
+    if args.check {
+        // What differs is named wherever it is known, findings or not: the
+        // plugin's files with its drift, the catalog with its entry.
+        let (writes, removals) = plan.drift.as_ref().map_or((&[][..], &[][..]), |drift| {
+            (drift.writes.as_slice(), drift.removals.as_slice())
+        });
+        let writes = writes.iter().chain(&plan.catalog);
+        for line in check_lines(writes, removals, "instrukt docs plugin") {
+            ctx.out.line(&line)?;
+            failed = true;
+        }
+    } else if let Some(drift) = plan.drift.as_ref().filter(|_| !failed) {
+        ctx.out.line(&format!(
+            "{}: version {}",
+            plan.folder.display(),
+            drift.version
+        ))?;
+        let removed: Vec<&Path> = drift.removals.iter().map(PathBuf::as_path).collect();
+        for path in publication::write_plugin(&root, &plan)? {
+            let what = if removed.contains(&path.as_path()) {
+                "removed"
+            } else {
+                "written"
+            };
+            ctx.out.line(&format!("{}: {what}", path.display()))?;
+        }
+    }
+    for finding in &plan.findings {
+        ctx.out.line(&finding.to_string())?;
+    }
+    Ok(if !failed {
+        ExitCode::SUCCESS
+    } else if args.check {
+        ExitCode::FAILURE
+    } else {
+        crate::output::could_not(
+            "the findings above left the plugin and its catalog as they were; fix them and run `instrukt docs plugin` again",
+        )
+    })
+}
+
+/// One line per file whose content differs from its rendering or is
+/// missing, and per file no longer rendered, each naming `command`, which
+/// writes or removes it.
+fn check_lines<'a>(
+    writes: impl IntoIterator<Item = &'a PlannedFile>,
+    removals: &[PathBuf],
+    command: &str,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for file in writes.into_iter().filter(|file| file.differs()) {
+        let what = if file.current.is_some() {
+            format!("differs from its rendering; `{command}` writes it")
+        } else {
+            format!("missing; `{command}` writes it")
         };
         lines.push(format!("{}: {what}", file.path.display()));
     }
-    for path in &plan.removals {
+    for path in removals {
         lines.push(format!(
-            "{}: no longer rendered; `instrukt docs render` removes it",
+            "{}: no longer rendered; `{command}` removes it",
             path.display()
         ));
     }

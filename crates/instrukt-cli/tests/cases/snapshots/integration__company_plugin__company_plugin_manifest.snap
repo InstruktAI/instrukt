@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/company-plugin.rs
+expression: repo.read(MANIFEST)
+---
+{
+  "name": "acme",
+  "version": "0.1.0",
+  "description": "The knowledge of Acme Bicycles, as the company keeps it in its own repository.",
+  "author": {
+    "name": "Acme Bicycles"
+  }
+}
