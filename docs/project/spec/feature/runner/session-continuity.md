@@ -356,28 +356,41 @@ opening brief just because placement is preparing.
 Every placement runs in the checkout's own project. Whenever instrukt adopts,
 wakes or succeeds an instrukt-owned thread, and before every input it delivers
 to one — event, approval, recovery and conversation input alike, for every
-binding kind — the adapter resolves the checkout's project exactly, as for
-launch, and compares it with the thread's native project. The binding's
-recorded project is not proof of that match. A thread in any other project is
-misplaced and is sent nothing:
+binding kind — it looks up the checkout's project in T3's project snapshot by
+exact root, read-only, and compares it with the thread's native project. The
+comparison never registers a project. The binding's recorded project is not
+proof of a match, and a checkout with no live project of its own never
+matches. A thread that does not match is misplaced: it is not adopted and is
+sent nothing, and the input stays pending.
 
-- Reported `input-ready` or `ended failed`, it is rolled over: under the object
-  lock its owner allocates the next generation in the checkout's own project
-  exactly as it does after confirmed archive or deletion, with the same
-  transfer of outstanding work, and the outstanding work starts there. The
-  misplaced thread is left as it is, as history; instrukt never sends to it
-  again.
-- Reported `running`, `needs-input` or `unknown`, it is left alone: a turn in
-  progress, a pending request or an unobserved state is never cut off. Work
-  stays pending, and operator surfaces carry instrukt's own outcome naming the
-  thread and the checkout, stating that the thread rolls over once it is idle
-  or archived.
+A misplaced thread reported `input-ready` or `ended failed` is rolled over by
+its owner, at the same succession point and under the same object lock that
+follow confirmed archive or deletion, with the same transfer of outstanding
+work: a standing agent's delivery, a todo or task execution's observation or
+follow-up, and a company conversation's succession. The new generation
+launches as any successor does, adding the checkout's project if it is still
+missing, and the misplaced thread is left as it is, as history; instrukt never
+sends to it again. A todo successor attaches a retained worktree only when it
+is a registered worktree of the checkout on the captured branch; a worktree
+the misplaced thread holds elsewhere is left untouched, and the successor
+starts with `worktree` placement on its captured base and branch. Input
+delivery and approval attention never roll a thread over themselves; their
+pending input waits for the owner's succession, and approval attention keeps
+its own rule: once the claim moves to the successor, the notice is not routed
+to the former holder, and the successor derives the decision from the work
+record. Taking the object lock before any input lock, the owner never rolls
+over from inside input delivery.
+
+A misplaced thread reported `running`, `needs-input` or `unknown` is left
+alone: a turn in progress, a pending request or an unobserved state is never
+cut off. Its work stays pending, and operator surfaces carry instrukt's own
+outcome naming the thread and the checkout, stating that the thread rolls over
+once it is idle or archived.
 
 A manual reservation never adopts a misplaced thread: a candidate a project
 listing returns meets the same comparison and is refused, with no rollover.
 A person writing to a company's agent is told only that the assistant is
-unavailable for a while. No project root is retained beside the binding; T3's
-project snapshot is read where the comparison is made.
+unavailable for a while. No project root is retained beside the binding.
 <!-- /planned:fix-company-session-starts-outside-company-home -->
 
 Service failures retain the captured request and actual cause for retry/status.
