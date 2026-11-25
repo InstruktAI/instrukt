@@ -167,6 +167,16 @@ admitted and the reservation is a worktree-less `Child` assignment with no
 `worktree`, `branch`, or `base`. The command records facts and calls no runtime.
 Setup admits its setup-only brief; other roles match the procedure's declared role.
 
+<!-- planned:reuse-retained-worker-sessions -->
+The reply also names the role's prior session when the record holds one: the
+native identity, attempt number and recorded selection of the role's most
+recent earlier attempt that was bound on the reservation's runtime. It is read
+from the record's session bindings when the reply is made and is absent when
+the role has no such attempt. Whether that session is still usable is the
+orchestrator's native evidence, not a recorded fact.
+<!-- /planned:reuse-retained-worker-sessions -->
+
+<!-- planned-change:reuse-retained-worker-sessions -->
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
@@ -187,6 +197,34 @@ before workspace work, record writes or stamps. If a child starts before binding
 it reports that prerequisite and awaits its parent's native follow-up. Exact
 replay succeeds; changed child identity or workspace refuses. Binding neither
 calls the runtime nor transfers the orchestrator's claim to the child.
+<!-- change:reuse-retained-worker-sessions -->
+Reservation commits before native delegation. An outstanding same-role retry
+returns the same attempt and inputs. Changed inputs or a second workspace/child
+role refuse while that attempt is outstanding. Claim, hold, and configured
+`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
+require PRD approval when configured). Every new repository attempt captures the
+current shared `<slug>/work` head. The orchestrator starts a fresh worker with
+shared isolation through `runtime.dispatch`, or continues the role's prior
+session through `runtime.message_child`; `general/procedure/orchestration`
+decides which.
+
+Immediately after delegating a fresh worker, and before sending a continued
+worker its brief, it records `instrukt todo bind <slug> --role <role>
+--attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
+[--base <sha>]`. Binding requires the reservation, same claim holder and selected
+runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
+(and matching worktree, branch, and clean initial head) are required and every
+child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
+worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
+`--branch`, and `--base` must be omitted. Bind
+before workspace work, record writes or stamps. If a child starts before binding,
+it reports that prerequisite and awaits its parent's native follow-up. Exact
+replay succeeds; changed child identity or workspace refuses. A later attempt
+of a role may bind the native session an earlier attempt of that role was bound
+to: the earlier attempt keeps its recorded release, and the worker's evidence
+binds to the new attempt. Binding neither calls the runtime nor transfers the
+orchestrator's claim to the child.
+<!-- /planned-change:reuse-retained-worker-sessions -->
 
 An interrupted dispatch or bind leaves the reservation outstanding. Recover the
 existing child through the parent's native task evidence and bind it; project
@@ -395,6 +433,19 @@ When the filing is made, confirmed or not
 Then nothing is filed
 And the agent is told that a bug is reported through the bug front door, and how to reach it
 ```
+
+<!-- planned:reuse-retained-worker-sessions -->
+### UC-TD13: Continue a retained worker into its next round
+
+```gherkin
+Given a developer's orchestrator holds a role's completed attempt that was bound to a worker's native session
+When it reserves that role's next attempt and binds it to the same session at the current shared head
+Then the reservation names that session as the role's prior session
+And instrukt records the new attempt on that session without calling the runtime
+And the worker stamps its required evidence against the new attempt
+And the earlier attempt keeps its recorded release
+```
+<!-- /planned:reuse-retained-worker-sessions -->
 
 ## Known caveats
 

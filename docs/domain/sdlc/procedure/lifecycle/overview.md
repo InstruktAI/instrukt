@@ -250,6 +250,7 @@ apply to a checkout still in active build or awaiting review before handoff.
        additions, edits, replacements, or retirements; publication-checked
        `instrukt docs get <id>` from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
+<!-- planned-change:reuse-retained-worker-sessions -->
 3. **Select and dispatch the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
@@ -263,6 +264,32 @@ apply to a checkout still in active build or awaiting review before handoff.
    a separate one-off worktree session (`runtime.start_thread` /
    `runtime.inspect_thread`) so the shared-workspace admission guarantee
    remains unbroken.
+<!-- change:reuse-retained-worker-sessions -->
+3. **Select and dispatch the next primitive.** Every admitted role that shares
+   `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
+   `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
+   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) reserves
+   each round via
+   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
+   then continues its retained worker or starts a fresh one as the
+   continue-or-start-fresh rule of the orchestration loop in
+   `general/procedure/orchestration` decides:
+   - **Continue** — bind the new attempt to the role's prior session via
+     `instrukt todo bind`, then send its brief through `runtime.message_child`
+     above. The producers whose follow-up rounds continue are `intaker`,
+     `architect`, `planner`, `builder`, `fixer`, `deferrer` and `finalizer`;
+     the reviewers whose finding-closure re-checks continue are `prd-reviewer`,
+     `architecture-reviewer`, `plan-reviewer` and `build-reviewer`.
+   - **Start fresh** — delegate with shared isolation in `<slug>/work` through
+     `runtime.dispatch` above and immediately bind via `instrukt todo bind`.
+
+   Only one workspace attempt may be active at a time; completion stamps
+   release it atomically. Live verification (`verifier`) is not a shared
+   `<slug>/work` `runtime.dispatch` child; it runs per Step 4b in a separate
+   one-off worktree session (`runtime.start_thread` /
+   `runtime.inspect_thread`) so the shared-workspace admission guarantee
+   remains unbroken.
+<!-- /planned-change:reuse-retained-worker-sessions -->
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
    discloses each finding's `Method:` (finding format in

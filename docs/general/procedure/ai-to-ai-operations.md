@@ -28,6 +28,7 @@ lifecycle contract.
 1. Resolve the project and assignment from the work record or explicit brief.
    Follow the existing session binding for a todo and role; do not infer
    identity from similar briefs or target another environment.
+<!-- planned-change:reuse-retained-worker-sessions -->
 2. For each required runtime action, use its configured value below. The selected runtime entry
    supplies a native instruction or an instrukt route for a missing native
    counterpart. Write the brief as the reality wanted from its role. For a todo worker,
@@ -41,6 +42,23 @@ lifecycle contract.
    and branch with shared isolation (`task-preparer` on `kind: task` runs as a
    worktree-less child attempt). Bind the recorded placement, not an incidental
    shell cwd.
+<!-- change:reuse-retained-worker-sessions -->
+2. For each required runtime action, use its configured value below. The selected runtime entry
+   supplies a native instruction or an instrukt route for a missing native
+   counterpart. Write the brief as the reality wanted from its role. For a todo worker,
+   execute the workflow's `instrukt todo attempt` action, preserving its rendered
+   brief, role, attempt, semantic key, display title and captured shared head. When the
+   governing role's procedure starts the round fresh, delegate using the
+   selected runtime instruction below, then record `instrukt todo bind` with the
+   native child id and matching shared workspace evidence before admitting work; when it
+   continues a retained child into the new attempt, follow step 3. Retain an
+   interrupted reservation and recover its existing native task before retrying.
+   Repository todo children (preparation writers, builders, reviewers, deferrer,
+   finalizer) all inherit `todo-orchestrator`'s single `<slug>/work` worktree
+   and branch with shared isolation (`task-preparer` on `kind: task` runs as a
+   worktree-less child attempt). Bind the recorded placement, not an incidental
+   shell cwd.
+<!-- /planned-change:reuse-retained-worker-sessions -->
 
    <!-- @config: runtime.dispatch -->
 
@@ -48,8 +66,18 @@ lifecycle contract.
 
    <!-- @config: runtime.start_thread -->
 
+<!-- planned-change:reuse-retained-worker-sessions -->
 3. Continue your identified child using its retained native identity. Findings,
    reviewer follow-ups and recovery remain within that role's assignment:
+<!-- change:reuse-retained-worker-sessions -->
+3. Continue your identified child using its retained native identity. Within an
+   outstanding attempt, findings, reviewer follow-ups and recovery remain within
+   that role's assignment. When the governing role's procedure continues the
+   child into a newly reserved attempt, record `instrukt todo bind` for that
+   attempt with the child's retained native id and matching shared workspace
+   evidence first, then send the attempt's rendered brief; the child works the
+   new round under the new attempt:
+<!-- /planned-change:reuse-retained-worker-sessions -->
 
    <!-- @config: runtime.message_child -->
 

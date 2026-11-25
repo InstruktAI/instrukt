@@ -65,6 +65,7 @@ actually did the work recorded there.
    state, open findings, and gate status. Code enforces only the three hard
    integrity invariants; choose the next composable primitive from the prose
    playbook in `sdlc/procedure/lifecycle/overview`.
+<!-- planned-change:reuse-retained-worker-sessions -->
 3. Reserve a new worker through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`.
    Use its rendered brief, role, attempt, semantic key, display title and
    captured shared head with the configured runtime delegation instruction under
@@ -72,6 +73,33 @@ actually did the work recorded there.
    the native child id and matching shared workspace evidence. Continue active
    attempts with native child messaging. Yield while valid work continues; read
    the native result and current factual ledger before choosing the next move.
+<!-- change:reuse-retained-worker-sessions -->
+3. Reserve every round through `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`.
+   Use its rendered brief, role, attempt, semantic key, display title and
+   captured shared head, then continue the role's retained worker or start a
+   fresh one through the configured runtime instructions under
+   `general/procedure/ai-to-ai-operations`:
+   - **Continue.** The reservation names the role's prior session when the
+     record holds one. Continue it when that session is still usable, its
+     recorded selection matches the reservation's resolved selection, and the
+     round is a producer's follow-up round or a reviewer's re-check of a target
+     that changed only to address that reviewer's findings, unless the
+     runtime's own instructions require a fresh reviewer for the re-check.
+     Record `todo bind` for the new attempt with that session's native id and
+     matching shared workspace evidence, then send the rendered brief through
+     the configured child-message instruction, so the worker receives its
+     round already bound.
+   - **Start fresh.** Every other round uses the configured delegation
+     instruction, with `todo bind` recorded immediately for the new native
+     child id and matching shared workspace evidence: a role's first attempt,
+     a prior session that is gone or unusable, a changed selection, and a
+     reviewer facing a substantive scope or design rewrite or a deadlocked
+     review loop.
+
+   Follow up an outstanding attempt through the configured child-message
+   instruction. Yield while valid work continues; read the native result and
+   current factual ledger before choosing the next move.
+<!-- /planned-change:reuse-retained-worker-sessions -->
 4. Assess current session and work evidence. A step is complete only when the
    record carries its required artifact and stamp with current target bindings.
    A reply or ended run alone supplies neither.
