@@ -16,6 +16,7 @@ parameters:
 
 ## Required reads
 
+- [general/procedure/event-handling/overview](../../../../../general/procedure/event-handling/overview.md)
 - [sdlc/procedure/lifecycle/review](../review.md)
 - [sdlc/policy/todo-creation-discipline](../../../policy/todo-creation-discipline.md)
 
