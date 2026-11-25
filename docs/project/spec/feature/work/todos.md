@@ -169,10 +169,11 @@ Setup admits its setup-only brief; other roles match the procedure's declared ro
 
 <!-- planned:reuse-retained-worker-sessions -->
 The reply also names the role's prior session when the record holds one: the
-native identity, attempt number and recorded selection of the role's most
-recent earlier attempt that was bound on the reservation's runtime. It is read
-from the record's session bindings when the reply is made and is absent when
-the role has no such attempt. Whether that session is still usable is the
+native identity and attempt number of the role's most recent earlier attempt
+that was bound on the reservation's runtime, with that attempt's recorded
+selection and the session that dispatched it where the record holds them. It
+is read from the record's session bindings when the reply is made and is absent
+when the role has no such attempt. Whether that session is still usable is the
 orchestrator's native evidence, not a recorded fact.
 <!-- /planned:reuse-retained-worker-sessions -->
 
