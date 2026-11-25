@@ -113,6 +113,7 @@ selection. Preserve the shipped event-handler/default fallback and validate
 changed action and bundle references under
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 GitHub setup follows `project/instrukt/spec/feature/work/github-apps`: reuse the
 existing three TeleClaude Apps where installed, otherwise guide their creation
 and installation, verify the actual App/bot identities and repository/board
@@ -121,6 +122,16 @@ references in the existing `roles` map. Write App keys only through
 `instrukt secrets set`. Verify installation-token issuance and distinct author/
 reviewer actors without exposing keys or tokens. A missing permission or failed
 identity/issuance check leaves setup visibly incomplete with its repair door.
+<!-- change:remove-teleclaude-import-and-references -->
+GitHub setup follows `project/instrukt/spec/feature/work/github-apps`: reuse the
+three Apps an installation already has, otherwise guide their creation
+and installation, verify the actual App/bot identities and repository/board
+permissions, and record machine-global public profiles plus per-role App
+references in the existing `roles` map. Write App keys only through
+`instrukt secrets set`. Verify installation-token issuance and distinct author/
+reviewer actors without exposing keys or tokens. A missing permission or failed
+identity/issuance check leaves setup visibly incomplete with its repair door.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 ### Runtime coordination
 

@@ -5,8 +5,13 @@ description: What instrukt is and the problem it exists to solve.
 
 ## What
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 Instrukt is a modular Rust CLI for context engineering: documentation instructs
 agents through progressive retrieval and publication. It replaces TeleClaude.
+<!-- change:remove-teleclaude-import-and-references -->
+Instrukt is a modular Rust CLI for context engineering: documentation instructs
+agents through progressive retrieval and publication.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 ## Why
 

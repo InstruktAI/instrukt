@@ -112,8 +112,11 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     its pull request.
 - A version tag produces release binaries for macOS arm64 and Linux
   x86_64/arm64, and only from a revision that passed those checks.
+<!-- planned-change:remove-teleclaude-import-and-references -->
 - Parity against the corpus instrukt was extracted from is a one-off
   acceptance run, not a CI dependency.
+<!-- change:remove-teleclaude-import-and-references -->
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 - Code is synchronous by default; a crate that needs concurrent network I/O
   keeps it behind its own interface. Clippy runs with `-D warnings`, denying
   `dbg_macro` and `print_stdout` outside the command output writer.

@@ -204,7 +204,11 @@ And the developer can read that procedure and sees the broken entry named in the
 ## Known caveats
 
 - Duplicate protection lasts seven days and replay lasts only while Redis retains payloads. This is no permanent exactly-once business-effect contract.
+<!-- planned-change:remove-teleclaude-import-and-references -->
 - UC-EC11 and UC-EC12's TeleClaude notification/correlation goals have no admitted instrukt consumers in this port and are not imported or repurposed.
+<!-- change:remove-teleclaude-import-and-references -->
+- UC-EC11 and UC-EC12's notification/correlation goals have no admitted instrukt consumers and are not repurposed.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 - An interruption or lost append response can leave a settled dead letter counted
   as unannounced even if its announcement reached Redis. It is not replayed; the
   durable dead letter remains inspectable.

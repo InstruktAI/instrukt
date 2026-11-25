@@ -54,6 +54,7 @@ requirements; different bots alone do not prove review occurred.
 
 ### Configuration skill and installation
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 The configuration skill reuses the three existing TeleClaude Apps on the
 installation that already has them, verifying their configured identity and
 repository installation instead of creating duplicates. On other installations
@@ -62,6 +63,16 @@ public identities; globally unique slugs can differ from the shipped names.
 It writes private keys only through `instrukt secrets set`, into
 `~/.instrukt/secrets.env` under the owned-files contract. No key or token is
 carried in a configuration report, repo file or assignment brief.
+<!-- change:remove-teleclaude-import-and-references -->
+The configuration skill reuses the three Apps on an
+installation that already has them, verifying their configured identity and
+repository installation instead of creating duplicates. On other installations
+it guides creation and installation of the three Apps and records their actual
+public identities; globally unique slugs can differ from the shipped names.
+It writes private keys only through `instrukt secrets set`, into
+`~/.instrukt/secrets.env` under the owned-files contract. No key or token is
+carried in a configuration report, repo file or assignment brief.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 Setup verifies the App installation reaches the project's repository and has
 the permissions required by the operation: records/issues/artifacts and board

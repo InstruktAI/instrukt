@@ -141,6 +141,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   extracted searchable history is a separate contract. instrukt calls only the adapter's
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
+<!-- planned-change:remove-teleclaude-import-and-references -->
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
   `instrukt history extract|import-teleclaude|search|show`,
@@ -161,6 +162,28 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `runner.upstream_changed`,
   `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
   `workflow.finalized`.
+<!-- change:remove-teleclaude-import-and-references -->
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  operational `instrukt sessions list` surface,
+  `instrukt history extract|search|show`,
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
+  and runner-service registration by `instrukt install`;
+  structured adapter operations, semantic-state observation, optional bounded native conversation
+  reads and explicit delivery/assignment evidence capabilities, linked-thread
+  streams and optional notification; instrukt-owned start semantic-key discovery
+  and database locking; the hosting and the conversation assignment lookup that
+  the company context implements and the CLI wires. Every operational sessions
+  command accepts `--json`.
+  Agents use configured native operations in their own conversation and
+  record native child attempts through work. The adapter starts only without
+  an agent or for an explicit native-capability gap. Native delegation returns
+  shared workspace evidence. The unified `todo-orchestrator` and its native shared children
+  use one `<slug>/work` worktree and branch, with one workspace role admitted at a time
+  and atomic completion/release through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
+  `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
+  `workflow.finalized`.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 - **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
   project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
   supplies records and session identity, and the state database's file,
@@ -296,11 +319,18 @@ a computer's own events activate where they are emitted, external facts on the
 reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). A missing project checkout or company home on
 the activating computer fails visibly without forwarding.
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 Published general/domain procedures reach every home of their declared kind:
 one published procedure runs in each company's own home, wherever its publishing
 project is checked out.
 A project-local subscribed procedure reaches only that project's origin; this
 preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
+<!-- change:remove-teleclaude-import-and-references -->
+Published general/domain procedures reach every home of their declared kind:
+one published procedure runs in each company's own home, wherever its publishing
+project is checked out.
+A project-local subscribed procedure reaches only that project's origin.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
@@ -331,6 +361,7 @@ of event enablement and without a GitHub API call or a main-ahead event.
 
 ### Event naming and producer declarations
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
 `runner.upstream_changed`,
 `runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
@@ -339,6 +370,16 @@ and `workflow.finalized` → `workflow.finalized`.
 The producing contexts remain owners of these facts; subscriptions keep
 these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
 No compatibility alias or second occurrence is emitted.
+<!-- change:remove-teleclaude-import-and-references -->
+Existing vocabulary is retained explicitly: `runner.upstream_changed` →
+`runner.upstream_changed`,
+`runner.ci_completed` → `runner.ci_completed`, `runner.main_failing` →
+`runner.main_failing`, `runner.dependency_failing` → `runner.dependency_failing`,
+and `workflow.finalized` → `workflow.finalized`.
+The producing contexts remain owners of these facts; subscriptions keep
+these names. Event-platform types use `instrukt.*`.
+No compatibility alias or second occurrence is emitted.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 The canonical received boundary is the open event envelope, not a closed enum
 of these facts. Runner declarations use project origin;
@@ -376,12 +417,20 @@ in data.
 
 ### Event-platform facts emitted
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 `instrukt.system.event.dead_lettered` ports
 `teleclaude.system.event.dead_lettered`: subject is the failing stream entry,
 origin is none, and data declares string fields `attempt_count`, `consumer`,
 `consumer_id`, `dlq_destination`, `failing_stage`, `original_entry_id` and
 `original_stream`. It reports a parked act, not a failing lifecycle state.
 No signal/correlation or runtime-lifecycle producer is added by this declaration.
+<!-- change:remove-teleclaude-import-and-references -->
+For `instrukt.system.event.dead_lettered`, subject is the failing stream entry,
+origin is none, and data declares string fields `attempt_count`, `consumer`,
+`consumer_id`, `dlq_destination`, `failing_stage`, `original_entry_id` and
+`original_stream`. It reports a parked act, not a failing lifecycle state.
+No signal/correlation or runtime-lifecycle producer is added by this declaration.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 ### Domain events consumed
 
@@ -409,7 +458,11 @@ has no origin, as declared in Canonical fields.
 
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 - **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3, one-time TeleClaude mirror import and merged search across computers.
+<!-- change:remove-teleclaude-import-and-references -->
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
@@ -509,11 +562,19 @@ per-role session bindings. Work owns validation and persistence of those writes.
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
+<!-- planned-change:remove-teleclaude-import-and-references -->
 - A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
   harness, one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. GitHub-backed todos cover work movement without a separate
   computer-transfer feature.
+<!-- change:remove-teleclaude-import-and-references -->
+- A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
+  one-time layout migrations, experiment matching, dsh upgrades,
+  harness-install management and session/work-record migration are outside
+  instrukt. GitHub-backed todos cover work movement without a separate
+  computer-transfer feature.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 - There is no installation inspector or incident-alert subsystem. Module
   infrastructure checks retain their existing contract; anomaly notification
   and the log bug hunter cover unattended failures.

@@ -38,6 +38,7 @@ The resolved role is independent of workflow membership and todo enablement.
 Handling instructions come from the procedure's authored Required reads, resolved
 through ordinary closure. Metadata injects no documentation dependencies.
 
+<!-- planned-change:remove-teleclaude-import-and-references -->
 General and domain positions answer every origin of their declared kind.
 Project-position procedures must declare project home and answer only that
 project's origin. This is instrukt's existing project-local reach, an explicit
@@ -47,6 +48,16 @@ domain procedure declaring company home answers the origin of every company
 home (`project/instrukt/spec/feature/configuration/company-homes`). Person
 vocabulary is retained at general/domain positions; resolving a person home
 remains an unsupported execution capability with a visible activation failure.
+<!-- change:remove-teleclaude-import-and-references -->
+General and domain positions answer every origin of their declared kind.
+Project-position procedures must declare project home and answer only that
+project's origin. This is instrukt's existing project-local reach. A domain's owner project
+never silently restricts or broadens domain publication reach. A general or
+domain procedure declaring company home answers the origin of every company
+home (`project/instrukt/spec/feature/configuration/company-homes`). Person
+vocabulary is retained at general/domain positions; resolving a person home
+remains an unsupported execution capability with a visible activation failure.
+<!-- /planned-change:remove-teleclaude-import-and-references -->
 
 ### Published set and matching
 
