@@ -154,6 +154,15 @@ composition is:
 | `tools` | `mcp-access`, `company-reply`, each at `own`. |
 | `all` | Every catalog action at `any`. |
 
+<!-- planned:verification-stamp-and-evidence-store -->
+`verifier`, the role `sdlc/procedure/lifecycle/work/verify` declares, ships
+with the reviewer roles' entry: class `focused`, the `read` and `review`
+bundles, the reviewer App identity, and the reviewer roles' model selection
+under `project/instrukt/spec/feature/configuration/agent-selection`. Its
+grants reach reading, its own findings artifacts and its own stamp; committing
+code and writing documentation are outside them.
+<!-- /planned:verification-stamp-and-evidence-store -->
+
 A company connector may declare `role: technical-coordinator`; its sessions
 then start from `general/procedure/technical-coordinator`, the procedure
 declaring that role, rather than from company assistance. Its shipped entry

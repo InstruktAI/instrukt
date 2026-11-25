@@ -1,0 +1,87 @@
+---
+description: Raw evidence of live verification runs is kept outside the repository and outside what the work record reflects, found by reference for a bounded time.
+delivered_by:
+  - verification-stamp-and-evidence-store
+---
+# Verification Evidence — Spec
+
+## What it is
+
+Raw verification evidence is what a live verification run captures from the
+real surface it drives: recordings, screenshots, transcripts and observed
+state. The work record carries the sanitized `verification-plan` and
+`verification-findings` artifacts and a reference to the raw evidence. The
+evidence itself is kept in an evidence home outside Git and outside
+reflection, for a bounded time, under the publication boundary of
+`sdlc/policy/live-verification`.
+
+## Canonical fields
+
+### What the record carries
+
+Todo artifacts are the published work evidence and reflect to the issue
+tracker (`project/instrukt/spec/feature/work/github-record`). Raw verification
+evidence is never an artifact, is never committed to a repository and is never
+reflected.
+
+`verification-findings` names, for every run its disposition rests on, the
+evidence home that holds that run's raw evidence. A reference identifies the
+run; it is not a machine-local path. The disposition that binds the report is
+`project/instrukt/spec/feature/work/stamps`, Verification dispositions.
+
+### Evidence homes
+
+| Run | Evidence home | Kept until |
+| --- | --- | --- |
+| CI-hosted, private repository | The CI run's workflow artifacts, readable by the repository's authorized collaborators | The CI host's artifact retention ends |
+| CI-hosted, public repository | Private authorized storage outside the public repository | That storage's retention ends |
+| Local | The verification evidence store of the computer that ran it | Its retention lapses |
+
+For a CI-hosted run instrukt holds none of the evidence: the reference is the
+whole of what the record keeps, and access to the evidence is decided by the
+home that holds it. Which home a run uses follows the publication boundary of
+`sdlc/policy/live-verification`.
+
+### Local evidence store
+
+A local run that keeps raw evidence beyond its own teardown keeps it in the
+computer's verification evidence store. The store belongs to the instrukt home
+and lies outside every repository and worktree: evidence in it makes no
+worktree dirty and reaches no commit. Evidence is held per project, todo and
+run, and is found on that computer from the reference its findings carry.
+
+The store is derived state (`sdlc/policy/state-storage`): its source is the
+candidate commit and the verification run, and losing an entry costs running
+that verification again. Nothing of another nature is kept in it.
+
+instrukt removes an entry once its retention has lapsed. No agent deletes
+evidence from the store, and removing an entry changes no stamp, artifact or
+reference.
+
+Keeping evidence in the store is optional for a run. Evidence a run does not
+keep stays in that run's own temporary location and ends with the run.
+
+## Use cases
+
+### UC-VE1: Inspect what a local verification run observed after the run ended
+
+```gherkin
+Given a developer's candidate was verified by a local run that kept its raw evidence
+When the developer follows the findings' evidence reference on that computer while retention lasts
+Then the run's raw evidence is readable there
+And none of it is in the repository or in the todo's reflected record
+When the evidence's retention has lapsed
+Then instrukt has removed it without an agent deleting it
+```
+
+## Known caveats
+
+- A local run's evidence is readable only on the computer that ran it; it does
+  not follow a todo whose claim moves to another computer.
+- instrukt neither stores nor fetches the evidence of a CI-hosted run.
+
+## See Also
+
+- [project/instrukt/spec/feature/work/stamps](stamps.md)
+- [project/instrukt/spec/feature/work/github-record](github-record.md)
+- [project/instrukt/spec/domain/work](../../domain/work.md)

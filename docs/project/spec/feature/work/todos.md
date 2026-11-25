@@ -197,6 +197,7 @@ flight, before retrying the same assignment. Silence, missing binding and empty
 listings supply no such evidence. A workspace mismatch stays a visible binding
 gap; resolve that assignment before admitting work.
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
 `planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
 `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
@@ -205,6 +206,17 @@ worktree on `kind: task`). Completion stamps release writing
 attempts atomically; review verdicts and deferral-processing stamps release their
 read-only attempts. Released bindings remain tracking and evaluation evidence.
 Native parent linkage and child attention remain runtime-owned.
+<!-- change:verification-stamp-and-evidence-store -->
+`todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
+`planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
+`verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
+outstanding workspace-role attempt at a time (`task-preparer` runs without a
+worktree on `kind: task`). Completion stamps release writing
+attempts atomically; review verdicts, verification dispositions and
+deferral-processing stamps release their read-only attempts. Released bindings
+remain tracking and evaluation evidence. Native parent linkage and child
+attention remain runtime-owned.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### Role completion and failed attempts
 

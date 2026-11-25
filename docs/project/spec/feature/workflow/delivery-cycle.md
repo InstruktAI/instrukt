@@ -36,6 +36,31 @@ build, review, fix, process deferrals, and finalize.
    `builder`, `fixer`, and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact.
 
+<!-- planned:verification-stamp-and-evidence-store -->
+### Live verification disposition
+
+`--finalize-ready` also requires a current verification disposition for the
+exact candidate commit: a pass, a Tier 0 skip or a hotfix deferral bound to
+that commit and to the current `verification-findings` report
+(`project/instrukt/spec/feature/work/stamps`, Verification dispositions). A
+candidate whose current disposition is fail or blocked, or that carries none
+for its commit, is refused readiness, and the refusal names the disposition
+owed.
+
+A pass is admitted only from a bound `verifier` session distinct from the
+orchestrator and from every writer role, as a build-review approval is
+admitted only from an independent reviewer. The claim-holding
+`todo-orchestrator` may record a Tier 0 skip or a hotfix deferral itself,
+with no verifier attempt. Whether a candidate warrants a skip, a deferral or a
+live run is the orchestrator's judgment under `sdlc/policy/live-verification`;
+code admits the record and judges no diff
+(`general/principle/intelligence-boundaries`).
+
+`verifier` is a shared-worktree role under the attempt lock. Its attempt is
+reserved, bound and released like every other role's, and it works in
+`<slug>/work` at the candidate head, with no worktree or branch of its own.
+<!-- /planned:verification-stamp-and-evidence-store -->
+
 ### Fast-track and reversible routing
 
 Code imposes no mandatory `implementation-plan`, `setup`, `--build-started`,
@@ -171,6 +196,19 @@ And finalization is refused until an independent reviewer approves the exact pub
 When the independent reviewer approves that exact commit SHA
 Then the claim-holding orchestrator can record finalize readiness directly for integration
 ```
+
+<!-- planned:verification-stamp-and-evidence-store -->
+### UC-DC10: Hand off a candidate whose live behavior is accounted for
+
+```gherkin
+Given a developer's candidate is independently approved at its exact commit
+When no verification disposition is current for that commit
+Then finalize readiness is refused
+When an independent verifier records a pass for that exact commit and its findings
+Then readiness can be recorded for that candidate
+But a pass recorded by the orchestrator or a writer of the change is refused
+```
+<!-- /planned:verification-stamp-and-evidence-store -->
 
 ## Known caveats
 

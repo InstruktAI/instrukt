@@ -188,6 +188,35 @@ The readiness stamp and `workflow.finalized` event append commit together,
 idempotently by project/todo/SHA. It records the exact candidate for integration
 and does not release the execution claim.
 
+<!-- planned:verification-stamp-and-evidence-store -->
+### Verification dispositions
+
+A verification disposition records what is established about the live
+behavior of a candidate commit. Its vocabulary is closed: pass, fail, blocked,
+Tier 0 skip and hotfix deferral, with the meanings
+`sdlc/policy/live-verification` gives them. Any other value is refused.
+
+A disposition is commit-bound and report-bound. It names the exact candidate
+commit, which is the clean head of the shared todo worktree when it is
+recorded, and binds the current digest of the complete `verification-findings`
+report. A disposition with no such report, or recorded over a dirty tree, is
+refused without a partial record. It counts only for the commit and report it
+names: a later candidate commit carries none until one is recorded for it, and
+a rewritten report leaves the earlier disposition as history.
+
+A disposition recorded from a bound `verifier` attempt releases that attempt
+in the same transaction, as a build-review verdict releases its reviewer.
+Exact replay reports the retained outcome without a second release. A
+disposition recorded by the claim-holding orchestrator is a record-only write
+and releases nothing. Which session may record which disposition, and what
+finalize readiness requires of it, is workflow's rule in
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
+
+The raw evidence a disposition rests on is part of neither the stamp nor the
+reflected report. Where it is kept is
+`project/instrukt/spec/feature/work/verification-evidence`.
+<!-- /planned:verification-stamp-and-evidence-store -->
+
 ## Use cases
 
 Stamp capture supports the approval, GitHub-record and evaluation-report goals.
