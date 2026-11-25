@@ -515,7 +515,8 @@ pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 /// an assignment is bound to the attempt its dispatcher reserved. A session
 /// whose assignment carries no todo, such as a standing one, cannot also hold
 /// a todo's, so the request goes through a separate session. A todo worked
-/// without a worktree has nothing to reclaim.
+/// without a worktree has nothing to reclaim; what qualifies is a writing
+/// assignment bound to a repository todo's worktree.
 pub(crate) fn reclaim_door(
     assignment: Option<&instrukt_core::capabilities::Assignment>,
 ) -> &'static str {
@@ -526,7 +527,9 @@ pub(crate) fn reclaim_door(
         Some(assignment) if assignment.todo.is_none() => {
             "this session's assignment cannot also hold a todo's, so ask the todo's dispatcher to reserve a writing role attempt in the todo's worktree, bind it to a separate session, and reclaim from that session"
         }
-        Some(_) => "its todo is worked without a worktree, so there is nothing to reclaim",
+        Some(_) => {
+            "its todo is worked without a worktree, so there is nothing to reclaim; reclaiming needs a writing assignment bound to a repository todo's worktree"
+        }
     }
 }
 
