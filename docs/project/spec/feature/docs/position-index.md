@@ -28,6 +28,7 @@ states what an index may say and what validation reports about it.
 | `docs/domain/<x>/index.yaml` | `description`, `expanded`, `listed` |
 | `docs/project/index.yaml` | `expanded`, `listed` |
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **`expanded`** — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
 - **`listed`** — snippet ids rendered as one listing line each: id,
@@ -40,6 +41,20 @@ states what an index may say and what validation reports about it.
   surrounding whitespace is invalid. Names are accepted independently of
   installed or configured providers and native instruction-loading support. Those snippets are rendered into that
   runtime's global file only, after everything else.
+<!-- change:compressed-global-entrypoints -->
+- **`expanded`** — snippet ids rendered in full, each with its closure: its
+  transitive required reads, each once.
+- **`listed`** — snippet ids rendered as one listing line each: id and
+  description, leading to the command that reads it.
+- **`description`** — one line saying what the domain is about; the line that
+  stands for the domain in every agent's global file.
+- **`agents`** — a map from a provider name to snippet ids. A name has 1–64 ASCII
+  characters, starts with a letter and otherwise contains letters, digits,
+  underscores or hyphens (`^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`). Case is preserved;
+  surrounding whitespace is invalid. Names are accepted independently of
+  installed or configured providers and native instruction-loading support. Those snippets are rendered into that
+  runtime's global file only, after everything else.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 `general`'s `expanded` and `listed` may name ids from any domain: always-on
 content from several domains is chosen in this one place. A domain's index and

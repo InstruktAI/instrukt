@@ -63,6 +63,7 @@ everything a forced one did.
 
 ### What a sync writes
 
+<!-- planned-change:compressed-global-entrypoints -->
 | Output | Where | Content |
 | --- | --- | --- |
 | `general` | `~/.instrukt/docs/general/` | the snippets of `docs/general/`, published raw, with its `index.yaml` and `schema.yaml` when present |
@@ -75,6 +76,22 @@ everything a forced one did.
 | Editor schemas and modelines | the project's primary worktree | `project/instrukt/spec/feature/publication/editor-schemas` |
 | Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path; no record of the files a sync wrote outside the home |
 | Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `project/instrukt/spec/feature/publication/eval-fingerprint` |
+<!-- change:compressed-global-entrypoints -->
+| Output | Where | Content |
+| --- | --- | --- |
+| `general` | `~/.instrukt/docs/general/` | the snippets of `docs/general/`, published raw, with its `index.yaml` and `schema.yaml` when present |
+| Domains | `~/.instrukt/docs/<x>/` | for each `docs/domain/<x>/`: its snippets, published raw, with its `index.yaml` and `schema.yaml` when present |
+| Workflow flavor | `~/.instrukt/docs/<x>/workflow/` | the owning project's `docs/domain/<x>/workflow/` definitions, actions and templates, copied with the domain and retracted by the same owner rules; not snippet index entries |
+| Claims | the ownership record under `~/.instrukt/state/publication/` | the project as owner of each position it publishes |
+| Compressed units | the home, with the position they belong to | the committed compressed units of each published position (`project/instrukt/spec/feature/publication/compressed-units`) |
+| Published entries | the global index `~/.instrukt/state/index.yaml` | one entry per published snippet, owned by the project, carrying the snippet's lineage digests (`project/instrukt/spec/feature/publication/compressed-units`) |
+| Project position and entries | `~/.instrukt/docs/project/<slug>/…` and the global index | committed `docs/project/` content, including pending companions and its position files; entries owned by that project, ids `project/<slug>/…`, resolving to published files with source checkout provenance |
+| Global agent files | the homes of the configured agent runtimes | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+| Uncompressed global copies | the home, where no agent runtime loads them | only from the owner of `docs/general/` (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+| Editor schemas and modelines | the project's primary worktree | `project/instrukt/spec/feature/publication/editor-schemas` |
+| Publication state | `~/.instrukt/state/publication/` | the project's published commit and checkout path; no record of the files a sync wrote outside the home |
+| Eval fingerprint | `~/.instrukt/state/eval-fingerprint/` | digest associated with the published commit; `project/instrukt/spec/feature/publication/eval-fingerprint` |
+<!-- /planned-change:compressed-global-entrypoints -->
 
 - Snippets are published raw: their `@config` directives resolve when they are
   read (`project/instrukt/spec/domain/docs`). The global agent files
@@ -150,6 +167,7 @@ sync retracts it. No name is reserved beyond `general` and `project`, besides
 
 ### Retraction
 
+<!-- planned-change:compressed-global-entrypoints -->
 Everything the project published before and its committed main no longer
 yields is removed by the same sync: a position it stopped publishing (its
 directory under `~/.instrukt/docs/`, its claim, its entries), snippets deleted
@@ -157,6 +175,15 @@ or moved within a published position, and its index entries without a
 source. Retraction touches nothing another project owns, and no global agent file:
 those are written whole by every sync that publishes them and never removed
 (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- change:compressed-global-entrypoints -->
+Everything the project published before and its committed main no longer
+yields is removed by the same sync: a position it stopped publishing (its
+directory under `~/.instrukt/docs/`, its claim, its entries), snippets deleted
+or moved within a published position, the compressed units it no longer
+commits, and its index entries without a source. Retraction touches nothing another project owns, and no global agent file:
+those are written whole by every sync that publishes them and never removed
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ### Failure
 

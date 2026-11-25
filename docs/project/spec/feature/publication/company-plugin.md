@@ -26,6 +26,7 @@ The plugin is the folder `plugins/<key>/` at the repository's root, `<key>`
 being the company's key. It conforms to Claude's plugin, skill and plugin
 catalog formats (See Also), which decide where each of its files stands.
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **The manifest** names the plugin by the company's key and carries its
   version, a description and the company as its author.
 - **One skill**, named by the company's key. Its main file carries the
@@ -58,13 +59,47 @@ catalog formats (See Also), which decide where each of its files stands.
   the generated line of an instruction file
   (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
   generated line).
-
-<!-- planned:compressed-global-entrypoints -->
-The skill's main file holds each document it holds in full as that
-document's current compressed unit, and in its prose where the unit is stale
-or missing (`project/instrukt/spec/feature/publication/compressed-units`). A
-document the skill carries as a file of its own is carried in its prose.
-<!-- /planned:compressed-global-entrypoints -->
+<!-- change:compressed-global-entrypoints -->
+- **The manifest** names the plugin by the company's key and carries its
+  version, a description and the company as its author.
+- **One skill**, named by the company's key. Its main file carries the
+  skill's name and description, the name people write the company by as its
+  title, the company passage
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, The company
+  passage), and each `expanded` document in full, in the index's order, with
+  its required reads, each before the document that requires it and each
+  once.
+- **Each other document** the index selects or a required read reaches is a
+  file of its own inside the skill, under one folder of the skill at the
+  document's path relative to `docs/`. The main file names each `listed`
+  document by one line: that file's path inside the skill and the document's
+  `description`. A document that requires another names it by where the
+  plugin carries it.
+- **Compressed in the main file.** The main file holds each document it
+  holds in full as that document's current compressed unit, and in its prose
+  where the unit is stale or missing
+  (`project/instrukt/spec/feature/publication/compressed-units`). A document
+  the main file holds compressed is also carried in its prose as a file of
+  its own, and the main file names that file with the document's compressed
+  rules, so a reader without the repository reaches its full prose.
+- **Every document's prose once.** Each document the index selects, and each
+  document their required reads reach, is carried in its prose exactly once:
+  in the main file where an `expanded` document brings it in and the main
+  file holds it in prose, otherwise as a file of its own.
+- **References between documents.** A reference in one company document's
+  text to another, in each form the company's knowledge admits
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
+  company's knowledge stands alone), names in the plugin where the plugin
+  carries that document.
+- **The descriptions are instrukt's.** The plugin's and the skill's
+  descriptions say whose knowledge the plugin holds and when an agent uses
+  the skill. They take the company's name and nothing else: no document and
+  no index replaces, extends or removes them.
+- **Each file opens as its format requires.** No file of the plugin carries
+  the generated line of an instruction file
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
+  generated line).
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ### What the documents may say
 
@@ -110,12 +145,22 @@ With a finding, no file is written or removed.
 
 ### What the rendering is a function of
 
+<!-- planned-change:compressed-global-entrypoints -->
 The plugin and its catalog entry are a function of the repository's index and
 documents, the company's key, the name people write the company by, the
 plugin the repository already holds, and the rendering instrukt release.
 Nothing else from the computer enters: no home, no publication, no
 configuration layer and no environment. A fresh clone and the binary are
 enough, and a home and a clone of the repository render the same bytes.
+<!-- change:compressed-global-entrypoints -->
+The plugin and its catalog entry are a function of the repository's index,
+documents and compressed units, the company's key, the name people write the
+company by, the plugin the repository already holds, and the rendering
+instrukt release.
+Nothing else from the computer enters: no home, no publication, no
+configuration layer and no environment. A fresh clone and the binary are
+enough, and a home and a clone of the repository render the same bytes.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 The caller gives the key and the name with every request, for a rendering, a
 check and a validation alike. instrukt takes neither from the repository's

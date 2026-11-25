@@ -56,11 +56,14 @@ and the report procedure itself are outside this shipped process set.
   order the projects published.
 - **Change.** Adding, removing or changing the content of an `eval: true`
   snippet changes the fingerprint; changes to other snippets do not.
-- **Compressed units.** An `eval: true` snippet's compressed unit
-  (`project/instrukt/spec/feature/publication/compressed-units`) is part of
-  the evaluated doctrine: adding, removing or changing it changes the
-  fingerprint, and what state records per published commit tells a change of
-  evaluated prose apart from a change of compressed units alone.
+- **Compressed units.** The fingerprint also covers the current compressed
+  units (`project/instrukt/spec/feature/publication/compressed-units`) that
+  the global agent files hold, those of the always-on doctrine and of each
+  runtime's own rules, and the current unit of each `eval: true` snippet. A
+  stale unit is held by no rendering and does not enter it. Adding, removing
+  or changing a covered unit changes the fingerprint, and what state records
+  per published commit tells a change of evaluated prose apart from a change
+  of covered units alone.
 - **Empty.** A corpus with no `eval: true` snippet has a defined fingerprint
   of its own, distinct from any non-empty one.
 - **Association.** State records the fingerprint per published commit, rather
@@ -84,8 +87,13 @@ fingerprint computation as part of publication.
 
 ## Known caveats
 
+<!-- planned-change:compressed-global-entrypoints -->
 - Only published snippets (from `docs/general/` and `docs/domain/<x>/`) with `eval: true` enter the fingerprint; `docs/project/` snippets do not.
 - The digest hashes committed raw snippet content, before read-time expansion.
+<!-- change:compressed-global-entrypoints -->
+- Only published snippets (from `docs/general/` and `docs/domain/<x>/`) with `eval: true`, and the compressed units the global agent files hold, enter the fingerprint; `docs/project/` snippets and their units do not.
+- The digest hashes committed raw snippet content and the bodies of the units it covers, before read-time expansion.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ## See Also
 

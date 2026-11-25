@@ -153,13 +153,14 @@ read it. Every rendering that lists snippets uses these forms: the domain read
 above, the global agent files and the project root `AGENTS.md`.
 <!-- change:compressed-global-entrypoints -->
 A listing line stands for one snippet and leads an agent to the command that
-reads it. The domain read above and the project root `AGENTS.md` use the forms
-below, each line carrying its command. A global agent file carries the command
-once, in the heading over each run of listing lines: its listed snippets stand
-under a heading naming `instrukt docs get <id>`, each line
-`` - <id>: <description> ``, and its triggered procedures under a heading
-naming `instrukt docs get <id> --closure`, each line
-`` - <id>: <description> — when: <activation_trigger> ``.
+reads it, in one of two forms. In the inline form, the domain read's, each
+line carries its command, as in the table below. In the headed form, a
+heading over a run of lines of one kind carries the command once, and each
+line carries the rest: `` - <id>: <description> `` under a heading naming
+`instrukt docs get <id>`, and `` - <id>: <description> — when: <activation_trigger> ``
+under a heading naming `instrukt docs get <id> --closure`. Which form another
+rendering uses is that rendering's
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 <!-- /planned-change:compressed-global-entrypoints -->
 
 | Stands for | Line |

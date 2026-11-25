@@ -54,6 +54,7 @@ forms and closures are
 owns the domain read. This spec owns the grouping and headings. A rendered
 section, in order:
 
+<!-- planned-change:compressed-global-entrypoints -->
 1. **Heading.** `# <Name>`: the position's name with its first letter
    capitalised (`# General`, `# Sdlc`, `# Project`).
 2. **Expanded.** Each id in `expanded`, in the order listed, in full with its
@@ -72,6 +73,32 @@ section, in order:
 4. **Triggered procedures.** One listing line per procedure of the position
    carrying an `activation_trigger`, naming its trigger and
    `instrukt docs get <id> --closure`.
+<!-- change:compressed-global-entrypoints -->
+1. **Heading.** `# <Name>`: the position's name with its first letter
+   capitalised (`# General`, `# Sdlc`, `# Project`).
+2. **Expanded.** Each id in `expanded`, in the order listed, in full with its
+   closure: its transitive required reads, each before the snippet that
+   requires it. The traversal order is kept: each snippet sits under the
+   `# <Domain>` heading of the domain it belongs to, so an `sdlc` snippet
+   that `general`'s `expanded` selects sits under `# Sdlc`, not `# General`,
+   and when the traversal moves to a snippet of another domain a heading for
+   that domain opens there — a domain's heading appears again when the
+   traversal returns to it (`general/A`, then `sdlc/B`, then `general/C`
+   renders `# General`, `# Sdlc`, `# General`). Order is never changed to
+   group a domain's snippets together. Every heading of a rendered
+   snippet is demoted one level, except inside fenced code; an H6 stays H6.
+3. **Listed.** One listing line per id in `listed`, leading to
+   `instrukt docs get <id>`.
+4. **Triggered procedures.** One listing line per procedure of the position
+   carrying an `activation_trigger`, naming its trigger and leading to
+   `instrukt docs get <id> --closure`.
+
+A global agent file gives its listed snippets and its triggered procedures
+each a heading of their own that carries the read command once, and their
+lines carry no command; the root `AGENTS.md` and the domain read carry the
+command on every line. Both are listing-line forms of
+`project/instrukt/spec/feature/docs/progressive-retrieval`.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 Within one rendered file, a snippet appears in full at most once. A
 triggered procedure keeps its trigger and its `instrukt docs get <id>
@@ -86,10 +113,12 @@ fenced code block is left exactly as written and is never reported as
 unresolved.
 
 <!-- planned:compressed-global-entrypoints -->
-Wherever this spec says a rendering holds a snippet or a company document in
-full, the rendering holds that source's current compressed unit in its place,
-and the source's prose where its unit is stale or missing
-(`project/instrukt/spec/feature/publication/compressed-units`).
+Wherever this spec says a global agent file, a root `AGENTS.md` or a company
+home's `AGENTS.md` holds a snippet or a company document in full, that
+rendering holds the source's current compressed unit in its place, and the
+source's prose where its unit is stale or missing
+(`project/instrukt/spec/feature/publication/compressed-units`). The domain
+read holds every snippet in its prose.
 <!-- /planned:compressed-global-entrypoints -->
 
 ### Committed entrypoints
@@ -356,6 +385,14 @@ the home and leaves any other there as it is.
   and `instrukt docs render` leave it in place, and `instrukt docs render
   --check` does not name it.
 
+<!-- planned:compressed-global-entrypoints -->
+The compressed units a company's repository keeps
+(`project/instrukt/spec/feature/publication/compressed-units`) are no company
+documents: no index entry, required read or reference names one, the
+company's knowledge rules do not read one as a document, and their presence
+is no finding.
+<!-- /planned:compressed-global-entrypoints -->
+
 ### Global agent files
 
 Rendered from what is published on the computer, and written only by the sync
@@ -534,9 +571,7 @@ runtime loads or reads as an instruction file, on a case-insensitive file
 system as well. It is written whole every time, as the global file is. A
 global file that holds a compressed unit names, near its top and in text
 every runtime loads, where that uncompressed copy stands and how to read any
-snippet it names in full. In a global file, `general`'s listed snippets and
-triggered procedures stand under headings that carry their read command once
-(`project/instrukt/spec/feature/docs/progressive-retrieval`, Listing lines).
+snippet it names in full.
 <!-- /planned:compressed-global-entrypoints -->
 
 ## Use cases
