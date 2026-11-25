@@ -28,7 +28,8 @@ pub(crate) use _observe::{
 pub use _provider::{
     ApprovalStatus, ArtifactFact, AttemptFact, BuildReviewBinding, BuildReviewFact, DriftStatus,
     GatesFact, IntegrateGateStatus, PrerequisiteFact, PrerequisiteStanding, ReviewFact, TodoLedger,
-    WorkspaceFact, is_independent_reviewer, prd_approval_satisfied, task_approval_satisfied,
+    VerificationBinding, VerificationFact, VerifierLimitFact, WorkspaceFact,
+    is_independent_reviewer, prd_approval_satisfied, task_approval_satisfied,
     waiting_for_human_approval,
 };
 pub use _schema::WorkflowSchema;
