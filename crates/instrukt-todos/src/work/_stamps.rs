@@ -7,16 +7,17 @@
 use std::path::Path;
 
 use instrukt_core::git;
-use instrukt_core::ids::{CommitSha, SessionRef};
+use instrukt_core::ids::{CommitSha, SessionRef, TodoSlug};
 use instrukt_runner::dispatch::TASK_RUNNER_ROLE;
 use instrukt_runner::interfaces::TodoKind;
 use jiff::Timestamp;
 
 use super::_error::WorkError;
-use super::_model::TodoRecord;
+use super::_model::{TodoRecord, TodoRef};
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
-    Grounding, PreparationReview, ReviewVerdict, StampFact, TaskResult, artifact_names,
+    Grounding, PreparationReview, ReviewVerdict, StampFact, TaskResult, VerificationDisposition,
+    artifact_names,
 };
 
 /// One admitted stamp form, as `instrukt todo stamp <slug>` takes it.
@@ -67,6 +68,13 @@ pub enum StampRequest {
     DeferralsProcessed,
     /// `--finalize-ready`.
     FinalizeReady,
+    /// `--verification <disposition> [--follow-up <slug>]`: a live
+    /// verification disposition of the candidate at the clean head
+    /// (`stamps`, "Verification dispositions").
+    VerificationDisposition {
+        disposition: VerificationDisposition,
+        follow_up: Option<TodoSlug>,
+    },
     /// `--task-firing-started [--occurrence <RFC 3339>]`: the occurrence
     /// the run executes; now when not given (deliberate pickup).
     TaskFiringStarted { occurrence: Option<Timestamp> },
@@ -88,6 +96,11 @@ pub(crate) struct StampInputs<'a> {
     /// The acting session, when the caller runs in one.
     pub session: Option<&'a SessionRef>,
     pub now: Timestamp,
+    /// The open todo a verification disposition's `--follow-up` names, as
+    /// the work session resolved it: `None` when none was named, or when
+    /// the slug names no todo of the project that is neither delivered nor
+    /// withdrawn.
+    pub follow_up: Option<&'a TodoRef>,
 }
 
 /// What a stamp form resolved to: the fact, and the effects that come with
@@ -382,6 +395,20 @@ pub(crate) fn resolve(
                 ..plain(StampFact::FinalizeReady { commit })
             }
         }
+        StampRequest::VerificationDisposition {
+            disposition,
+            follow_up,
+        } => {
+            // Mechanical presence and identity checks only: the findings
+            // text is never read (`sdlc/policy/no-semantic-validators`).
+            let follow_up = follow_up_of(record, *disposition, follow_up.as_ref(), inputs)?;
+            plain(StampFact::VerificationDisposition {
+                disposition: *disposition,
+                commit: head(inputs.cwd)?,
+                report: current(record, artifact_names::VERIFICATION_FINDINGS)?,
+                follow_up,
+            })
+        }
         StampRequest::TaskFiringStarted { occurrence } => {
             task_only(record)?;
             let occurrence = occurrence.unwrap_or(inputs.now);
@@ -478,6 +505,43 @@ pub(crate) fn resolve(
             }
         }
     })
+}
+
+/// The follow-up a disposition records: a hotfix deferral names another
+/// open todo of the project as its tracked follow-up
+/// (`sdlc/policy/live-verification`, Exceptions); no other disposition
+/// names one.
+fn follow_up_of(
+    record: &TodoRecord,
+    disposition: VerificationDisposition,
+    named: Option<&TodoSlug>,
+    inputs: &StampInputs<'_>,
+) -> Result<Option<TodoRef>, WorkError> {
+    let deferral = disposition == VerificationDisposition::HotfixDeferred;
+    let Some(slug) = named else {
+        if deferral {
+            return Err(WorkError::refused(
+                "a hotfix deferral names its tracked follow-up todo; record it with `--verification hotfix_deferred --follow-up <slug>`",
+            ));
+        }
+        return Ok(None);
+    };
+    if !deferral {
+        return Err(WorkError::refused(format!(
+            "only a hotfix deferral names a follow-up; drop `--follow-up`, or record `--verification hotfix_deferred --follow-up {slug}`"
+        )));
+    }
+    let todo = inputs.follow_up.ok_or_else(|| {
+        WorkError::refused(format!(
+            "the follow-up `{slug}` is no open todo of this project: it is unknown, delivered or withdrawn; name the open todo that tracks the deferred verification, or file it first"
+        ))
+    })?;
+    if todo.id == record.id {
+        return Err(WorkError::refused(format!(
+            "a hotfix deferral's follow-up is another todo; `{slug}` is this one: file the todo that tracks the deferred verification and name it"
+        )));
+    }
+    Ok(Some(todo.clone()))
 }
 
 /// The evidence gate `gate` approves: the current prd, or a task's plan.
@@ -669,4 +733,166 @@ fn merge_base(cwd: &Path, base_branch: &str) -> Result<CommitSha, WorkError> {
         Err(err) => return Err(err.into()),
     };
     CommitSha::parse(sha.trim()).map_err(|err| WorkError::refused(err.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::work::{Artifact, TodoId, Version};
+
+    /// An active change `ship-it` with a `verification-findings` report.
+    fn record() -> TodoRecord {
+        let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
+            "schema": 4, "id": "ab".repeat(16), "project": "demo", "slug": "ship-it",
+            "kind": "change", "status": "active", "created": "2026-01-01T00:00:00Z",
+            "created_by": {"person": {"name": "dev"}}, "revision": 1,
+        }))
+        .unwrap();
+        record.artifacts.push(Artifact {
+            name: ArtifactName::new(artifact_names::VERIFICATION_FINDINGS),
+            address: None,
+            versions: vec![Version {
+                digest: ContentDigest::of("Tier 0: deterministic CLI change."),
+                writer: Actor::Person { name: "dev".into() },
+                created: Timestamp::from_second(5).unwrap(),
+                derived_from: Vec::new(),
+                sequence: 1,
+                grounding: Grounding::default(),
+                remote: None,
+                content: None,
+            }],
+        });
+        record
+    }
+
+    /// A repository with one commit: the candidate's clean head.
+    fn candidate() -> (tempfile::TempDir, CommitSha) {
+        let repo = tempfile::tempdir().unwrap();
+        let dir = repo.path();
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.name", "Test"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "commit.gpgsign", "false"],
+            &["commit", "-q", "--allow-empty", "-m", "candidate"],
+        ] {
+            git::run(dir, args.iter().copied()).unwrap();
+        }
+        let sha = head(dir).unwrap();
+        (repo, sha)
+    }
+
+    fn todo_ref(id: char, slug: &str) -> TodoRef {
+        TodoRef {
+            id: TodoId::parse(&id.to_string().repeat(32)).unwrap(),
+            slug: TodoSlug::parse(slug).unwrap(),
+        }
+    }
+
+    fn resolve_disposition(
+        record: &TodoRecord,
+        cwd: &Path,
+        disposition: VerificationDisposition,
+        named: Option<&str>,
+        found: Option<&TodoRef>,
+    ) -> Result<StampFact, String> {
+        let request = StampRequest::VerificationDisposition {
+            disposition,
+            follow_up: named.map(|slug| TodoSlug::parse(slug).unwrap()),
+        };
+        let inputs = StampInputs {
+            cwd,
+            base_branch: "main",
+            session: None,
+            now: Timestamp::from_second(9).unwrap(),
+            follow_up: found,
+        };
+        resolve(&request, record, &inputs)
+            .map(|resolved| resolved.fact)
+            .map_err(|err| err.to_string())
+    }
+
+    #[test]
+    fn a_hotfix_deferral_binds_head_report_and_its_open_follow_up() {
+        let (repo, sha) = candidate();
+        let record = record();
+        let follow_up = todo_ref('c', "verify-live-later");
+        let fact = resolve_disposition(
+            &record,
+            repo.path(),
+            VerificationDisposition::HotfixDeferred,
+            Some("verify-live-later"),
+            Some(&follow_up),
+        )
+        .unwrap();
+        assert_eq!(
+            fact,
+            StampFact::VerificationDisposition {
+                disposition: VerificationDisposition::HotfixDeferred,
+                commit: sha,
+                report: ContentDigest::of("Tier 0: deterministic CLI change."),
+                follow_up: Some(follow_up),
+            }
+        );
+    }
+
+    #[test]
+    fn follow_up_presence_and_identity_are_refused_before_anything_is_bound() {
+        let record = record();
+        let nowhere = Path::new("/nonexistent");
+        let this = todo_ref('a', "ship-it");
+        let other = todo_ref('c', "verify-live-later");
+        let refusal = |disposition, named, found| {
+            resolve_disposition(&record, nowhere, disposition, named, found).unwrap_err()
+        };
+        assert!(
+            refusal(VerificationDisposition::HotfixDeferred, None, None)
+                .contains("names its tracked follow-up todo")
+        );
+        assert!(
+            refusal(
+                VerificationDisposition::Tier0Skip,
+                Some("verify-live-later"),
+                Some(&other)
+            )
+            .contains("only a hotfix deferral names a follow-up")
+        );
+        assert!(
+            refusal(
+                VerificationDisposition::HotfixDeferred,
+                Some("gone-todo"),
+                None
+            )
+            .contains("unknown, delivered or withdrawn")
+        );
+        let mut same = record.clone();
+        same.id = this.id.clone();
+        assert!(
+            resolve_disposition(
+                &same,
+                nowhere,
+                VerificationDisposition::HotfixDeferred,
+                Some("ship-it"),
+                Some(&this),
+            )
+            .unwrap_err()
+            .contains("is this one")
+        );
+    }
+
+    #[test]
+    fn a_disposition_without_a_findings_report_is_refused() {
+        let (repo, _) = candidate();
+        let mut record = record();
+        record.artifacts.clear();
+        let refusal = resolve_disposition(
+            &record,
+            repo.path(),
+            VerificationDisposition::Pass,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(refusal.contains("`verification-findings`"), "{refusal}");
+    }
 }

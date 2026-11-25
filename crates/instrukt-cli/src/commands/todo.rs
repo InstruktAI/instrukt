@@ -22,6 +22,7 @@ use instrukt_runner::interfaces::{
 use instrukt_todos::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, DriftClass, HoldSource,
     ModelProvenance, PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
+    VerificationDisposition,
 };
 use instrukt_todos::work::{
     CreateRequest, DiffLine, ListEntry, Outcome, ReflectionStatus, Selection, StampRequest,
@@ -336,6 +337,13 @@ struct StampArgs {
     /// The work branch's head is handed to integration.
     #[arg(long)]
     finalize_ready: bool,
+    /// A live verification disposition of the candidate at the clean head,
+    /// bound to the current `verification-findings` report.
+    #[arg(long, value_name = "pass|fail|blocked|tier_0_skip|hotfix_deferred")]
+    verification: Option<VerificationArg>,
+    /// The tracked follow-up todo a hotfix deferral names.
+    #[arg(long, value_name = "SLUG", requires = "verification")]
+    follow_up: Option<TodoSlug>,
     /// A task firing starts: the run of `--occurrence`, or now.
     #[arg(long)]
     task_firing_started: bool,
@@ -410,6 +418,17 @@ enum PhaseArg {
     ArchitectureReview,
     PlanReview,
     BuildReview,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum VerificationArg {
+    Pass,
+    Fail,
+    Blocked,
+    #[value(name = "tier_0_skip")]
+    Tier0Skip,
+    HotfixDeferred,
 }
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
@@ -962,6 +981,18 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         if set {
             forms.push(form);
         }
+    }
+    if let Some(disposition) = args.verification {
+        forms.push(StampRequest::VerificationDisposition {
+            disposition: match disposition {
+                VerificationArg::Pass => VerificationDisposition::Pass,
+                VerificationArg::Fail => VerificationDisposition::Fail,
+                VerificationArg::Blocked => VerificationDisposition::Blocked,
+                VerificationArg::Tier0Skip => VerificationDisposition::Tier0Skip,
+                VerificationArg::HotfixDeferred => VerificationDisposition::HotfixDeferred,
+            },
+            follow_up: args.follow_up.clone(),
+        });
     }
     if let Some(result) = args.task_outcome {
         forms.push(StampRequest::TaskOutcome {

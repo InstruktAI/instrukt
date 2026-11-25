@@ -836,6 +836,15 @@ impl Work {
             super::_attempts::require_task_approval(&record, task_approver)?;
         }
         let base = s.base.clone();
+        // A hotfix deferral's follow-up resolves among the project's open
+        // todos, which only the work session sees; resolution judges it.
+        let follow_up = match request {
+            StampRequest::VerificationDisposition {
+                follow_up: Some(slug),
+                ..
+            } => s.live_ref(slug).map(|todo| todo.reference()),
+            _ => None,
+        };
         let resolved = _stamps::resolve(
             request,
             &record,
@@ -844,6 +853,7 @@ impl Work {
                 base_branch: &base,
                 session: session.as_ref(),
                 now: s.now,
+                follow_up: follow_up.as_ref(),
             },
         )?;
         let actor = match resolved.actor {
