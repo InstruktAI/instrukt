@@ -12,16 +12,30 @@
       "const": 3
     },
     "default": {
-      "$ref": "#/$defs/role"
+      "$ref": "#/$defs/role",
+      "properties": {
+        "order": {
+          "type": "array"
+        },
+        "tier": {
+          "type": "string"
+        }
+      }
     },
     "roles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "$ref": "#/$defs/role"
       }
     },
     "bundles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "type": "array",
         "items": {
@@ -30,7 +44,10 @@
       }
     },
     "profiles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "$ref": "#/$defs/profile"
       }
@@ -42,7 +59,10 @@
       "additionalProperties": false,
       "properties": {
         "order": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "minItems": 1,
           "items": {
             "type": "string"
@@ -53,7 +73,8 @@
             "light",
             "standard",
             "strong",
-            "premium"
+            "premium",
+            null
           ]
         },
         "class": {
@@ -78,7 +99,10 @@
           }
         },
         "github_app": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
