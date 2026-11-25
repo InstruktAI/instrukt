@@ -634,3 +634,30 @@ whose installed instrukt predates this release, that key is an unknown key in
 this repository's layer: the layer does not validate there, which withholds
 history extraction for the project on that computer until instrukt is
 upgraded. Upgrade instrukt on each computer that serves this repository.
+
+### The work record lives on this computer only
+
+GitHub no longer carries a copy of the work record: the issue, its labels,
+the board, the native artifacts, the pull request and its reviews show the
+todo one way, and the state database holds the only copy. `instrukt todo
+refresh` is gone, and a computer no longer lists, picks up or reads todos
+another computer created. The state database migrates forward on its own
+(Version 39); existing record comments on issues are left where they are.
+
+A todo this computer holds can carry artifact versions whose content only
+GitHub has: versions another computer recorded, taken in by an earlier
+build's pickup listing without their bodies. The new build reads artifacts
+from the local record alone, so it cannot fetch them later. Before installing
+it, restore them with the build you have. List the versions without content:
+
+    sqlite3 ~/.instrukt/state/instrukt.db "SELECT t.project, t.slug, v.name, v.digest FROM artifact_versions v JOIN todos t ON t.id = v.todo_id WHERE v.content IS NULL AND t.status NOT IN ('delivered', 'removed')"
+
+and, in a checkout of each project listed, read each version once with the
+installed build, which fetches its content from GitHub, checks it against
+its digest and keeps it in the record:
+
+    instrukt todo artifacts diff <slug> <name> <digest> <digest>
+
+A version the command reports GitHub no longer serves stays without content.
+Delivered and withdrawn todos may be left as they are; their evidence on
+GitHub is unchanged.
