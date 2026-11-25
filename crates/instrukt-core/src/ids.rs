@@ -534,3 +534,30 @@ mod tests {
         assert!(serde_yaml_ng::from_str::<ProjectSlug>("Not A Slug").is_err());
     }
 }
+
+/// A todo's durable identity: survives rename, removal and recovery, and is
+/// never reused, where a slug may be. 32 lowercase hexadecimal characters.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TodoId(String);
+
+impl TodoId {
+    /// Validates `value` as an identity: 32 lowercase hex characters.
+    pub fn parse(value: &str) -> Option<Self> {
+        let ok = value.len() == 32
+            && value
+                .chars()
+                .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c));
+        ok.then(|| Self(value.to_owned()))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for TodoId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}

@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
+use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -675,7 +675,7 @@ pub trait WorktreeReclamation: Send + Sync {
     fn attempt_free(
         &self,
         project: &ProjectRef,
-        todo: &TodoIdentity,
+        todo: &TodoId,
         admission: &SectionAdmission,
         action: &mut dyn FnMut(),
     ) -> Result<SectionOutcome, WorkInterfaceError>;
@@ -686,12 +686,12 @@ pub trait WorktreeReclamation: Send + Sync {
     fn release_delivered(
         &self,
         project: &ProjectRef,
-        todo: &TodoIdentity,
+        todo: &TodoId,
     ) -> Result<DeliveredRelease, WorkInterfaceError>;
 
     /// Whether `project`'s work record on this computer holds the todo
     /// `todo`.
-    fn holds(&self, project: &ProjectRef, todo: &TodoIdentity) -> Result<bool, WorkInterfaceError>;
+    fn holds(&self, project: &ProjectRef, todo: &TodoId) -> Result<bool, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -769,27 +769,6 @@ pub trait WorkflowAssignments: Send + Sync {
     ) -> Result<Option<Assignment>, WorkflowInterfaceError>;
 }
 
-/// A todo's durable identity as work records it: stable across renames and
-/// never reused, where a slug may be.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct TodoIdentity(String);
-
-impl TodoIdentity {
-    pub fn new(identity: impl Into<String>) -> Self {
-        Self(identity.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for TodoIdentity {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
 /// What git still lists on this computer of a delivered todo's working
 /// resources: the cleanup it still owes (`delivery-cycle`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -824,7 +803,7 @@ pub enum WorktreeStanding {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TodoWorktree {
     pub todo: TodoSlug,
-    pub identity: TodoIdentity,
+    pub identity: TodoId,
     /// The record revision the standing was derived at: advanced by every
     /// accepted change to the todo's record.
     pub revision: u64,

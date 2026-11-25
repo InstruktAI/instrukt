@@ -535,7 +535,12 @@ fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     };
     let work = crate::wiring::work_ports(ctx)?
         .ok_or_else(|| anyhow::anyhow!("the todos module is not available in this build"))?;
-    let todo = instrukt_runner::interfaces::TodoIdentity::new(todo);
+    let todo = instrukt_core::ids::TodoId::parse(todo).ok_or_else(|| {
+        anyhow::anyhow!(
+            "the assignment {} records `{todo}`, which is no todo identity",
+            assignment.key
+        )
+    })?;
     let request = Request {
         project,
         todo: &todo,

@@ -9,9 +9,7 @@ use std::path::{Path, PathBuf};
 
 use instrukt_core::git::{self, GitError};
 use instrukt_core::ids::CommitSha;
-use instrukt_runner::interfaces::{
-    DeliveredRemains, Lane, TodoIdentity, TodoWorktree, WorktreeStanding,
-};
+use instrukt_runner::interfaces::{DeliveredRemains, Lane, TodoWorktree, WorktreeStanding};
 
 use crate::evidence::{StampFact, TodoEvidence, TodoStatus, artifact_names};
 
@@ -254,7 +252,7 @@ pub(crate) fn worktree_standings(evidence: &[TodoEvidence], listed: &Listed) -> 
         }
         answers.push(TodoWorktree {
             todo: todo.slug.clone(),
-            identity: TodoIdentity::new(todo.id.as_str()),
+            identity: todo.id.clone(),
             revision: todo.revision,
             standing: match standing {
                 Standing::UnderWay => WorktreeStanding::UnderWay,

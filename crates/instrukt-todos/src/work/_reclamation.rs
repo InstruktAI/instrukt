@@ -23,7 +23,7 @@ use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
 use instrukt_runner::interfaces::{
     AssignmentKind, DeliveredRelease, DeliveredResource, Lane, ProjectRef, SectionAdmission,
-    SectionOutcome, TodoIdentity, WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
+    SectionOutcome, WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
 };
 
 use super::_error::WorkError;
@@ -43,15 +43,12 @@ impl WorktreeReclamation for Work {
     fn attempt_free(
         &self,
         project: &ProjectRef,
-        todo: &TodoIdentity,
+        todo: &TodoId,
         admission: &SectionAdmission,
         action: &mut dyn FnMut(),
     ) -> Result<SectionOutcome, WorkInterfaceError> {
-        let Some(id) = TodoId::parse(todo.as_str()) else {
-            return Ok(SectionOutcome::NotRecorded);
-        };
         Ok(
-            Store::new(self.home(), &project.slug).hold_record(&id, |record| {
+            Store::new(self.home(), &project.slug).hold_record(todo, |record| {
                 let Some(record) = record else {
                     return SectionOutcome::NotRecorded;
                 };
@@ -69,7 +66,7 @@ impl WorktreeReclamation for Work {
     fn release_delivered(
         &self,
         project: &ProjectRef,
-        todo: &TodoIdentity,
+        todo: &TodoId,
     ) -> Result<DeliveredRelease, WorkInterfaceError> {
         let Some(_lock) = LockGuard::try_acquire(&self.home().delivered_release_lock_file())
             .map_err(WorkError::from)?
@@ -77,10 +74,8 @@ impl WorktreeReclamation for Work {
             return Ok(DeliveredRelease::Busy);
         };
         let store = Store::new(self.home(), &project.slug);
-        let record = TodoId::parse(todo.as_str())
-            .map(|id| store.item(&id))
-            .transpose()?
-            .flatten()
+        let record = store
+            .item(todo)?
             .map(|item| item.record)
             .filter(|record| record.status == TodoStatus::Delivered)
             .ok_or_else(|| WorkError::refused(format!("{todo} is not a delivered todo here")))?;
@@ -102,11 +97,8 @@ impl WorktreeReclamation for Work {
         })
     }
 
-    fn holds(&self, project: &ProjectRef, todo: &TodoIdentity) -> Result<bool, WorkInterfaceError> {
-        let Some(id) = TodoId::parse(todo.as_str()) else {
-            return Ok(false);
-        };
-        Ok(Store::new(self.home(), &project.slug).item(&id)?.is_some())
+    fn holds(&self, project: &ProjectRef, todo: &TodoId) -> Result<bool, WorkInterfaceError> {
+        Ok(Store::new(self.home(), &project.slug).item(todo)?.is_some())
     }
 }
 

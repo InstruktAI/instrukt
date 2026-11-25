@@ -32,10 +32,10 @@ use std::sync::Arc;
 use instrukt_core::config::RegenerablePath;
 use instrukt_core::fsx;
 use instrukt_core::git;
-use instrukt_core::ids::{ProjectSlug, SessionRef};
+use instrukt_core::ids::{ProjectSlug, SessionRef, TodoId};
 
 use crate::interfaces::{
-    DeliveredRelease, ProjectRef, RunnerWiring, SectionAdmission, SectionOutcome, TodoIdentity,
+    DeliveredRelease, ProjectRef, RunnerWiring, SectionAdmission, SectionOutcome,
     WorkInterfaceError, WorktreeHolder, WorktreeReclamation, WorktreeStanding, WorktreeStandings,
 };
 use crate::runner::Considered;
@@ -101,7 +101,7 @@ pub struct Staged {
 /// The worktree whose declared output is moved out, and who asks.
 pub struct Target<'a> {
     pub project: &'a ProjectRef,
-    pub todo: &'a TodoIdentity,
+    pub todo: &'a TodoId,
     pub worktree: &'a Path,
     pub admission: SectionAdmission,
 }
@@ -228,7 +228,7 @@ fn examine(worktree: &Path, entry: &RegenerablePath) -> Result<(), Left> {
 /// A staging location beside the worktree at `worktree`, in the same
 /// directory, under a name no existing entry has: the prefix, the todo's
 /// identity, and a suffix fresh to this process and moment.
-fn fresh_staging(worktree: &Path, todo: &TodoIdentity) -> std::io::Result<PathBuf> {
+fn fresh_staging(worktree: &Path, todo: &TodoId) -> std::io::Result<PathBuf> {
     let parent = worktree.parent().ok_or_else(|| {
         std::io::Error::other(format!("{} has no directory beside it", worktree.display()))
     })?;
@@ -267,13 +267,13 @@ pub fn delete(staged: &Path) -> std::io::Result<()> {
 
 /// The todo identity the staging location named `name` carries, when it is
 /// one.
-fn staged_for(name: &OsStr) -> Option<TodoIdentity> {
+fn staged_for(name: &OsStr) -> Option<TodoId> {
     let identity = name
         .to_str()?
         .strip_prefix(STAGING_PREFIX)?
         .split('-')
         .next()?;
-    (!identity.is_empty()).then(|| TodoIdentity::new(identity))
+    TodoId::parse(identity)
 }
 
 /// The owed causes this process last logged, so a cause is logged when it
@@ -496,7 +496,7 @@ impl Deferred {
 /// (`instrukt repo reclaim`).
 pub struct Request<'a> {
     pub project: &'a ProjectSlug,
-    pub todo: &'a TodoIdentity,
+    pub todo: &'a TodoId,
     pub worktree: &'a Path,
     pub session: SessionRef,
 }
@@ -619,7 +619,7 @@ mod tests {
         let name = OsStr::new(".instrukt-rg-0123456789abcdef0123456789abcdef-42-17-0");
         assert_eq!(
             staged_for(name),
-            Some(TodoIdentity::new("0123456789abcdef0123456789abcdef"))
+            TodoId::parse("0123456789abcdef0123456789abcdef")
         );
     }
 
