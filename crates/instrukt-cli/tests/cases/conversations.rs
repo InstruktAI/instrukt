@@ -5274,22 +5274,26 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
         .assert()
         .success();
     // The command's output is the queued reply's summary, not the reply text.
+    // The turn is an identifier generated per queued reply, so it is guarded
+    // as produced and then held as a placeholder.
     let stdout = String::from_utf8(queued.get_output().stdout.clone()).unwrap();
-    let summary: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    let mut fields = summary
-        .as_object()
-        .unwrap()
-        .keys()
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    fields.sort_unstable();
-    assert_eq!(
-        fields,
-        ["company", "connector", "conversation", "pieces", "turn"]
+    let mut summary: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        summary["turn"]
+            .as_str()
+            .is_some_and(|turn| !turn.is_empty()),
+        "{stdout}"
     );
-    assert_eq!(summary["conversation"], "D1");
-    assert_eq!(summary["connector"], "quiet");
-    assert_eq!(summary["pieces"], 1);
+    summary["turn"] = "<turn>".into();
+    insta::assert_json_snapshot!(summary, @r#"
+    {
+      "company": "acme",
+      "connector": "quiet",
+      "conversation": "D1",
+      "turn": "<turn>",
+      "pieces": 1
+    }
+    "#);
 
     // 5. Finish the turn with raw internal monologue — reply_mode: explicit must NEVER post it!
     c.finish_turn(&session, 0, "INTERNAL MONOLOGUE DO NOT LEAK TO SLACK");
@@ -5313,14 +5317,16 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
             .unwrap();
         state == "answered"
     });
-    let posts = c.slack.posts();
-    assert_eq!(
-        posts.len(),
-        1,
-        "raw turn output must not be posted: {posts:?}"
-    );
-    // The explicit reply is posted exactly as the agent wrote it.
-    assert_eq!(posts[0].markdown.as_deref(), Some(reply));
+    // The raw turn output is not posted; the explicit reply is posted once,
+    // exactly as the agent wrote it, its stored secret values included.
+    insta::assert_snapshot!(complete_post_bodies(&c), @r#"
+    [
+      [
+        null,
+        "Pipeline green. Key=secret-company-key-987654 Machine=secret-machine-key-123456 Token=mcp-oauth-token-555555"
+      ]
+    ]
+    "#);
     assert!(
         !c.slack
             .status_texts("D1", &dm_ts)
