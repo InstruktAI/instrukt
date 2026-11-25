@@ -530,12 +530,15 @@ record recognises as unedited is removed by the first writing command, and
 every role then takes these defaults. Any other file is kept as your
 overrides: every role, bundle and field it leaves out takes these defaults,
 and what it names stays as written. A `company-agent` whose `can` the file
-lists keeps that list: unless it names `report`, `all` or a grant of
-`bug-report`, its help and briefing do not offer defect reporting until you
-add `report` there. Focused roles using a `record` bundle the file defines
-report into their own project once you add `{action: bug-report, scope: own}`
-to it. A role naming `report` in a file that defines no such bundle receives
-the shipped one.
+lists holds the union of the scoped grants that list expands to, across its
+explicit grants and the bundles it names. As a standing role it still sees
+`instrukt bugs report` in command help; its usual-capabilities summary and
+conversation briefing offer cross-project defect reporting (`bug-report:any`)
+only when those grants supply it, for example by naming the shipped `report`
+bundle where the file does not redefine it. Focused roles using a `record`
+bundle the file defines report into their own project once you add
+`{action: bug-report, scope: own}` to it. A role naming `report` in a file
+that defines no such bundle receives the shipped one.
 
 ### One root AGENTS.md, rendered from an index.yaml
 
