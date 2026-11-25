@@ -152,6 +152,7 @@ But malformed fields or an invalid effort value produce shape findings
 And configured roles with no installed procedure are reported
 ```
 
+<!-- planned-change:fix-agents-yaml-override-merge -->
 ### UC-AS4: Receive new defaults while keeping one's own choices
 
 ```gherkin
@@ -160,6 +161,16 @@ When work starts for that role and for a role they did not override
 Then the first starts on the profile they chose
 And the second starts on the shipped default
 ```
+<!-- change:fix-agents-yaml-override-merge -->
+### UC-AS4: Receive new defaults while keeping one's own choices
+
+```gherkin
+Given a developer overrode one role's profile order in their agents file
+When work starts for that role and for a role they did not override
+Then the first starts on the profile they chose
+And the second starts on the shipped default
+```
+<!-- /planned-change:fix-agents-yaml-override-merge -->
 
 ### UC-AS5: Check a harness before creating a thread and contain quota marking (retired)
 
