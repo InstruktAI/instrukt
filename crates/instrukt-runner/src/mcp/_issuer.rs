@@ -404,12 +404,14 @@ pub fn show_company_issuer(home: &Home, company: &ProjectSlug) -> Result<IssuerI
 /// Obtain a speaker's Bearer access token for a `sign_in.mode: issuer` server:
 /// reuses a valid cached token from `mcp_logins`, or signs a fresh ES256 ID-JAG
 /// JWT asserting the speaker's verified email and exchanges it via `jwt-bearer`.
+/// A cached token other than `rejected_access_token`, which the server just
+/// refused, is reused even on a retry: another call may already have renewed it.
 pub(crate) fn obtain_issuer_login(
     home: &Home,
     company: &ProjectSlug,
     server: &McpServer,
     speaker: &Speaker,
-    force_refresh: bool,
+    rejected_access_token: Option<&str>,
     now: Timestamp,
 ) -> Result<(Login, Vec<Login>), McpError> {
     let email = speaker
@@ -484,8 +486,8 @@ pub(crate) fn obtain_issuer_login(
     };
 
     let expected_return_id = format!("issuer:{issuer_id}");
-    if !force_refresh
-        && let Some((resource, return_id, access_token, expires_at, checked)) = cached_login
+    if let Some((resource, return_id, access_token, expires_at, checked)) = cached_login
+        && rejected_access_token.is_none_or(|bad| bad != access_token)
         && resource == server.url
         && return_id == expected_return_id
         && checked != 0
