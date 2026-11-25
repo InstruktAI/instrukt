@@ -129,7 +129,8 @@ fn open_record(roots: &[PathBuf], directory: &Path) -> Result<Record, RecordUnav
         source,
     };
     let place = resolved(directory);
-    if let Some(root) = roots.iter().find(|root| fenced(&place, root)) {
+    let fold = place.folds_case();
+    if let Some(root) = roots.iter().find(|root| Root::at(root).holds(&place, fold)) {
         return Err(unavailable(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("it lies under the fenced {}", root.display()),
@@ -191,26 +192,28 @@ pub fn refused() -> bool {
 
 /// Admits a write to `path`, or refuses it when the path itself or what
 /// it resolves to lies under a fenced location.
+///
+/// Everything is resolved during this admission, as the file system stands
+/// when the write is checked; what one admission needs more than once — each
+/// fenced root, each target's case folding — is resolved once and shared
+/// within it. The targets are checked in turn against the roots in their
+/// setting's order, so the first that refuses names the refusal.
 pub fn admit(path: &Path) -> io::Result<()> {
     let Some(fence) = FENCE.get() else {
         return Ok(());
     };
     let absolute = absolute(path);
     // The entry itself (what a rename or removal changes) and, through a
-    // final symbolic link, what a write into it changes.
-    let entry = match (absolute.parent(), absolute.file_name()) {
-        (Some(parent), Some(name)) => {
-            let parent = resolved(parent);
-            Resolved {
-                existing: parent.existing,
-                path: parent.path.join(name),
-            }
-        }
-        _ => resolved(&absolute),
-    };
-    for target in [entry, resolved(&absolute)] {
-        if let Some(root) = fence.roots.iter().find(|root| fenced(&target, root)) {
-            return Err(refuse(fence, path, &target.path, root));
+    // final symbolic link, what a write into it changes; the latter is
+    // checked only where it leads somewhere else.
+    let whole = resolved(&absolute);
+    let entry = entry(&absolute).unwrap_or_else(|| whole.clone());
+    let roots: Vec<Root<'_>> = fence.roots.iter().map(|root| Root::at(root)).collect();
+    let second = (whole != entry).then_some(whole);
+    for target in std::iter::once(entry).chain(second) {
+        let fold = target.folds_case();
+        if let Some(root) = roots.iter().find(|root| root.holds(&target, fold)) {
+            return Err(refuse(fence, path, &target.path, root.name));
         }
     }
     Ok(())
@@ -271,24 +274,40 @@ pub fn is_refusal(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// Whether `target` lies under the fenced `root`, both as the file system
-/// stands now: under where the root leads, or, for a fenced link, under the
-/// link itself.
-fn fenced(target: &Resolved, root: &Path) -> bool {
-    let fold = target.folds_case();
-    let leads = resolved(root);
-    let absolute = absolute(root);
-    let entry = match (absolute.parent(), absolute.file_name()) {
-        (Some(parent), Some(name)) => {
-            let parent = resolved(parent);
-            Resolved {
-                existing: parent.existing,
-                path: parent.path.join(name),
-            }
-        }
-        _ => leads.clone(),
-    };
-    under(target, &leads, fold) || under(target, &entry, fold)
+/// A fenced root as the file system stands at one check: where it leads,
+/// and the root entry itself, which differs from it for a fenced link.
+struct Root<'a> {
+    name: &'a Path,
+    leads: Resolved,
+    entry: Resolved,
+}
+
+impl<'a> Root<'a> {
+    /// Resolves `name` now, for the check that uses it and no later one.
+    fn at(name: &'a Path) -> Self {
+        let leads = resolved(name);
+        let entry = entry(&absolute(name)).unwrap_or_else(|| leads.clone());
+        Self { name, leads, entry }
+    }
+
+    /// Whether `target`, whose volume folds case as `fold` says, lies under
+    /// this root: under where it leads, or, for a fenced link, under the
+    /// link itself.
+    fn holds(&self, target: &Resolved, fold: bool) -> bool {
+        under(target, &self.leads, fold) || under(target, &self.entry, fold)
+    }
+}
+
+/// The entry an absolute path names, without following it when it is a
+/// symbolic link: its parent resolved and its own name as written. `None`
+/// for a path with no parent or name.
+fn entry(absolute: &Path) -> Option<Resolved> {
+    let (parent, name) = (absolute.parent()?, absolute.file_name()?);
+    let parent = resolved(parent);
+    Some(Resolved {
+        existing: parent.existing,
+        path: parent.path.join(name),
+    })
 }
 
 fn absolute(path: &Path) -> PathBuf {
