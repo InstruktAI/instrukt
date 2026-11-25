@@ -59,9 +59,10 @@ existing path can be found before a new mechanism is built.
 
 The same failure mode faces outward: when input validity is governed by an
 external specification — a data or markup grammar, a protocol, a format — a
-hand-built parser or reimplementation beside a conforming implementation drifts
-from that specification on every edge case, and a local constraint offered as
-its reason holds only when grounded at its source (`general/principle/grounding`).
+hand-built parser or reimplementation beside a conforming implementation
+produces a bespoke, fragile result that risks drifting from that specification
+on edge cases, and a local constraint offered as its reason holds only when
+grounded at its source (`general/principle/grounding`).
 
 Placing the burden on the preparing agent rather than the input author keeps the
 human contract intact: the human owns what, the agent owns how, and how begins

@@ -251,7 +251,7 @@ Check whether the implementation follows existing codebase paradigms:
    to it.
 
    The existing path can also be an established solution outside the system
-   (`substrate-anchoring`, `general/principle/grounding`): input whose validity
+   (`sdlc/policy/substrate-anchoring`, `general/principle/grounding`): input whose validity
    an external specification defines — a data or markup grammar, a protocol, a
    format — is read through a conforming implementation, unless the change
    declares a subset the project owns and refuses everything outside it. A

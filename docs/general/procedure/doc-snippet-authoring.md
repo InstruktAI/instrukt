@@ -70,8 +70,9 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     (`sdlc/policy/peer-invocation`): first send the problem, evidence and corpus
     pointers so the peer forms its own reading; then send the draft and rejected
     alternatives to test for duplication, contradictions, layer bleed and
-    unintended consequences. State in the peer's brief that it authors nothing
-    and owes no sparring. The peer is consulted, not a gating participant or a
+    unintended consequences. Direct the peer in its brief to inspect the cited
+    sources, report its independent analysis and challenges in its reply, and
+    return its findings to you. The peer is consulted, not a gating participant or a
     separate approval lane (`sdlc/policy/process-change-authority`): hold and
     ground any disagreement on evidence (`general/procedure/brainstorming`), and
     decide on evidence. This sparring does not replace post-commit independent
