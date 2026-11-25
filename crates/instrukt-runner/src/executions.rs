@@ -336,7 +336,12 @@ impl<'a> Executions<'a> {
                 }
             }
             let recovery_id = format!("recovery:{}:{}", execution.session, execution.state);
+            // The recovery input's outcome is read only where it can decide
+            // the step: progress and a person wait come first, and an
+            // execution already reported is not reported again.
             let unconfirmed = !progressed
+                && !assignment.waits_on_person
+                && !execution.anomaly_raised
                 && matches!(
                     crate::inputs::outcome(self.state, &execution.session, &recovery_id)?,
                     crate::inputs::InputOutcome::Unconfirmed
