@@ -532,6 +532,11 @@ fn a_released_orchestrator_stays_settled_after_another_session_takes_its_todo_up
         .unwrap();
     assert!(start.status.success());
     let second = String::from_utf8(start.stdout).unwrap().trim().to_owned();
+    // Its native record places it in the retained todo worktree, as T3
+    // records a thread started in an existing worktree.
+    let branch = p.env.git(&worktree, ["branch", "--show-current"]);
+    fake.change(&second, "worktreePath", worktree.to_str().unwrap().into());
+    fake.change(&second, "branch", branch.into());
     let proof = runtime::placement_evidence(
         &p.env,
         &runtime::NativePlacement {
