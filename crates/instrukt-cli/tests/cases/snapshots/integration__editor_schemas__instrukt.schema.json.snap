@@ -278,6 +278,13 @@ expression: "String::from_utf8(bytes).unwrap()"
       },
       "additionalProperties": false
     },
+    "regenerable": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
     "blueprint": {
       "type": "object",
       "properties": {

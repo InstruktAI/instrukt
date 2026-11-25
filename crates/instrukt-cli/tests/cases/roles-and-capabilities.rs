@@ -581,8 +581,7 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");
-    let edited = std::fs::read_to_string(&file)
-        .unwrap()
+    let edited = instrukt_core::config::SHIPPED_AGENTS
         .replace("can: [read, tools, report]", "can: [read, tools]")
         .replace("  report:\n    - {action: bug-report, scope: any}\n", "")
         .replace("    - {action: bug-report, scope: own}\n", "")

@@ -280,7 +280,7 @@ fn interrupted_native_binding_reuses_its_reservation_until_no_start_is_recorded(
 
 // spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC8
 #[test]
-fn delivered_cleanup_retains_each_failed_or_incomplete_deletion() {
+fn the_runner_removes_a_delivered_worktree_and_branch_once_no_uncommitted_change_holds_them() {
     let crew = prepared();
     setup(&crew);
     let builder = worker(&crew, "builder", Some("crew/procedure/build"));
@@ -303,7 +303,21 @@ fn delivered_cleanup_retains_each_failed_or_incomplete_deletion() {
         .repo
         .git(["merge", "--quiet", "--ff-only", "add-depth/work"]);
     crew.project.repo.git(["push", "--quiet", "origin", "main"]);
+    let identity = crew
+        .todo(["show", SLUG])
+        .lines()
+        .find_map(|line| line.strip_prefix("identity: ").map(str::to_owned))
+        .unwrap();
     crew.todo(["deliver", SLUG, "--commit", &candidate]);
+    crew.project.env.run(crew.root(), ["sync"]).success();
+    // The retained session bindings and attempts, as the record shows them.
+    let retained = || {
+        let shown = crew.todo(["show", &format!("{SLUG}@{identity}")]);
+        let start = shown.find("\nsessions:\n").unwrap();
+        let end = shown[start + 1..].find("\nartifacts:").unwrap() + start + 1;
+        shown[start..end].to_owned()
+    };
+    let bound = retained();
     let cleanup = || {
         let out = crew
             .project
@@ -312,24 +326,16 @@ fn delivered_cleanup_retains_each_failed_or_incomplete_deletion() {
             .success();
         shown(&crew, &out.get_output().stdout)
     };
+    let threads = crew.runtime.thread_calls();
+    let tick = || crew.project.env.run(crew.root(), ["tick"]).success();
+
     std::fs::write(finalizer.path.join("uncommitted.txt"), "preserve").unwrap();
-    crew.project
-        .env
-        .git_command(crew.root())
-        .args(["worktree", "remove", finalizer.path.to_str().unwrap()])
-        .assert()
-        .failure();
+    tick();
+    assert!(finalizer.path.join("uncommitted.txt").is_file());
     insta::assert_snapshot!("cleanup-dirty-worktree-owed", cleanup());
+
     std::fs::remove_file(finalizer.path.join("uncommitted.txt")).unwrap();
-    crew.project
-        .repo
-        .git(["worktree", "remove", finalizer.path.to_str().unwrap()]);
-    insta::assert_snapshot!("cleanup-branches-still-owed", cleanup());
-    crew.project.repo.git(["branch", "-d", "add-depth/work"]);
-    insta::assert_snapshot!("cleanup-origin-still-owed", cleanup());
-    crew.project
-        .repo
-        .git(["push", "--quiet", "origin", "--delete", "add-depth/work"]);
+    tick();
     insta::assert_snapshot!("cleanup-complete", cleanup());
     assert!(!finalizer.path.exists());
     assert_eq!(
@@ -345,6 +351,14 @@ fn delivered_cleanup_retains_each_failed_or_incomplete_deletion() {
             .count(),
         0
     );
+    assert!(
+        crew.project
+            .env
+            .git(&crew.origin, ["branch", "--list", "add-depth/work"])
+            .is_empty()
+    );
+    assert_eq!(crew.runtime.thread_calls(), threads);
+    assert_eq!(retained(), bound);
 }
 
 // spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC9

@@ -3,11 +3,7 @@ use crate::common::TestEnv;
 use instrukt_core::state_db::rusqlite::{Connection, params};
 use serde_json::{Value, json};
 use std::os::unix::fs::OpenOptionsExt as _;
-use std::{
-    path::{Path, PathBuf},
-    process::Child,
-    time::Duration,
-};
+use std::{path::PathBuf, process::Child, time::Duration};
 
 /// How a write to T3's database waits while the other work streams: the
 /// stream takes the database for a moment every millisecond, so the write is
@@ -104,7 +100,17 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
                 "provider",
             ),
         ] {
-            let payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            let mut payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            if role == "user" {
+                // Composer context T3 stores beside what the person wrote:
+                // terminal lines they attached and a review comment on a diff.
+                payload["context"] = json!({"version":1,"records":[
+                    {"version":1,"contextId":"terminal-fixture","kind":"terminal","label":"Terminal 1 lines 1-2","terminalId":"terminal-1","terminalLabel":"Terminal 1","lineStart":1,"lineEnd":2,"text":"Terminalonlytoken printed."},
+                    {"version":1,"contextId":"review-comment-fixture","kind":"review-comment","label":"src/lib.rs lines 3-4","sectionId":"working-tree","sectionTitle":"Working tree","filePath":"src/lib.rs","startIndex":3,"endIndex":4,"rangeLabel":"Lines 3-4","text":"Keep this comment.","diff":"+Diffonlytoken added line"},
+                    {"version":1,"contextId":"annotation-fixture","kind":"preview-annotation","label":"Fixture page","annotationId":"annotation-1","pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","comment":"Make this button bigger.","targetSummary":"1 selected element","styleChanges":[],"elements":[{"pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","tagName":"button","selector":"#save","htmlPreview":"<button id=\"save\">Htmlonlytoken</button>","componentName":"SaveButton","source":null,"styles":"color: red;"}],"elementIds":["element-1"],"styleChangeDetails":[]},
+                    {"version":1,"contextId":"element-fixture","kind":"element","label":"button#save","pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","tagName":"button","selector":"#save","htmlPreview":"<button id=\"save\">Htmlonlytoken</button>","componentName":"SaveButton","source":null,"styles":"color: red;"}
+                ]});
+            }
             self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child',?2,0,?3,?3,?4)",params![id,role,at,payload.to_string()]).unwrap();
         }
         let run = json!({"id":"native-run","threadId":"child","ordinal":1,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"providerThreadId":null,"userMessageId":"native-user-message","rootNodeId":null,"activeAttemptId":null,"status":"completed","requestedAt":at,"startedAt":at,"completedAt":at,"checkpointId":null,"contextHandoffId":null});
@@ -141,6 +147,42 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
                 item["streaming"] = json!(false);
             }
             self.db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,'child',?2,'completed',?3,?4)",params![id,kind,at,item.to_string()]).unwrap();
+        }
+    }
+    /// T3 changes a row of each of its run, subagent and turn-item tables
+    /// for `child`, and nothing else of it.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn rewrite_runs_subagents_and_turn_items(&self) {
+        let at = "2026-11-08T11:00:00.000Z";
+        self.db.execute("UPDATE orchestration_v2_projection_runs SET completed_at=?1,payload_json=json_set(payload_json,'$.completedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_subagents SET updated_at=?1,payload_json=json_set(payload_json,'$.result','Rewrittentoken result.','$.updatedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_turn_items SET updated_at=?1,payload_json=json_set(payload_json,'$.output','Rewrittentoken output.','$.updatedAt',?1) WHERE thread_id='child' AND type='command_execution'",[at]).unwrap();
+    }
+    /// T3's run, subagent and turn-item tables are gone.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn remove_runs_subagents_and_turn_items(&self) {
+        self.db.execute_batch("DROP TABLE orchestration_v2_projection_runs; DROP TABLE orchestration_v2_projection_subagents; DROP TABLE orchestration_v2_projection_turn_items;").unwrap();
+    }
+    /// T3's server writes two notifications into `child`: its report that a
+    /// background command finished, with the command's output, and a
+    /// delegated task's result whose own words open as such a report does.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn background_reports(&self) {
+        let at = "2026-11-08T10:30:00.000Z";
+        for (id, text, source) in [
+            (
+                "background-command-report",
+                "Background command completed (exit 0): make check\n\nOutput tail:\nShelloutputtoken printed",
+                json!({"kind":"background_command"}),
+            ),
+            (
+                "delegated-task-report",
+                "Background command completed: Delegatedresulttoken done.",
+                json!({"kind":"delegated_task","taskIds":["node-fixture"]}),
+            ),
+        ] {
+            let payload = json!({"id":id,"threadId":"child","runId":null,"nodeId":null,"role":"user","text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":"agent","creationSource":"server","notification":{"source":source,"outcome":"completed","summary":"Background work finished"}});
+            self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child','user',0,?2,?2,?3)",params![id,at,payload.to_string()]).unwrap();
         }
     }
     #[allow(
@@ -761,59 +803,6 @@ impl Drop for Gate {
 pub fn computer(env: &TestEnv, id: &str) {
     std::fs::create_dir_all(env.instrukt_home().join("state")).unwrap();
     std::fs::write(env.instrukt_home().join("state/machine-id"), id).unwrap();
-}
-pub fn mirror(env: &TestEnv) -> PathBuf {
-    let file = env.home().join(".teleclaude/mirrors.db");
-    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-    let db = Connection::open(&file).unwrap();
-    db.execute_batch("PRAGMA user_version=11;
-CREATE TABLE mirrors(id INTEGER PRIMARY KEY,computer TEXT,title TEXT,conversation_text TEXT,metadata TEXT,native_session_id TEXT,source_identity TEXT,session INTEGER,project_path TEXT,timestamp_start TEXT,timestamp_end TEXT);
-CREATE TABLE mirror_sessions(id INTEGER PRIMARY KEY,session_id TEXT,initiator_session_id TEXT);
-CREATE TABLE mirror_sources(id INTEGER PRIMARY KEY,mirror INTEGER,source_identity TEXT,native_session_id TEXT,agent TEXT,transcript_path TEXT,position INTEGER,archival_text TEXT);
-CREATE TABLE mirror_messages(source INTEGER,ordinal INTEGER,entry_index INTEGER,block_ordinal INTEGER,timestamp TEXT,role TEXT,text TEXT);
-INSERT INTO mirror_sessions VALUES(1,'archive-session',NULL);
-INSERT INTO mirrors VALUES(1,'old-computer','Retained archive','The archive jewels.','{}','native-session','source-alias',1,'/project','2026-01-01T00:00:00Z',NULL);
-INSERT INTO mirror_sources VALUES(1,1,'source-alias','native-session','claude','/gone/transcript',0,'The archive jewels.');").unwrap();
-    file
-}
-/// The ids of the mirrors `mirrors` adds beside the archive mirror, id 1:
-/// more than one import batch, from below zero through zero and on past it,
-/// each carrying [`BATCHED_TERM`]; those up to zero carry
-/// [`NONPOSITIVE_TERM`] as well.
-pub fn batched_ids() -> impl Iterator<Item = i64> {
-    (-5..=125).filter(|id| *id != 1)
-}
-pub const BATCHED_TERM: &str = "Batchtoken";
-pub const NONPOSITIVE_TERM: &str = "Lowtoken";
-/// A mirror after the first batch the importer cannot read: it has no title.
-pub const UNREADABLE: i64 = 125;
-
-/// The archive mirror store of [`mirror`] with the [`batched_ids`] mirrors
-/// beside it, [`UNREADABLE`] among them.
-pub fn mirrors(env: &TestEnv) -> PathBuf {
-    let file = mirror(env);
-    let db = Connection::open(&file).unwrap();
-    for id in batched_ids() {
-        let title = (id != UNREADABLE).then(|| format!("Batched {id}"));
-        let low = if id <= 0 { NONPOSITIVE_TERM } else { "" };
-        db.execute(
-            "INSERT INTO mirrors(id,computer,title,conversation_text,metadata) VALUES(?1,'old-computer',?2,?3,'{}')",
-            params![id, title, format!("{BATCHED_TERM} {low} mirror {id}.")],
-        )
-        .unwrap();
-    }
-    file
-}
-
-/// Gives mirror `id` a title, or takes it away so the importer cannot read it.
-pub fn retitle(file: &Path, id: i64, title: Option<&str>) {
-    Connection::open(file)
-        .unwrap()
-        .execute(
-            "UPDATE mirrors SET title=?2 WHERE id=?1",
-            params![id, title],
-        )
-        .unwrap();
 }
 
 pub fn configure_cluster(env: &TestEnv, url: &str) {

@@ -22,7 +22,8 @@ the requirement contract). They are defined once here and consumed by:
 
 - `sdlc/procedure/lifecycle/work/review-build` — the build reviewer, which **executes** the applicable lanes.
 - `sdlc/procedure/lifecycle/work/review-commits` — the commit reviewer, which executes the same lanes; that procedure resolves the scope lane's intent basis.
-- `sdlc/procedure/lifecycle/prepare/plan-draft` and `.../prepare/review-plan` — the planner and plan reviewer, which **anticipate** the lanes (the plan must pre-satisfy what build-review will check).
+- `sdlc/procedure/lifecycle/prepare/review-prd` and `sdlc/procedure/lifecycle/prepare/review-architecture` — preparation reviewers, which execute the applicable lanes through `sdlc/procedure/lifecycle/review`.
+- `sdlc/procedure/lifecycle/prepare/plan-draft` and `sdlc/procedure/lifecycle/prepare/review-plan` — the planner and plan reviewer, which **anticipate** the lanes (the plan must pre-satisfy what build-review will check).
 
 Severity tiers, citation rules, the lane execution gate, and verdict arithmetic
 live in the review procedure, not here — this catalog defines _what each lane
@@ -31,8 +32,8 @@ checks and the authority it answers to_, not how a review is run.
 Every lane finding cites the contract the reviewed artifact violates. A finding
 that prescribes new functionality, instrumentation, or subsystems beyond the
 approved intent enlarges the horizon and is invalid
-(`sdlc/policy/preparation-artifact-quality`, §Evidence does not
-reallocate ownership); a genuine intent gap is reported as an investigation
+(`sdlc/policy/preparation-artifact-quality`: evidence does
+not reallocate ownership); a genuine intent gap is reported as an investigation
 lead, never encoded as a blocking demand.
 
 Lanes run in parallel, each in its own native subagent, under `sdlc/procedure/lifecycle/review`. Each lane produces findings with severity levels.
@@ -45,23 +46,23 @@ later log judgment is not a per-criterion proof source. Demanding or rewarding
 forbidden test authorship violates the project ruling. All other lanes apply
 unchanged; in every project without such a ruling this catalog applies in full.
 
-| Lane                    | Reference                                                                              | Task                                                                                                                                                                             |
-| ----------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| scope                   | § Scope verification                                                                   | Verify delivery matches PRD intent — no gold-plating, no gaps                                                                                                                    |
-| code                    | § Code quality review; `code-quality-practices`, `design-fundamentals`                 | Find bugs and pattern violations                                                                                                                                                 |
-| ownership               | § Domain ownership review; `domain-ownership`                                          | Verify every domain rule is implemented by its single owning context and crossed only through a published contract                                                               |
-| paradigm                | § Paradigm-fit assessment                                                              | Check data flow, component reuse, pattern consistency, forward-migration of owned data                                                                                           |
-| principles              | § Principle violation hunt; `principle-violation-hunt`                                 | Structural violation hunt against design principles                                                                                                                              |
-| intelligence-boundaries | `principle/intelligence-boundaries`                                                    | Find code that classifies, scores, judges, or auto-edits free-text content semantics                                                                                             |
-| security                | § Security review                                                                      | Check for secrets, injection, auth gaps, and repository-privacy leakage                                                                                                          |
-| tests                   | § Test coverage check; `quality-predicate-registry`                                    | Evaluate behavioral value, weak-test anti-patterns, and coverage                                                                                                                 |
-| errors                  | § Error handling review; `silent-failure-audit`                                        | Find silent failures and inadequate error handling                                                                                                                               |
-| types                   | § Type design review (when types added/modified)                                       | Validate type invariants, encapsulation, and enforcement                                                                                                                         |
-| comments                | § Comment accuracy review                                                              | Verify comments are accurate, non-stale, and earn their place                                                                                                                    |
-| logging                 | § Logging review                                                                       | Enforce logging policy; reject ad-hoc debug probes                                                                                                                               |
-| docs                    | § Documentation and config surface check (when CLI, config, or API changed)            | Verify help text, config surface, README, and affected doc snippets reflect changes                                                                                              |
-| doc-hygiene             | § Doc-snippet hygiene (when a `docs/**` snippet or any directive-text surface changed) | Verify changed snippet bodies state present-tense contract — no narration; verify changed directive text was the author's to write and states the reality wanted from its reader |
-| simplify                | § Simplification review (after other lanes pass)                                       | Simplify without behavior changes                                                                                                                                                |
+| Lane                    | Reference                                                                                         | Task                                                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| scope                   | § Scope verification                                                                              | Verify delivery matches PRD intent — no gold-plating, no gaps                                                                                                                    |
+| code                    | § Code quality review; `sdlc/policy/code-quality-practices`, `sdlc/principle/design-fundamentals` | Find bugs and pattern violations                                                                                                                                                 |
+| ownership               | § Domain ownership review; `sdlc/policy/domain-ownership`                                         | Verify every domain rule is implemented by its single owning context and crossed only through a published contract                                                               |
+| paradigm                | § Paradigm-fit assessment                                                                         | Check data flow, component reuse, pattern consistency, forward-migration of owned data                                                                                           |
+| principles              | § Principle violation hunt; `sdlc/procedure/lifecycle/work/principle-violation-hunt`              | Structural violation hunt against design principles                                                                                                                              |
+| intelligence-boundaries | `general/principle/intelligence-boundaries`                                                       | Find code or staged checks that grade free-text content, and contracts that make prose a test subject                                                                            |
+| security                | § Security review                                                                                 | Check for secrets, injection, auth gaps, and repository-privacy leakage                                                                                                          |
+| tests                   | § Test coverage check; `sdlc/policy/quality-predicate-registry`                                   | Evaluate behavioral value, weak-test anti-patterns, and coverage                                                                                                                 |
+| errors                  | § Error handling review; `sdlc/procedure/lifecycle/work/silent-failure-audit`                     | Find silent failures and inadequate error handling                                                                                                                               |
+| types                   | § Type design review (when types added/modified)                                                  | Validate type invariants, encapsulation, and enforcement                                                                                                                         |
+| comments                | § Comment accuracy review                                                                         | Verify comments are accurate, non-stale, and earn their place                                                                                                                    |
+| logging                 | § Logging review                                                                                  | Enforce logging policy; reject ad-hoc debug probes                                                                                                                               |
+| docs                    | § Documentation and config surface check (when CLI, config, or API changed)                       | Verify help text, config surface, README, and affected doc snippets reflect changes                                                                                              |
+| doc-hygiene             | § Doc-snippet hygiene (when a `docs/**` snippet or any directive-text surface changed)            | Verify changed snippet bodies state present-tense contract — no narration; verify changed directive text was the author's to write and states the reality wanted from its reader |
+| simplify                | § Simplification review (after other lanes pass)                                                  | Simplify without behavior changes                                                                                                                                                |
 
 ### A verdict and its lane scores are written together
 
@@ -141,8 +142,9 @@ lifecycle review):
 1. Identify the authoritative source and quote the criterion.
 2. Identify the specific reviewed change that delivers it (file, function, line range).
 3. Explain, in one sentence, how that change satisfies it.
-4. Where the project opts into tests, name the scenario-bound test and the
-   concrete production-code mutation it catches under the testing policy.
+4. Where the project opts into tests and the criterion concerns software
+   behavior, name the scenario-bound test and the concrete production-code
+   mutation it catches under the testing policy.
 
 Findings:
 
@@ -158,13 +160,14 @@ Findings:
 
 A reviewer cannot approve while any Scope verification entry is missing its
 reviewed change or satisfaction analysis. In a project that opts into tests, the
-entry also needs its test and killing mutation.
+entry for a criterion on software behavior also needs its test and killing
+mutation.
 
 #### Code quality review
 
-**Authority:** DoD §2 (Code Quality) + `code-quality-practices`, `design-fundamentals`.
+**Authority:** `sdlc/policy/definition-of-done` on code quality, `sdlc/policy/code-quality-practices`, `sdlc/principle/design-fundamentals`.
 
-Systematically check changed code for bugs, pattern violations, and structural anti-patterns. Read `code-quality-practices` and `design-fundamentals` before starting.
+Systematically check changed code for bugs, pattern violations, and structural anti-patterns. Read `sdlc/policy/code-quality-practices` and `sdlc/principle/design-fundamentals` before starting.
 
 For each changed file, evaluate:
 
@@ -172,7 +175,7 @@ For each changed file, evaluate:
 2. **Contract fidelity** — Do call sites honour the contract of the functions they call? Are preconditions met? Are return values handled correctly?
 3. **Pattern violations** — Does the code follow the established patterns in adjacent code? Import conventions, error handling style, naming, module structure.
 4. **Duplication** — Is logic copy-pasted where it should be extracted? Is an existing utility ignored?
-5. **Unnecessary complexity** — Premature abstraction, over-engineering, dead code, unreachable branches, abstractions with a single consumer, and a named constant for a string with a single use (`sdlc/policy/code-quality-practices` → State and Data).
+5. **Unnecessary complexity** — Premature abstraction, over-engineering, dead code, unreachable branches, abstractions with a single consumer, and a named constant for a string with a single use (`sdlc/policy/code-quality-practices`).
 6. **Language-policy ownership** — For every changed code file, load the applicable language policy and apply its rules for string ownership, closed vocabularies, typing, and tooling. Findings cite that language owner. A generic review rule never substitutes its own language construct or command.
 7. **Shared-resource cost** — Where the change makes a path wait on a lock, transaction or other resource that unrelated work also holds, name those other holders and what they do while holding it, whether the wait is bounded, and whether the outcome reaches each caller within that caller's deadline. Judge it from the change, the resource's other holders in the code, and the callers the path serves. The wait is a finding only when it is reachable under `sdlc/concept/defect-evidence`.
 8. **Executable logic in carriers** — In every changed file whose purpose is configuration, declaration, orchestration or convention, whatever its format, each executable body it carries — a Make recipe, a workflow run block, a build step, a hook — is a single delegation line to a script or module. Declarative content is unaffected, and a file may hold several such bodies; a body that branches, loops, computes or parses is code in the wrong place (`sdlc/policy/no-inline-logic`).
@@ -222,19 +225,19 @@ may expose crossings, but no path-name or prose scanner determines ownership.
 
 #### Paradigm-fit assessment
 
-**Authority:** `design-fundamentals`, `backward-compatibility-hygiene`, `substrate-anchoring`, `general/principle/grounding`, `state-storage`.
+**Authority:** `sdlc/principle/design-fundamentals`, `sdlc/policy/backward-compatibility-hygiene`, `sdlc/policy/substrate-anchoring`, `general/principle/grounding`, `sdlc/policy/state-storage`.
 
 Check whether the implementation follows existing codebase paradigms:
 
 1. **Data flow**: Does it use the established data layer, or bypass it with inline hacks?
 2. **Component reuse**: Does it reuse and parameterize existing components, or copy-paste them?
 3. **Pattern consistency**: Does it follow patterns established by adjacent code?
-4. **Schema evolution**: For data the project owns (persisted state, config, artifacts), does it migrate the stored shape forward, or carry a backward-compatibility branch for an old shape? The contract for owned data is forward-migration (`backward-compatibility-hygiene`, Owned internal data); a version-tolerance branch in domain code is the violation, not the workaround. Any change to the field set of an owned persisted or serialized model — adding a field, renaming a field, removing a field, or tightening one to required — is itself a schema change: the diff must include the forward-migration step that rewrites existing records to the new shape **and** a golden-fixture test that loads an old-shape record through the new model. A field-set change with no migration is a defect that surfaces only when a pre-change record is read back, never in the change's own tests. The trap is a rename that does not bump the schema version: affected records are already stamped at the latest version, so a version-gated `vN → vN+1` hop never runs on them — the migration must normalize them unconditionally.
+4. **Schema evolution**: For data the project owns (persisted state, config, artifacts), does it migrate the stored shape forward, or carry a backward-compatibility branch for an old shape? The contract for owned data is forward-migration (`sdlc/policy/backward-compatibility-hygiene`: owned data migrates forward); a version-tolerance branch in domain code is the violation, not the workaround. Any change to the field set of an owned persisted or serialized model — adding a field, renaming a field, removing a field, or tightening one to required — is itself a schema change: the diff must include the forward-migration step that rewrites existing records to the new shape **and** a golden-fixture test that loads an old-shape record through the new model. A field-set change with no migration is a defect that surfaces only when a pre-change record is read back, never in the change's own tests. The trap is a rename that does not bump the schema version: affected records are already stamped at the latest version, so a version-gated `vN → vN+1` hop never runs on them — the migration must normalize them unconditionally.
 
 5. **Structural ratchet**: Does the delivery leave the modules and seams on its
    change path no worse, and carry its ratchet disposition — a preparatory
    deepening commit, or a recorded deepening candidate with the reason for
-   deferral (`definition-of-done` §2)? The reviewer blocks an introduced or
+   deferral (`sdlc/policy/definition-of-done`)? The reviewer blocks an introduced or
    worsened violation. It may challenge a deferral only by disproving its
    stated reason, never by substituting the reviewer's preferred refactor.
    Untouched debt outside the change path is never a finding.
@@ -243,7 +246,7 @@ Check whether the implementation follows existing codebase paradigms:
    this system already reaches the same kind of outcome for a comparable case.
    Does the change take that path, or does it assemble a new mechanism beside
    it, even one whose every part reuses an existing module
-   (`substrate-anchoring`)? An undeclared parallel is **Critical**. A declared
+   (`sdlc/policy/substrate-anchoring`)? An undeclared parallel is **Critical**. A declared
    divergence whose reason does not hold is **Important**.
    The existing path can lie outside the repository: a shared repository the
    project consumes — shared workflows, presets, packages — is part of the
@@ -264,9 +267,9 @@ Check whether the implementation follows existing codebase paradigms:
 
 7. **State placement**: Does every piece of durable state the change
    introduces, relocates or changes live where the reviewed design placed it,
-   and does that placement hold under `state-storage`? Durable state the design
+   and does that placement hold under `sdlc/policy/state-storage`? Durable state the design
    never declared, or durable state with no persisted home or living inside a
-   derived store, is **Critical**. Any other `state-storage` breach is
+   derived store, is **Critical**. Any other `sdlc/policy/state-storage` breach is
    **Important**.
 
 Paradigm violations are **Important** at minimum. An introduced or worsened
@@ -278,22 +281,23 @@ is Important. Bypassing the data layer is Critical. A backward-compatibility bra
 
 #### Principle violation hunt
 
-**Authority:** the documented design principles (`principle-violation-hunt`).
+**Authority:** the documented design principles (`sdlc/procedure/lifecycle/work/principle-violation-hunt`).
 
-Systematic check of changed code against documented design principles, with fallback detection as the most prominent target. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
+Systematic check of the reviewed target — changed code, preparation artifacts, or pending contracts — against documented design principles, with fallback detection as the most prominent target. Its brief carries the complete target and the intent basis, and the hunt reads beyond them wherever a principle leads.
 
-Use the `principle-violation-hunt` procedure for detailed hunt criteria.
+Use the `sdlc/procedure/lifecycle/work/principle-violation-hunt` procedure for detailed hunt criteria.
 
-**Severity baseline:** Unjustified fallback paths are **Critical**. A fallback is justified only when UX literally dies without it, documented in a code comment at the fallback site.
+**Severity baseline:** Unjustified fallback paths are **Critical**, including when named in an upstream work artifact (`general/policy/conflict-resolution`). A fallback is justified only when UX literally dies without it, documented in a code comment at the fallback site (or, in preparation, justified by that exact standard in the design).
 
 #### Intelligence-boundaries
 
-**Authority:** `principle/intelligence-boundaries`.
+**Authority:** `general/principle/intelligence-boundaries`.
 
 Find code that classifies, scores, judges, evaluates, or auto-edits free-text
 content semantics — intelligence that belongs in an agent's briefing, not in code
-the agent wraps. Consult `principle/intelligence-boundaries` for the detection
-patterns and the defining test.
+the agent wraps. Consult `sdlc/policy/no-semantic-validators` for the detection
+patterns and `sdlc/procedure/lifecycle/work/principle-violation-hunt` for the
+defining test.
 
 The lane's question is positive: list every decision the change makes about
 free text and name where each executes. A judgment moved from an agent into
@@ -301,9 +305,13 @@ code is the finding. That a change removes an agent, invokes fewer agents, or
 makes work "mechanical" is never a compliance argument; it is the exact shape
 the principle warns against.
 
+A contract or plan that makes documentation, a prompt or a skill the subject of
+a test, a replay or a score is the same finding, whether code or staged agent
+sessions would run the check (`general/principle/intelligence-boundaries`).
+
 #### Security review
 
-**Authority:** DoD §5 (Security) + `security-awareness`.
+**Authority:** `sdlc/policy/definition-of-done` on security, `sdlc/policy/security-awareness`.
 
 Check the diff for security issues against the Definition of Done security gates:
 
@@ -326,7 +334,7 @@ control. Security violations are **Critical** findings.
 
 #### Test coverage check
 
-**Authority:** DoD §3 (Testing) + `sdlc/policy/testing` and the per-language testing policy.
+**Authority:** `sdlc/policy/definition-of-done` on testing, `sdlc/policy/testing` and the per-language testing policy.
 
 This lane applies the atomic rejection predicates in
 `sdlc/policy/quality-predicate-registry` and the doctrine in
@@ -341,7 +349,7 @@ Apply the policy, not a per-function reflex:
 
 - **Coverage is the scenario inventory, not "every new function."** A coverage finding requires an **unbound feature-spec scenario this change delivers**. Absent such a scenario — platform-internal machinery, or a contract-defining / thin artifact (the artifact is its own spec) — there is nothing to bind, and "missing tests" is **not** a finding.
 - **Never request an agent-authored unit test where the applicable language testing policy forbids one.** If internal logic genuinely warrants coverage, route it as `sdlc/policy/testing` routes a test that seems missing: a fast test of that logic where the language policy and project ruling admit one, otherwise none. Never a new scenario, never a second test bound to an existing scenario.
-- **A scenario added or widened in a build range is a finding.** Scenarios are authored and frozen in preparation; a build pass that adds a use case or broadens one, including to justify a test, breaks the author/binder separation (`sdlc/policy/testing`, rule 2).
+- **A scenario added or widened in a build range is a finding.** Scenarios are authored and frozen in preparation; a build pass that adds a use case or broadens one, including to justify a test, breaks the author/binder separation (`sdlc/policy/testing`: scenarios are frozen in preparation).
 - **Spec-delivered test specs:** every assertion from the spec-delivery commit must still exist; a removed or weakened assertion is a **Critical** finding (diff the spec-delivery commit against the final state).
 - **Weak tests are findings even when coverage exists.** Apply every weak-test anti-pattern the testing policy enumerates — the policy owns the full list; do not re-list it here.
 - **Browser / web UI changes without downstream live verification:** verify observable behavior independently via review browser smoke, CI browser verification, or a separate `verifier` pass per `sdlc/procedure/lifecycle/review`.
@@ -364,7 +372,7 @@ Before crediting any test as meaningful coverage, name the concrete production-c
 - Apply `TQ-04` from `sdlc/policy/quality-predicate-registry` to configuration and default assertions. `TQ-04` is the single rejection predicate and evidence contract.
 
 - Reject **unit tests wearing the language's `functional` label** — a marker is self-asserted by the author and proves nothing. A test fails this check when it enters at an internal symbol that is not the behavior's real surface and fakes that symbol's in-process collaborators, or when it patches in-process non-boundary collaborators so the real chain never runs, or when its value is a return-value, construction-default, or config-literal assertion. Verify against `sdlc/concept/functional-test-boundary` that the test drives a real entry surface and fakes only the process or network line. Naming style is not the disqualifier; the real surface and collaboration boundary decide. This is a review judgment against the definition; no path check or scanner decides it, and treating one as the enforcement manufactures false assurance.
-- Reject **tests that pin a superseded owned-data shape** — a test asserting an old config, artifact, or persisted-aggregate schema the code is meant to migrate forward (`backward-compatibility-hygiene`, Owned internal data). It makes the dead compatibility path load-bearing and resists its own deletion. Schema-evolution coverage belongs in the migration's `vN → vN+1` golden-fixture test asserting the current shape — never in a test that locks the old one in place.
+- Reject **tests that pin a superseded owned-data shape** — a test asserting an old config, artifact, or persisted-aggregate schema the code is meant to migrate forward (`sdlc/policy/backward-compatibility-hygiene`: owned data migrates forward). It makes the dead compatibility path load-bearing and resists its own deletion. Schema-evolution coverage belongs in the migration's `vN → vN+1` golden-fixture test asserting the current shape — never in a test that locks the old one in place.
 - Review snapshot deltas in the PR with the same weight as code deltas. Read each snapshot diff and confirm it matches the change's stated intent. An unreviewed or unjustified snapshot update is a finding.
 - A test file appearing on the project's string-assertion exemption list is acceptable only if the current PR does not touch that file. If the PR touches a listed test file, the file must be migrated to snapshots in the same change and removed from the exemption list.
 
@@ -390,9 +398,9 @@ Severity guidance:
 
 #### Error handling review
 
-**Authority:** DoD §8 (Observability) + `silent-failure-audit`.
+**Authority:** `sdlc/policy/definition-of-done` on observability, `sdlc/procedure/lifecycle/work/silent-failure-audit`.
 
-Audit all error handling paths in the diff for silent failures, inadequate logging, and inappropriate fallback behavior. Use the `silent-failure-audit` procedure for the systematic approach.
+Audit all error handling paths in the diff for silent failures, inadequate logging, and inappropriate fallback behavior. Use the `sdlc/procedure/lifecycle/work/silent-failure-audit` procedure for the systematic approach.
 
 Key targets:
 
@@ -414,7 +422,7 @@ Severity guidance:
 
 #### Type design review
 
-**Authority:** DoD §2 (Code Quality) — type design.
+**Authority:** `sdlc/policy/definition-of-done` on code quality — type design.
 
 When the diff introduces or modifies types, data models, or record structures, evaluate the type design quality.
 
@@ -446,7 +454,7 @@ Severity guidance:
 
 #### Comment accuracy review
 
-**Authority:** DoD §6 (Documentation) — comments.
+**Authority:** `sdlc/policy/definition-of-done` on documentation — comments.
 
 Verify that comments on changed code are factually accurate, non-stale, and earn their place. A wrong comment is worse than no comment.
 
@@ -466,7 +474,7 @@ Severity guidance:
 
 #### Logging review
 
-**Authority:** DoD §8 (Observability) + `sdlc/policy/observability` (level and content) + the applicable language logging policy (mechanism).
+**Authority:** `sdlc/policy/definition-of-done` on observability, `sdlc/policy/observability` (level and content) + the applicable language logging policy (mechanism).
 
 Verify that changed code follows the observability contract and its language realization. Load both before reviewing.
 
@@ -484,11 +492,11 @@ Severity guidance:
 - Sensitive data in logs → **Critical**.
 - Ad-hoc debug probes left in production code → **Important**.
 - Wrong log levels that hide errors or pollute the production level → **Important**.
-- Missing boundary logging for significant operations → **Important** (per DoD §8 Observability: logging at key boundaries is required).
+- Missing boundary logging for significant operations → **Important** (`sdlc/policy/definition-of-done`: logging at key boundaries is required).
 
 #### Documentation and config surface check
 
-**Authority:** DoD §6 (Documentation) + `documentation-first-development`.
+**Authority:** `sdlc/policy/definition-of-done` on documentation, `sdlc/principle/documentation-first-development`.
 
 When the delivery changes CLI subcommands, config keys, API endpoints, or user-facing behavior:
 
@@ -542,7 +550,7 @@ lane checks that the changed prose is _clean_ and _the author's to write_. A
 snippet or company knowledge body states present-tense intent, facts, or
 contract — nothing else. This is a reviewer judgment, not an automated grader:
 code that scores free-text prose quality would itself violate
-`principle/intelligence-boundaries`, so the reviewer reads the prose and applies
+`general/principle/intelligence-boundaries`, so the reviewer reads the prose and applies
 the rule. Tooling may **route** a diff into this lane by locating changed string
 literals on the surfaces named below; it never grades what those literals say.
 
@@ -657,7 +665,7 @@ surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
 
 For each changed snippet body, flag the Narration anti-pattern in its four forms
-(`snippet-value-contract` owns the full definition; do not re-derive it here):
+(`general/policy/snippet-value-contract` owns the full definition; do not re-derive it here):
 
 1. **History in the body** — "replaces the v1 path", "is retired", "used to …",
    "previously named …". Belongs in git.
@@ -671,7 +679,7 @@ For each changed snippet body, flag the Narration anti-pattern in its four forms
 
 For each changed snippet body, and for an `index.yaml` diff per item 8's
 own trigger below, additionally flag the coherence anti-patterns
-(`snippet-value-contract` owns the full definition; do not re-derive it here):
+(`general/policy/snippet-value-contract` owns the full definition; do not re-derive it here):
 
 5. **Duplication without a citation, or a citation that misrepresents its
    owner** — the change restates a rule that another snippet already owns,
@@ -687,7 +695,8 @@ own trigger below, additionally flag the coherence anti-patterns
    commonest form is **consumer restatement**: a use case, paragraph, or "or
    on another computer" variant whose `Then` clauses, read without actor and
    surface words, assert outcomes another context's spec decides
-   (`general/policy/snippet-value-contract`, Consumer restatement). Open the
+   (`general/policy/snippet-value-contract`: an outcome another context decides is
+   cited, not restated). Open the
    owning context's spec — live, and pending via
    `instrukt docs get <id> --target <slug>`; an owner that is pending still
    exists — and apply the test: delete each `Then` clause the owner decides;
@@ -697,8 +706,8 @@ own trigger below, additionally flag the coherence anti-patterns
    reviewer never requests that a consumer's use case be extended, completed,
    or made symmetric with the owner's rule; such a request assigns another
    context's behavior to the artifact under review
-   (`sdlc/policy/preparation-artifact-quality`, §Evidence does not reallocate
-   ownership) and is itself a defective finding.
+   (`sdlc/policy/preparation-artifact-quality`: evidence does not
+   reallocate ownership) and is itself a defective finding.
 6. **Section echo** — a required section restating another section of the same
    snippet, most often Enforcement re-listing Rules as "X is a violation," or
    Rationale restating a rule instead of naming the invariant it protects.
@@ -722,8 +731,7 @@ own trigger below, additionally flag the coherence anti-patterns
    snippet does.
 
 When the changed snippet is an ADR (`docs/project/adr/**`), additionally hold its
-body to the ADR contract (`general/policy/adr-discipline`, `general/procedure/adr-authoring`
-— "What an ADR is"):
+body to the ADR contract (`general/policy/adr-discipline`, `general/procedure/adr-authoring`):
 
 5. **Forward ADR reference** — the body references a _later_ ADR, a decision that
    did not exist when this one was recorded. A backward reference to an _earlier_
@@ -787,7 +795,7 @@ A routing or documentation finding must satisfy the validity and closure rules i
 
 #### Simplification review
 
-**Authority:** `design-fundamentals` / KISS + naming-clarity policy.
+**Authority:** `sdlc/principle/design-fundamentals` on simplicity and naming clarity.
 
 Run after all other lanes pass. Simplify changed code for clarity, consistency, and maintainability without changing behaviour.
 
@@ -810,7 +818,7 @@ Simplification findings are **Important** severity. The simplify lane only flags
 
 #### Bug-fix review
 
-**Authority:** DoD §3 (Testing) + `sdlc/procedure/lifecycle/prepare/diagnose-peer`. Conditional lane — fires when `kind == "bug"`.
+**Authority:** `sdlc/policy/definition-of-done` on testing, `sdlc/procedure/lifecycle/prepare/diagnose-peer`. Conditional lane — fires when `kind == "bug"`.
 
 When `kind == "bug"`, the `input` artifact is the bug report and the intent source (no `prd`),
 sharpened by the `diagnosis` root cause. Verify:
@@ -834,10 +842,10 @@ sharpened by the `diagnosis` root cause. Verify:
 4. Investigation and documentation sections are complete.
 5. Where the project opts into test authorship, a reproduction test exists before
    the fix, binding either a pre-existing scenario or the single regression
-   scenario the plan phase authored for this symptom (`policy/testing` rule 2,
-   bug-lane exception). A contract-defining artifact with no bindable scenario
-   needs no test (`sdlc/policy/testing`, "Contract-defining artifacts are not
-   tested").
+   scenario the plan phase authored for this symptom (`sdlc/policy/testing`: the
+   bug-lane exception to frozen scenarios). A contract-defining artifact with no bindable scenario
+   needs no test (`sdlc/policy/testing`: a
+   contract-defining artifact is its own spec).
 6. The reproduction test passes after the fix when item 5 requires one.
 7. No scenario beyond the single regression scenario was authored, and beyond that scenario no new
    contract text shipped unless the diagnosed cause is a wrong documented contract — a fix that

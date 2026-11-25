@@ -279,7 +279,7 @@ mod tests {
     fn other_forms_name_nothing() {
         for raw in [
             "docs/domain/sdlc/policy/x.md",
-            "~/.teleclaude/docs/sdlc/policy/x.md",
+            "~/.elsewhere/docs/sdlc/policy/x.md",
             "/elsewhere/.instrukt/docs/sdlc/policy/x.md",
             "~/.instrukt/docs/third-party/x.md",
             "~/.instrukt/docs/sdlc/notes/x.md",

@@ -24,6 +24,7 @@ mod _editor;
 mod _fingerprint;
 mod _patch;
 pub(crate) use _patch::target_entries;
+mod _plugin;
 mod _render;
 mod _source;
 mod _sync;
@@ -46,6 +47,9 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
+pub use _plugin::{
+    CompanyName, CompanyNameError, PluginDrift, PluginFinding, PluginPlan, PluginVersion,
+};
 pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
@@ -160,6 +164,108 @@ pub fn write_rendering(root: &Path, plan: &RenderPlan) -> Result<Vec<PathBuf>, P
         }
     }
     Ok(changed)
+}
+
+/// Plans the rendering of the company plugin of `key`, named `name`, from
+/// the working tree whose root is `root`
+/// (`project/instrukt/spec/feature/publication/company-plugin`): what it
+/// found, and what to write and remove wherever that can be known, read
+/// from the working tree alone, the plugin's folder and the catalog
+/// included. Writes nothing.
+pub fn plan_plugin(
+    root: &Path,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<PluginPlan, PublicationError> {
+    _plugin::plan(&plugin_view(root, key)?, key, name)
+}
+
+/// Every finding of the company plugin of `key`, named `name`, in the
+/// working tree whose root is `root`, as [`plan_plugin`] finds them, without
+/// comparing any file with the rendering. Writes nothing.
+pub fn validate_plugin(
+    root: &Path,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<Vec<PluginFinding>, PublicationError> {
+    _plugin::findings(&plugin_view(root, key)?, key, name)
+}
+
+/// The view of the working tree whose root is `root` that the plugin of
+/// `key` is rendered from: the plugin's folder and the catalog included.
+fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, PublicationError> {
+    let folder = _plugin::folder(key);
+    _source::Committed::working_tree_places(
+        root,
+        _source::Places {
+            folder: &folder,
+            file: _plugin::CATALOG,
+        },
+    )
+}
+
+/// Applies `plan` to the working tree whose root is `root`, and nothing
+/// while it holds a finding. Each removal comes first, with each folder it
+/// leaves empty inside the plugin's folder, so a new file never meets an
+/// old file or an emptied folder on its way. Then each write follows, one file at a
+/// time: the plugin's other files, then its manifest, then the catalog.
+/// Each write is atomic and nothing passes through a symbolic link. A
+/// rendering cut short leaves exactly the removals and writes made before
+/// the cut; the next rendering compares against what the folder then
+/// holds. Returns the paths it changed, relative to `root`.
+pub fn write_plugin(root: &Path, plan: &PluginPlan) -> Result<Vec<PathBuf>, PublicationError> {
+    let mut changed = Vec::new();
+    let Some(drift) = plan.drift.as_ref().filter(|_| plan.findings.is_empty()) else {
+        return Ok(changed);
+    };
+    for path in &drift.removals {
+        let target = _tx::own_destination(root, path)?;
+        match crate::fsx::remove_file(&target) {
+            Ok(()) => changed.push(path.clone()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(PublicationError::Io {
+                    path: target,
+                    source,
+                });
+            }
+        }
+        remove_emptied_folders(root, &plan.folder, path)?;
+    }
+    for file in drift.writes.iter().chain(&plan.catalog) {
+        let target = _tx::own_destination(root, &file.path)?;
+        crate::fsx::atomic_write(&target, file.text.as_bytes())?;
+        changed.push(file.path.clone());
+    }
+    Ok(changed)
+}
+
+/// Removes each folder above the removed file `removed` that the removal
+/// left empty, up to the plugin's folder `folder` and never that folder
+/// itself, each through [`_tx::own_destination`]. A folder that still holds
+/// anything, or is gone, ends the climb.
+fn remove_emptied_folders(
+    root: &Path,
+    folder: &Path,
+    removed: &Path,
+) -> Result<(), PublicationError> {
+    let mut at = removed.parent();
+    while let Some(rel) = at.filter(|rel| rel.starts_with(folder) && *rel != folder) {
+        let dir = _tx::own_destination(root, rel)?;
+        match crate::fsx::remove_dir(&dir) {
+            Ok(()) => at = rel.parent(),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::DirectoryNotEmpty | std::io::ErrorKind::NotFound
+                ) =>
+            {
+                break;
+            }
+            Err(source) => return Err(PublicationError::Io { path: dir, source }),
+        }
+    }
+    Ok(())
 }
 
 /// A sync could not run to its end. Refusals are not errors (see
@@ -389,3 +495,91 @@ fn record_path(home: &Home, project: &ProjectSlug) -> PathBuf {
 }
 
 pub mod status;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write(root: &Path, rel: &str, text: &str) {
+        let path = root.join(rel);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    }
+
+    #[test]
+    fn a_rendering_replaces_an_emptied_folder_with_the_document_now_at_its_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let key = ProjectSlug::parse("acme").unwrap();
+        let name = CompanyName::parse("Acme").unwrap();
+        let references = root.join("plugins/acme/skills/acme/references");
+        write(
+            root,
+            ".claude-plugin/marketplace.json",
+            "{\"plugins\": []}\n",
+        );
+        write(root, "docs/index.yaml", "listed: [guide.md/spring.md]\n");
+        write(
+            root,
+            "docs/guide.md/spring.md",
+            "---\ndescription: Spring.\n---\n\n# Spring\n",
+        );
+        write_plugin(root, &plan_plugin(root, &key, &name).unwrap()).unwrap();
+        assert!(references.join("guide.md/spring.md").is_file());
+
+        std::fs::remove_dir_all(root.join("docs/guide.md")).unwrap();
+        write(root, "docs/index.yaml", "listed: [guide.md]\n");
+        write(
+            root,
+            "docs/guide.md",
+            "---\ndescription: The guide.\n---\n\n# Guide\n",
+        );
+        let plan = plan_plugin(root, &key, &name).unwrap();
+        assert!(plan.findings.is_empty());
+        write_plugin(root, &plan).unwrap();
+        assert!(references.join("guide.md").is_file());
+        let again = plan_plugin(root, &key, &name).unwrap().drift.unwrap();
+        assert!(again.writes.is_empty() && again.removals.is_empty());
+    }
+
+    #[test]
+    fn a_tracked_folder_replaced_by_a_document_reads_as_gone_before_it_is_staged() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let key = ProjectSlug::parse("acme").unwrap();
+        let name = CompanyName::parse("Acme").unwrap();
+        crate::git::run(root, ["init", "--quiet"]).unwrap();
+        write(
+            root,
+            ".claude-plugin/marketplace.json",
+            "{\"plugins\": []}\n",
+        );
+        write(root, "docs/index.yaml", "listed: [guide.md/spring.md]\n");
+        write(
+            root,
+            "docs/guide.md/spring.md",
+            "---\ndescription: Spring.\n---\n\n# Spring\n",
+        );
+        write_plugin(root, &plan_plugin(root, &key, &name).unwrap()).unwrap();
+        // The document and its generated file are tracked.
+        crate::git::run(root, ["add", "--all"]).unwrap();
+
+        // The document's folder becomes a document, nothing staged: git still
+        // lists both the old document and its generated file.
+        std::fs::remove_dir_all(root.join("docs/guide.md")).unwrap();
+        write(root, "docs/index.yaml", "listed: [guide.md]\n");
+        write(
+            root,
+            "docs/guide.md",
+            "---\ndescription: The guide.\n---\n\n# Guide\n",
+        );
+        let plan = plan_plugin(root, &key, &name).unwrap();
+        assert!(plan.findings.is_empty(), "{:?}", plan.findings);
+        write_plugin(root, &plan).unwrap();
+        let again = plan_plugin(root, &key, &name).unwrap();
+        assert!(again.findings.is_empty(), "{:?}", again.findings);
+        let drift = again.drift.unwrap();
+        assert!(drift.writes.is_empty() && drift.removals.is_empty());
+        assert!(again.catalog.is_none());
+    }
+}

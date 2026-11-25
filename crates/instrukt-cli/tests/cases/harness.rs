@@ -8,7 +8,7 @@
 use crate::common;
 use std::collections::BTreeMap;
 
-use crate::fixtures::documented;
+use crate::fixtures::{documented, history};
 use common::{Snapshot, TestEnv};
 use instrukt_core::fsx::FENCE_EXIT;
 
@@ -326,9 +326,11 @@ fn the_loggers_own_files_are_refused_before_they_land() {
     assert_eq!(env.refusals().len(), 1);
 }
 
-/// A live database that keeps a write-ahead log; closed, it has no sidecars.
+/// A live T3 database where the runtime locates it under the live home,
+/// which keeps a write-ahead log; closed, it has no sidecars.
 fn live_database(live: &Live) -> std::path::PathBuf {
-    let database = live.path().join("mirrors.db");
+    let database = live.path().join("userdata/statev2.sqlite");
+    std::fs::create_dir_all(database.parent().unwrap()).unwrap();
     let db = instrukt_core::state_db::rusqlite::Connection::open(&database).unwrap();
     db.pragma_update(None, "journal_mode", "WAL").unwrap();
     db.execute_batch("CREATE TABLE kept(id INTEGER)").unwrap();
@@ -336,11 +338,17 @@ fn live_database(live: &Live) -> std::path::PathBuf {
     database
 }
 
-/// Imports the legacy store at `source` and returns the exit status.
-fn import(env: &TestEnv, source: &std::path::Path) -> Option<i32> {
+/// Extracts history from T3 on a computer whose runtime is T3, and returns
+/// the exit status. Extraction opens T3's database read-only.
+fn extract(env: &TestEnv) -> Option<i32> {
+    history::computer(env, "aaaaaaaaaaaaaaaa");
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        "schema_version: 1\nrunner: {runtime: t3}\n",
+    )
+    .unwrap();
     env.instrukt(env.home())
-        .args(["history", "import-teleclaude", "--source"])
-        .arg(source)
+        .args(["history", "extract"])
         .output()
         .unwrap()
         .status
@@ -350,11 +358,12 @@ fn import(env: &TestEnv, source: &std::path::Path) -> Option<i32> {
 #[test]
 fn a_read_that_would_write_beside_a_live_database_is_refused_before_it_lands() {
     let live = Live::new();
-    let database = live_database(&live);
+    live_database(&live);
     let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
     let mut env = TestEnv::new();
     env.fence(&live.path());
-    assert_eq!(import(&env, &database), Some(i32::from(FENCE_EXIT)));
+    env.set_env("T3CODE_HOME", live.path().to_str().unwrap());
+    assert_eq!(extract(&env), Some(i32::from(FENCE_EXIT)));
     assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
     assert_eq!(env.refusals().len(), 1);
 }
@@ -366,11 +375,13 @@ fn a_read_through_a_link_to_a_live_database_is_refused_before_it_lands() {
     let untouched = Snapshot::over(Vec::new(), vec![live.path()]);
     let mut env = TestEnv::new();
     env.fence(&live.path());
-    // A link in the test's own directory, which SQLite follows to the live
+    // A link in the test's own T3 home, which SQLite follows to the live
     // file and keeps its side files beside.
-    let link = env.path("source.db");
+    let link =
+        std::path::Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/statev2.sqlite");
+    std::fs::create_dir_all(link.parent().unwrap()).unwrap();
     std::os::unix::fs::symlink(&database, &link).unwrap();
-    assert_eq!(import(&env, &link), Some(i32::from(FENCE_EXIT)));
+    assert_eq!(extract(&env), Some(i32::from(FENCE_EXIT)));
     assert!(untouched.changed().is_empty(), "{:?}", untouched.changed());
     assert_eq!(env.refusals().len(), 1);
 }

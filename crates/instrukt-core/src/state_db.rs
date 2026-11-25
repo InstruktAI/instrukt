@@ -400,6 +400,26 @@ impl StoreDb {
         tx.commit().map_err(StoreError::sqlite(store, &path))?;
         Ok(value)
     }
+
+    /// Reclaims the store's free pages under the lock this handle holds: a
+    /// rewrite without them (`VACUUM`), then one passive checkpoint. Once
+    /// the rewrite has committed no free page remains. The checkpoint
+    /// shortens the file unless a reader holds a snapshot from before the
+    /// rewrite; it waits for no reader, stopping short of the end of the log
+    /// is not a failure, and the log is not truncated.
+    pub fn reclaim(&mut self) -> Result<(), StoreError> {
+        let sql = StoreError::sqlite(self.store, &self.path);
+        self.conn.execute_batch("VACUUM").map_err(&sql)?;
+        // (busy, frames in the log, frames checkpointed): a short or busy
+        // checkpoint leaves the shortening to SQLite's next one.
+        let _: (i64, i64, i64) = self
+            .conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(&sql)?;
+        Ok(())
+    }
 }
 
 /// A connection opened for writing, at the current schema version, with the
@@ -457,23 +477,9 @@ impl StateDb {
     }
 
     /// Reclaims the database's free pages under the writer lock this handle
-    /// holds: a rewrite without them (`VACUUM`), then one passive checkpoint.
-    /// Once the rewrite has committed no free page remains. The checkpoint
-    /// shortens the file unless a reader holds a snapshot from before the
-    /// rewrite; it waits for no reader, stopping short of the end of the log
-    /// is not a failure, and the log is not truncated.
+    /// holds, as [`StoreDb::reclaim`] does for any store.
     pub fn reclaim(&mut self) -> Result<(), StateDbError> {
-        let sql = StateDbError::sqlite(self.db.path());
-        self.conn().execute_batch("VACUUM").map_err(&sql)?;
-        // (busy, frames in the log, frames checkpointed): a short or busy
-        // checkpoint leaves the shortening to SQLite's next one.
-        let _: (i64, i64, i64) = self
-            .conn()
-            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |row| {
-                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-            })
-            .map_err(&sql)?;
-        Ok(())
+        Ok(self.db.reclaim()?)
     }
 }
 
@@ -858,7 +864,7 @@ mod tests {
         let mut retained = at_31();
         retained
             .execute(
-                "INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:kept',1,1)",
+                "INSERT INTO history_sources(source,position,imported) VALUES('archive:kept',1,1)",
                 [],
             )
             .unwrap();
@@ -866,7 +872,7 @@ mod tests {
         assert_eq!(history(&retained), [true; 5]);
         let kept: (i64, bool) = retained
             .query_row(
-                "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
+                "SELECT position,imported FROM history_sources WHERE source='archive:kept'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )

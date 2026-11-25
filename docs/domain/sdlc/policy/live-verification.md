@@ -33,7 +33,6 @@ Select the cheapest honest real-surface oracle matching the changed runtime or b
 | Mobile app | iOS Simulator / Android Emulator | Booted simulator/emulator on CI or native host + black-box device driver + checker + screenshots/recording |
 | Public API / backend service / webhooks / workers | Real HTTP/WS/queue endpoints backed by real DB/cache/local protocol emulators | Isolated Compose stack on CI runner + black-box protocol/concurrency driver + DB/log checker |
 | CLI / local daemon / orchestrator | Compiled candidate binary, real git hooks, running daemon, local locks/files, relocatable target runtimes | Deterministic commands: real-binary functional tests and snapshots (`sdlc/policy/testing`). Concurrency, hooks, installation, or runtime-boundary behavior: isolated temp-home live-daemon / candidate-binary smoke |
-| Executable agent doctrine / prompts / skills (`general/policy/documentation-discipline`) | Frontier agents executing tasks under rendered instructions | Structural doc validation plus behavioral scenario replay or real-CLI/workflow dry-run under the candidate rendering |
 | ERP / business-ops tenants | Real tenant state, ledger, stock, board, or GitOps reconciliation | Ephemeral/staging tenant + black-box workflow driver + independent native state/ledger proof |
 | Libraries / parsers / compilers / data pipelines | Input corpus to output and algebraic invariants | Property-based testing, differential testing against reference/prior release, and sample corpus replay |
 
@@ -41,14 +40,14 @@ Select the cheapest honest real-surface oracle matching the changed runtime or b
 
 - Containerized, browser, and mobile-simulator verification runs execute by default on an **ephemeral CI runner** (using the organization's subscription-backed agent runtime and reusable workflows per `sdlc/policy/ci-pipeline-conventions`), rather than nested Docker-in-Docker inside company containers or local workstations.
 - Containerized verification stacks remain standard OCI and Compose definitions so compute stays portable across hosted CI runners and self-hosted or alternative runners via runner selection alone.
-- Docker-free archetypes (isolated temp-home CLI/daemon smokes, real-binary tests, property/corpus suites, and doctrine behavioral replay) execute cleanly in CI or locally without container privileges.
+- Docker-free archetypes (isolated temp-home CLI/daemon smokes, real-binary tests, and property/corpus suites) execute cleanly in CI or locally without container privileges.
 
 ### Dynamic verification tiering
 
 Classify every clean candidate HEAD by runtime or behavioral surface risk and blast radius:
 
-- **Tier 0 (no runtime or executable-doctrine delta):** Passive human documentation (READMEs, comments, descriptive notes), pure type/formatting refactors, or deterministic code changes fully verified by compiler + real-binary functional tests + static review. Record a Tier 0 disposition citing the exact candidate HEAD SHA and reason in `verification-findings` and skip live `verifier` execution.
-- **Tier 1 (localized runtime surface or executable-doctrine change):** Single isolated Setup -> Driver -> Checker pass (or behavioral replay for executable doctrine) exercising the touched surface plus every firing Layer 2 trigger.
+- **Tier 0 (no live run warranted):** A prose-only change (`general/principle/intelligence-boundaries`), a pure type/formatting refactor, or a deterministic code change fully verified by compiler + real-binary functional tests + static review. Any accompanying change to software behavior is classified on its own surface. Record a Tier 0 disposition citing the exact candidate HEAD SHA and reason in `verification-findings` and skip live `verifier` execution.
+- **Tier 1 (localized runtime surface change):** Single isolated Setup -> Driver -> Checker pass exercising the touched surface plus every firing Layer 2 trigger.
 - **Tier 2 (high blast radius, multi-flow feature, external integration, or pre-release):** Parallel isolated fan-out across distinct flows (bounded by Layer 1's concurrency cap), full firing Layer 2 sweep, and captured visual/trace evidence.
 
 ### Two planning moments
@@ -79,15 +78,15 @@ Live verification (`verifier`) operates as the black-box dual of static white-bo
 
 Every `bug` todo originating from a real occurrence (`sdlc/concept/defect-evidence`) records an `escape-assessment` artifact before finalization answering why pre-merge verification missed that defect class. It resolves to one disposition:
 
-- `trigger-added`: add one diff-triggered entry to Layer 2 (`project/<project>/policy/reliability-checklist`) via a tracked follow-up todo when the bug fix restores existing documented behavior (preserving minimal bug-fix scope under `sdlc/policy/definition-of-done-lanes`, Bug-fix review).
+- `trigger-added`: add one diff-triggered entry to Layer 2 (`project/<project>/policy/reliability-checklist`) via a tracked follow-up todo when the bug fix restores existing documented behavior (preserving minimal bug-fix scope under `sdlc/policy/definition-of-done-lanes`).
 - `substrate-upgraded`: deliver or file a tracked follow-up todo for the Layer 1 or stack upgrade closing the missing surface, engine, or test identity (filed as a tracked follow-up when the bug fix restores existing documented behavior).
 - `regression-graduated`: bind a permanent deterministic or hybrid regression scenario/test within the bug delivery (`sdlc/policy/testing`).
-- `escape-unmodelable`: state the concrete reason the external anomaly cannot be prevented upstream.
+- `escape-unmodelable`: state the concrete reason the external anomaly cannot be prevented upstream, or that the defect lay in prose, which review corrects (`general/principle/intelligence-boundaries`).
 
 ## Rationale
 
 - Splitting persistent substrate, pruned escape memory, and todo-scoped planning avoids both static-checklist rot (accretion and blind spots on new surfaces) and pure dynamic amnesia (re-inventing boot recipes and forgetting past incidents).
-- Routing by system archetype prevents verifying plumbing or running heavy browser sandboxes on deterministic CLI logic or passive prose while ensuring live runtime surfaces and executable doctrine meet an honest oracle.
+- Routing by system archetype prevents verifying plumbing or running heavy browser sandboxes on deterministic CLI logic or prose while ensuring live runtime surfaces meet an honest oracle.
 - Executing containerized and simulator verification on ephemeral CI runners eliminates Docker-in-Docker hazards for containerized company agents and workstation resource exhaustion, while standard OCI/Compose definitions preserve one-line portability to self-hosted runners if hosted CI limits tighten.
 - Checking substrate readiness upstream during Prepare prevents build from stalling on missing verification infrastructure; deriving Layer 3 post-build covers actual unintended blast radius and firing incident triggers.
 - Separating Setup, a code-blind Driver, and an anti-cheat Checker operationalizes `general/principle/verification-independence` on live behavior: a Driver that has never seen the diff cannot mirror builder assumptions or silently route around broken surfaces.

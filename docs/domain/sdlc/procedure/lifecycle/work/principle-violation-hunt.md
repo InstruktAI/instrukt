@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Hunt for code that violates documented design principles. Surface structural issues that a surface review would miss.'
+description: 'Hunt for code, preparation artifacts, or pending contracts that violate documented design principles. Surface structural issues that a surface review would miss.'
 visibility: 'public'
 ---
 
@@ -8,20 +8,20 @@ visibility: 'public'
 
 ## Goal
 
-Hunt for code that violates documented design principles. Surface structural issues — silent degradation, coupling violations, responsibility sprawl — that a surface-level review would miss.
+Hunt for code, preparation artifacts, or pending contracts that violate documented design principles. Surface structural issues — silent degradation, coupling violations, responsibility sprawl — that a surface-level review would miss.
 
 ## Preconditions
 
-- Changed files are available (diff or worktree).
-- The reviewer has loaded `design-fundamentals` for anti-pattern vocabulary.
+- The reviewed target is available (changed files in a diff or worktree, or preparation artifacts and pending contracts).
+- The reviewer has loaded `sdlc/principle/design-fundamentals` for anti-pattern vocabulary.
 
 ## Steps
 
-Work through each category below against the changed code. For each violation found, report: location (file:line), severity, principle violated, and what the code should do instead.
+Work through each applicable category below against the reviewed target. For each violation found, report: location (file:line or artifact section), severity, principle violated, and what the target should do instead.
 
 ### 1. Fallback & Silent Degradation (Critical focus)
 
-This is the highest-priority category. Unjustified fallbacks are **Critical** findings.
+This is the highest-priority category. Unjustified fallbacks are **Critical** findings, including when named in an upstream work artifact (`general/policy/conflict-resolution`).
 
 **Patterns to detect:**
 
@@ -31,9 +31,9 @@ This is the highest-priority category. Unjustified fallbacks are **Critical** fi
 - **Log-and-continue** — Catching an error, logging it, and continuing execution without surfacing the failure to the caller.
 - **Silent default substitution** — A function receives `None` or missing data for a required parameter and substitutes a default instead of raising.
 
-**Severity:** Critical unless the code has an explicit comment explaining why UX requires the fallback.
+**Severity:** Critical unless justified by the standard below — documented in a code comment at the fallback site, or in the design during preparation.
 
-**Justification standard:** "The user experience literally dies without this fallback" — convenience, robustness-theater, and "just in case" are not justification. A code comment must explain the specific UX failure that the fallback prevents.
+**Justification standard:** "The user experience literally dies without this fallback" — convenience, robustness-theater, and "just in case" are not justification. A code comment (or the design during preparation) must explain the specific UX failure that the fallback prevents.
 
 **Aliases:** A fallback rarely names itself. "Hardening", "graceful degradation", "defensive default", "safety net", "best-effort recovery", and "tolerant parsing" are the usual labels — judge the mechanism (a substitute path taken when the primary fails or input is bad), not the label. A renamed fallback is still a fallback and carries the same severity.
 
@@ -115,7 +115,7 @@ violate the immutability-preference policy is not a finding — drop the observa
 
 ### 9. Intelligence in the wrong layer
 
-Per `principle/intelligence-boundaries`. Code performing classification,
+Per `general/principle/intelligence-boundaries`. Code performing classification,
 scoring, judgment, evaluation, or auto-editing of content semantics — work
 the agent layer should do.
 
@@ -132,6 +132,8 @@ Patterns to detect:
   (regex section-header grading then regex-driven section insertion).
 - Structural-rubric grading via regex on document headers / formatting
   ("documents with `## Goal` and `## Acceptance` score higher").
+- A test, replay or score whose subject is a document, a prompt or a skill,
+  whether code or staged agent sessions run it.
 
 **Severity: Critical.** This pattern accumulates and corrupts the codebase
 faster than coupling violations because every implementation looks
@@ -144,7 +146,8 @@ wrong layer.
 A structural invariant policed by a lint, guardrail, regex, or meta-test that
 a type or schema could make **unrepresentable**. The fix is to move the
 invariant up to the strongest layer that can express it (see the
-enforcement-placement order in `definition-of-done-lanes` → test-coverage lane),
+enforcement-placement order of the test coverage lane in
+`sdlc/policy/definition-of-done-lanes`),
 not to add the scanner.
 
 Patterns to detect:

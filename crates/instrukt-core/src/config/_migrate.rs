@@ -24,7 +24,11 @@ pub(super) fn selection(
             changed = true;
         }
     }
-    // Role entries inherit machine choices migrated from the old global defaults.
+    // A migrated machine-wide order or tier leaves the file naming no role,
+    // so every shipped role keeps its shipped order and tier and the
+    // migrated ones reach only roles without a shipped entry. A profile
+    // chain migrated below reaches every role that selects that profile and
+    // tier.
     if changed {
         next["roles"] = Value::Mapping(Default::default());
     }

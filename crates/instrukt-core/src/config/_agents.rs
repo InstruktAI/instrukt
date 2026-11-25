@@ -123,85 +123,84 @@ fn invalid(message: impl Into<String>) -> ConfigError {
     }
 }
 
-/// Fill only absent capability fields; authored values and files remain unchanged.
-fn inherit_capabilities(value: &mut serde_yaml_ng::Value) -> Result<(), ConfigError> {
-    use serde_yaml_ng::{Mapping, Value};
-    let shipped: Value =
+/// The maps the file merges into the shipped defaults key by key.
+const KEYED_MAPS: [&str; 3] = ["roles", "profiles", "bundles"];
+
+/// The effective selection document: the shipped defaults with `file` laid
+/// over them. Maps merge by key, a field the file sets replaces the shipped
+/// one and a field it leaves out is inherited, and any other value (a list
+/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
+/// entries names nothing, so a bare `roles:` keeps every shipped role.
+fn effective(mut file: Value) -> Result<Value, ConfigError> {
+    let mut merged: Value =
         serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
-    fn fill(entry: &mut Value, fallback: &Value) {
-        if let Some(fields) = entry.as_mapping_mut() {
-            for field in ["class", "can"] {
-                if !fields.contains_key(field)
-                    && let Some(default) = fallback.get(field)
-                {
-                    fields.insert(field.into(), default.clone());
+    if let Some(fields) = file.as_mapping_mut() {
+        for key in KEYED_MAPS {
+            if fields
+                .get(key)
+                .is_some_and(|map| map.is_null() || map.as_mapping().is_some_and(|m| m.is_empty()))
+            {
+                fields.remove(key);
+            }
+        }
+    }
+    // A role with no shipped entry takes its omitted class and grants from
+    // the effective `default`; a shipped role takes them from its own entry
+    // through the overlay.
+    let unshipped: Vec<Value> = file
+        .get("roles")
+        .and_then(Value::as_mapping)
+        .into_iter()
+        .flat_map(|roles| roles.keys())
+        .filter(|name| merged["roles"].get(*name).is_none())
+        .cloned()
+        .collect();
+    super::_merge::overlay(&mut merged, &file);
+    let default = merged.get("default").cloned().unwrap_or(Value::Null);
+    if let Some(roles) = merged.get_mut("roles").and_then(Value::as_mapping_mut) {
+        for name in &unshipped {
+            if let Some(fields) = roles.get_mut(name).and_then(Value::as_mapping_mut) {
+                for field in ["class", "can"] {
+                    if !fields.contains_key(field)
+                        && let Some(inherited) = default.get(field)
+                    {
+                        fields.insert(field.into(), inherited.clone());
+                    }
                 }
             }
         }
     }
-    if let Some(default) = value.get_mut("default") {
-        fill(default, &shipped["default"]);
-    }
-    let effective_default = value.get("default").cloned().unwrap_or(Value::Null);
-    if let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) {
-        for (name, entry) in roles {
-            let fallback = shipped["roles"].get(name).unwrap_or(&effective_default);
-            fill(entry, fallback);
-        }
-    }
-    let entries = value.get("default").into_iter().chain(
-        value
-            .get("roles")
-            .and_then(Value::as_mapping)
-            .into_iter()
-            .flat_map(|roles| roles.values()),
-    );
-    let needed = entries
-        .flat_map(|entry| {
-            entry
-                .get("can")
-                .and_then(Value::as_sequence)
-                .into_iter()
-                .flatten()
-        })
-        .filter_map(Value::as_str)
-        .map(str::to_owned)
-        .collect::<std::collections::BTreeSet<_>>();
-    if let Some(root) = value.as_mapping_mut() {
-        let bundles = root
-            .entry(Value::String("bundles".into()))
-            .or_insert_with(|| Value::Mapping(Mapping::new()));
-        if let Some(bundles) = bundles.as_mapping_mut() {
-            for name in needed {
-                if !bundles.contains_key(name.as_str())
-                    && let Some(default) = shipped["bundles"].get(name.as_str())
-                {
-                    bundles.insert(name.into(), default.clone());
-                }
-            }
-        }
-    }
-    Ok(())
+    Ok(merged)
 }
 
 impl Agents {
+    /// The effective selection `text` states: the shipped defaults with the
+    /// file's overrides merged over them, validated as one document. The
+    /// file's own `schema_version` names the shape of its overrides, so it is
+    /// required and never inherited.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
-        let mut value: serde_yaml_ng::Value =
-            serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
-        if let Some(found) = value
-            .get("schema_version")
-            .and_then(serde_yaml_ng::Value::as_u64)
-            && found > VERSION
-        {
-            return Err(ConfigError::NewerSchema {
-                path: "agents.yaml".into(),
-                found,
-                current: VERSION,
-            });
+        let mut value: Value = serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
+        match value.get("schema_version") {
+            None => {
+                return Err(ConfigError::UnknownSchema {
+                    path: "agents.yaml".into(),
+                });
+            }
+            Some(found) => {
+                if let Some(found) = found.as_u64()
+                    && found > VERSION
+                {
+                    return Err(ConfigError::NewerSchema {
+                        path: "agents.yaml".into(),
+                        found,
+                        current: VERSION,
+                    });
+                }
+            }
         }
         super::_agents_migrate::retire_session_recover(&mut value);
-        inherit_capabilities(&mut value)?;
-        let result: Self = serde_yaml_ng::from_value(value).map_err(|e| invalid(e.to_string()))?;
+        let result: Self =
+            serde_yaml_ng::from_value(effective(value)?).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(
                 "unsupported agents schema_version; upgrade instrukt",
@@ -264,65 +263,31 @@ impl Agents {
         })
     }
 
-    /// Deploy or upgrade defaults, retaining edits against the last deployed
-    /// digest. An announcement is returned when new defaults cannot replace edits.
-    pub fn deploy(home: &Home, defaults: &str) -> Result<Option<String>, ConfigError> {
-        Self::parse(defaults)?;
+    /// What a writing command does to `agents.yaml` before reading it. A full
+    /// copy of shipped defaults the deployment record recognises as unedited
+    /// is removed, and then the record; any other file is kept and has a due
+    /// shape conversion persisted. Removal comes first, so a recognised copy
+    /// is never converted and kept.
+    pub fn converge_file(home: &Home) -> Result<(), ConfigError> {
+        let path = home.agents_file();
+        let state = home.agents_deployment_file();
+        let Some(before) = read_existing(&path)? else {
+            return Ok(());
+        };
+        if next_write(&before, Deployment::load(&state).as_ref())? == NextWrite::Keep {
+            return Ok(());
+        }
         let _lock = LockGuard::acquire(
             &home.locks_dir().join("agents.lock"),
             Duration::from_secs(10),
         )?;
-        let path = home.agents_file();
-        let state = home.agents_deployment_file();
-        let digest = |bytes: &[u8]| hex::encode(Sha256::digest(bytes));
-        let new_digest = digest(defaults.as_bytes());
-        let current = match std::fs::read(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(source) => return Err(ConfigError::Read { path, source }),
+        let Some(current) = read_existing(&path)? else {
+            return Ok(());
         };
-        let migrated = current
-            .as_deref()
-            .map(super::_agents_migrate::current)
-            .transpose()?
-            .flatten();
-        let prior = Deployment::load(&state)?;
-        let unedited = current
-            .as_ref()
-            .is_none_or(|b| prior.as_ref().is_some_and(|p| p.recognises(b)));
-        if unedited {
-            if current.as_deref() != Some(defaults.as_bytes()) {
-                let prepared = Deployment {
-                    schema_version: DEPLOYMENT_VERSION,
-                    digest: prior.as_ref().map(|p| p.digest.clone()).unwrap_or_default(),
-                    pending: Some(new_digest.clone()),
-                };
-                atomic_write(
-                    &state,
-                    &serde_json::to_vec(&prepared).map_err(|e| invalid(e.to_string()))?,
-                )?;
-                atomic_write(&path, defaults.as_bytes())?;
-            }
-            let record = serde_json::to_vec(&Deployment {
-                schema_version: DEPLOYMENT_VERSION,
-                digest: new_digest,
-                pending: None,
-            })
-            .map_err(|e| invalid(e.to_string()))?;
-            atomic_write(&state, &record)?;
-            if current.as_deref() != Some(defaults.as_bytes()) {
-                tracing::info!(
-                    event = "agents_defaults_written",
-                    operation = if current.is_none() {
-                        "install"
-                    } else {
-                        "replace"
-                    }
-                );
-            }
-            Ok(None)
-        } else {
-            if let Some(converted) = migrated {
+        match next_write(&current, Deployment::load(&state).as_ref())? {
+            NextWrite::Keep => {}
+            NextWrite::Remove => remove_copy(&path, &state)?,
+            NextWrite::Convert(converted) => {
                 atomic_write(&path, &converted.bytes)?;
                 tracing::info!(
                     event = "agents_shape_migrated",
@@ -330,102 +295,59 @@ impl Agents {
                     to_version = VERSION
                 );
             }
-            if prior.as_ref().is_none_or(|p| p.digest != new_digest) {
-                Ok(Some(format!(
-                    "{}: user edits retained; new agents defaults are available",
-                    path.display()
-                )))
-            } else {
-                Ok(None)
-            }
-        }
-    }
-
-    /// Persist mandatory shape conversion independently of default selection.
-    pub fn migrate_shape(home: &Home) -> Result<(), ConfigError> {
-        let path = home.agents_file();
-        let before = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(source) => return Err(ConfigError::Read { path, source }),
-        };
-        if super::_agents_migrate::current(&before)?.is_none() {
-            return Ok(());
-        }
-        let _lock = LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
-            Duration::from_secs(10),
-        )?;
-        let current = std::fs::read(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        if let Some(converted) = super::_agents_migrate::current(&current)? {
-            // A deployed file left unedited stays recognisable through its
-            // conversion: its converted bytes are recorded as instrukt's own
-            // write, so the defaults upgrade still replaces it.
-            let state = home.agents_deployment_file();
-            if let Some(prior) = Deployment::load(&state)?
-                && prior.recognises(&current)
-            {
-                let carried = Deployment {
-                    pending: Some(hex::encode(Sha256::digest(&converted.bytes))),
-                    ..prior
-                };
-                atomic_write(
-                    &state,
-                    &serde_json::to_vec(&carried).map_err(|e| invalid(e.to_string()))?,
-                )?;
-            }
-            atomic_write(&path, &converted.bytes)?;
-            tracing::info!(
-                event = "agents_shape_migrated",
-                from_version = converted.from,
-                to_version = VERSION
-            );
         }
         Ok(())
     }
 
+    /// What a reading command reports about `agents.yaml`: the change the
+    /// next writing command makes to it, if any, without making it.
     pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
         let path = home.agents_file();
-        let bytes = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => return Err(ConfigError::Read { path, source }),
+        let Some(bytes) = read_existing(&path)? else {
+            return Ok(None);
         };
-        Ok(super::_agents_migrate::current(&bytes)?.map(|_|format!("{}: selection configuration inspected in memory; file migrates on the next writing command",path.display())))
+        let state = home.agents_deployment_file();
+        Ok(
+            match next_write(&bytes, Deployment::load(&state).as_ref())? {
+                NextWrite::Keep => None,
+                NextWrite::Remove => Some(format!(
+                    "{}: an unedited copy of earlier shipped defaults; the next writing command removes it and the shipped defaults apply",
+                    path.display()
+                )),
+                NextWrite::Convert(_) => Some(format!(
+                    "{}: selection configuration inspected in memory; file migrates on the next writing command",
+                    path.display()
+                )),
+            },
+        )
     }
 
+    /// The effective selection: the admitted one when served, else the file
+    /// merged over the shipped defaults, or the shipped defaults when there
+    /// is no file. A writing home first brings the file to its current state
+    /// ([`Self::converge_file`]); an inspection home writes and removes
+    /// nothing.
     pub fn load(home: &Home) -> Result<Self, ConfigError> {
         if let Some(admitted) = super::_admitted::served(home) {
             return Ok(admitted.agents().clone());
         }
         if home.is_inspection() {
-            let path = home.agents_file();
-            let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(source) => return Err(ConfigError::Read { path, source }),
-            };
+            let existing = read_existing(&home.agents_file())?;
             let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
             return Self::from_documents(home, existing, global.as_ref());
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
-        if let Some(notice) = Self::deploy(home, SHIPPED_AGENTS)? {
-            tracing::warn!(event="agents_defaults_available", message=%notice);
-        }
-        let path = home.agents_file();
-        let text =
-            std::fs::read_to_string(&path).map_err(|source| ConfigError::Read { path, source })?;
-        Self::parse(&text)
+        Self::converge_file(home)?;
+        let existing = read_existing(&home.agents_file())?;
+        Self::from_documents(home, existing, None)
     }
 
-    /// The profiles as a read command sees them, from `agents.yaml`'s bytes
-    /// (`None` when there is no file) and the global layer as read (`None`
-    /// when there is none), without reading or writing anything: an older
-    /// `agents.yaml` converted in memory, the selection of an older global
-    /// layer carried over, the shipped profiles when neither declares any.
+    /// The effective selection from `agents.yaml`'s bytes (`None` when there
+    /// is no file) and the global layer as read (`None` when there is none),
+    /// without reading or writing anything: an older `agents.yaml` converted
+    /// in memory, the selection of an older global layer carried over, each
+    /// merged over the shipped defaults, and the shipped defaults alone when
+    /// neither states any.
     pub(crate) fn from_documents(
         home: &Home,
         agents: Option<Vec<u8>>,
@@ -565,7 +487,70 @@ impl Agents {
             .collect()
     }
 }
-#[derive(Serialize, Deserialize)]
+/// What the next writing command does to `agents.yaml`.
+#[derive(Debug, PartialEq, Eq)]
+enum NextWrite {
+    /// Nothing for this operation: the file is not a recognised copy and no
+    /// shape conversion applies. Whether it is valid is for [`Agents::parse`]
+    /// to decide.
+    Keep,
+    /// Remove the file and then the deployment record: the record recognises
+    /// the file as a copy an earlier release wrote and nobody edited.
+    Remove,
+    /// Persist the file's own bytes at the current shape.
+    Convert(super::_agents_migrate::Converted),
+}
+
+/// The decision for `file` beside `record`, the readable deployment record
+/// (`None` when there is none, or it is unreadable). Removal comes first, so
+/// a recognised copy is never converted and kept.
+fn next_write(file: &[u8], record: Option<&Deployment>) -> Result<NextWrite, ConfigError> {
+    if record.is_some_and(|record| record.recognises(file)) {
+        return Ok(NextWrite::Remove);
+    }
+    Ok(match super::_agents_migrate::current(file)? {
+        Some(converted) => NextWrite::Convert(converted),
+        None => NextWrite::Keep,
+    })
+}
+
+/// Removes a recognised copy at `path`, then its record at `state`.
+fn remove_copy(path: &std::path::Path, state: &std::path::Path) -> Result<(), ConfigError> {
+    for removed in [path, state] {
+        match crate::fsx::remove_file(removed) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => {
+                return Err(crate::fsx::FsError::Write {
+                    path: removed.to_path_buf(),
+                    source,
+                }
+                .into());
+            }
+        }
+    }
+    tracing::info!(event = "agents_defaults_copy_removed");
+    Ok(())
+}
+
+/// `agents.yaml`'s bytes, or `None` when there is no file.
+fn read_existing(path: &std::path::Path) -> Result<Option<Vec<u8>>, ConfigError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// What an ignored deployment record leaves, and how an operator returns to
+/// the shipped defaults: told whether the record could not be read or could
+/// not be understood.
+const IGNORED_RECORD_RECOVERY: &str = "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want";
+
+#[derive(Deserialize)]
 struct Deployment {
     schema_version: u64,
     digest: String,
@@ -574,26 +559,52 @@ struct Deployment {
 }
 
 impl Deployment {
-    /// The defaults deployment record at `state`; `None` before the first.
-    fn load(state: &std::path::Path) -> Result<Option<Self>, ConfigError> {
-        let prior: Self = match std::fs::read(state) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| invalid("invalid defaults deployment record"))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: state.to_path_buf(),
-                    source,
-                });
+    /// The record an earlier release kept of the defaults it deployed; `None`
+    /// when there is none. A record that cannot be read or is in an unknown
+    /// shape recognises nothing: the file beside it is kept and the command
+    /// proceeds, because the record is only bookkeeping about instrukt's own
+    /// earlier write and the person's file is never removed on a guess.
+    fn load(state: &std::path::Path) -> Option<Self> {
+        let bytes = match std::fs::read(state) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                tracing::warn!(
+                    event = "agents_deployment_record_unreadable",
+                    record = %state.display(),
+                    %error,
+                    "{IGNORED_RECORD_RECOVERY}"
+                );
+                return None;
             }
         };
-        if prior.schema_version != DEPLOYMENT_VERSION {
-            return Err(invalid("unsupported defaults deployment schema"));
+        match Self::parse(&bytes) {
+            Ok(record) => Some(record),
+            Err(cause) => {
+                tracing::warn!(
+                    event = "agents_deployment_record_invalid",
+                    record = %state.display(),
+                    %cause,
+                    "{IGNORED_RECORD_RECOVERY}"
+                );
+                None
+            }
         }
-        Ok(Some(prior))
     }
 
-    /// Whether `bytes` are what instrukt itself last wrote: the deployed
+    /// A deployment record from its bytes, or why it recognises nothing.
+    fn parse(bytes: &[u8]) -> Result<Self, String> {
+        let record: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if record.schema_version != DEPLOYMENT_VERSION {
+            return Err(format!(
+                "schema_version {} is not the supported {DEPLOYMENT_VERSION}",
+                record.schema_version
+            ));
+        }
+        Ok(record)
+    }
+
+    /// Whether `bytes` are what an earlier release itself wrote: the deployed
     /// defaults, or a write it recorded before making it.
     fn recognises(&self, bytes: &[u8]) -> bool {
         let found = hex::encode(Sha256::digest(bytes));
@@ -930,6 +941,115 @@ mod tests {
             .capabilities("builder")
             .unwrap();
         assert_eq!(role.scope(Action::DocsWrite), None);
+    }
+
+    #[test]
+    fn a_file_naming_one_field_of_a_shipped_role_inherits_its_other_fields() {
+        let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let edited = Agents::parse("schema_version: 3\nroles: {builder: {tier: light}}\n").unwrap();
+        let (before, after) = (&shipped.roles["builder"], &edited.roles["builder"]);
+        assert_eq!(after.tier, Some(super::Tier::Light));
+        assert_eq!(after.order, before.order);
+        assert_eq!(after.class, before.class);
+        assert_eq!(after.github_app, before.github_app);
+        assert_eq!(
+            edited.capabilities("builder").unwrap().grants,
+            shipped.capabilities("builder").unwrap().grants
+        );
+    }
+
+    #[test]
+    fn a_list_the_file_sets_replaces_the_shipped_list_whole() {
+        let edited =
+            Agents::parse("schema_version: 3\nroles: {builder: {order: [antigravity]}}\n").unwrap();
+        let order: Vec<&str> = edited.roles["builder"]
+            .order
+            .iter()
+            .flatten()
+            .map(|profile| profile.as_str())
+            .collect();
+        assert_eq!(order, ["antigravity"]);
+    }
+
+    #[test]
+    fn a_roles_key_with_no_entries_keeps_every_shipped_role() {
+        let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let bare = Agents::parse("schema_version: 3\nroles:\n").unwrap();
+        assert_eq!(
+            bare.roles.keys().collect::<Vec<_>>(),
+            shipped.roles.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(
+            bare.capabilities("technical-coordinator").unwrap().grants,
+            shipped
+                .capabilities("technical-coordinator")
+                .unwrap()
+                .grants
+        );
+    }
+
+    #[test]
+    fn a_file_stating_no_schema_version_is_refused() {
+        assert!(matches!(
+            Agents::parse("roles: {builder: {tier: light}}\n"),
+            Err(ConfigError::UnknownSchema { .. })
+        ));
+    }
+
+    /// The deployment record an earlier release kept of `bytes`.
+    fn record_of(bytes: &str) -> super::Deployment {
+        use sha2::Digest as _;
+        let record = serde_json::json!({
+            "schema_version": 1,
+            "digest": hex::encode(sha2::Sha256::digest(bytes.as_bytes())),
+        });
+        super::Deployment::parse(record.to_string().as_bytes()).unwrap()
+    }
+
+    /// The shipped defaults in the shape an earlier release wrote: the split
+    /// orchestrator role the current shape retires.
+    fn older_shape(text: &str) -> String {
+        text.replacen("  todo-orchestrator:", "  work-orchestrator:", 1)
+    }
+
+    #[test]
+    fn a_recognised_older_copy_is_removed_rather_than_converted() {
+        let older = older_shape(SHIPPED_AGENTS);
+        assert_eq!(
+            super::next_write(older.as_bytes(), Some(&record_of(&older))).unwrap(),
+            super::NextWrite::Remove
+        );
+    }
+
+    #[test]
+    fn an_edited_older_file_is_converted_and_kept() {
+        let edited = format!("{}# my own note\n", older_shape(SHIPPED_AGENTS));
+        let decided = super::next_write(
+            edited.as_bytes(),
+            Some(&record_of(&older_shape(SHIPPED_AGENTS))),
+        )
+        .unwrap();
+        assert!(matches!(decided, super::NextWrite::Convert(_)));
+    }
+
+    #[test]
+    fn an_edited_current_file_is_kept_as_it_is() {
+        let edited = format!("{SHIPPED_AGENTS}# my own note\n");
+        assert_eq!(
+            super::next_write(edited.as_bytes(), Some(&record_of(SHIPPED_AGENTS))).unwrap(),
+            super::NextWrite::Keep
+        );
+    }
+
+    #[test]
+    fn a_record_in_an_unknown_shape_recognises_nothing() {
+        use sha2::Digest as _;
+        let record = serde_json::json!({
+            "schema_version": 2,
+            "digest": hex::encode(sha2::Sha256::digest(SHIPPED_AGENTS.as_bytes())),
+        });
+        assert!(super::Deployment::parse(record.to_string().as_bytes()).is_err());
+        assert!(super::Deployment::parse(b"{not a record").is_err());
     }
 
     #[test]

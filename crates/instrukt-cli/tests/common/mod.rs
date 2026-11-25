@@ -694,7 +694,6 @@ fn live_fence(home: &Path, temp_dir: &Path) -> Vec<PathBuf> {
         ".codex",
         ".gemini",
         ".dsh",
-        ".teleclaude",
         "Library/LaunchAgents",
         ".config/systemd",
     ]
@@ -851,7 +850,10 @@ fn is_not_found(err: Option<&std::io::Error>) -> bool {
     err.is_some_and(|err| err.kind() == std::io::ErrorKind::NotFound)
 }
 
-/// Edit a complete current agents fixture, inheriting the shipped native shapes.
+/// Edit a complete current agents fixture, inheriting the shipped native
+/// shapes. Every shipped role the patch does not name resolves to the
+/// fixture's `default` entry; one it names takes its omitted class and grants
+/// from its shipped entry and its omitted order and tier from `default`.
 pub fn agent_profiles(env: &TestEnv, patch: &str) {
     fn merge(value: &mut serde_yaml_ng::Value, patch: serde_yaml_ng::Value) {
         if let (Some(target), Some(source)) = (value.as_mapping_mut(), patch.as_mapping()) {
@@ -869,8 +871,33 @@ pub fn agent_profiles(env: &TestEnv, patch: &str) {
     }
     let mut agents: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(instrukt_core::config::SHIPPED_AGENTS).unwrap();
-    agents["roles"] = serde_yaml_ng::Value::Mapping(Default::default());
+    let shipped = std::mem::replace(
+        &mut agents["roles"],
+        serde_yaml_ng::Value::Mapping(Default::default()),
+    );
     merge(&mut agents, serde_yaml_ng::from_str(patch).unwrap());
+    let default = agents["default"].clone();
+    for (name, shipped) in shipped.as_mapping().unwrap() {
+        let named = agents["roles"].get(name).cloned();
+        let capabilities = if named.is_some() { shipped } else { &default };
+        let mut entry = named
+            .and_then(|entry| entry.as_mapping().cloned())
+            .unwrap_or_default();
+        for (field, source) in [
+            ("class", capabilities),
+            ("can", capabilities),
+            ("order", &default),
+            ("tier", &default),
+        ] {
+            if !entry.contains_key(field) {
+                entry.insert(field.into(), source[field].clone());
+            }
+        }
+        entry
+            .entry("github_app".into())
+            .or_insert(serde_yaml_ng::Value::Null);
+        agents["roles"][name] = serde_yaml_ng::Value::Mapping(entry);
+    }
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
     std::fs::write(
         env.instrukt_home().join("agents.yaml"),

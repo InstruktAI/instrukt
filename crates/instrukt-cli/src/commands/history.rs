@@ -1,7 +1,7 @@
 //! Command composition for the runner's retained history.
 use crate::context::Ctx;
 use instrukt_runner::history;
-use std::{path::PathBuf, process::ExitCode, time::Duration};
+use std::{process::ExitCode, time::Duration};
 
 #[derive(Debug, clap::Args)]
 pub struct HistoryArgs {
@@ -12,13 +12,6 @@ pub struct HistoryArgs {
 enum Command {
     /// Catch up from T3's durable local state.
     Extract {
-        #[arg(long)]
-        json: bool,
-    },
-    /// Import the legacy mirror store once, in resumable batches; a rerun continues an interrupted import and preserves a completed one.
-    ImportTeleclaude {
-        #[arg(long)]
-        source: Option<PathBuf>,
         #[arg(long)]
         json: bool,
     },
@@ -35,7 +28,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Read a retained source document by conversation id or legacy alias.
+    /// Read a retained conversation's document by conversation id or legacy alias: a runtime conversation's thread and messages, or the document its import retained.
     Show {
         source: String,
         conversation: String,
@@ -69,15 +62,6 @@ fn execute(args: HistoryArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     "{}: loaded {} conversations; source position {}",
                     computer, result.loaded, result.position
                 ))?;
-            }
-        }
-        Command::ImportTeleclaude { source, json } => {
-            let result = history::import_teleclaude(&ctx.home, source.as_deref())?;
-            if json {
-                ctx.out.json(&result)?;
-            } else {
-                ctx.out
-                    .line(&format!("imported {} conversations", result.loaded))?;
             }
         }
         Command::Search {

@@ -722,3 +722,74 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         .unwrap();
     assert_eq!(left, 0);
 }
+
+#[test]
+fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups() {
+    let mut project = support::Project::new();
+    project.env.set_env("INSTRUKT_NOW", "2026-11-23T09:00:00Z");
+    // GitHub cannot be read: the command answers from the migrated database.
+    project.github.stop();
+    let state = project.env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+    let before = {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v37.sql"))
+            .unwrap();
+        // The v35 work rows: no shipped migration since changed their shape.
+        db.execute_batch(V35_WORK).unwrap();
+        let version: u32 = db
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, 37);
+        work_rows(&db)
+    };
+
+    // The real CLI migrates the database and reads the work through it.
+    project.ok(["list"]);
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+    assert_eq!(work_rows(&raw), before);
+
+    // Unrelated records of every kind a standing lookup reads.
+    raw.execute_batch(
+        "CREATE TEMP TABLE other AS SELECT * FROM todos;
+         UPDATE other SET id = 'e' || substr(id, 2), slug = 'other-a', branch = 'other-a/work';
+         INSERT INTO todos SELECT * FROM other;
+         UPDATE other SET id = 'f' || substr(id, 2), slug = 'other-b', branch = 'other-b/work';
+         INSERT INTO todos SELECT * FROM other;
+         INSERT INTO holds SELECT 'e' || substr(todo_id, 2), source, reason, set_by, set_at, released_at, released_by FROM holds;
+         INSERT INTO holds SELECT 'f' || substr(todo_id, 2), source, reason, set_by, set_at, released_at, released_by FROM holds WHERE todo_id LIKE 'd%';
+         INSERT INTO session_bindings(todo_id, role, attempt, semantic_key, worktree, branch, evidence) VALUES
+             ('e34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-a', '/work/other-a', 'other-a/work', '{}'),
+             ('f34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-b', '/work/other-b', 'other-b/work', '{}'),
+             ('d34b9b4b157da44424c3630d9592445e', 'builder', 1, 'k-c', '/work/list-depth', 'list-depth', '{}');
+         INSERT INTO github_label_actions VALUES
+             ('demo', 1, 1, 'd34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted'),
+             ('demo', 2, 2, 'e34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted'),
+             ('demo', 3, 3, 'f34b9b4b157da44424c3630d9592445e', 'held', 'dev', '2026-11-23T08:00:00Z', 'accepted');",
+    )
+    .unwrap();
+
+    // Each lookup worktree standing makes reaches its rows by a search,
+    // never by stepping through the others.
+    for lookup in [
+        "SELECT todo_id FROM session_bindings WHERE worktree = ?1",
+        "SELECT todo_id FROM session_bindings WHERE branch = ?1",
+        "SELECT id FROM todos WHERE branch = ?1",
+        "SELECT reason FROM holds WHERE todo_id = ?1",
+        "SELECT action FROM github_label_actions WHERE todo_id = ?1",
+    ] {
+        let mut statement = raw.prepare(lookup).unwrap();
+        let found = statement.query_map(["absent"], |_| Ok(())).unwrap().count();
+        assert_eq!(found, 0);
+        assert_eq!(
+            statement.get_status(instrukt_core::state_db::rusqlite::StatementStatus::FullscanStep),
+            0,
+            "{lookup}"
+        );
+    }
+}

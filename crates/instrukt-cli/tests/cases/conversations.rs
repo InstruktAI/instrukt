@@ -4741,9 +4741,8 @@ fn admins_only_connector_refuses_non_admin_and_uses_declared_role() {
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     // Add a custom standing role `specialist` under `roles:` in agents.yaml.
     let home = instrukt_core::home::Home::at_user_home(c.env.home().into()).for_writing();
-    let _ = instrukt_core::config::Agents::load(&home).unwrap();
     let agents_path = home.root().join("agents.yaml");
-    let agents_text = std::fs::read_to_string(&agents_path).unwrap().replace(
+    let agents_text = instrukt_core::config::SHIPPED_AGENTS.replace(
         "roles:\n",
         "roles:\n  specialist: {github_app: project, class: standing, can: [read, tools], order: [claude, codex, antigravity], tier: strong}\n",
     );

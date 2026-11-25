@@ -507,6 +507,10 @@ impl FakeT3 {
         )
         .unwrap()
     }
+    /// The model a thread was started on.
+    pub fn model(&self, id: &str) -> String {
+        self.read(id)["model"].as_str().unwrap().to_owned()
+    }
     pub fn native_id(&self, id: &str) -> String {
         std::fs::read_to_string(self.state.join(format!("{id}.alias")))
             .unwrap_or_else(|_| id.to_owned())

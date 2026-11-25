@@ -24,6 +24,7 @@ mod _merge;
 mod _migrate;
 mod _module;
 mod _redis;
+mod _regenerable;
 mod _render;
 mod _review;
 mod _root;
@@ -65,6 +66,7 @@ pub use _mcp::{
 };
 pub use _module::Module;
 pub use _redis::{REDIS_BLOCK_SECONDS, RedisEndpoint, RedisSettings};
+pub use _regenerable::{EntryRefusal, REGENERABLE_KEY, RegenerablePath, withholds_reclamation};
 pub use _render::render_yaml;
 pub use _review::{REVIEW_AUTOMATIC_KEY, REVIEW_NEEDED_EVENT, REVIEW_PROCEDURE, REVIEW_ROLE};
 pub use _root::{RootDocument, classify_root};

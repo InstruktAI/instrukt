@@ -137,13 +137,11 @@ on configured human approval (`approvals.prd` / `approvals.task`) or while a
 (a human clarification, external input, or a peer reply), keep the claim on your
 live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
 so the runner does not re-dispatch a fresh turn on every tick.
-When a kickback to preparation leaves `<slug>/work` idle after build output has
-already been created there (such as returning to a human approval gate after the
-kickback), remove the regenerable build output created by this
-todo's work sessions and their delegates (`general/policy/shared-machine-resources`),
-leaving the clean committed tree, the todo branch and any published head intact,
-and record any removal that cannot complete as an owed obligation. This does not
-apply to a checkout still in active build or awaiting review before handoff.
+While `<slug>/work` sits idle — its candidate handed to `integrate`, the todo
+parked or held, or its work gone back to preparation — the runner reclaims the
+build output there; remove none of it yourself
+(`general/policy/shared-machine-resources`). A worktree still in its rounds of
+building, reviewing and fixing keeps its output.
 
 ## Preconditions
 
@@ -250,21 +248,6 @@ apply to a checkout still in active build or awaiting review before handoff.
        additions, edits, replacements, or retirements; publication-checked
        `instrukt docs get <id>` from published canonical docs for untouched
        fills) without ad hoc merges during preparation.
-<!-- planned-change:reuse-retained-worker-sessions -->
-3. **Select and dispatch the next primitive.** Every admitted role that shares
-   `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
-   `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
-   `architecture-reviewer`, `plan-reviewer`, `deferrer`, `finalizer`) uses
-   `runtime.dispatch` above: reserve each attempt via
-   `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`,
-   delegate with shared isolation in `<slug>/work`, and immediately bind via
-   `instrukt todo bind`. Only one workspace attempt may be active at a time;
-   completion stamps release it atomically. Live verification (`verifier`) is
-   not a shared `<slug>/work` `runtime.dispatch` child; it runs per Step 4b in
-   a separate one-off worktree session (`runtime.start_thread` /
-   `runtime.inspect_thread`) so the shared-workspace admission guarantee
-   remains unbroken.
-<!-- change:reuse-retained-worker-sessions -->
 3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
    `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `prd-reviewer`,
@@ -279,7 +262,6 @@ apply to a checkout still in active build or awaiting review before handoff.
    per Step 4b in a separate one-off worktree session (`runtime.start_thread` /
    `runtime.inspect_thread`) so the shared-workspace admission guarantee remains
    unbroken.
-<!-- /planned-change:reuse-retained-worker-sessions -->
 4. **Verify review substance and contest invalid findings before acting on verdicts.**
    Confirm the findings artifact exists, covers all applicable review lanes,
    discloses each finding's `Method:` (finding format in
@@ -436,15 +418,12 @@ apply to a checkout still in active build or awaiting review before handoff.
    scope (`sdlc/policy/definition-of-done-lanes`) is filed as a
    tracked follow-up cited in `escape-assessment`. Record
    `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
-   `workflow.finalized`). Then remove the regenerable build output created in
-   `<slug>/work` by this todo's work
-   sessions and their delegates (`general/policy/shared-machine-resources`),
-   leaving the clean committed tree, the todo branch and the published head
-   intact as bound by the readiness record; if removal cannot complete, record
-   it as an owed obligation without reopening the handoff. Then release the
-   claim with `instrukt todo update {slug} --unclaim`. Keep this orchestrator
-   thread wakeable (never retire it before delivery — `integrate` retires it
-   once the todo is delivered).
+   `workflow.finalized`). Then release the claim with
+   `instrukt todo update {slug} --unclaim`; the runner reclaims the build output
+   `<slug>/work` holds while the handoff waits
+   (`general/policy/shared-machine-resources`). Keep this orchestrator thread
+   wakeable (never retire it before delivery — `integrate` retires it once the
+   todo is delivered).
 6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm

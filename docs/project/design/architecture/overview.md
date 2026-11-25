@@ -134,8 +134,8 @@ deleting the home is not a lossless reset.
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
 | `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
-| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained searchable conversations with their source documents and full-text index, normalized native records, each source's extraction position and each TeleClaude import's progress; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
-| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, one import batch, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
+| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
+| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
@@ -185,8 +185,8 @@ A command that fails ends with one readable line on stderr, `instrukt: `
 and then what failed, where, and what to run when there is a door; it is
 printed once and the exit status is non-zero. An error's causes follow it
 on that line, each once; findings that read as a list are joined with `; `.
-A command that meant to act and could not — a writing `docs render` left
-with findings, a converging `install` left incomplete, `docs get` with a
+A command that meant to act and could not — a writing `docs render` or
+`docs plugin` left with findings, a converging `install` left incomplete, `docs get` with a
 configured value it could not resolve, `docs schema` with findings, a
 `history search` that could not reach every computer — ends the same way,
 after its output, exit status 1; its line points at what that output holds
@@ -194,8 +194,9 @@ in the mode it was asked for, text or JSON.
 
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
-validate`, `docs validate`, `docs render --check`, `install --check` and
-`specs coverage --check` exit 1 with findings; `status` exits 0 whatever its
+validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
+`docs plugin --validate`, `install --check` and `specs coverage --check`
+exit 1 with findings; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
 exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
@@ -220,6 +221,7 @@ the command-line parser's own text and exit status 2.
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
+| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository on request: the company plugin under `plugins/<key>/` and its one entry in `.claude-plugin/marketplace.json` (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
 
 ## Invariants
 
@@ -360,9 +362,14 @@ branch. Work on another computer creates its local `<slug>/work` branch from
 use that recorded workspace serially and commit directly on `<slug>/work`;
 completion stamps release attempts atomically. `kind: task` creates no git
 worktree. Pending docs fold at work delivery, and after confirmed delivery
-the integrator removes the clean `<slug>/work` worktree and deletes `<slug>/work`
-locally and on origin. Ad hoc work uses its own reviewed one-off worktree; main
-is integrator-only.
+the runner has work release the clean `<slug>/work` worktree and delete
+`<slug>/work` locally and on origin, on each computer that holds them. On each
+invocation the runner also removes a project's declared regenerable output
+from the todo worktrees workflow reports idle, and a session working a todo
+reclaims its own worktree with `instrukt repo reclaim`; no agent issues a
+deletion command for either
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). Ad hoc work
+uses its own reviewed one-off worktree; main is integrator-only.
 Before dispatch each tick, the runner fetches canonical remote main and
 fast-forwards a clean canonical checkout when it lags. Post-merge publication
 and blueprint maintenance run on each computer; dirty or diverged checkouts
@@ -488,7 +495,7 @@ sequenceDiagram
 
 A review is one judgment of one commit from the pinned base its request
 carries, which the runner selects
-(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests).
+(`project/instrukt/spec/feature/runner/pull-request-review`).
 A verdict covers the canonical branch only when that base lies on it, and
 earns candidate coverage only then. Requests are counted per commit: one is live
 at a time, and a request delivery selected for handover keeps the commit until
