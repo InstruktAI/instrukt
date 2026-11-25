@@ -404,12 +404,14 @@ pub fn show_company_issuer(home: &Home, company: &ProjectSlug) -> Result<IssuerI
 /// Obtain a speaker's Bearer access token for a `sign_in.mode: issuer` server:
 /// reuses a valid cached token from `mcp_logins`, or signs a fresh ES256 ID-JAG
 /// JWT asserting the speaker's verified email and exchanges it via `jwt-bearer`.
+/// A cached token other than `rejected_access_token`, which the server just
+/// refused, is reused even on a retry: another call may already have renewed it.
 pub(crate) fn obtain_issuer_login(
     home: &Home,
     company: &ProjectSlug,
     server: &McpServer,
     speaker: &Speaker,
-    force_refresh: bool,
+    rejected_access_token: Option<&str>,
     now: Timestamp,
 ) -> Result<(Login, Vec<Login>), McpError> {
     let email = speaker
@@ -484,12 +486,16 @@ pub(crate) fn obtain_issuer_login(
     };
 
     let expected_return_id = format!("issuer:{issuer_id}");
-    if !force_refresh
-        && let Some((resource, return_id, access_token, expires_at, checked)) = cached_login
+    if let Some((resource, return_id, access_token, expires_at, checked)) = cached_login
         && resource == server.url
         && return_id == expected_return_id
-        && checked != 0
-        && is_token_fresh(expires_at.as_deref(), now)
+        && cached_login_usable(
+            &access_token,
+            checked,
+            expires_at.as_deref(),
+            rejected_access_token,
+            now,
+        )
     {
         return Ok(bearer_logins(&server.name, access_token));
     }
@@ -706,6 +712,21 @@ pub(crate) fn is_token_fresh(expires_at: Option<&str>, now: Timestamp) -> bool {
     expiry.as_second() > now.as_second() + RENEW_MARGIN_SECS
 }
 
+/// Whether a cached sign-in access token may be sent as it is: its identity
+/// was checked, it is fresh, and it is not the token the server just refused.
+/// A different token on a retry is one another call already renewed.
+pub(crate) fn cached_login_usable(
+    access_token: &str,
+    checked: i32,
+    expires_at: Option<&str>,
+    rejected_access_token: Option<&str>,
+    now: Timestamp,
+) -> bool {
+    checked != 0
+        && rejected_access_token.is_none_or(|rejected| rejected != access_token)
+        && is_token_fresh(expires_at, now)
+}
+
 pub(crate) fn bearer_logins(server: &ProjectSlug, access_token: String) -> (Login, Vec<Login>) {
     let label = format!("<{server} sign-in login>");
     let header = Login {
@@ -734,8 +755,37 @@ fn extract_first_kid(jwks_json: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::generate_es256_keypair;
+    use super::{cached_login_usable, generate_es256_keypair};
+    use jiff::Timestamp;
     use serde_json::Value;
+
+    #[test]
+    fn a_retry_reuses_a_checked_fresh_token_other_than_the_one_refused() {
+        let now = Timestamp::from_second(1_800_000_000).unwrap();
+        let expires = Timestamp::from_second(1_800_003_600).unwrap().to_string();
+
+        assert!(cached_login_usable(
+            "renewed",
+            1,
+            Some(&expires),
+            Some("refused"),
+            now
+        ));
+    }
+
+    #[test]
+    fn a_retry_does_not_reuse_the_token_the_server_refused() {
+        let now = Timestamp::from_second(1_800_000_000).unwrap();
+        let expires = Timestamp::from_second(1_800_003_600).unwrap().to_string();
+
+        assert!(!cached_login_usable(
+            "refused",
+            1,
+            Some(&expires),
+            Some("refused"),
+            now
+        ));
+    }
 
     #[test]
     fn generated_es256_jwks_contains_only_public_ec_coordinates() {
