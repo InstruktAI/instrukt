@@ -58,10 +58,10 @@ On each runner tick, each computer polls, with conditional requests:
 <!-- /planned-change:github-human-agent-reflection -->
 
 <!-- planned:github-human-agent-reflection -->
-A todo's record is read as its latest reflected revision alone, with a
-conditional request. An unchanged record transfers no content, and a changed
-one transfers that one revision, however many revisions and artifact versions
-the todo has accumulated.
+The cost of reading a todo's record does not grow with its history. The read
+is conditional: an unchanged record transfers no content, and a changed one
+transfers its committed remote revision, not the revisions and artifact
+versions the todo accumulated before it.
 <!-- /planned:github-human-agent-reflection -->
 
 A list read follows pages up to its page limit (`crates/instrukt-todos/src/work/_github.rs`);
@@ -168,19 +168,17 @@ the pull request with the delivered commit. The integrator owns merging and
 the integration gate; pull-request state alone never proves delivery.
 <!-- change:github-human-agent-reflection -->
 Repository implementation has a linked pull request during its build and
-review path, opened as soon as the todo's branch is on GitHub. When that
-branch is published belongs to
-`project/instrukt/spec/feature/workflow/delivery-cycle`; while the branch is
-not available on GitHub, creation remains pending. The pull request carries
-the commits under review and each recorded build-review verdict as a native
-review of the exact reviewed commit, written by the reviewing role's App
-(`project/instrukt/spec/feature/work/github-apps`).
+review path, opened as soon as the todo's branch is on GitHub; while the
+branch is not available on GitHub, creation remains pending. The pull request
+carries the commits under review and each recorded build-review verdict as a
+native review of the exact reviewed commit, written by the reviewing role's
+App (`project/instrukt/spec/feature/work/github-apps`).
 
 A review is written for a person. Its body states the verdict and what the
-reviewer found, readable in place, and links the version of the todo's
-review report the verdict is bound to. A report longer than a review body
-holds is carried up to that length and marked as shortened; the linked
-report gives it whole.
+reviewer found, readable in place, and links the todo's `review-findings`
+artifact. A report longer than a review body holds is carried up to that
+length and marked as shortened; the complete report is read in the linked
+artifact.
 
 Delivery closes the pull request with the delivered commit. The integrator
 owns merging and the integration gate; pull-request state alone never proves
@@ -286,11 +284,10 @@ and never applied. Envelope trust does not grant human approval or hold-label
 authority; those controls retain their actor checks below.
 <!-- change:github-human-agent-reflection -->
 The reflected record is the issue's `state` artifact: one native issue
-artifact per todo, whose latest saved version is the committed remote
-revision and whose earlier saved versions are the earlier revisions. It
-carries what another computer needs to recover the todo or to continue it:
-its identity, status, claim, holds, relationships, stamp ledger and each
-artifact's version references. No issue comment carries the record.
+artifact per todo, whose saved versions carry the record's remote revisions.
+The record holds what another computer needs to recover the todo or to
+continue it: its identity, status, claim, holds, relationships, stamp ledger
+and each artifact's version references. No issue comment carries the record.
 
 What has meaning only on the computer that produced it stays in that
 computer's state database and is no part of the reflected record: dispatch
@@ -599,7 +596,7 @@ Given a developer's repository todo has its branch on GitHub while it is built a
 When an independent reviewer records a verdict on a commit of that branch
 Then the todo's pull request is open and shows the reviewer bot's review of that commit
 And the review states the verdict and what the reviewer found, readable in place
-And it links the complete review report
+And it links the todo's review findings artifact
 ```
 
 ### UC-GR15: Continue a todo that was reflected as record comments

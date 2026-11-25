@@ -46,20 +46,6 @@ follow with independent `build-reviewer`, push the exact reviewed HEAD, stamp
 radius surfaces mid-build, the orchestrator routes to planning or doc updates in
 prose without skip-flag proliferation.
 
-<!-- planned:github-human-agent-reflection -->
-### Published work branch
-
-While a repository todo is built and reviewed, its branch on GitHub follows
-the shared worktree: commits a builder or fixer lands on `<slug>/work` are
-published to `origin/<slug>/work` as they land. The todo's pull request shows
-them from then on (`project/instrukt/spec/feature/work/github-record`).
-
-Publication never gates local work. While GitHub is unreachable the attempt
-continues and completes locally, and the branch is published once GitHub is
-reachable. `--finalize-ready` keeps its requirement that the published head is
-the reviewed head.
-<!-- /planned:github-human-agent-reflection -->
-
 ### Single workspace, cleanup & in-flight legacy migration
 
 Repository todos share `<slug>/work` from freshly fetched `origin/main` (or
@@ -185,18 +171,6 @@ And finalization is refused until an independent reviewer approves the exact pub
 When the independent reviewer approves that exact commit SHA
 Then the claim-holding orchestrator can record finalize readiness directly for integration
 ```
-
-<!-- planned:github-human-agent-reflection -->
-### UC-DC10: Follow a change on GitHub while it is built
-
-```gherkin
-Given a developer's repository todo is being built in its todo worktree
-When a builder or fixer lands commits on the todo branch
-Then those commits are on the todo's branch on GitHub while build and review continue
-But when GitHub is unreachable
-Then the work continues locally and the branch is published once GitHub is reachable
-```
-<!-- /planned:github-human-agent-reflection -->
 
 ## Known caveats
 
