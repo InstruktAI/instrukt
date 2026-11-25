@@ -1,6 +1,6 @@
 ---
 eval: true
-description: 'Plan drafting phase for prepare. Produces implementation plans from the approved intent artifact and the optional reviewer-approved architecture (thin index artifact plus the doc snippets it points at).'
+description: 'Plan drafting phase for prepare. Produces implementation plans from the approved intent artifact and the optional reviewer-approved architecture (delivery-reasoning artifact plus the pending design snippets authored in `<slug>/work`).'
 visibility: 'public'
 role: planner
 parameters:
@@ -22,17 +22,18 @@ parameters:
 
 Your focus this turn is the plan phase: produce an `implementation-plan`
 artifact from the approved intent artifact and the reviewer-approved architecture
-when present (the thin index artifact plus the doc snippets it points at); or
-split the todo into dependent child work items when planning shows the work is
-not atomic. The wider prepare lifecycle is still yours; this phase is one
-focused part of it.
+when present (the delivery-reasoning artifact plus the pending design snippets
+authored in `<slug>/work`); or split the todo into dependent child work items
+when planning shows the work is not atomic. The wider prepare lifecycle is still
+yours; this phase is one focused part of it.
 
 ### Outcome
 
 Produce `implementation-plan` from the approved intent artifact (Preconditions 1)
-and the optional reviewer-approved `architecture` (the thin index artifact plus the
-domain-spec / design-doc snippets it points at); or split the todo into
-dependent child work items when step 2 finds the work is not one coherent delivery.
+and the optional reviewer-approved `architecture` (the delivery-reasoning
+artifact plus the pending domain-spec / design-doc snippets authored in
+`<slug>/work`); or split the todo into dependent child work items when step 2
+finds the work is not one coherent delivery.
 
 The plan must be detailed enough for a builder to execute without guessing, and
 review-aware enough that the reviewer finds no surprises. Whether the work stays
@@ -78,9 +79,9 @@ Read the full context before writing anything:
   reviewed and approved `prd`; for a change or bug, read `input`. Read a
   seeded plan's _Intent & scope_ as a claim to check against that input.
 
-- `instrukt todo artifacts read {slug} architecture` — when present, the thin
-  index/log; otherwise read the skip reason. Read the domain-spec / design-doc
-  snippets it points at for the actual design content.
+- `instrukt todo artifacts read {slug} architecture` — when present, the delivery
+  reasoning; otherwise read the skip reason. Read the pending domain-spec /
+  design-doc snippets authored in `<slug>/work` for the actual design content.
 - `instrukt todo artifacts read {slug} input` — the authorized basis. For
   feature/change it carries authorized product intent; for bug it carries the
   reported concern rather than an agent-added cause or remedy. A supplied plan or input may remain a technical
@@ -652,7 +653,7 @@ lane-coverage report and doc reflection under steps 4 and 4b.
 
 ### 5. Write artifacts
 
-If the todo stays one delivery, write (using the approved intent artifact and the optional reviewer-approved architecture — the thin index plus the snippets it points at — as inputs):
+If the todo stays one delivery, write (using the approved intent artifact and the optional reviewer-approved architecture — the delivery-reasoning artifact plus the pending design snippets authored in `<slug>/work` — as inputs):
 
 - `instrukt todo artifacts write {slug} implementation-plan <content>` — the full plan with tasks, rationale, and verification.
   Each task references the intent criteria it delivers and, for Category A work, the feature-spec scenarios it satisfies (`sdlc/policy/preparation-artifact-quality`).
