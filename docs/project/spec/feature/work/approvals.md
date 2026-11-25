@@ -58,12 +58,21 @@ the next non-author checks the replacement version. The checker's position,
 rather than a fixed workflow role, determines who performs the check. For work
 committed directly from a conversation, commit review is the first recipient.
 
+<!-- planned-change:github-human-agent-reflection -->
 The check runs on the computer where the originating conversation is readable.
 The responsible orchestrator there dispatches the checker through an
 configured native delegation instruction, reserving its role attempt and
 binding the native child id through work commands. Its runtime delivers the
 result to that parent. GitHub carries the checked record and
 stamp; the conversation remains in its runtime.
+<!-- change:github-human-agent-reflection -->
+The check runs on the computer where the originating conversation is readable.
+The responsible orchestrator there dispatches the checker through an
+configured native delegation instruction, reserving its role attempt and
+binding the native child id through work commands. Its runtime delivers the
+result to that parent. The work record carries the checked record and
+stamp; the conversation remains in its runtime.
+<!-- /planned-change:github-human-agent-reflection -->
 
 An intent check establishes fidelity of the record. An approval authorizes a
 particular reviewed outcome. One never substitutes for the other.

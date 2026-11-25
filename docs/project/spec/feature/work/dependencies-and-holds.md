@@ -73,10 +73,17 @@ these bindings and records role-associated execution evidence through work’s
 mutation surface. A binding is distinct from a claim; different roles can
 have different sessions without transferring execution ownership.
 
+<!-- planned-change:github-human-agent-reflection -->
 The runner records and reflects the todo's item-level execution claim before
 starting any session. `claim.held` exposes that claim. Session identities are
 retained only in per-todo, per-role bindings. A dispatch hold pauses automatic
 pickup without establishing or transferring the claim.
+<!-- change:github-human-agent-reflection -->
+The runner records the todo's item-level execution claim before starting any
+session. `claim.held` exposes that claim. Session identities are retained only
+in per-todo, per-role bindings. A dispatch hold pauses automatic pickup without
+establishing or transferring the claim.
+<!-- /planned-change:github-human-agent-reflection -->
 
 `instrukt todo update <slug> --hold --reason <reason>` sets a hold with its
 source, causal reason, time and recording session. A missing or blank reason

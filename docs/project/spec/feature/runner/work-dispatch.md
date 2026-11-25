@@ -73,6 +73,7 @@ defect is fixed in the code).
 | `events` enabled | Resolve event subscriptions and start or wake standing agents independently of todo pickup mode. |
 | `blueprint` enabled | Its pushed-revision generation follows its own hook contract; enabling it does not create another runner. |
 
+<!-- planned-change:github-human-agent-reflection -->
 One runner lock per machine, `~/.instrukt/state/runner.lock`, serializes
 invocations. A tick exits at once while `instrukt run` holds the lock. Publication state supplies each project's
 checkout path beside its published commit; the runner considers projects
@@ -106,6 +107,36 @@ lock too. Reflection holds that lock across GitHub requests and takes the writer
 lock only briefly for each local commit of what it learned. Lock order is always
 reflection → writer; the local transaction releases the writer lock before a
 flush acquires the reflection lock. Local readers take neither lock.
+<!-- change:github-human-agent-reflection -->
+One runner lock per machine, `~/.instrukt/state/runner.lock`, serializes
+invocations. A tick exits at once while `instrukt run` holds the lock. Publication state supplies each project's
+checkout path beside its published commit; the runner considers projects
+whose effective configuration (project over global) enables `todos` or
+`events`, without a separate registry. A project whose code is not on GitHub
+gets no todo pickup: todos need the project's code on GitHub
+(`project/instrukt/spec/feature/work/github-record`).
+Pickup considers the todos of this computer's work record. Before starting a
+session for a todo, the runner commits a claim on it in that record; the
+claim needs no answer from GitHub, so an unreachable GitHub delays the
+claim's reflection and never the session.
+
+A claim is held by a computer, identified by the id created once in
+`~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
+deleting it orphans this computer's live claims until they are released. On that
+computer the holder is a session bound to the todo, or the session that claimed
+it through `instrukt todo work`; any other caller is refused as "claimed
+elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
+it. The dispatcher records the handoff and retains conversations needed for
+later rounds or human questions. The runtime owns session ending and cleanup.
+Every tick also reads GitHub for what people did on the issues of the todos in
+this computer's record (`project/instrukt/spec/feature/work/github-record`).
+Every tick flushes pending work-record reflection under the
+per-computer reflection lock; commands that write the record flush it under that
+lock too. Reflection holds that lock across GitHub requests and takes the writer
+lock only briefly for each local commit of what it learned. Lock order is always
+reflection → writer; the local transaction releases the writer lock before a
+flush acquires the reflection lock. Local readers take neither lock.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Enablement and infrastructure
 

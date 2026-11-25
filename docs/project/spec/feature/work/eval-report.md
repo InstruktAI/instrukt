@@ -14,15 +14,22 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 
 ### Evidence source
 
+<!-- planned-change:github-human-agent-reflection -->
 `instrukt eval report` produces HTML from the record, whether the available
 record is local, drawn from another project's reflected work or reconstructed
 from GitHub. The report uses recorded evidence rather than a separate eval
 log. There is only something to evaluate where work passes through the record.
+<!-- change:github-human-agent-reflection -->
+`instrukt eval report` produces HTML from this computer's work record. The
+report uses recorded evidence rather than a separate eval log. There is only
+something to evaluate where work passes through the record.
+<!-- /planned-change:github-human-agent-reflection -->
 
 `--since <date>` selects the history range. `--out <path>` selects the HTML
 destination, defaulting to the current project’s `scratchpad/eval/index.html`.
 With no recorded work, the report says so.
 
+<!-- planned-change:github-human-agent-reflection -->
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is
 read from this computer's local record and, for items that are not on this
@@ -38,6 +45,16 @@ Model identity, version and eval fingerprint come from the stamps owned by
 `project/instrukt/spec/feature/work/stamps`. Report generation does not
 invent missing observations or require conversation transcripts. Unreflected
 local observations are available only where their record is available.
+<!-- change:github-human-agent-reflection -->
+One report covers every project known to this home's publication state,
+grouped by project, with the current project first. Each project's record is
+read from this computer's work record; the report reads nothing from GitHub.
+The report takes no options beyond `--since` and `--out`.
+
+Model identity, version and eval fingerprint come from the stamps owned by
+`project/instrukt/spec/feature/work/stamps`. Report generation does not
+invent missing observations or require conversation transcripts.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Evaluation windows
 

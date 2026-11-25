@@ -121,6 +121,7 @@ that task preference before the role mapping in `~/.instrukt/agents.yaml`.
 
 ### Reads and changes
 
+<!-- planned-change:github-human-agent-reflection -->
 `instrukt todo list [--project <slug>]` reads the work of the caller's
 project, or of the named project resolved as for a bug report (Bug reports,
 above). Active work is the
@@ -140,6 +141,24 @@ read from GitHub is the interest-driven refresh contract in
 
 `instrukt todo refresh <slug>` resolves a conflicted item: it takes the
 todo as GitHub holds it, and the agent re-applies its change.
+<!-- change:github-human-agent-reflection -->
+`instrukt todo list [--project <slug>]` reads the work of the caller's
+project, or of the named project resolved as for a bug report (Bug reports,
+above). Active work is the
+default view; iceboxed, removed and delivered work are available through the
+corresponding listing selections. Ordering is derived from readiness and
+dependencies. `instrukt todo show <slug>` exposes the record, current evidence,
+holds, prerequisites, group context, execution claim and per-role session
+attempt bindings (runtime, id, key, attempt, branch, base, returned worktree
+path and release evidence), including released attempts. These bindings form the
+assignment child set exposed as `sessions.bound`; `claim.held` exposes whether
+the execution claim remains held. `instrukt todo list` reads only this
+computer's state database and fetches nothing; it shows the todos this
+computer's record holds. `instrukt todo show <slug>` first applies what people
+did on that todo's issue since it was last read. When and what is read from
+GitHub is the contract in
+`project/instrukt/spec/feature/work/github-record`.
+<!-- /planned-change:github-human-agent-reflection -->
 
 `instrukt todo update <slug>` changes supported metadata. A rename preserves
 durable identity and updates references. A kind change reroutes preparation

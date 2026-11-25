@@ -142,6 +142,7 @@ It establishes declared write permissions and available read surfaces; it cannot
 prove a future remote write, or artifact access on an empty repository, without
 performing a mutation.
 
+<!-- planned-change:github-human-agent-reflection -->
 ### Restore trust and commit authorship
 
 Record restoration accepts an author matching a configured App's verified
@@ -155,6 +156,13 @@ or hold-control authority.
 The App boundary supplies verified bot actor facts; commit-author resolution,
 precedence and refusal belong to
 `project/instrukt/spec/feature/repository/attributed-commit`.
+<!-- change:github-human-agent-reflection -->
+### Commit authorship
+
+The App boundary supplies verified bot actor facts; commit-author resolution,
+precedence and refusal belong to
+`project/instrukt/spec/feature/repository/attributed-commit`.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Review verdict on the reviewed commit
 
@@ -668,6 +676,7 @@ Then GitHub shows the author bot and the different reviewer bot
 And shared record, issue and board maintenance shows the project bot
 ```
 
+<!-- planned-change:github-human-agent-reflection -->
 ### UC-GA2: Recover reflected work written by the configured bots
 
 ```gherkin
@@ -677,6 +686,9 @@ Then the bot's NONE association does not exclude its valid record revisions
 And schema, artifact and evidence checks still apply
 But a similarly named unconfigured actor gains no record trust
 ```
+<!-- change:github-human-agent-reflection -->
+### UC-GA2: Recover reflected work written by the configured bots
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### UC-GA3: See an automatic review's verdict where GitHub can enforce it
 
