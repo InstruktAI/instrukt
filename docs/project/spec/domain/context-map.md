@@ -28,7 +28,11 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
+<!-- planned-change:github-human-agent-reflection -->
 | work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+<!-- change:github-human-agent-reflection -->
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+<!-- /planned-change:github-human-agent-reflection -->
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
@@ -121,9 +125,16 @@ belong to blueprint. Core declares the todo-existence, flavor-role lookup and
 hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
+<!-- planned-change:github-human-agent-reflection -->
 External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub reflection boundary translates issues, artifacts
 and stamps; blueprint's engine adapter translates the engine graph into its
+<!-- change:github-human-agent-reflection -->
+External models are translated through **Anti-corruption layer (ACL)**
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
+<!-- /planned-change:github-human-agent-reflection -->
 node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into

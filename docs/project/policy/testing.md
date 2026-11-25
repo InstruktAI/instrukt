@@ -123,9 +123,15 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
 Subfunctions (pending-doc folding, graph status, tick status and eval
 fingerprint computation) are exercised by the stakeholder use cases that
+<!-- planned-change:github-human-agent-reflection -->
 reach them; they introduce no separate use cases. Session reuse, availability
 selection, direct-main integration and conflict refresh are exercised within
 the dispatch, integration and record-recovery goals.
+<!-- change:github-human-agent-reflection -->
+reach them; they introduce no separate use cases. Session reuse, availability
+selection and direct-main integration are exercised within the dispatch and
+integration goals.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Inherited home and isolated application roots
 

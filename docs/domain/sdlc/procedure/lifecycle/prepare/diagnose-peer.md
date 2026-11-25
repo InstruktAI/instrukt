@@ -135,7 +135,13 @@ fix or verification approach.
   driving session owns reclassification or closure.
 - If the cause is a process-design gap, diagnose and report it without changing the process;
   the driving session owns the authority escalation.
+<!-- planned-change:github-human-agent-reflection -->
 - If an artifact write is refused, preserve the refusal and report it to the
   driving session. A remote revision conflict follows `instrukt todo refresh
   {slug}` and reapplication of the intended change; no alternate write path
   or transfer of the driver's claim is implied.
+<!-- change:github-human-agent-reflection -->
+- If an artifact write is refused, preserve the refusal and report it to the
+  driving session; no alternate write path or transfer of the driver's claim
+  is implied.
+<!-- /planned-change:github-human-agent-reflection -->

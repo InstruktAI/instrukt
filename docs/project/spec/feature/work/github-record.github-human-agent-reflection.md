@@ -43,8 +43,12 @@ fetches, and no command has a `--refresh` flag.
 On each runner tick, each computer reads, with conditional requests, the
 issues of the todos in its record that are neither delivered nor withdrawn,
 so that what a person does on GitHub (an approval, a change request, a hold)
-reaches the todo whether or not it is claimed. Reading an issue whose
-conversation has grown costs only what is new since the last read. A list
+reaches the todo whether or not it is claimed. An issue GitHub reports
+unchanged is not read further. Reading an issue whose conversation or label
+history has grown costs only what is new since the last read: the record
+keeps how far it has read the issue, and never moves that position past a
+control it has not yet applied or answered. A lost position costs one
+complete read of the issue and applies no control twice. A list
 read follows pages up to its page limit; reaching it with a full last page is
 stated in the command's report as an incomplete read, never passed off as the
 whole list.
@@ -126,18 +130,36 @@ board reflection failures remain visible and retryable independently of issue an
 local-record writes; missing GitHub permissions are a reported setup failure,
 never an implicit opt-out.
 
+Reflection publishes a repository todo's work branch while the todo is built
+and reviewed: from the branch its build start records until the todo is
+delivered or a withdrawal of it begins. Each runner tick's flush compares the
+branch's local head with the head its last publication left on the remote the
+default branch tracks, and pushes the branch there when the local head has
+moved; a command's own flush publishes nothing, so no command waits on the
+remote. A publication only ever
+fast-forwards the remote branch; it never forces it. A remote branch that
+moved where the local one cannot fast-forward it is reported with the todo
+as the reason its publication is outstanding, and is left as it is. An
+unreachable remote leaves the publication pending for the next flush; it
+delays the publication and never the work. Commits land on the branch as
+before: the builder, the fixer and the lifecycle's own pushes are unchanged,
+and a push of a head the remote already holds changes nothing.
+
 Repository implementation has a linked pull request during its build and
 review path, opened as soon as the todo's branch is on GitHub; while the
 branch is not available on GitHub, creation remains pending. The pull request
 carries the commits under review and each recorded build-review verdict as a
 native review of the exact reviewed commit, written by the reviewing role's
-App (`project/instrukt/spec/feature/work/github-apps`).
+App (`project/instrukt/spec/feature/work/github-apps`). A verdict is
+reflected once its commit and its report are on GitHub: the commit on the
+published branch and the report as a saved version of the `review-findings`
+artifact.
 
 A review is written for a person. Its body states the verdict and what the
 reviewer found, readable in place, and links the todo's `review-findings`
-artifact. A report longer than a review body holds is carried up to that
-length and marked as shortened; the complete report is read in the linked
-artifact.
+artifact on the issue. A report longer than a review body holds is carried up
+to that length and marked as shortened; the complete report is read in the
+linked artifact, whose saved versions include the reviewed one.
 
 Delivery closes the pull request with the delivered commit. The integrator
 owns merging and the integration gate; pull-request state alone never proves
@@ -287,9 +309,11 @@ pull request or review.
 Content GitHub refuses as invalid is a refusal of that content, where an
 unreachable or rate-limiting GitHub is a wait. The refusal is kept with the
 validation detail GitHub gave and reported with the todo as the reason its
-reflection is outstanding. The same content is not sent again; reflection of
-that todo resumes when what it sends has changed. The local record continues
-and other todos reflect independently.
+reflection is outstanding. The same content is not sent again: a refused
+request is sent again only once what it sends, or the published branch head
+it concerns, has changed. The todo's other reflection continues, the local
+record continues and other todos reflect independently. A refused artifact
+version is followed by the artifact's next version as usual.
 
 ## Use cases
 
@@ -422,6 +446,21 @@ When an independent reviewer records a verdict on a commit of that branch
 Then the todo's pull request is open and shows the reviewer bot's review of that commit
 And the review states the verdict and what the reviewer found, readable in place
 And it links the todo's review findings artifact
+```
+
+### UC-GR16: Follow a todo's work on its pull request while agents build it
+
+```gherkin
+Given a developer's repository todo is being built and reviewed on their computer
+When a builder or a fixer lands a commit on the todo's branch
+Then the commit is on the todo's branch on GitHub
+And the todo's pull request is open and shows it
+But when GitHub cannot be reached
+Then the work on the todo continues
+And the commit reaches GitHub once it can be reached again
+But when the branch on GitHub has moved where the todo's branch cannot follow it
+Then the branch on GitHub is left as it is
+And the developer is told why the todo's commits are not on GitHub
 ```
 
 ## Known caveats

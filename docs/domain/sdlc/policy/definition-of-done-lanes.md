@@ -614,7 +614,11 @@ dispatch gate. The reviewer checks frontmatter shape and stale delivered
 relationships against `general/spec/snippet-authoring-schema`:
 a known slug whose todo is already delivered is a finding, because delivery
 should have folded it. A slug absent from the local todo store is not a finding:
+<!-- planned-change:github-human-agent-reflection -->
 the work record is local-leading and pull-through from GitHub, so a git-carried pending snippet can name work not dispatched to this machine.
+<!-- change:github-human-agent-reflection -->
+each computer's work record holds only the todos created on it, so a git-carried pending snippet can name work this computer's record does not hold.
+<!-- /planned-change:github-human-agent-reflection -->
 Do not use `instrukt todo show <slug>` 404 as evidence that a pending snippet is
 undeliverable.
 

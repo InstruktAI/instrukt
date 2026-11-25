@@ -59,9 +59,20 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Dispatch hold**
 : An attributed pause on automatic pickup, carrying its cause.
 
+<!-- planned-change:github-human-agent-reflection -->
 **Remote revision**
 : The committed version of a todo's reflected GitHub record, against which
   later reflection checks for conflicts.
+<!-- change:github-human-agent-reflection -->
+**Reflection**
+: The one-way showing of a todo on GitHub — its issue, labels, board card,
+  artifacts, work branch and pull request — from the work record, which holds
+  the only copy of the todo. Nothing reflected is read back as work state.
+
+**People's control**
+: An approval, a change request or a hold a person exercises on a todo's
+  issue, entering the record as that person's attributed change, once.
+<!-- /planned-change:github-human-agent-reflection -->
 
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
@@ -108,6 +119,7 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 ## Ownership boundary
 
+<!-- planned-change:github-human-agent-reflection -->
 - **Owns:** todo identity and record mutations; artifact versions; stamp
   evidence; approvals and intent-check records; prerequisite and group facts;
   holds; per-role session bindings and task schedules; local-leading
@@ -117,6 +129,20 @@ runner owns dispatch, and the configured runtime owns conversations.
   bot trust and installation credentials at its GitHub boundary; reports derived
   from that record. The GitHub boundary's credential interface is shared through
   CLI wiring with runner and repository consumers, not a reverse core dependency.
+<!-- change:github-human-agent-reflection -->
+- **Owns:** todo identity and record mutations; artifact versions; stamp
+  evidence; approvals and intent-check records; prerequisite and group facts;
+  holds; per-role session bindings and task schedules; the work record's only
+  copy, in the state database — its file, writer rules, migrations and work
+  tables (`project/instrukt/spec/feature/work/state-database`); reflection of
+  each todo to GitHub, including publishing a repository todo's work branch
+  while it is built and reviewed and the pull request and reviews on it;
+  people's controls read from a todo's issue; verified App actors and
+  installation credentials at its GitHub boundary; reports derived from that
+  record. The GitHub boundary's credential interface is shared through CLI
+  wiring with runner and repository consumers, not a reverse core dependency.
+<!-- /planned-change:github-human-agent-reflection -->
+
 - **Does not own:** workflow definitions and next-action derivation, execution
   and integration decisions, runner scheduling and dispatch, runtime thread
   status and conversation storage, or documentation publication. Those
@@ -132,7 +158,13 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
   published eval provenance; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
+<!-- planned-change:github-human-agent-reflection -->
   GitHub supplies the required reflected store; the runner supplies the event-log
+<!-- change:github-human-agent-reflection -->
+  GitHub is the required surface reflection writes to and people's controls
+  are read from, and holds no copy of the record; the project's git remote
+  receives the published work branch; the runner supplies the event-log
+<!-- /planned-change:github-human-agent-reflection -->
   append the finalize-ready stamp uses. Standing-agent event delivery
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
@@ -158,12 +190,20 @@ Work supplies its recorded todo-role attempt, native session and workspace
 facts to command admission; the capability contract is
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`. Role grants
 supply focus and every caller still meets the object's claim, phase and admitted
+<!-- planned-change:github-human-agent-reflection -->
 workspace-writer checks. The record's GitHub schema is checked on every read
 before dependent mutation under
 `project/instrukt/spec/feature/work/github-record`. Configuration supplies App
 profiles and per-role selection; work's shared GitHub boundary verifies actors
 and issues installation credentials under
 `project/instrukt/spec/feature/work/github-apps`.
+<!-- change:github-human-agent-reflection -->
+workspace-writer checks. Admission reads this computer's record and waits on
+nothing from GitHub. Configuration supplies App profiles and per-role
+selection; work's shared GitHub boundary verifies actors and issues
+installation credentials under
+`project/instrukt/spec/feature/work/github-apps`.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ### Aggregates
 
@@ -245,8 +285,15 @@ the reviewed head; workflow owns the lifecycle vocabulary.
 
 ### Domain events consumed
 
+<!-- planned-change:github-human-agent-reflection -->
 Work consumes no events in the first build. GitHub changes reconcile into
 local records and workflow results enter as evidence-bound mutations.
+<!-- change:github-human-agent-reflection -->
+Work consumes no events in the first build. People's controls on a todo's
+issue enter the record as attributed mutations, each applied once; nothing
+else on GitHub changes the record. Workflow results enter as evidence-bound
+mutations.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ## Event subjects and origins
 
@@ -261,8 +308,15 @@ Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 - **Todos** — `project/instrukt/spec/feature/work/todos` — record work
   with its kind and recover withdrawn intent and evidence.
 - **GitHub Apps** — [project/instrukt/spec/feature/work/github-apps](../feature/work/github-apps.md) — role-selected project/author/reviewer bots, installation credentials, bot trust and visible bot authorship.
+<!-- planned-change:github-human-agent-reflection -->
 - **GitHub record** — `project/instrukt/spec/feature/work/github-record`
   — retain local progress through outages and follow reflected delivery evidence.
+<!-- change:github-human-agent-reflection -->
+- **GitHub record** — `project/instrukt/spec/feature/work/github-record`
+  — retain local progress through outages, discuss and decide on a todo's
+  issue, follow the live pull request and read its reviews, and follow
+  reflected delivery evidence.
+<!-- /planned-change:github-human-agent-reflection -->
 - **Stamps** — `project/instrukt/spec/feature/work/stamps` — retain
   attributed evidence for approval, workflow and evaluation goals.
 - **Approvals** — `project/instrukt/spec/feature/work/approvals` —
@@ -330,5 +384,13 @@ owning design snippet or decision record is declared.
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.
+<!-- planned-change:github-human-agent-reflection -->
 - **GitHub** — anti-corruption-layer. Reflection translates work records into
   provider artifacts and issues while local operations keep their domain model.
+<!-- change:github-human-agent-reflection -->
+- **GitHub** — anti-corruption-layer. Reflection translates work records one
+  way into issues, labels, board items, native artifacts, the published work
+  branch, its pull request and reviews; the boundary translates people's
+  controls on an issue into attributed record mutations. Local operations keep
+  their domain model.
+<!-- /planned-change:github-human-agent-reflection -->

@@ -494,12 +494,22 @@ runtime-owned. Instrukt delivers its own events/approvals under session-continui
 stamps remain work-record evidence. Native instruction prose is resolved from
 configuration through `@config`; it is never an adapter command template.
 
+<!-- planned-change:github-human-agent-reflection -->
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract
 covers every runner mutation: recording and reflecting execution claims,
 flushing pending reflection on ticks, writing last-fired stamps, setting
 automatic holds, purging expired retained records, and reading and writing
 per-role session bindings. Work owns validation and persistence of those writes.
+<!-- change:github-human-agent-reflection -->
+Todo dispatch reads work and workflow through runner-declared interfaces,
+implemented by the todos crate and wired by the CLI. Work’s command contract
+covers every runner mutation: recording execution claims, flushing pending
+reflection and reading people's controls on ticks, writing last-fired stamps,
+setting automatic holds, purging expired retained records, and reading and
+writing per-role session bindings. Work owns validation and persistence of
+those writes, and what a tick's reflection publishes.
+<!-- /planned-change:github-human-agent-reflection -->
 
 ## Known caveats
 
@@ -509,11 +519,20 @@ per-role session bindings. Work owns validation and persistence of those writes.
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
+<!-- planned-change:github-human-agent-reflection -->
 - A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
   harness, one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. GitHub-backed todos cover work movement without a separate
   computer-transfer feature.
+<!-- change:github-human-agent-reflection -->
+- A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
+  harness, one-time layout migrations, experiment matching, dsh upgrades,
+  harness-install management and session/work-record migration are outside
+  instrukt. Moving a todo between computers is not supported: the runner picks
+  up only the todos of its own computer's work record, and GitHub carries no
+  copy of a todo for another computer to take up.
+<!-- /planned-change:github-human-agent-reflection -->
 - There is no installation inspector or incident-alert subsystem. Module
   infrastructure checks retain their existing contract; anomaly notification
   and the log bug hunter cover unattended failures.
