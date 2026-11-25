@@ -434,7 +434,9 @@ fn issue_ref(value: &Value, path: &str) -> Result<IssueRef, GitHubError> {
 }
 
 /// `author_association` values of authors who can write to the
-/// repository: only their envelopes and commands count.
+/// repository: a command reply already posted by one of them is recognized
+/// as posted. Who may command is decided apart, by `github.approvers` and
+/// GitHub's answer on write access.
 pub(crate) const TRUSTED_ASSOCIATIONS: [&str; 3] = ["OWNER", "MEMBER", "COLLABORATOR"];
 
 /// Whether the comment's author can write to the repository.
