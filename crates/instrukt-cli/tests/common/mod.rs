@@ -634,7 +634,6 @@ fn live_fence(base: &Path) -> Vec<PathBuf> {
         ".codex",
         ".gemini",
         ".dsh",
-        ".teleclaude",
         "Library/LaunchAgents",
         ".config/systemd",
     ]
