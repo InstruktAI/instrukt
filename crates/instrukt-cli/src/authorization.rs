@@ -61,7 +61,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
-        ["history", "import-teleclaude" | "extract"] => HistoryRead,
+        ["history", "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
         ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,

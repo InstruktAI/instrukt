@@ -82,7 +82,7 @@ enum Command {
     Review(review::ReviewArgs),
     /// Discover producer-declared event types and their schemas.
     Events(events::EventsArgs),
-    /// Extract, import and search retained conversations across computers.
+    /// Extract and search retained conversations across computers.
     History(history::HistoryArgs),
     /// Internal signed loopback webhook receiver (installation is separate).
     Webhooks(webhooks::WebhooksArgs),
