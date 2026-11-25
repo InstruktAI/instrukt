@@ -63,7 +63,7 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.inspect_thread -->
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
 ### 1. Route the activating event
 
@@ -218,16 +218,11 @@ todo's clean `<slug>/work` worktree and deletes `<slug>/work` locally and on
 (`general/policy/shared-machine-resources`).
 
 After delivery, inspect `instrukt todo show <slug>@<identity-prefix> --json` and
-retire the terminal orchestrator threads. Read the delivered todo's recorded
-orchestrator bindings (`todo-orchestrator`, plus any legacy phase-orchestrator
-bindings) and retire each non-standing orchestrator thread through the
-configured `runtime.retire_thread` action. Converge idempotently on
-already-retired threads (distinguishing an already-retired thread from a failed
-observation), preserve any unfinished human or worker obligations, and never
-retire standing agents (including this integrator session). A worktree or
-branch whose removal is still owed shows in that ledger; it does not gate
-retiring the delivered todo's orchestrator threads. Preserve the runtime thread
-record and retained attempt evidence.
+finish each recorded non-standing orchestrator thread of the delivered todo
+through `runtime.finish_thread` under `sdlc/policy/todo-creation-discipline`
+(never this standing integrator session). A worktree or branch whose removal is
+still owed shows in that ledger and does not gate finishing. Preserve the
+runtime thread record and retained attempt evidence.
 
 When all current work is settled, park as the standing integrator. The next
 `workflow.finalized`, `runner.ci_completed`, `runner.main_failing` or `runner.dependency_failing` resumes this session. Its mandate continues across idle turns under the recorded standing-session
@@ -251,8 +246,8 @@ binding.
 - A candidate already promoted needs delivery-record reconciliation, not
   another merge. Execute delivery (`instrukt todo deliver <slug> --commit <sha>`),
   then follow Step 6 directly: inspect `instrukt todo show <slug>@<identity-prefix> --json`
-  and retire the delivered todo's recorded non-standing phase orchestrator
-  thread(s) through `runtime.retire_thread`. Release an owed claim with
+  and finish the delivered todo's recorded non-standing orchestrator
+  thread(s) through `runtime.finish_thread`. Release an owed claim with
   `instrukt todo update <slug> --unclaim` and confirm the released claim. Record
-  the handoff; apart from terminal orchestrator retirement, the runtime owns
-  session ending.
+  the handoff; apart from finishing completed todo orchestrator threads, the
+  runtime owns session ending.

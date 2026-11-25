@@ -141,18 +141,16 @@ Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
 conversation needs the child, record the contribution and handoff. Close
 discussion through the configured runtime discussion instruction. Keep active,
-held, and between-phase orchestrators wakeable (using dormant settling only);
-once a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
-recorded orchestrator threads (`todo-orchestrator`, plus any legacy
-phase-orchestrator bindings) through the configured terminal retirement
-instruction, completing all record writes first when self-retiring, converging
-idempotently on replay, never gating retirement on unrelated resource cleanup,
-and never retiring standing agents:
+held, and between-phase orchestrators wakeable; once a todo reaches a terminal
+state (`delivered` or `withdrawn`), finish its recorded orchestrator threads
+through the configured thread-finishing instruction under
+`sdlc/policy/todo-creation-discipline`:
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
-Apart from terminal orchestrator retirement, session ending and cleanup belong
-to the runtime. Preserve any unresolved cleanup with its responsible owner.
+Apart from finishing completed todo orchestrator threads, session ending and
+cleanup belong to the runtime. Preserve any unresolved cleanup with its
+responsible owner.
 
 ### Container Slug Handling
 
@@ -233,8 +231,9 @@ provider-status mutation, restart or quota timer. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
 When evidence establishes rejection before any session was created, retry
 through the native runtime's supported availability selection. An ambiguous start
-retains its identity and pending work for reconciliation; apart from terminal
-orchestrator retirement, session ending and cleanup belong to the runtime. If
+retains its identity and pending work for reconciliation; apart from finishing
+completed todo orchestrator threads, session ending and cleanup belong to the
+runtime. If
 recovery cannot complete, preserve the pending step and report the anomaly.
 
 ### Review Threshold Handling (Orchestrator-Owned)
@@ -293,8 +292,8 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
 then record the handoff and any remaining obligations. Preserve conversations
-needed for later rounds or human input; apart from terminal orchestrator
-retirement, the runtime owns session ending and cleanup.
+needed for later rounds or human input; apart from finishing completed todo
+orchestrator threads, the runtime owns session ending and cleanup.
 
 ## Outputs
 
