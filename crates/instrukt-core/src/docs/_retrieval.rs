@@ -3,9 +3,10 @@
 //! domain's position index rendered
 //! (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 //!
-//! All read the global index and publication records. Current-schema database
-//! reads take no writer lock; an older database first enters its locked
-//! migration path. Configuration reads can likewise migrate their owned layers.
+//! All read the global index and publication records. The work record that
+//! resolves an explicit target is inspected: an older database is brought
+//! forward in memory only and never takes the writer lock. Configuration
+//! reads can migrate their owned layers.
 //! Every published snippet is read from the home, with its companions beside it.
 //! Explicit target reads use the preparation worktree. Where a listing or a read
 //! names a position or a snippet, it names its source: the file or folder in the
