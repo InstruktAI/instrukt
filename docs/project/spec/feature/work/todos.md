@@ -203,26 +203,25 @@ returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
 `approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
-current shared `<slug>/work` head. The orchestrator starts a fresh worker with
-shared isolation through `runtime.dispatch`, or continues the role's prior
-session through `runtime.message_child`; `general/procedure/orchestration`
-decides which.
+current shared `<slug>/work` head. Whether the reserved round starts a fresh
+worker or continues the role's prior session, and the order of the
+orchestrator's native operations, belong to `general/procedure/orchestration`.
 
-Immediately after delegating a fresh worker, and before sending a continued
-worker its brief, it records `instrukt todo bind <slug> --role <role>
---attempt <n> --session <runtime:id> [--worktree <path>] [--branch <branch>]
-[--base <sha>]`. Binding requires the reservation, same claim holder and selected
-runtime, and exact role/attempt. For repository todos, `--branch` and `--base`
-(and matching worktree, branch, and clean initial head) are required and every
-child inherits `todo-orchestrator`'s single `<slug>/work` worktree. For
-worktree-less `kind: task` (`task-preparer`) reservations, `--worktree`,
-`--branch`, and `--base` must be omitted. Bind
-before workspace work, record writes or stamps. If a child starts before binding,
-it reports that prerequisite and awaits its parent's native follow-up. Exact
-replay succeeds; changed child identity or workspace refuses. A later attempt
-of a role may bind the native session an earlier attempt of that role was bound
-to: the earlier attempt keeps its recorded release, and the worker's evidence
-binds to the new attempt. Binding neither calls the runtime nor transfers the
+`instrukt todo bind <slug> --role <role> --attempt <n> --session <runtime:id>
+[--worktree <path>] [--branch <branch>] [--base <sha>]` records the native
+session that works the reserved attempt. Binding requires the reservation, same
+claim holder and selected runtime, and exact role/attempt. For repository todos,
+`--branch` and `--base` (and matching worktree, branch, and clean initial head)
+are required and every child inherits `todo-orchestrator`'s single
+`<slug>/work` worktree. For worktree-less `kind: task` (`task-preparer`)
+reservations, `--worktree`, `--branch`, and `--base` must be omitted. The
+binding is the prerequisite for the attempt's workspace work, record writes and
+stamps; a session that starts before its binding reports that prerequisite.
+Exact replay succeeds; changed child identity or
+workspace refuses. A later attempt of a role may bind the native session an
+earlier attempt of that role was bound to: the earlier attempt keeps its
+recorded completion and release, and the session's evidence is attributed to
+the new attempt. Binding neither calls the runtime nor transfers the
 orchestrator's claim to the child.
 <!-- /planned-change:reuse-retained-worker-sessions -->
 
@@ -435,15 +434,14 @@ And the agent is told that a bug is reported through the bug front door, and how
 ```
 
 <!-- planned:reuse-retained-worker-sessions -->
-### UC-TD13: Continue a retained worker into its next round
+### UC-TD13: A developer's further round keeps the worker that did the earlier one
 
 ```gherkin
-Given a developer's orchestrator holds a role's completed attempt that was bound to a worker's native session
-When it reserves that role's next attempt and binds it to the same session at the current shared head
-Then the reservation names that session as the role's prior session
-And instrukt records the new attempt on that session without calling the runtime
-And the worker stamps its required evidence against the new attempt
-And the earlier attempt keeps its recorded release
+Given a developer's todo whose worker completed an earlier round in its role
+When that role is given a further round
+Then the further round is recorded on the same worker's conversation, where its earlier context lives
+And each round's evidence is attributed to its own round
+And the earlier round's record stays as it was
 ```
 <!-- /planned:reuse-retained-worker-sessions -->
 
