@@ -418,8 +418,8 @@ reflection. Key: `todo_id`.
 | `published_head` | The work-branch commit the last publication left on the remote; `NULL` before the first. |
 | `publication_outstanding` | Why the work branch's local head is not on the remote — the remote branch moved where the local one cannot fast-forward it, or no remote is tracked — as the last publication found it; `NULL` once a publication leaves the local head there or none is owed. |
 | `etag` | The issue's `ETag` at its last read, for conditional reads. |
-| `comments_since` | The latest update time among the issue's comments read so far: the next read asks only for comments updated after it. `NULL` reads the conversation once in full. |
-| `events_page`, `events_last` | The page of the issue's events holding the last event read, and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
+| `comments_since` | The latest update time among the issue's comments read before the first control still outstanding — an approval or change request not yet applied or answered — or among all of them when none is: the next read asks only for comments updated after it. `NULL` reads the conversation once in full. |
+| `events_page`, `events_last` | The page of the issue's events holding the last event read before the first hold-label action still outstanding (the last event read when none is), and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
 | `reviews` | The build verdicts whose review is on the pull request, by their stamps' record order, as JSON. Each verdict is reflected on its own: one not yet reflected, or refused, holds back no other. |
 | `issue_id`, `pull_outstanding`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
 <!-- /planned-change:github-human-agent-reflection -->

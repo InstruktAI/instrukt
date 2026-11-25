@@ -84,10 +84,13 @@ pub(crate) struct ReflectionState {
     pub pull_closed: bool,
     /// The last reflection failure that left the item pending.
     pub failure: Option<String>,
-    /// The latest update time among the issue's comments read so far.
+    /// Where the next read of the issue's comments starts: the latest update
+    /// time among the comments read before the first control still
+    /// outstanding (all of them when none is).
     pub comments_since: Option<String>,
-    /// The page of the issue's events holding the last event read, and
-    /// that event's identity.
+    /// Where the next read of the issue's events starts: the page holding
+    /// the last event read before the first control still outstanding (the
+    /// last event read when none is), and that event's identity.
     pub events_page: Option<u64>,
     pub events_last: Option<u64>,
     /// The work-branch commit the last publication left on the remote.
