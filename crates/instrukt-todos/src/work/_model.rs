@@ -33,20 +33,6 @@ pub(crate) const SHOWN_PREFIX: usize = 8;
 
 impl TodoAddress {
     /// The address of `record`'s exact entry.
-    /// The address an action on `record` takes: its plain slug for a live
-    /// todo, since a plain slug always means the live item, else its exact
-    /// address.
-    pub fn door(record: &TodoRecord) -> Self {
-        if record.is_live() {
-            Self {
-                slug: record.slug.clone(),
-                identity: None,
-            }
-        } else {
-            Self::exact(record)
-        }
-    }
-
     pub fn exact(record: &TodoRecord) -> Self {
         Self {
             slug: record.slug.clone(),

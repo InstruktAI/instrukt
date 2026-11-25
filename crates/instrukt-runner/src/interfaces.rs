@@ -104,13 +104,6 @@ pub enum WorkInterfaceError {
         project: ProjectSlug,
         todo: TodoSlug,
     },
-    /// The item is conflicted with a newer remote revision; commands on it
-    /// refuse until it is refreshed (`github-record`, "Writer and
-    /// convergence").
-    #[error(
-        "todo `{todo}` is conflicted with GitHub; refresh it with `instrukt todo refresh {todo}`"
-    )]
-    Conflicted { todo: TodoSlug },
     /// Work refused the write for a reason its contract states (a hold,
     /// a delivered item, an invalid resulting record).
     #[error("{reason}")]
@@ -137,10 +130,9 @@ pub struct PickupCandidate {
     /// (`work-dispatch`, "Agent selection and intent checks").
     pub agent: Option<AgentPreference>,
     /// The runner's own claim on this computer already holds the todo and
-    /// no session is bound to it yet: either pending reflection (GitHub was
-    /// unreachable when it was recorded) or reflected since by another
-    /// command. Claiming it again answers `AlreadyHeld` once reflected,
-    /// `NotReflected` while GitHub still cannot be reached (ruling D).
+    /// no session is bound to it yet: a claim recorded by an earlier tick
+    /// whose dispatch did not start. Claiming it again answers
+    /// `AlreadyHeld`, and dispatch goes on.
     pub claimed_here: bool,
 }
 
@@ -161,10 +153,8 @@ pub trait Pickup: Send + Sync {
     /// dispatch hold, no execution claim held. Lane readiness (which flow
     /// is owed and whether prerequisites satisfy it) is workflow's, through
     /// [`WorkflowAssignments`]. Serves `work-dispatch`, "Todo pickup", and
-    /// `dependencies-and-holds`, "Prerequisites". Reads the tick's one
-    /// pickup listing of the project from GitHub, whose result replaces the
-    /// project's listing copies (`github-record`, "Interest-driven
-    /// refresh").
+    /// `dependencies-and-holds`, "Prerequisites". Reads only this
+    /// computer's record of the project; nothing is read from GitHub.
     fn pickup_candidates(
         &self,
         project: &ProjectRef,
@@ -186,19 +176,16 @@ pub enum Claimant {
     Session(SessionRef),
 }
 
-/// The outcome of recording an execution claim and reflecting it.
+/// The outcome of recording an execution claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimOutcome {
-    /// The claim is recorded and reflected: this computer holds it.
+    /// The claim is recorded in this computer's record: this computer holds
+    /// it, whether or not GitHub answered its reflection.
     Claimed,
     /// The claimant already held it; nothing changed.
     AlreadyHeld,
-    /// Reflection met a newer remote revision: another computer claimed
-    /// it first. The local change is not reflected; leave the item.
+    /// Another holder on this computer holds the claim; leave the item.
     ClaimedElsewhere,
-    /// The claim is recorded locally but could not be reflected (GitHub
-    /// unreachable or rate limited); it is pending reflection.
-    NotReflected,
 }
 
 /// Recording the item-level execution claim (`work-dispatch`, "Execution
@@ -206,8 +193,9 @@ pub enum ClaimOutcome {
 /// holds"). Release is `instrukt todo update <slug> --unclaim`, the
 /// session's own command, not a runner write.
 pub trait Claims: Send + Sync {
-    /// Records the claim on `todo` for `claimant` and reflects it to
-    /// GitHub before returning.
+    /// Records the claim on `todo` for `claimant` in this computer's record,
+    /// then flushes its reflection; the outcome never waits on GitHub's
+    /// answer.
     fn record_claim(
         &self,
         project: &ProjectRef,
@@ -357,20 +345,15 @@ pub struct ReflectionReport {
     pub reach: GitHubReach,
     /// Local items whose writes still await reflection.
     pub pending: Vec<TodoSlug>,
-    /// Local items marked conflicted by this or an earlier pass.
-    pub conflicted: Vec<TodoSlug>,
 }
 
 /// The tick's reflection pass (`work-dispatch`, "Execution contract";
-/// `github-record`, "Local-leading pull-through" and "Writer and
-/// convergence").
+/// `github-record`, "Reading GitHub" and "Writer and convergence").
 pub trait Reflection: Send + Sync {
-    /// Polls GitHub, with conditional requests, for the todos this
-    /// computer holds claims on and the prerequisites that claimed work is
-    /// blocked on (`github-record`, "Interest-driven refresh"), then flushes
-    /// pending reflection, under the per-computer writer lock. The tick's
-    /// pickup listing is [`Pickup::pickup_candidates`]. An unreachable
-    /// GitHub is a report, not an error.
+    /// Reads people's controls on the issues of this computer's live todos,
+    /// with conditional requests, then flushes pending reflection. What a
+    /// tick's reflection publishes is work's. An unreachable GitHub is a
+    /// report, not an error.
     fn sync_reflection(&self, project: &ProjectRef)
     -> Result<ReflectionReport, WorkInterfaceError>;
 }

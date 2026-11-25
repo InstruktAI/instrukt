@@ -29,10 +29,10 @@ stamps:
 ---
 @maintainer: the prd evidence changed since `<earlier prefix>`; review it and approve the current one again: `/instrukt approve prd <current prefix>`. Nothing changed.
 
-<!-- instrukt:command-reply:1036 -->
+<!-- instrukt:command-reply:1029 -->
 @passer-by: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed.
 
-<!-- instrukt:command-reply:1037 -->
+<!-- instrukt:command-reply:1030 -->
 @maintainer: recorded your approval of prd `<current prefix>`.
 
-<!-- instrukt:command-reply:1038 -->
+<!-- instrukt:command-reply:1031 -->

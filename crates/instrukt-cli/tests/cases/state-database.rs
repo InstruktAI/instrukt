@@ -405,8 +405,8 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     const FIRST: &str = "Started the depth parser.";
     const SECOND: &str = "Joined the nested-list cases.";
     let mut project = support::Project::new();
-    // One application clock for every command, so the listing's age of
-    // the copy is what the record says, whatever time the test takes.
+    // One application clock for every command, so what the listing and the
+    // todo show does not depend on the time the test takes.
     project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
     project.create(
         "list-depth",
@@ -420,9 +420,8 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     };
     let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
 
-    // The coming reflection stops at its artifact upload, before its
-    // revision comment, and again at the issue fields once GitHub holds the
-    // revision.
+    // The coming reflection stops at its artifact upload, and again at the
+    // issue fields once GitHub holds the artifact version.
     let upload = project.github.pause_once("POST", "/issues/1/artifacts");
     let fields = project.github.pause_once("PATCH", "/issues/1");
     let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
@@ -450,17 +449,17 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     let current = String::from_utf8(current.stdout).unwrap();
     drop(writer);
 
-    // GitHub accepts the first revision, with newly assigned artifact
-    // coordinates, and the reflection stops before this computer records
-    // it.
+    // GitHub accepts the first artifact version, with newly assigned
+    // coordinates, and the reflection stops at the issue update before this
+    // computer records anything of it.
     drop(upload);
     assert!(
         fields.wait_until_received(Duration::from_secs(30)),
-        "the first command's revision never reached GitHub"
+        "the first command's issue update never reached GitHub"
     );
 
     // A local change to the same todo commits while the reflection is in
-    // flight: its entry meets this computer's own unrecorded post.
+    // flight.
     let second = todo(&["artifacts", "write", "list-depth", "log", SECOND])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -478,8 +477,8 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         );
     }
 
-    // This computer holds a revision past the one GitHub holds and has not
-    // recorded. Reading the todo marks no conflict.
+    // This computer holds a revision past the one GitHub shows; reading the
+    // todo waits on nothing.
     let during = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
         .expect("showing the todo waited on the in-flight reflection");
     assert!(during.status.success(), "{during:?}");
@@ -503,16 +502,10 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .collect();
     // GitHub lists an artifact's versions newest first.
     let on_github = on_github.join("\n");
-    let comments = project.github.comments(support::REPOSITORY, 1);
-    let head = comments
-        .iter()
-        .filter_map(|c| c["body"].as_str())
-        .next_back()
-        .unwrap();
     insta::assert_snapshot!(
         "reflection-in-flight",
         support::redact(&format!(
-            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n---\n{head}"
+            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n"
         ))
     );
 }

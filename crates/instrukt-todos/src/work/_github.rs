@@ -20,8 +20,6 @@ const API_VERSION: &str = "2026-03-10";
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitHubError {
-    #[error("{message}")]
-    RecordSchema { message: String },
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
     /// The App one todo's operation selected (a role's pull request or
@@ -116,7 +114,6 @@ pub(crate) struct GitHub {
     /// Whether this client's credential serves one operation rather than
     /// every request of the command ([`GitHub::for_role`]).
     scoped: bool,
-    bots: std::cell::RefCell<Vec<instrukt_core::github::Bot>>,
 }
 
 impl GitHub {
@@ -142,7 +139,6 @@ impl GitHub {
             clock: super::_apps::Clock::starting(Timestamp::now()),
             apps: None,
             scoped: false,
-            bots: Default::default(),
         }
     }
 
@@ -177,15 +173,6 @@ impl GitHub {
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         gh
-    }
-    pub fn bots(&self) -> std::cell::Ref<'_, Vec<instrukt_core::github::Bot>> {
-        self.bots.borrow()
-    }
-    pub fn trusts(&self, comment: &Value) -> bool {
-        self.bots
-            .borrow()
-            .iter()
-            .any(|bot| bot.matches(&comment["user"]))
     }
     pub fn bot(&self) -> Result<instrukt_core::github::Bot, GitHubError> {
         self.credential()?;
@@ -224,10 +211,8 @@ impl GitHub {
                     self.clock,
                 )
                 .map_err(|error| self.app_failure(error))?;
-            let bots = apps.verified_bots(&self.repository, self.clock)?;
             *self.token.borrow_mut() = credential.token().to_owned();
             *self.credential.borrow_mut() = Some(credential);
-            *self.bots.borrow_mut() = bots;
         }
         Ok(())
     }

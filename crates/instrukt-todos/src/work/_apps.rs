@@ -183,13 +183,6 @@ impl GitHubAccess {
             ))
         })
     }
-    pub(crate) fn verified_bots(
-        &self,
-        repository: &str,
-        clock: Clock,
-    ) -> Result<Vec<Bot>, AppError> {
-        self.with_apps(|apps| apps.verified_bots(repository, clock))
-    }
 }
 impl instrukt_core::interfaces::GitHubActors for GitHubAccess {
     fn actor(&self, role: &str) -> Result<Bot, AppError> {

@@ -86,63 +86,21 @@ fn todos_are_picked_up_when_a_projects_event_responses_are_not_admitted() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() {
+fn work_claimed_while_github_is_unreachable_is_dispatched_at_once() {
     let mut project = Tracked::new(true);
     create_change(&project);
 
     project.github.stop();
     project.tick();
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "{:?}",
-        project.rt.calls()
-    );
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 
     project.github.resume();
     project.tick();
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!(
-        "dispatched-after-pending-claim",
+        "dispatched-while-github-unreachable",
         work::redact(&project.todo(["show", "tidy-imports"]))
     );
-}
-
-// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
-#[test]
-fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command_reflects_the_claim()
- {
-    let mut project = Tracked::new(true);
-    project.todo([
-        "create",
-        "tidy-imports",
-        "Sort the imports of every module.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
-
-    // The runner claims the work but cannot reflect the claim: no session.
-    project.github.stop();
-    project.tick();
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "{:?}",
-        project.rt.calls()
-    );
-
-    // A developer's command reflects the pending claim before the next tick.
-    project.github.resume();
-    project.todo([
-        "artifacts",
-        "write",
-        "tidy-imports",
-        "log",
-        "Noted: imports are grouped std, external, internal.",
-    ]);
-
-    project.tick();
-
-    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1

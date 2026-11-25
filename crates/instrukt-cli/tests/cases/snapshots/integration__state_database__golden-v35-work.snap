@@ -2,7 +2,7 @@
 source: crates/instrukt-cli/tests/cases/state-database.rs
 expression: "support::redact(&format!(\"{listed}---\\n{shown}---\\n{artifacts}---\\n{plan}\"))"
 ---
-list-depth · change · active · on hold: Waits for the parser review. · runs on <id 1> · last known <time> (55 minutes old) · reflection pending
+list-depth · change · active · on hold: Waits for the parser review. · claimed on <id 1> · reflection pending
 ---
 list-depth · change · active
 identity: <id 2>
@@ -12,7 +12,6 @@ revision: 4
 intent:
   Lists keep their depth everywhere.
 reflection: pending: GitHub is unreachable
-not refreshed from GitHub (GitHub is unreachable); shown as this computer last knew it
 issue: #1
 claim: held since <time> by session t3:lead-1
 hold: Waits for the parser review. (manual, by session t3:lead-1, <time>)

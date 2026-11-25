@@ -2,8 +2,6 @@
 //! runner's work interfaces, workflow's evidence read and core's todo
 //! existence.
 
-use instrukt_core::config::Configuration;
-use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
@@ -15,9 +13,7 @@ use jiff::Timestamp;
 
 use super::_envelope::ShownStatus;
 use super::_error::WorkError;
-use super::_github::{GitHub, GitHubError};
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
-use super::_reflect;
 use super::_session::{self, GitHubRead, PendingReason, ReflectionStatus, Session};
 use super::_store;
 use super::Work;
@@ -36,15 +32,10 @@ impl Pickup for Work {
         project: &ProjectRef,
         kinds: &[TodoKind],
     ) -> Result<Vec<PickupCandidate>, WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
-        // The tick's one pickup listing of the project: its result replaces
-        // the listing copies (`github-record`, "Interest-driven refresh").
-        let listed = s.pickup_listing();
+        let s = Session::open(self, project)?;
         let machine = s.machine()?;
         // The runner's own claims on this computer that no session took up
-        // yet are offered again (ruling D): one still awaiting reflection is
-        // reflected on the next claim, and one another command already
-        // reflected is dispatched rather than stranded.
+        // yet are offered again, and dispatched rather than stranded.
         let pending_here: Vec<TodoId> = s
             .items
             .iter()
@@ -56,31 +47,7 @@ impl Pickup for Work {
             })
             .map(|it| it.record.id.clone())
             .collect();
-        // A local item is judged as the listing read it when GitHub holds
-        // a newer revision than this computer last read and nothing local is
-        // pending: another computer may have claimed or changed it. Claiming
-        // refreshes it before the claim is committed.
-        let mut records: Vec<TodoRecord> = s
-            .items
-            .iter()
-            .filter(|it| !it.reflection.conflicted && !s.incompatible.contains(&it.record.id))
-            .map(|it| {
-                let newer = listed.iter().find(|(remote, _)| {
-                    remote.id == it.record.id
-                        && !it.reflection.pending
-                        && Some(remote.revision) > it.reflection.remote_revision
-                });
-                newer.map_or_else(|| it.record.clone(), |(remote, _)| remote.clone())
-            })
-            .collect();
-        for copy in &s.copies {
-            if s.incompatible.contains(&copy.record.id) {
-                continue;
-            }
-            if !records.iter().any(|r| r.id == copy.record.id) {
-                records.push(copy.record.clone());
-            }
-        }
+        let mut records: Vec<TodoRecord> = s.known_records();
         records.retain(|r| {
             r.status == TodoStatus::Active
                 && r.hold.is_none()
@@ -121,11 +88,7 @@ impl Claims for Work {
         claimant: &Claimant,
     ) -> Result<ClaimOutcome, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
-        let index = match s.enter(todo) {
-            Ok(index) => index,
-            Err(WorkError::Conflicted { .. }) => return Ok(ClaimOutcome::ClaimedElsewhere),
-            Err(err) => return Err(err.into()),
-        };
+        let index = s.enter(todo)?;
         let machine = s.machine()?;
         let session = match claimant {
             Claimant::Runner => None,
@@ -149,15 +112,7 @@ impl Claims for Work {
             if !holds {
                 return Ok(ClaimOutcome::ClaimedElsewhere);
             }
-            if !s.items[index].reflection.pending {
-                return Ok(ClaimOutcome::AlreadyHeld);
-            }
-            // A claim recorded while GitHub was unreachable: reflect it now.
-            s.flush()?;
-            return Ok(match claim_outcome(s.status(index)) {
-                ClaimOutcome::Claimed => ClaimOutcome::AlreadyHeld,
-                other => other,
-            });
+            return Ok(ClaimOutcome::AlreadyHeld);
         }
         if record.status != TodoStatus::Active {
             return Err(WorkError::refused(format!(
@@ -180,8 +135,10 @@ impl Claims for Work {
             });
             Ok(())
         })?;
+        // The claim takes effect in the record; its reflection is GitHub's
+        // to answer whenever it can (`github-record`).
         s.flush()?;
-        Ok(claim_outcome(s.status(index)))
+        Ok(ClaimOutcome::Claimed)
     }
 
     fn release_claim(
@@ -251,14 +208,14 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
         .collect();
     for index in held {
         match s.pull_through(index) {
-            Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+            Ok(()) => {}
             Err(err) => return Err(err),
         }
     }
     let mut blocking: Vec<TodoId> = Vec::new();
     for &index in &claimed {
         match s.pull_through(index) {
-            Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+            Ok(()) => {}
             Err(err) => return Err(err),
         }
         for prerequisite in &s.items[index].record.after {
@@ -280,20 +237,7 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
                 continue;
             }
             match s.pull_through(index) {
-                Ok(()) | Err(WorkError::Conflicted { .. }) => {}
-                Err(err) => return Err(err),
-            }
-        } else if let Some(copy) = s.copies.iter().find(|c| c.record.id == id).cloned()
-            && s.refreshed()
-        {
-            match s.refresh_copy(copy.issue_number) {
-                Ok(_) => {}
-                Err(WorkError::GitHub(err)) => tracing::warn!(
-                    event = "work_prerequisite_unread",
-                    todo = %copy.record.slug,
-                    error = %err,
-                    "a prerequisite of claimed work could not be refreshed"
-                ),
+                Ok(()) => {}
                 Err(err) => return Err(err),
             }
         }
@@ -357,14 +301,6 @@ impl HeldHere {
     }
 }
 
-fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
-    match status {
-        ReflectionStatus::Reflected => ClaimOutcome::Claimed,
-        ReflectionStatus::Conflicted { .. } => ClaimOutcome::ClaimedElsewhere,
-        ReflectionStatus::Pending(_) => ClaimOutcome::NotReflected,
-    }
-}
-
 fn checked_replacement(
     record: &super::_model::TodoRecord,
     machine: &instrukt_core::machine::MachineId,
@@ -423,11 +359,11 @@ fn checked_replacement(
 
 /// Whether item `index`, as the state database holds it after this
 /// command's flush, admits a native start or follow-up on this computer:
-/// reflected and not conflicted, still active, unheld and claimed by
-/// `machine` with no session, and holding the assignment `holds` accepts.
-/// The session's own copy is never the evidence: another command, a
-/// refresh or a reflection can have replaced the row between the commit and
-/// the flush. Why it does not, otherwise.
+/// still active, unheld and claimed by `machine` with no session, and
+/// holding the assignment `holds` accepts, whatever its reflection. The
+/// session's own copy is never the evidence: another command can have
+/// replaced the row between the commit and the flush. Why it does not,
+/// otherwise.
 fn admitted(
     s: &Session<'_>,
     index: usize,
@@ -439,12 +375,6 @@ fn admitted(
     };
     if withdrawing {
         return Err("belongs to a todo whose withdrawal is releasing its working resources");
-    }
-    if live.reflection.conflicted {
-        return Err("met a newer GitHub revision");
-    }
-    if live.reflection.pending {
-        return Err("remains pending GitHub reflection");
     }
     let record = &live.record;
     if record.status != TodoStatus::Active
@@ -616,8 +546,6 @@ impl SessionBindings for Work {
                         "the resumed assignment {why}; no runtime follow-up was attempted"
                     ))
                 })?;
-            } else if s.unjudged(index) {
-                return Err(super::_session::unjudged_refusal(todo).into());
             }
             return Ok(DispatchReservation::Existing(SessionBinding {
                 title: retained
@@ -714,9 +642,6 @@ impl SessionBindings for Work {
                 ))
                 .into());
             }
-            if s.unjudged(index) {
-                return Err(super::_session::unjudged_refusal(todo).into());
-            }
             return Ok(DispatchReservation::Start {
                 key: pending.attempt.semantic_key.clone(),
                 worktree: placement,
@@ -728,9 +653,6 @@ impl SessionBindings for Work {
                 && (occurrence.is_none() || Some(&b.attempt.semantic_key) == task_key.as_ref())
         }) && let Some(session) = &active.session
         {
-            if s.unjudged(index) {
-                return Err(super::_session::unjudged_refusal(todo).into());
-            }
             return Ok(DispatchReservation::Existing(SessionBinding {
                 title: active
                     .attempt
@@ -850,7 +772,7 @@ impl SessionBindings for Work {
         let mut s = Session::open(self, project)?;
         let machine = s.machine()?;
         let todo = replacement_todo(&s, key)?;
-        let index = s.enter_judged(&todo)?;
+        let index = s.enter(&todo)?;
         s.refuse_withdrawing(index)?;
         checked_replacement(&s.items[index].record, &machine, key, stopped)?;
         Ok(())
@@ -922,10 +844,6 @@ impl SessionBindings for Work {
             ReflectionStatus::Pending(reason) => {
                 Err(WorkError::refused(super::_session::describe(&reason)).into())
             }
-            ReflectionStatus::Conflicted { .. } => Err(WorkError::refused(
-                "todo reflection has a conflicting revision. Run `instrukt todo refresh`",
-            )
-            .into()),
         }
     }
 
@@ -1007,26 +925,20 @@ impl Reflection for Work {
             return Err(WorkError::refused(format!("cockpit setup pending: {cause}")).into());
         }
         let reach = match s.github_read() {
-            GitHubRead::Read | GitHubRead::Unjudged => GitHubReach::Reachable,
+            GitHubRead::Read => GitHubReach::Reachable,
             GitHubRead::NotRead(PendingReason::RateLimited { until }) => {
                 GitHubReach::RateLimited { until }
             }
             GitHubRead::NotRead(_) => GitHubReach::Unreachable,
         };
-        let mut pending = Vec::new();
-        let mut conflicted = Vec::new();
-        for (index, item) in s.items.iter().enumerate() {
-            match s.status(index) {
-                ReflectionStatus::Pending(_) => pending.push(item.record.slug.clone()),
-                ReflectionStatus::Conflicted { .. } => conflicted.push(item.record.slug.clone()),
-                ReflectionStatus::Reflected => {}
-            }
-        }
-        Ok(ReflectionReport {
-            reach,
-            pending,
-            conflicted,
-        })
+        let pending = s
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| matches!(s.status(*index), ReflectionStatus::Pending(_)))
+            .map(|(_, item)| item.record.slug.clone())
+            .collect();
+        Ok(ReflectionReport { reach, pending })
     }
 }
 
@@ -1152,20 +1064,12 @@ impl WorkEvidence for Work {
         todo: &TodoSlug,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
-        let record = match s.find(todo, true) {
-            Some(index) => {
-                read_through(&mut s, index)?;
-                s.items[index].record.clone()
-            }
-            None => match s.known_copy(todo) {
-                Some(copy) => copy_record(&mut s, copy)?,
-                None => match s.remote_item(todo)? {
-                    Some(item) => item.record,
-                    None => return Ok(None),
-                },
-            },
+        let Some(index) = s.find(todo, true) else {
+            return Ok(None);
         };
-        let prerequisites = expand(&mut s, &record);
+        s.pull_through(index)?;
+        let record = s.items[index].record.clone();
+        let prerequisites = expand(&s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
     }
 
@@ -1175,20 +1079,12 @@ impl WorkEvidence for Work {
         id: &TodoId,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
         let mut s = Session::open(self, project)?;
-        let record = match s.find_id(id) {
-            Some(index) => {
-                read_through(&mut s, index)?;
-                s.items[index].record.clone()
-            }
-            None => match s.copies.iter().find(|c| &c.record.id == id).cloned() {
-                Some(copy) => copy_record(&mut s, copy)?,
-                None => match s.remote_matching(&format!("todo {id}"), |r| &r.id == id)? {
-                    Some(item) => item.record,
-                    None => return Ok(None),
-                },
-            },
+        let Some(index) = s.find_id(id) else {
+            return Ok(None);
         };
-        let prerequisites = expand(&mut s, &record);
+        s.pull_through(index)?;
+        let record = s.items[index].record.clone();
+        let prerequisites = expand(&s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
     }
 
@@ -1207,31 +1103,6 @@ impl WorkEvidence for Work {
             .into_iter()
             .map(|item| to_evidence(item.record, Vec::new()))
             .collect())
-    }
-}
-
-/// Pulls local item `index` for a read: a conflicted item is still read.
-fn read_through(s: &mut Session<'_>, index: usize) -> Result<(), WorkError> {
-    match s.pull_through(index) {
-        Ok(()) | Err(WorkError::Conflicted { .. }) => Ok(()),
-        Err(err) => Err(err),
-    }
-}
-
-/// The record of listing copy `copy`, refreshed from GitHub when it can be
-/// read, else as last known.
-fn copy_record(
-    s: &mut Session<'_>,
-    copy: super::_store::ListingCopy,
-) -> Result<TodoRecord, WorkError> {
-    if !s.refreshed() {
-        return Ok(copy.record);
-    }
-    match s.refresh_copy(copy.issue_number) {
-        Ok(Some(item)) => Ok(item.record),
-        Ok(None) => Ok(copy.record),
-        Err(WorkError::GitHub(err)) if err.is_reach() => Ok(copy.record),
-        Err(err) => Err(err),
     }
 }
 
@@ -1260,79 +1131,23 @@ impl TodoExistence for WorkExistence {
                 self.project.slug
             )));
         }
-        let (items, copies, provider) =
-            _store::read_existence_state(self.work.home(), &self.project.slug)
-                .map_err(|e| failed(e.to_string()))?;
-        if _session::find_in(&items, slug, true)
-            .is_some_and(|i| items[i].record.status != TodoStatus::Removed)
-        {
-            return Ok(true);
+        // A computer without a state database holds no work record: whether
+        // the todo exists cannot be told here (`snippet-validation`, UC-SV7).
+        if !self.work.home().state_db_file().exists() {
+            return Err(failed(format!(
+                "cannot tell whether todo `{slug}` exists: this computer holds no work record"
+            )));
         }
-        if copies
-            .iter()
-            .any(|c| &c.record.slug == slug && c.record.is_live())
-        {
-            return Ok(true);
-        }
-        let config = Configuration::load(self.work.home(), Some(&self.project.root))
+        let (items, _) = _store::read_existence_state(self.work.home(), &self.project.slug)
             .map_err(|e| failed(e.to_string()))?;
-        let api_url = github::api_url(self.work.home()).map_err(|e| failed(e.to_string()))?;
-        let repository = match github::code_host(&config, &api_url, &self.project.root)
-            .map_err(|e| failed(e.to_string()))?
-        {
-            github::CodeHost::GitHub { repository } => repository,
-            github::CodeHost::Elsewhere { reason } => {
-                return Err(failed(WorkError::CodeNotOnGitHub { reason }.to_string()));
-            }
-        };
-        let now = self.work.now();
-        // Anchored before the capability lock is taken (see `Session::open`).
-        let clock = super::_apps::Clock::starting(now);
-        let unreadable = |reason: PendingReason| {
-            failed(format!(
-                "cannot tell whether todo `{slug}` exists: it is not on this computer and GitHub cannot be read ({})",
-                _session::describe(&reason)
-            ))
-        };
-        if let Some(until) = provider.deferred_until
-            && until > now
-        {
-            return Err(unreadable(PendingReason::RateLimited {
-                until: Some(until),
-            }));
-        }
-        self.work
-            .github
-            .begin_pass()
-            .map_err(|e| failed(WorkError::GitHub(GitHubError::from(e)).to_string()))?;
-        let gh = GitHub::for_app(
-            self.work.github.clone(),
-            &api_url,
-            &repository,
-            None,
-            github::Operation::Record,
-            clock,
-        )
-        .map_err(|e| unreadable(_session::reason_of(&e)))?;
-        let remote =
-            _reflect::remote_records(&gh, true).map_err(|e| unreadable(_session::reason_of(&e)))?;
-        if remote
-            .records
-            .iter()
-            .any(|(r, _)| &r.slug == slug && r.is_live())
-        {
-            return Ok(true);
-        }
-        if let Some((_, error)) = remote.incompatible.first() {
-            return Err(unreadable(PendingReason::Failed(error.to_string())));
-        }
-        Ok(false)
+        Ok(_session::find_in(&items, slug, true)
+            .is_some_and(|i| items[i].record.status != TodoStatus::Removed))
     }
 }
 
 /// The record's prerequisites with structural holders expanded to the
 /// todos whose milestones satisfy them.
-pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
+pub(super) fn expand(s: &Session<'_>, record: &TodoRecord) -> Vec<Prerequisite> {
     let mut out = Vec::new();
     let mut seen = Vec::new();
     let mut stack: Vec<_> = record.after.iter().rev().cloned().collect();
@@ -1349,24 +1164,12 @@ pub(super) fn expand(s: &mut Session<'_>, record: &TodoRecord) -> Vec<Prerequisi
             out.push(Prerequisite::Todo(prerequisite.slug));
             continue;
         }
-        let mut children: Vec<TodoRecord> = s
+        let children: Vec<TodoRecord> = s
             .items
             .iter()
             .map(|it| it.record.clone())
             .filter(|r| r.group.as_ref().is_some_and(|g| g.id == prerequisite.id))
             .collect();
-        for copy in &s.copies {
-            let remote = &copy.record;
-            if remote
-                .group
-                .as_ref()
-                .is_some_and(|g| g.id == prerequisite.id)
-                && remote.is_live()
-                && !children.iter().any(|c| c.id == remote.id)
-            {
-                children.push(remote.clone());
-            }
-        }
         if children.is_empty() {
             out.push(Prerequisite::EmptyHolder(prerequisite.slug));
         }

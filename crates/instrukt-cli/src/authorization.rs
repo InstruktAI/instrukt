@@ -46,7 +46,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold" | "render" | "plugin"] => DocsWrite,
         ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
-        ["todo", "list" | "show" | "refresh"] => TodoRead,
+        ["todo", "list" | "show"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
         ["todo", "artifacts", "write"] => ArtifactWrite,
         ["todo", "stamp"] => Stamp,
