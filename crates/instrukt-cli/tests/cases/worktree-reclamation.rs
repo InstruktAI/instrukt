@@ -8,23 +8,38 @@ use instrukt_core::config::CURRENT_SCHEMA_VERSION;
 
 const BUILD: &str = "crew/procedure/build";
 
-/// The crew's project, declaring `target` regenerable and ignoring it, as
-/// published on this computer.
+/// The crew's project, as published on this computer, declaring as
+/// regenerable `build/out` and `latest`, which it ignores; `out`, which it
+/// ignores but in which it tracks a file; `vendored`, which it tracks; and
+/// `gen`, which it neither tracks nor ignores. It also ignores `target` and
+/// `cache` without declaring them.
 fn declaring() -> Crew {
     let crew = Crew::new();
     let repo = &crew.project.repo;
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {}\nworkflow:\n  domain: crew\nregenerable:\n  - target\n",
+            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {}\nworkflow:\n  domain: crew\nregenerable:\n  - build/out\n  - out\n  - gen\n  - vendored\n  - latest\n",
             crate::fixtures::work::REPOSITORY
         ),
     );
-    repo.write(".gitignore", "/target\n/cache\n");
+    repo.write(".gitignore", "/build\n/out\n/latest\n/target\n/cache\n");
+    repo.write("vendored/lib.txt", "vendored source");
+    repo.write("out/keep.txt", "tracked inside ignored output");
+    repo.git(["add", "--force", "out/keep.txt"]);
     repo.commit("declare the regenerable output");
     repo.git(["push", "--quiet", "origin", "main"]);
     crew.project.env.run(crew.root(), ["sync"]).success();
     crew
+}
+
+/// The staging locations left beside `worktree`.
+fn staged_beside(worktree: &Path) -> Vec<String> {
+    std::fs::read_dir(worktree.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".instrukt-rg-"))
+        .collect()
 }
 
 /// A todo `slug` whose plan is approved and whose worktree its own
@@ -102,8 +117,11 @@ fn built(crew: &Crew, session: &str, worktree: &Path, slug: &str) {
     output(worktree);
 }
 
-/// Build output under the worktree's `target`.
+/// Build output under the worktree's declared `build/out` and its
+/// undeclared `target`.
 fn output(worktree: &Path) {
+    std::fs::create_dir_all(worktree.join("build/out")).unwrap();
+    std::fs::write(worktree.join("build/out/app"), "binary").unwrap();
     std::fs::create_dir_all(worktree.join("target/debug")).unwrap();
     std::fs::write(worktree.join("target/debug/app"), "binary").unwrap();
 }
@@ -168,10 +186,13 @@ fn the_runner_reclaims_declared_output_from_an_idle_worktree_only() {
     let threads = crew.runtime.thread_calls();
     crew.project.env.run(crew.root(), ["tick"]).success();
 
-    assert!(!handed.join("target").exists());
+    assert!(!handed.join("build/out").exists());
+    assert!(staged_beside(&handed).is_empty());
     assert_eq!(git_state(&crew, &handed), before);
-    assert!(between.join("target/debug/app").is_file());
-    assert!(working.join("target/debug/app").is_file());
+    assert!(handed.join("target/debug/app").is_file());
+    assert!(handed.join("out/keep.txt").is_file());
+    assert!(between.join("build/out/app").is_file());
+    assert!(working.join("build/out/app").is_file());
     assert_eq!(crew.runtime.thread_calls(), threads);
 }
 
@@ -184,6 +205,9 @@ fn a_working_session_reclaims_only_its_own_worktrees_declared_output() {
     output(&own);
     std::fs::create_dir_all(own.join("cache")).unwrap();
     std::fs::write(own.join("cache/kept"), "undeclared").unwrap();
+    std::fs::create_dir_all(own.join("gen")).unwrap();
+    std::fs::write(own.join("gen/new.txt"), "untracked work").unwrap();
+    std::os::unix::fs::symlink("target", own.join("latest")).unwrap();
     prepared(&mut crew, "other");
     let (_, other) = attempt(&crew, "other", "builder", BUILD);
     output(&other);
@@ -200,12 +224,24 @@ fn a_working_session_reclaims_only_its_own_worktrees_declared_output() {
     let reclaimed = reclaim(builder.strip_prefix("t3:").unwrap()).success();
     insta::assert_snapshot!(
         String::from_utf8_lossy(&reclaimed.get_output().stdout),
-        @"removed: target"
+        @r"
+    removed: build/out
+    removed: latest
+    left: out (git does not ignore it)
+    left: gen (git does not ignore it)
+    left: vendored (git does not ignore it)
+    "
     );
-    assert!(!own.join("target").exists());
+    assert!(!own.join("build/out").exists());
+    assert!(std::fs::symlink_metadata(own.join("latest")).is_err());
+    assert!(staged_beside(&own).is_empty());
     assert_eq!(git_state(&crew, &own), before);
+    assert!(own.join("target/debug/app").is_file());
+    assert!(own.join("out/keep.txt").is_file());
+    assert!(own.join("gen/new.txt").is_file());
+    assert!(own.join("vendored/lib.txt").is_file());
     assert!(own.join("cache/kept").is_file());
-    assert!(other.join("target/debug/app").is_file());
+    assert!(other.join("build/out/app").is_file());
 
     let refused = reclaim("unbound").failure();
     insta::assert_snapshot!(
