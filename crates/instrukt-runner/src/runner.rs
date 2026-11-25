@@ -155,6 +155,10 @@ pub struct Considered {
     /// Admitted for automatic review here, as far as nothing but GitHub
     /// decides; readiness is asked once per pass.
     pub review: bool,
+    /// Worktree reclamation of the declared regenerable output admitted.
+    pub reclamation: bool,
+    /// The regenerable output the project declares, as admitted.
+    pub regenerable: Vec<instrukt_core::config::RegenerablePath>,
 }
 
 /// The published projects that switch on `todos` or `events`. A project
@@ -166,15 +170,23 @@ pub fn considered(admitted: &Admitted) -> Vec<Considered> {
         .projects()
         .iter()
         .filter(|project| project.switched)
-        .map(|project| Considered {
-            project: ProjectRef {
-                slug: project.slug.clone(),
-                root: project.checkout.clone(),
-            },
-            config: project.config.clone(),
-            todos: project.todos,
-            events: project.events,
-            review: project.review,
+        .map(|project| {
+            let regenerable = project
+                .reclamation
+                .then(|| project.config.regenerable().ok())
+                .flatten();
+            Considered {
+                project: ProjectRef {
+                    slug: project.slug.clone(),
+                    root: project.checkout.clone(),
+                },
+                config: project.config.clone(),
+                todos: project.todos,
+                events: project.events,
+                review: project.review,
+                reclamation: regenerable.is_some(),
+                regenerable: regenerable.unwrap_or_default(),
+            }
         })
         .collect()
 }
@@ -205,7 +217,7 @@ pub fn tick(
     // and readiness work below never make an on-time occurrence late.
     let now = clock();
     let state = RunnerState::new(cx.home);
-    let Some(_runner) = _holder::tick(cx.home)? else {
+    let Some(runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
     };
     let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
@@ -249,6 +261,15 @@ pub fn tick(
         _readiness::ended(cx.home);
     }
     drop(invocation);
+    let mut reported = crate::reclamation::Reported::default();
+    crate::reclamation::stage_idle(&considered, cx.wiring, &mut reported);
+    let deferred = crate::reclamation::Deferred::prepare(&considered, cx.wiring);
+    // What reclamation deletes and releases waits for nothing and nothing
+    // waits for it: it runs once the runner lock is released.
+    drop(runner);
+    if let Some(deferred) = deferred {
+        deferred.run(&mut reported);
+    }
     woke?;
     Ok(TickOutcome::Done)
 }
@@ -398,6 +419,10 @@ pub fn run(
     };
     let mut relay = None;
     supervise_relay(&mut relay);
+    // Worktree reclamation: what the wakes reported, and the thread its
+    // deferred work runs on, started again for each wake once it ended.
+    let mut reclaimed = crate::reclamation::Reported::default();
+    let mut deferred: Option<std::thread::JoinHandle<crate::reclamation::Reported>> = None;
     tracing::info!(event = "runner_started");
     // A skipped wake stays in status until the next wake that is not skipped;
     // one left by an earlier runner is cleared by this runner's first.
@@ -501,6 +526,8 @@ pub fn run(
                 ) {
                     tracing::error!(event = "runner_wakeup_failed", error = %err);
                 }
+                drop(invocation);
+                deferred = reclaim(&considered, cx.wiring, &mut reclaimed, deferred);
             }
             Err(error) => {
                 tracing::warn!(event = "runner_wakeup_skipped", %error);
@@ -542,6 +569,43 @@ pub fn run(
                     std::thread::sleep(slice)
                 }
             }
+        }
+    }
+}
+
+/// Worktree reclamation after a run-loop wake: the declared output of idle
+/// worktrees is moved out now, and the deferred work starts on a thread of
+/// its own once the one an earlier wake started has ended. A thread that
+/// ended by a panic is logged and its reports are lost; the next one starts.
+fn reclaim(
+    considered: &[Considered],
+    wiring: &RunnerWiring,
+    reported: &mut crate::reclamation::Reported,
+    running: Option<std::thread::JoinHandle<crate::reclamation::Reported>>,
+) -> Option<std::thread::JoinHandle<crate::reclamation::Reported>> {
+    if let Some(running) = running {
+        if !running.is_finished() {
+            crate::reclamation::stage_idle(considered, wiring, reported);
+            return Some(running);
+        }
+        match running.join() {
+            Ok(returned) => *reported = returned,
+            Err(_) => tracing::error!(event = "worktree_reclamation_thread_ended"),
+        }
+    }
+    crate::reclamation::stage_idle(considered, wiring, reported);
+    let deferred = crate::reclamation::Deferred::prepare(considered, wiring)?;
+    let mut carried = std::mem::take(reported);
+    match std::thread::Builder::new()
+        .name("worktree-reclamation".into())
+        .spawn(move || {
+            deferred.run(&mut carried);
+            carried
+        }) {
+        Ok(thread) => Some(thread),
+        Err(error) => {
+            tracing::error!(event = "worktree_reclamation_unstarted", %error);
+            None
         }
     }
 }

@@ -688,6 +688,10 @@ pub trait WorktreeReclamation: Send + Sync {
         project: &ProjectRef,
         todo: &TodoIdentity,
     ) -> Result<DeliveredRelease, WorkInterfaceError>;
+
+    /// Whether `project`'s work record on this computer holds the todo
+    /// `todo`.
+    fn holds(&self, project: &ProjectRef, todo: &TodoIdentity) -> Result<bool, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------

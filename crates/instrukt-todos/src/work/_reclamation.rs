@@ -92,12 +92,21 @@ impl WorktreeReclamation for Work {
             released: Vec::new(),
             kept: Vec::new(),
         };
-        release.worktree()?;
-        release.branches()?;
+        // The worktree goes first: while it stays, so does its branch.
+        if release.worktree()? {
+            release.branches()?;
+        }
         Ok(DeliveredRelease::Done {
             released: release.released,
             kept: release.kept,
         })
+    }
+
+    fn holds(&self, project: &ProjectRef, todo: &TodoIdentity) -> Result<bool, WorkInterfaceError> {
+        let Some(id) = TodoId::parse(todo.as_str()) else {
+            return Ok(false);
+        };
+        Ok(Store::new(self.home(), &project.slug).item(&id)?.is_some())
     }
 }
 
@@ -167,10 +176,11 @@ impl Release<'_> {
     }
 
     /// Releases the worktree, first moving it aside to its staging
-    /// location, unless an earlier release left it there already.
-    fn worktree(&mut self) -> Result<(), WorkError> {
+    /// location, unless an earlier release left it there already. Whether
+    /// git no longer lists it.
+    fn worktree(&mut self) -> Result<bool, WorkError> {
         let Some((found, original)) = self.locate()? else {
-            return Ok(());
+            return Ok(true);
         };
         let resource = DeliveredResource::Worktree(original.clone());
         let Some(staging) = _worktrees::staging_path(&original, STAGING_PREFIX, &self.record.id)
@@ -179,12 +189,12 @@ impl Release<'_> {
                 resource,
                 "it has no directory beside it to be released from",
             );
-            return Ok(());
+            return Ok(false);
         };
         if found.path == original {
             if let Some(cause) = self.held(&found)? {
                 self.keep(resource, cause);
-                return Ok(());
+                return Ok(false);
             }
             if _worktrees::exists(&staging).map_err(|source| WorkError::Io {
                 path: staging.clone(),
@@ -197,7 +207,7 @@ impl Release<'_> {
                         staging.display()
                     ),
                 );
-                return Ok(());
+                return Ok(false);
             }
             git::run(
                 self.root,
@@ -206,7 +216,7 @@ impl Release<'_> {
         }
         let Some((staged, _)) = self.locate()?.filter(|(listed, _)| listed.path == staging) else {
             self.keep(resource, "git no longer lists it where it was moved to");
-            return Ok(());
+            return Ok(false);
         };
         let removal = match self.held(&staged)? {
             Some(cause) => Err(cause),
@@ -215,7 +225,10 @@ impl Release<'_> {
                 .map_err(|error| error.to_string()),
         };
         match removal {
-            Ok(()) => self.released.push(resource),
+            Ok(()) => {
+                self.released.push(resource);
+                return Ok(true);
+            }
             Err(cause) => {
                 let back = if _worktrees::exists(&original).unwrap_or(true) {
                     format!(
@@ -239,7 +252,7 @@ impl Release<'_> {
                 self.keep(resource, format!("{cause}{back}"));
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Deletes the work branch locally and on origin, each only where it
