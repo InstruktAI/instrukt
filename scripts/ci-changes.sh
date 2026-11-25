@@ -18,8 +18,9 @@
 #   python    the Python lint and type check among the commit checks
 #   validate  the Linux build job builds instrukt and validates (rust or docs):
 #             with validate true and rust false it validates and no test runs;
-#             with both false neither the Linux build job nor the shard job
-#             starts, while the required platform jobs still start and report
+#             with both false neither the Linux build job, the archive job
+#             nor the shard job starts, while the required platform jobs
+#             still start and report
 # and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) this
 # classification leaves out: the Rust ones unless rust, shellcheck unless
 # shell, the Python ones unless python; empty when every check runs. The
@@ -93,13 +94,19 @@ classify() {
         t3=true ;;
     esac
     case $1 in
-    # The instrukt-todos unit tests and the CLI's integration tests read the
-    # workflow flavor.
-    docs/domain/sdlc/workflow/*) known=true rust=true docs=true ;;
-    # Documents, the rendered instruction file and skills, the committed
-    # project layer and the use-case coverage baseline. Root instrukt.yaml
-    # belongs here, not to rust: only the configuration and instruction-file
-    # checks read it; no crate compiles or tests it.
+    # Shipped documents the workspace tests read: the instrukt-todos unit
+    # tests run against the workflow flavor (docs/domain/sdlc/workflow/), the
+    # CLI's integration tests read every Markdown document under
+    # docs/domain/sdlc/ and docs/general/, and the instrukt-company unit tests
+    # compile two docs/general/procedure/ documents in. In a case pattern `*`
+    # also matches `/`, so the Markdown patterns reach every depth.
+    docs/domain/sdlc/workflow/* | docs/domain/sdlc/*.md | docs/general/*.md)
+        known=true rust=true docs=true ;;
+    # Documents no test reads (the index and schema files of those trees
+    # among them), the rendered instruction file and skills, the
+    # committed project layer and the use-case coverage baseline. Root
+    # instrukt.yaml belongs here, not to rust: only the configuration and
+    # instruction-file checks read it; no crate compiles or tests it.
     docs/* | skills/* | *.md | instrukt.yaml | instrukt-coverage-baseline.json)
         known=true docs=true ;;
     esac

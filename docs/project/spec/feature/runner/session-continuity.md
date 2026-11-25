@@ -1,8 +1,6 @@
 ---
 description: Unattended runtime adapter operations, native agent delegation and record bindings, native keyed launch, automatic succession and settled-thread inspection.
 visibility: public
-binding_reservations:
-  UC-SS27: fix-false-recovery-on-released-executions
 ---
 # Session Continuity — Spec
 
@@ -792,8 +790,8 @@ And a lost acknowledgement replays that successor with the same IDs
 ### UC-SS27: A handed-off orchestrator's conversation stays settled
 
 ```gherkin
-Given a developer's orchestrator released its todo at the approved preparation handoff and settled its conversation
-And the todo still awaits integration of its preparation
+Given a developer's orchestrator released its todo and settled its conversation
+And another session has since taken that todo up
 When the runner next considers the project's work
 Then that conversation receives no recovery message and stays settled
 And no stopped execution is reported for it
@@ -824,6 +822,17 @@ Given a developer configures an Antigravity profile with xhigh effort in agents.
 When instrukt prepares native delegation inputs for a role using that profile on T3
 Then the resolved native options map that effort to thought_level with value xhigh
 And those options carry no other effort option
+```
+
+### UC-SS28: A developer's todo pickup is accepted once T3 finishes preparing its worktree
+
+```gherkin
+Given the runner picks up a developer's eligible todo on T3
+And T3 answers the launch while it is still preparing that todo's worktree
+When T3 finishes preparing the worktree during that pickup
+Then the pickup accepts the orchestrator in that conversation and its managed worktree
+And no failed start is reported for it
+And the orchestrator has received its opening brief once
 ```
 
 ## Known caveats
