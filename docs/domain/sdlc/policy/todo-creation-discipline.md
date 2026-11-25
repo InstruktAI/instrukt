@@ -629,12 +629,9 @@ this policy.
 - Parking a flagged todo with `instrukt todo update <slug> --hold --reason <text>` without
   the associated todo-log explanation is incomplete reconciliation.
 <!-- planned:standing-sdlc-coordinator -->
-- A coordinator that holds work without naming its release, withdraws a todo
-  carrying a person's request without a settlement of an origin of a todo the
-  return concerns, retires a filing that carries a person's request as redundant,
-  or removes a todo before its running work is settled and its claim released,
-  violates this policy. A coordinator acting within **Coordinator pauses and
-  retirements** is not a flagger.
+- Reviewers apply **Coordinator pauses and retirements** to the coordinator's
+  holds, log writes and withdrawals as the work record shows them. A
+  coordinator acting within it is not a flagger.
 <!-- /planned:standing-sdlc-coordinator -->
 
 ## Exceptions
