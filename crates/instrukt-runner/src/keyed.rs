@@ -45,6 +45,11 @@ pub fn todo_key(project: &str, slug: &str, role: &str, attempt: u64) -> String {
         encode(role)
     )
 }
+/// The requested reviewer's start key for `head` of `project`
+/// (`session-continuity`, Start keys and locks).
+pub fn review_key(project: &str, head: &str) -> String {
+    format!("instrukt:review:{}:{}", encode(project), encode(head))
+}
 pub fn task_key(project: &str, slug: &str, occurrence: Timestamp) -> String {
     format!(
         "instrukt:task:{}/{}:{}",
@@ -660,6 +665,34 @@ pub fn succeed(
     );
     result
 }
+/// Succeeds the generation of `key` under the `guard` its caller already
+/// holds, from `replacement`, after confirmed native terminal presence.
+pub(crate) fn succeed_owned(
+    guard: &KeyGuard,
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    replacement: &RuntimeStart,
+    now: Timestamp,
+) -> Result<Thread, SessionsError> {
+    let key = &replacement.key;
+    let result = succeed_claimed(
+        invocation,
+        adapter,
+        key,
+        now,
+        None,
+        guard,
+        Some(replacement),
+    );
+    note(
+        &guard.state,
+        adapter.runtime(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
 fn succeed_claimed(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
@@ -758,6 +791,11 @@ fn succeed_claimed(
     }
     if let Some(replacement) = replacement_request {
         request.title = replacement.title.clone();
+        // A requested reviewer's successor opens with the ask that starts
+        // it, not the rendering its predecessor opened with.
+        if kind(key) == "review" {
+            request.brief = replacement.brief.clone();
+        }
     }
     request.launch_modes = None;
     let generation = recorded
@@ -904,6 +942,22 @@ pub(crate) fn verify_bound(
     adapter.verify_placement(request, thread)
 }
 
+/// The session bound to a key and the generation it belongs to.
+pub(crate) struct Bound {
+    pub session: SessionRef,
+    pub generation: u64,
+}
+pub(crate) fn bound(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+) -> Result<Option<Bound>, StateError> {
+    let recorded = record(state, runtime, key)?;
+    Ok(recorded.bound.map(|session| Bound {
+        session,
+        generation: recorded.generation,
+    }))
+}
 pub(crate) fn recorded_session(
     state: &RunnerState,
     runtime: &str,

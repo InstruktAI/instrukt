@@ -286,6 +286,10 @@ pub(super) fn asks(
 
 /// The latest ask recorded under `start_key`, accepted or not: the
 /// requested reviewer's assignment resolves from it.
+#[expect(
+    dead_code,
+    reason = "the requested reviewer's assignment resolution reads it"
+)]
 pub(crate) fn latest_for_key(home: &Home, start_key: &str) -> Result<Option<Ask>, StoreError> {
     let Some(conn) = reader(home)? else {
         return Ok(None);
