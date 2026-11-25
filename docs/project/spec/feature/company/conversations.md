@@ -249,12 +249,21 @@ gives.
 
 ### The answer back
 
+<!-- planned-change:company-answers-unscrubbed -->
+- Under `reply_mode: turn_output` (the default), when a turn started by an
+  addressed message finishes, the agent's conversational output of that turn is
+  posted to the conversation as the agent wrote it (with resolved credentials
+  scrubbed), in parts where the connector's message size limit requires, in
+  order. Tool calls, tool results, thinking and control input are not posted. A
+  bare `NOOP` posts nothing.
+<!-- change:company-answers-unscrubbed -->
 - Under `reply_mode: turn_output` (the default), when a turn started by an
   addressed message finishes, the agent's conversational output of that turn is
   posted to the conversation exactly as the agent wrote it, in parts where the
   connector's message size limit requires, in order. No secret value is
   searched for or replaced in it. Tool calls, tool results, thinking and
   control input are not posted. A bare `NOOP` posts nothing.
+<!-- /planned-change:company-answers-unscrubbed -->
 - Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
   turn output (and suppresses relaying raw turn text to the connector's status
   line, showing only the generic working or unavailable state) so internal
@@ -262,6 +271,24 @@ gives.
   when the agent explicitly queues them via
   `instrukt company reply [--conversation <id>] --text <text>` (with `--text -`
   reading the reply body from stdin).
+<!-- planned-change:company-answers-unscrubbed -->
+- `instrukt company reply` is admitted through caller assignment lookup: the
+  caller must be an active company conversation session bound in
+  `connected_conversations` (and pass its role's `company-reply` capability
+  check). Under `reply_mode: explicit`, it is the sole reply path; under
+  `reply_mode: turn_output`, an active conversation session may also invoke it
+  to queue an explicit reply through the same durable outbox in addition to
+  final turn output. Under `session_scope: conversation`, `--conversation`
+  defaults to the session's own bound conversation and refuses any other target;
+  under `session_scope: company`, `--conversation <id>` is required and must
+  name an admitted conversation (one with an admitted, non-refused message and
+  no conflicting conversation-scoped binding) of that `(company, connector)`.
+  The command scrubs resolved company/machine secrets and stored MCP credentials
+  (at least 8 characters long) from the reply text and its own CLI output,
+  splits the reply to the connector kind's declared message limit, and writes
+  ordered pieces into `conversation_answers`, so the runner's existing
+  answer-posting relay delivers them with full retry and recovery.
+<!-- change:company-answers-unscrubbed -->
 - `instrukt company reply` is admitted through caller assignment lookup: the
   caller must be an active company conversation session bound in
   `connected_conversations` (and pass its role's `company-reply` capability
@@ -280,6 +307,7 @@ gives.
   delivers them with full retry and recovery. Its own output is the queued
   reply's summary (company, connector, conversation, turn and piece count),
   never the reply text.
+<!-- /planned-change:company-answers-unscrubbed -->
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction
@@ -661,6 +689,7 @@ And each turn's input tags its conversation ID, place context, thread and speake
 And each answer posts back to the conversation where its message was asked
 ```
 
+<!-- planned-change:company-answers-unscrubbed -->
 ### UC-CV24: Suppress raw turn output and deliver explicit replies
 
 ```gherkin
@@ -668,9 +697,21 @@ Given a company home declares a named connector with reply_mode set to explicit
 When a member addresses that connector and the agent finishes its turn with raw output
 Then the raw turn output is not posted to the conversation
 When the active conversation session runs instrukt company reply for an admitted conversation
-Then the command's output is the queued reply's summary, not the reply text
-And the connector posts the explicit reply to that conversation exactly as the agent wrote it, through the durable answer outbox
+Then credentials are scrubbed from the queued reply and CLI output
+And the connector posts the explicit reply to that conversation through the durable answer outbox
 ```
+<!-- change:company-answers-unscrubbed -->
+### UC-CV24: Suppress raw turn output and deliver explicit replies
+
+```gherkin
+Given a company home declares a named connector with reply_mode set to explicit
+When a member addresses that connector and the agent finishes its turn with raw output
+Then the raw turn output is not posted to the conversation
+When the active conversation session runs instrukt company reply for an admitted conversation
+Then the command outputs only the queued reply summary without the reply text
+And the connector posts the explicit reply to that conversation through the durable answer outbox exactly as the agent wrote it, without searching for or replacing any secret value
+```
+<!-- /planned-change:company-answers-unscrubbed -->
 
 ## Known caveats
 
