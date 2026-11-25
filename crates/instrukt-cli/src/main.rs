@@ -269,7 +269,7 @@ fn run() -> ExitCode {
     }
     if deferred_patch {
         ctx.home = ctx.home.for_writing();
-        if let Err(error) = instrukt_core::config::Agents::migrate_shape(&ctx.home) {
+        if let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home) {
             return report(&error.into());
         }
     }

@@ -44,7 +44,7 @@ impl Ctx {
         // Every command enters with current owned configuration, before its
         // module's refusal or unchanged-work decision.
         if !inspection {
-            instrukt_core::config::Agents::migrate_shape(&home)?;
+            instrukt_core::config::Agents::converge_file(&home)?;
             instrukt_core::config::Configuration::load_at(&home, &cwd)?;
         }
         let clock = Clock::from_process()?;

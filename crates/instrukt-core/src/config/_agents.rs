@@ -263,119 +263,46 @@ impl Agents {
         })
     }
 
-    /// Deploy or upgrade defaults, retaining edits against the last deployed
-    /// digest. An announcement is returned when new defaults cannot replace edits.
-    pub fn deploy(home: &Home, defaults: &str) -> Result<Option<String>, ConfigError> {
-        Self::parse(defaults)?;
-        let _lock = LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
-            Duration::from_secs(10),
-        )?;
+    /// What a writing command does to `agents.yaml` before reading it. A full
+    /// copy of shipped defaults the deployment record recognises as unedited
+    /// is removed, and then the record; any other file is kept and has a due
+    /// shape conversion persisted. Removal comes first, so a recognised copy
+    /// is never converted and kept.
+    pub fn converge_file(home: &Home) -> Result<(), ConfigError> {
         let path = home.agents_file();
         let state = home.agents_deployment_file();
-        let digest = |bytes: &[u8]| hex::encode(Sha256::digest(bytes));
-        let new_digest = digest(defaults.as_bytes());
-        let current = match std::fs::read(&path) {
-            Ok(bytes) => Some(bytes),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(source) => return Err(ConfigError::Read { path, source }),
+        let Some(before) = read_existing(&path)? else {
+            return Ok(());
         };
-        let migrated = current
-            .as_deref()
-            .map(super::_agents_migrate::current)
-            .transpose()?
-            .flatten();
-        let prior = Deployment::load(&state)?;
-        let unedited = current
-            .as_ref()
-            .is_none_or(|b| prior.as_ref().is_some_and(|p| p.recognises(b)));
-        if unedited {
-            if current.as_deref() != Some(defaults.as_bytes()) {
-                let prepared = Deployment {
-                    schema_version: DEPLOYMENT_VERSION,
-                    digest: prior.as_ref().map(|p| p.digest.clone()).unwrap_or_default(),
-                    pending: Some(new_digest.clone()),
-                };
-                atomic_write(
-                    &state,
-                    &serde_json::to_vec(&prepared).map_err(|e| invalid(e.to_string()))?,
-                )?;
-                atomic_write(&path, defaults.as_bytes())?;
-            }
-            let record = serde_json::to_vec(&Deployment {
-                schema_version: DEPLOYMENT_VERSION,
-                digest: new_digest,
-                pending: None,
-            })
-            .map_err(|e| invalid(e.to_string()))?;
-            atomic_write(&state, &record)?;
-            if current.as_deref() != Some(defaults.as_bytes()) {
-                tracing::info!(
-                    event = "agents_defaults_written",
-                    operation = if current.is_none() {
-                        "install"
-                    } else {
-                        "replace"
-                    }
-                );
-            }
-            Ok(None)
-        } else {
-            if let Some(converted) = migrated {
-                atomic_write(&path, &converted.bytes)?;
-                tracing::info!(
-                    event = "agents_shape_migrated",
-                    from_version = converted.from,
-                    to_version = VERSION
-                );
-            }
-            if prior.as_ref().is_none_or(|p| p.digest != new_digest) {
-                Ok(Some(format!(
-                    "{}: user edits retained; new agents defaults are available",
-                    path.display()
-                )))
-            } else {
-                Ok(None)
-            }
-        }
-    }
-
-    /// Persist mandatory shape conversion independently of default selection.
-    pub fn migrate_shape(home: &Home) -> Result<(), ConfigError> {
-        let path = home.agents_file();
-        let before = match std::fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(source) => return Err(ConfigError::Read { path, source }),
-        };
-        if super::_agents_migrate::current(&before)?.is_none() {
+        let unedited = |bytes: &[u8]| Deployment::load(&state).is_some_and(|d| d.recognises(bytes));
+        if !unedited(&before) && super::_agents_migrate::current(&before)?.is_none() {
             return Ok(());
         }
         let _lock = LockGuard::acquire(
             &home.locks_dir().join("agents.lock"),
             Duration::from_secs(10),
         )?;
-        let current = std::fs::read(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        if let Some(converted) = super::_agents_migrate::current(&current)? {
-            // A deployed file left unedited stays recognisable through its
-            // conversion: its converted bytes are recorded as instrukt's own
-            // write, so the defaults upgrade still replaces it.
-            let state = home.agents_deployment_file();
-            if let Some(prior) = Deployment::load(&state)?
-                && prior.recognises(&current)
-            {
-                let carried = Deployment {
-                    pending: Some(hex::encode(Sha256::digest(&converted.bytes))),
-                    ..prior
-                };
-                atomic_write(
-                    &state,
-                    &serde_json::to_vec(&carried).map_err(|e| invalid(e.to_string()))?,
-                )?;
+        let Some(current) = read_existing(&path)? else {
+            return Ok(());
+        };
+        if unedited(&current) {
+            for removed in [&path, &state] {
+                match crate::fsx::remove_file(removed) {
+                    Ok(()) => {}
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(source) => {
+                        return Err(crate::fsx::FsError::Write {
+                            path: removed.clone(),
+                            source,
+                        }
+                        .into());
+                    }
+                }
             }
+            tracing::info!(event = "agents_defaults_copy_removed");
+            return Ok(());
+        }
+        if let Some(converted) = super::_agents_migrate::current(&current)? {
             atomic_write(&path, &converted.bytes)?;
             tracing::info!(
                 event = "agents_shape_migrated",
@@ -396,28 +323,24 @@ impl Agents {
         Ok(super::_agents_migrate::current(&bytes)?.map(|_|format!("{}: selection configuration inspected in memory; file migrates on the next writing command",path.display())))
     }
 
+    /// The effective selection: the admitted one when served, else the file
+    /// merged over the shipped defaults, or the shipped defaults when there
+    /// is no file. A writing home first brings the file to its current state
+    /// ([`Self::converge_file`]); an inspection home writes and removes
+    /// nothing.
     pub fn load(home: &Home) -> Result<Self, ConfigError> {
         if let Some(admitted) = super::_admitted::served(home) {
             return Ok(admitted.agents().clone());
         }
         if home.is_inspection() {
-            let path = home.agents_file();
-            let existing = match std::fs::read(&path) {
-                Ok(bytes) => Some(bytes),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                Err(source) => return Err(ConfigError::Read { path, source }),
-            };
+            let existing = read_existing(&home.agents_file())?;
             let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
             return Self::from_documents(home, existing, global.as_ref());
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
-        if let Some(notice) = Self::deploy(home, SHIPPED_AGENTS)? {
-            tracing::warn!(event="agents_defaults_available", message=%notice);
-        }
-        let path = home.agents_file();
-        let text =
-            std::fs::read_to_string(&path).map_err(|source| ConfigError::Read { path, source })?;
-        Self::parse(&text)
+        Self::converge_file(home)?;
+        let existing = read_existing(&home.agents_file())?;
+        Self::from_documents(home, existing, None)
     }
 
     /// The effective selection from `agents.yaml`'s bytes (`None` when there
@@ -565,7 +488,19 @@ impl Agents {
             .collect()
     }
 }
-#[derive(Serialize, Deserialize)]
+/// `agents.yaml`'s bytes, or `None` when there is no file.
+fn read_existing(path: &std::path::Path) -> Result<Option<Vec<u8>>, ConfigError> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(source) => Err(ConfigError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+#[derive(Deserialize)]
 struct Deployment {
     schema_version: u64,
     digest: String,
@@ -574,26 +509,30 @@ struct Deployment {
 }
 
 impl Deployment {
-    /// The defaults deployment record at `state`; `None` before the first.
-    fn load(state: &std::path::Path) -> Result<Option<Self>, ConfigError> {
-        let prior: Self = match std::fs::read(state) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| invalid("invalid defaults deployment record"))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(source) => {
-                return Err(ConfigError::Read {
-                    path: state.to_path_buf(),
-                    source,
-                });
+    /// The record an earlier release kept of the defaults it deployed; `None`
+    /// when there is none. A record that cannot be read or is in an unknown
+    /// shape recognises nothing: the file beside it is kept and the command
+    /// proceeds, because the record is only bookkeeping about instrukt's own
+    /// earlier write and the person's file is never removed on a guess.
+    fn load(state: &std::path::Path) -> Option<Self> {
+        let bytes = match std::fs::read(state) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => {
+                tracing::debug!(event = "agents_deployment_record_unreadable", %error);
+                return None;
             }
         };
-        if prior.schema_version != DEPLOYMENT_VERSION {
-            return Err(invalid("unsupported defaults deployment schema"));
+        let record = serde_json::from_slice::<Self>(&bytes)
+            .ok()
+            .filter(|record| record.schema_version == DEPLOYMENT_VERSION);
+        if record.is_none() {
+            tracing::debug!(event = "agents_deployment_record_unknown_shape");
         }
-        Ok(Some(prior))
+        record
     }
 
-    /// Whether `bytes` are what instrukt itself last wrote: the deployed
+    /// Whether `bytes` are what an earlier release itself wrote: the deployed
     /// defaults, or a write it recorded before making it.
     fn recognises(&self, bytes: &[u8]) -> bool {
         let found = hex::encode(Sha256::digest(bytes));
@@ -983,6 +922,76 @@ mod tests {
             Agents::parse("roles: {builder: {tier: light}}\n"),
             Err(ConfigError::UnknownSchema { .. })
         ));
+    }
+
+    /// A writing home holding `file` as `agents.yaml` and `record` as the
+    /// deployment record beside it.
+    fn deployed(
+        dir: &tempfile::TempDir,
+        file: &str,
+        record: &str,
+    ) -> (crate::home::Home, std::path::PathBuf, std::path::PathBuf) {
+        let home = crate::home::Home::at_user_home(dir.path().to_path_buf());
+        let (path, state) = (home.agents_file(), home.agents_deployment_file());
+        for (at, contents) in [(&path, file), (&state, record)] {
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(at, contents).unwrap();
+        }
+        (home, path, state)
+    }
+
+    fn record_of(bytes: &str) -> String {
+        use sha2::Digest as _;
+        serde_json::json!({
+            "schema_version": 1,
+            "digest": hex::encode(sha2::Sha256::digest(bytes.as_bytes())),
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn a_writing_load_removes_a_recognised_unedited_copy_and_then_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let older = SHIPPED_AGENTS.replace("gpt-6.1-sol", "an-older-default");
+        let (home, path, state) = deployed(&dir, &older, &record_of(&older));
+        let loaded = Agents::load(&home).unwrap();
+        assert!(!path.exists());
+        assert!(!state.exists());
+        assert_eq!(
+            loaded.select(Some("builder"), None, None, None).unwrap(),
+            Agents::parse(SHIPPED_AGENTS)
+                .unwrap()
+                .select(Some("builder"), None, None, None)
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn an_edited_copy_is_kept_by_a_writing_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let edited = format!("{SHIPPED_AGENTS}# my own note\n");
+        let (home, path, state) = deployed(&dir, &edited, &record_of(SHIPPED_AGENTS));
+        Agents::converge_file(&home).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        assert!(state.exists());
+    }
+
+    #[test]
+    fn a_copy_beside_an_unreadable_record_is_kept_and_the_command_proceeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let (home, path, _) = deployed(&dir, SHIPPED_AGENTS, "{not a record");
+        Agents::converge_file(&home).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SHIPPED_AGENTS);
+    }
+
+    #[test]
+    fn an_inspection_load_changes_neither_the_copy_nor_its_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let record = record_of(SHIPPED_AGENTS);
+        let (home, path, state) = deployed(&dir, SHIPPED_AGENTS, &record);
+        Agents::load(&home.for_inspection()).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), SHIPPED_AGENTS);
+        assert_eq!(std::fs::read_to_string(&state).unwrap(), record);
     }
 
     #[test]

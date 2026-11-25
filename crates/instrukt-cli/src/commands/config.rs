@@ -624,11 +624,6 @@ fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let layer = layer(args.global, args.company.as_ref(), ctx)?;
     let path = layer.path(&ctx.home);
     let outcome = config::init(&ctx.home, &layer, None)?;
-    if args.global
-        && let Some(notice) = config::Agents::deploy(&ctx.home, config::SHIPPED_AGENTS)?
-    {
-        ctx.out.line(&notice)?;
-    }
     let what = match outcome {
         InitOutcome::Created => "created".to_owned(),
         InitOutcome::AlreadyCurrent => "already at the current schema; kept".to_owned(),

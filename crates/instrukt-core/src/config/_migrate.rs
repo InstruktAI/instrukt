@@ -24,7 +24,8 @@ pub(super) fn selection(
             changed = true;
         }
     }
-    // Role entries inherit machine choices migrated from the old global defaults.
+    // The migrated file names no role, so every shipped role keeps its
+    // shipped entry and the migrated choices reach only roles without one.
     if changed {
         next["roles"] = Value::Mapping(Default::default());
     }
