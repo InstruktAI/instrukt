@@ -5,7 +5,7 @@ expression: chosen(&p)
 [
   {
     "provider": "antigravity",
-    "model": "gemini-pro-agent",
+    "model": "gemini-4-neon",
     "session": "t3:instrukt:launch:<event 1>",
     "title": "todo-orchestrator · tidy-imports",
     "state": "running",

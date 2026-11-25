@@ -935,8 +935,8 @@ mod tests {
     #[test]
     fn an_antigravity_effort_outside_its_vocabulary_is_refused() {
         let edited = SHIPPED_AGENTS.replacen(
-            "standard: [{model: gemini-3.8-flash-high, effort: high}]",
-            "standard: [{model: gemini-3.8-flash-high, effort: max}]",
+            "standard: [{model: gemini-4-neon, effort: medium}]",
+            "standard: [{model: gemini-4-neon, effort: max}]",
             1,
         );
         assert!(matches!(

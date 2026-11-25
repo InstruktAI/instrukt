@@ -519,7 +519,7 @@ fn a_captured_native_start_retries_the_same_selection_without_an_operator() {
     let p = Tracked::new(true);
     selection_config(
         &p,
-        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
+        "default: {order: [codex, claude], tier: strong}\nprofiles:\n  codex:\n    strong: [{model: gpt-6.2-astra, effort: high}, {model: gpt-6.1-sol, effort: high}]\n",
     );
     let fake = runtime::FakeT3::create(&p.env);
     fake.flag("start-failure", true);
@@ -535,7 +535,7 @@ fn a_captured_native_start_retries_the_same_selection_without_an_operator() {
                 "codex",
                 "unavailable",
                 "--model",
-                "gpt-6-astra",
+                "gpt-6.2-astra",
                 "--until",
                 "2099-01-01T00:00:00Z",
                 "--reason",
@@ -547,7 +547,7 @@ fn a_captured_native_start_retries_the_same_selection_without_an_operator() {
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
     assert_eq!(fake.provider("s1").as_str(), "codex");
-    assert!(chosen(&p).contains("gpt-6-astra"));
+    assert!(chosen(&p).contains("gpt-6.2-astra"));
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -628,7 +628,7 @@ fn a_full_window_scoped_to_one_model_marks_only_that_models_family() {
     [
       {
         "profile": "claude",
-        "model": "claude-fable-5-1",
+        "model": "claude-fable-5-2",
         "status": "unavailable",
         "until": "2099-01-01T00:00:00Z",
         "reason": "quota: window seven_day_fable at 100%"
