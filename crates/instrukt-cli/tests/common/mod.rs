@@ -104,11 +104,57 @@ pub struct TestEnv {
     readiness: std::sync::Mutex<Option<t3_readiness::Server>>,
 }
 
+/// What a test inherits from the session that runs it: the live home its
+/// children run with and the fence protects, the temporary directory its
+/// fixture is created in and the fence is computed around, and the `TMPDIR`
+/// value its children are given, verbatim, when there is one.
+struct Session {
+    home: String,
+    temp_dir: PathBuf,
+    tmpdir: Option<String>,
+}
+
 impl TestEnv {
+    /// A test machine in the session that runs the test: children get the
+    /// inherited `HOME`, and `TMPDIR` only when the host sets it, as set.
     pub fn new() -> Self {
+        Self::in_session(
+            &Session {
+                home: std::env::var("HOME").unwrap(),
+                temp_dir: std::env::temp_dir(),
+                tmpdir: std::env::var("TMPDIR").ok(),
+            },
+            Vec::new(),
+        )
+    }
+
+    /// A test machine in a session that inherited `home` and `temp_dir`,
+    /// for a fence self-test that models one: the fixture is created in
+    /// `temp_dir`, children get `home` as their `HOME` and `temp_dir` as
+    /// their `TMPDIR`, and the fence covers `home` computed around
+    /// `temp_dir` — and also the live home of the session running the test,
+    /// so no child runs unfenced against it.
+    pub fn in_stand_in_session(home: &Path, temp_dir: &Path) -> Self {
+        let real = live_fence(
+            Path::new(&std::env::var("HOME").unwrap()),
+            &std::env::temp_dir(),
+        );
+        Self::in_session(
+            &Session {
+                home: home.display().to_string(),
+                temp_dir: temp_dir.to_path_buf(),
+                tmpdir: Some(temp_dir.display().to_string()),
+            },
+            real,
+        )
+    }
+
+    /// The test machine of `session`; `also_fenced` is appended to the
+    /// session's own live fence.
+    fn in_session(session: &Session, also_fenced: Vec<PathBuf>) -> Self {
         let root = tempfile::Builder::new()
             .prefix("instrukt-test-")
-            .tempdir()
+            .tempdir_in(&session.temp_dir)
             .unwrap();
         // Canonical path: macOS's /var → /private/var would otherwise make
         // paths the binary reports differ from the ones the test built.
@@ -180,7 +226,7 @@ impl TestEnv {
             "PATH".into(),
             format!("{}:{}", base.join("runtime-bin").display(), tools.display()),
         );
-        vars.insert("HOME".into(), std::env::var("HOME").unwrap());
+        vars.insert("HOME".into(), session.home.clone());
         for (key, relative) in [
             ("INSTRUKT_HOME", ".instrukt"),
             ("T3CODE_HOME", ".t3"),
@@ -201,12 +247,10 @@ impl TestEnv {
             base.join("logs").display().to_string(),
         );
 
-        for key in [
-            "TMPDIR",
-            "XDG_CONFIG_HOME",
-            "XDG_STATE_HOME",
-            "XDG_CACHE_HOME",
-        ] {
+        if let Some(tmpdir) = &session.tmpdir {
+            vars.insert("TMPDIR".into(), tmpdir.clone());
+        }
+        for key in ["XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"] {
             if let Ok(value) = std::env::var(key) {
                 vars.insert(key.into(), value);
             }
@@ -222,7 +266,8 @@ impl TestEnv {
         let record = base.join("fence");
         std::fs::create_dir_all(&record).unwrap();
         std::fs::write(record.join(instrukt_core::fsx::FENCE_RECORD), "").unwrap();
-        let mut fence = live_fence(&base);
+        let mut fence = live_fence(Path::new(&session.home), &session.temp_dir);
+        fence.extend(also_fenced);
         fence.push(PathBuf::from(format!(
             "{}{}",
             instrukt_core::fsx::FENCE_RECORD_ENTRY,
@@ -238,8 +283,8 @@ impl TestEnv {
             "$1.[HOME]",
         );
         snapshots.add_filter(r"(instrukt-[a-zA-Z0-9_-]+)-[0-9a-f]{8}(\b)", "$1-[HOME]$2");
-        let inherited = std::env::var("HOME")
-            .unwrap()
+        let inherited = session
+            .home
             .chars()
             .map(|c| {
                 if ".+*?()|[]{}^$\\".contains(c) {
@@ -621,10 +666,13 @@ where
 /// from: the whole live home, unless the test's own directory lies inside
 /// it, and in every case the files and trees instrukt is known to write
 /// there (through a symbolic link, these may resolve outside the home).
-fn live_fence(base: &Path) -> Vec<PathBuf> {
-    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
-        return Vec::new();
-    };
+fn live_fence(home: &Path, temp_dir: &Path) -> Vec<PathBuf> {
+    let scratch = temp_dir.canonicalize().unwrap_or_else(|error| {
+        panic!(
+            "the temporary directory {} cannot be resolved: {error}",
+            temp_dir.display()
+        )
+    });
     let mut fenced: Vec<PathBuf> = [
         ".instrukt",
         ".t3",
@@ -641,9 +689,9 @@ fn live_fence(base: &Path) -> Vec<PathBuf> {
     .iter()
     .map(|rel| home.join(rel))
     .collect();
-    let real = home.canonicalize().unwrap_or_else(|_| home.clone());
-    if !base.starts_with(&real) {
-        fenced.insert(0, home);
+    let real = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    if !scratch.starts_with(&real) {
+        fenced.insert(0, home.to_path_buf());
     }
     fenced
 }
