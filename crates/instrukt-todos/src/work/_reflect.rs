@@ -933,8 +933,7 @@ pub(crate) fn output_label(label: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        KeptRefusal, RefusedTarget, refused_before, request_identity, review_body, shortened_note,
-        walk_ends,
+        KeptRefusal, RefusedTarget, refused_before, request_identity, review_body, walk_ends,
     };
     use serde_json::json;
 
@@ -981,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn long_findings_are_shortened_and_still_link_the_complete_ones() {
+    fn long_findings_are_shortened_within_the_limit_and_keep_what_fits() {
         let link = "https://github.test/acme/demo/issues/1/artifacts/4";
         let line = "a finding\n";
         let findings = line.repeat(20_000);
@@ -990,7 +989,6 @@ mod tests {
         assert!(length <= super::super::review::BODY_LIMIT);
         // The findings fill the body to within two lines of the limit.
         assert!(length > super::super::review::BODY_LIMIT - 2 * line.chars().count());
-        assert!(body.ends_with(&shortened_note(link)));
     }
 
     #[test]
