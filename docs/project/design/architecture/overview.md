@@ -340,6 +340,7 @@ passing candidate is fast-forwarded onto main.
 
 ### Run
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
 the switched-on modules need: it dispatches todos (when `runner.autostart`), and
 starts or wakes standing agents on events. It reaches a runtime only through its
@@ -372,6 +373,45 @@ Session ending remains the runtime's responsibility. A step is done when the
 record carries its artifact and stamp, never when a session's reply says so.
 Whatever needs the human is a session asking in its thread; only anomalies are
 sent through `runner.notify`.
+<!-- change:runner-owned-workspace-cleanup -->
+The runner (`instrukt run`, or `instrukt tick` from the OS scheduler) does what
+the switched-on modules need: it dispatches todos (when `runner.autostart`), and
+starts or wakes standing agents on events. It reaches a runtime only through its
+Rust adapter for unattended operations. Its operational sessions surface is
+`instrukt sessions list`; agents discover and operate conversations
+through configured native instructions, recording attempts and native child ids
+through work commands. Start-or-wake holds exact object-key ownership across
+native operations and short database transactions. The binding is authoritative:
+each generation captures its native command/thread IDs and launch request before
+creation. Lost replies replay that fixed native identity; unknown observations
+and sends leave work pending. Outstanding work after confirmed native archive or
+deletion starts a successor generation through the same owner.
+instrukt derives the single repository todo branch `<slug>/work`; T3 creates the
+corresponding worktree from `origin/main` (or from an un-integrated legacy
+prepare branch during upgrade) and refuses an existing local `<slug>/work`
+branch. Work on another computer creates its local `<slug>/work` branch from
+`origin/<slug>/work`. Native shared children (both preparation and build roles)
+use that recorded workspace serially and commit directly on `<slug>/work`;
+completion stamps release attempts atomically. `kind: task` creates no git
+worktree. Pending docs fold at work delivery, and after confirmed delivery
+the runner has work release the clean `<slug>/work` worktree and delete
+`<slug>/work` locally and on origin, on each computer that holds them. On each
+invocation the runner also removes a project's declared regenerable output
+from the todo worktrees workflow reports idle, and a session working a todo
+reclaims its own worktree with `instrukt repo reclaim`; no agent issues a
+deletion command for either
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). Ad hoc work
+uses its own reviewed one-off worktree; main is integrator-only.
+Before dispatch each tick, the runner fetches canonical remote main and
+fast-forwards a clean canonical checkout when it lags. Post-merge publication
+and blueprint maintenance run on each computer; dirty or diverged checkouts
+are reported and preserved. No integrator-owned local sync or main-ahead event
+is needed. New phase branches use freshly fetched origin/main.
+Session ending remains the runtime's responsibility. A step is done when the
+record carries its artifact and stamp, never when a session's reply says so.
+Whatever needs the human is a session asking in its thread; only anomalies are
+sent through `runner.notify`.
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded

@@ -9,80 +9,108 @@ delivered_by:
 
 Worktree reclamation returns the disk a todo's worktree holds once that disk
 no longer serves work. The runner removes a project's declared regenerable
-output from an idle todo worktree and removes a delivered todo's worktree; a
-session working a todo reclaims its own worktree's regenerable output through
-one instrukt command, which is how disk is returned while the todo's work is
-still under way. Every removal is instrukt's
-own mechanical work: no agent issues a deletion command and no agent runtime
-is asked to approve one.
+output from an idle todo worktree and has a delivered todo's worktree
+released; a session working a todo reclaims its own worktree's regenerable
+output with `instrukt repo reclaim`, which is how disk is returned while the
+todo's work is still under way. Every removal is instrukt's own mechanical
+work: no agent issues a deletion command and no agent runtime is asked to
+approve one.
 
 ## Canonical fields
 
 ### Regenerable output
 
-Regenerable output is what a project declares, in the project layer of its
-configuration (`project/instrukt/spec/domain/configuration`), as rebuilt from
-its committed sources. The runner knows no language, build tool or directory
-name: the declaration is its only source for what may be removed. A project
-that declares nothing has no regenerable output, and reclamation removes
-nothing from its worktrees short of a delivered worktree as a whole.
+Regenerable output is what a project declares under `regenerable` in the
+project layer of its configuration, as rebuilt from its committed sources:
+paths inside a checkout of that project
+(`project/instrukt/spec/feature/configuration/layered-configuration`). The
+runner knows no language, build tool or directory name: the declaration is
+its only source for what may be removed. A project that declares nothing has
+no regenerable output, and reclamation removes nothing from its worktrees
+short of a delivered worktree as a whole.
 
-A declaration reaches only inside a checkout of the declaring project. One
-that reaches outside it is a configuration finding at each point where
-configuration enters, and removes nothing
+The declaration reclamation acts on is the one admitted for the project on
+that computer, from the project's own checkout. It applies alike to every
+todo worktree of the project there, whatever that worktree's branch holds. A
+declaration that reaches outside a checkout is a configuration finding at
+each point where configuration enters, and removes nothing
 (`project/instrukt/policy/checks-and-guards`).
 
-Reclaiming regenerable output leaves the rest of the worktree as it was: the
-same commit, the same branch, and a worktree that was clean stays clean.
+In a worktree, a declared path is removed only where it is reached through
+that worktree's real directories and git ignores it there. A declared path
+git tracks or reports as untracked, and one a symbolic link leads to, are
+left as they are and named with that reason; a declared path that is itself
+a symbolic link loses the link and nothing it points to. Reclaiming
+regenerable output therefore leaves the worktree at the same commit, on the
+same branch, with the same status git reported before.
 
 ### Idle worktrees
 
-A todo's worktree is idle once the todo's rounds of building, reviewing and
-fixing have paused or ended: its candidate waits for integration, the todo is
-parked or held, its work has gone back to preparation, or the todo is
-delivered. Between the rounds of work still under way — after a build and
-before its review, after a review and before its fix — the worktree is not
-idle, and its output stays for the role that works there next.
-
-That a todo is parked, held or delivered is a fact of the work record
-(`project/instrukt/spec/domain/work`). That its candidate waits for
-integration, that its work has gone back to preparation, and that its rounds
-are still under way are states workflow derives from that record
-(`project/instrukt/spec/domain/workflow`). The runner takes each from its
-owner.
-
 The runner reclaims the regenerable output of the idle todo worktrees on the
-computer it runs on. It reclaims nothing in a worktree where a role attempt is
-open: an attempt that opens first keeps the worktree, and reclamation waits
-until no attempt is open there (`general/principle/trust-and-guardrails`).
+computer it runs on, for each project whose work tracking is admitted there.
+Whether a todo's worktree is idle is workflow's answer, its standing: idle
+when the todo's candidate waits for integration, the todo is parked or held,
+or its work has gone back to preparation; delivered; or under way
+(`project/instrukt/spec/domain/workflow`). The runner derives none of it. A
+worktree whose todo is under way — between a build and its review, between a
+review and its fix — keeps its output for the role that works there next.
+
+The runner reclaims nothing in a worktree where a role attempt is open
+(`general/principle/trust-and-guardrails`). It moves the output out of the
+worktree, to a staging location beside it, inside a section of the work
+record in which no role attempt opens
+(`project/instrukt/spec/domain/work`), and deletes it from there afterwards,
+outside that section. An attempt that opens finds its worktree either still
+holding its output or no longer holding it, never while it is being emptied.
+
+Reclamation follows an invocation's dispatch and event work. No pickup, event
+reaction or command waits on a deletion, and output a stopped invocation left
+at a staging location is deleted by a later one.
 
 ### Delivered worktrees
 
-After a todo is delivered the runner removes its clean worktree, as the
-cleanup `project/instrukt/spec/feature/workflow/delivery-cycle` requires of a
-delivered todo. A worktree that is dirty or in use keeps its cleanup owed with
-its cause (`project/instrukt/spec/feature/runner/session-continuity`).
+After a todo is delivered, the runner has work release that todo's worktree
+and work branch on each computer that holds them
+(`project/instrukt/spec/feature/work/todos`): the cleanup
+`project/instrukt/spec/feature/workflow/delivery-cycle` requires of a
+delivered todo. The worktree's regenerable output leaves with it. A worktree
+that holds uncommitted changes, is locked or has a role attempt open stays,
+and its cleanup stays owed until a later invocation finds it releasable.
 
 A withdrawn todo's worktree is released by the withdrawal itself
 (`project/instrukt/spec/feature/work/todos`).
 
 ### Reclaiming on request
 
-A session reclaims the regenerable output of the worktree its own todo
-assignment binds it to. The command removes exactly what the runner removes
-from that worktree, and its caller cannot direct it at any other location. It
-is a write to that worktree and is admitted as one
-(`project/instrukt/spec/feature/configuration/roles-and-capabilities`). Its
-answer names what it removed, or states that the project declares nothing.
+`instrukt repo reclaim` reclaims the regenerable output of the worktree the
+calling session's todo assignment records. It takes no location: neither an
+argument nor the caller's working directory selects what it acts on. It
+removes exactly what the runner removes from that worktree, and it answers
+once that output is deleted, naming each path it removed and each declared
+path it left with the reason, or stating that the project declares nothing.
 
-A caller no todo assignment binds to a worktree is refused, and the refusal
-names the assignment that would bind it.
+It is a write to that worktree. Its action and object are those of a commit
+in the assigned authoring workspace
+(`project/instrukt/spec/feature/configuration/roles-and-capabilities`), and
+the worktree's own state admits one writer: the session whose open role
+attempt holds the worktree, or, while no role attempt is open there, the
+session holding the todo's execution claim. Any other caller the assignment
+binds is refused, and the refusal names the open attempt whose release frees
+the worktree. A caller no todo assignment binds to a worktree is refused, and
+the refusal names the assignment that would bind it.
 
 ### Mechanical work
 
-Reclamation starts no agent session and sends no agent a message. A removal
-that cannot complete changes nothing else, stays owed and is retried on a
-later runner invocation.
+Reclamation starts no agent session, sends no agent a message and emits no
+event. It keeps no record of its own: what is owed is read again on every
+runner invocation from the work record, git and the filesystem
+(`sdlc/policy/state-storage`). A removal that cannot complete changes nothing
+else and is retried on a later invocation.
+
+The runner's log names each worktree whose reclamation stays owed, with its
+cause, when that cause appears or changes. A delivered todo's remaining
+worktree and work branch show in that todo's own ledger
+(`project/instrukt/spec/feature/work/todos`).
 
 ## Use cases
 
@@ -121,6 +149,17 @@ Then the request is refused and names the assignment that would bind it
   pays a full build.
 - A worktree whose todo's work is still under way holds its output for as long
   as that work runs; reclaiming on request is the only reclamation it sees.
+  While a review role's attempt is open, no session is admitted to reclaim
+  there: the review role holds no write in the worktree, and the session
+  holding the claim is refused until that attempt is released.
+- A structural holder has no lifecycle, so its worktree, where it had one
+  before it became a holder, is neither idle nor delivered: it is not
+  reclaimed and not removed.
+- A declared path names one location. A project whose regenerable output sits
+  at many locations declares each of them.
+- A computer acts on what its own work record holds; it learns that a todo
+  was delivered elsewhere through work's refresh
+  (`project/instrukt/spec/feature/work/github-record`).
 
 ## See Also
 

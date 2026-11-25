@@ -113,6 +113,17 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 
+<!-- planned:runner-owned-workspace-cleanup -->
+Worktree reclamation adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/worktree-reclamation`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The project's admitted declaration of regenerable output |
+| workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
+| work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

@@ -89,6 +89,16 @@ addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
 computer changes).
 
+<!-- planned:runner-owned-workspace-cleanup -->
+`instrukt repo reclaim` belongs to the Repository family: it is `code-commit`
+and addresses the assignment's recorded workspace, as `repo commit` does, so
+the roles that commit in a todo's worktree are the roles that reclaim it. The
+grant reaches the command; which session may reclaim at a given moment is
+decided by the worktree's own writer admission, which binds every caller
+alike (`project/instrukt/spec/feature/runner/worktree-reclamation`,
+Reclaiming on request).
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
 reaches only objects bound by the recorded assignment. For machine-wide

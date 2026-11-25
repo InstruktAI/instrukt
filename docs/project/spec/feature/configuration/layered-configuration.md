@@ -85,6 +85,34 @@ that computer; its other capabilities are unaffected
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+### Regenerable output declaration
+
+`regenerable` is a list of paths allowed in the project layer only; absent or
+empty, the project declares nothing. Each entry names one location inside a
+checkout of the project, relative to the checkout's root, that the project
+rebuilds from its committed sources. Worktree reclamation is its only reader
+and owns what a removal does
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). The key holds
+locations and never a command: a project layer decides nothing that runs on
+the machine.
+
+An entry is a finding at `regenerable`, naming the entry, when it is empty or
+absolute, steps to a parent directory, names the checkout's root itself, or
+names the repository's `.git` or a location under it. A global value is a
+finding.
+
+`config patch` refuses a write that would introduce such an entry, under its
+revision check and whole-document validation
+(`project/instrukt/spec/feature/configuration/configuration-editing`).
+`config validate` and `install --check` report it without changing anything
+(`project/instrukt/spec/feature/runner/module-installation`). A project layer
+that arrives with it through a commit is not admitted for worktree
+reclamation on that computer, and a reclamation asked for there refuses with
+the same finding; the project's other capabilities are unaffected
+(`project/instrukt/policy/checks-and-guards`).
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |
@@ -501,6 +529,19 @@ Then the retirement action resolves from the machine's T3 entry as native archiv
 And a global override replaces the machine's retirement instruction while a project-layer override is refused
 And reading those directives starts or modifies no runtime session
 ```
+
+<!-- planned:runner-owned-workspace-cleanup -->
+### UC-CL9: A project's declared regenerable output cannot reach outside its checkout
+
+```gherkin
+Given a developer's project declares the output it rebuilds from its sources
+When the developer validates the project's configuration
+Then the declaration is accepted
+But when the declaration names a location outside the project's checkout
+Then validation reports that entry
+And the project is not admitted for reclaiming that output on the computer
+```
+<!-- /planned:runner-owned-workspace-cleanup -->
 
 ## Known caveats
 

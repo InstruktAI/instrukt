@@ -263,6 +263,7 @@ erase the associated GitHub issue or its history. The withdrawing agent
 removes that slug's pending documentation markers in a doc commit; withdrawal
 does not remove them automatically.
 
+<!-- planned-change:runner-owned-workspace-cleanup -->
 `instrukt todo deliver <slug> --commit <sha>` records the confirmed completion evidence.
 Repository-work delivery requires the actual delivered commit, supplied by the
 integrator after the integration gate succeeds. Delivery evidence belongs in
@@ -275,6 +276,37 @@ or withdrawal, the work record retains its recorded `sessions:` bindings and
 attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
 for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
+<!-- change:runner-owned-workspace-cleanup -->
+`instrukt todo deliver <slug> --commit <sha>` records the confirmed completion evidence.
+Repository-work delivery requires the actual delivered commit, supplied by the
+integrator after the integration gate succeeds. Delivery evidence belongs in
+the record; deciding whether a candidate passes the integration gate belongs
+to workflow. Delivered entries are read-only. `instrukt todo work <slug>` derives and
+returns what a delivered todo still owes of its worktree and work branch from
+retained evidence; it changes no delivered record.
+Claim release belongs to the work lane before integration handoff. After delivery
+or withdrawal, the work record retains its recorded `sessions:` bindings and
+attempt evidence readable by identity (`instrukt todo show <slug>@<id-prefix>`)
+for audit and for identifying the todo's recorded orchestrator sessions
+(`project/instrukt/spec/feature/configuration/layered-configuration`).
+
+Work releases a delivered todo's worktree and work branch when the runner
+asks, on each computer that holds them
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
+goes first, through the release a withdrawal uses
+(`project/instrukt/spec/feature/work/state-database`): read and checked at
+its path, moved aside with git's own worktree move, read and checked again,
+then removed with git's own worktree remove or moved back. A worktree that
+holds uncommitted changes, is locked, has a role attempt open or is no longer
+the todo's stays where it is. The work branch on origin goes next and the
+local work branch last, each only where it holds no commit beyond the head
+the todo handed to integration; a branch that holds more stays. While the
+local work branch is there the cleanup is owed, and an origin branch already
+gone counts as removed. This release records no intent and writes no marker:
+git shows of the worktree and of each branch whether it is still there, and a
+release that stopped part-way is continued by the next from what git shows
+(`sdlc/policy/state-storage`).
+<!-- /planned-change:runner-owned-workspace-cleanup -->
 
 Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
 

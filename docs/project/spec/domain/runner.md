@@ -329,6 +329,23 @@ to enabled blueprint. A dirty, misplaced or diverged checkout is reported and
 preserved, and a later tick retries. This is mechanical runner work, independent
 of event enablement and without a GitHub API call or a main-ahead event.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+### Mechanical worktree reclamation
+
+On each invocation, after its dispatch and event work, the runner reclaims the
+disk todo worktrees hold on its computer, for each considered project whose
+work tracking is admitted there. It removes the project's declared regenerable
+output from the worktrees workflow reports idle, and has work release the
+worktree and work branch of each delivered todo. `instrukt repo reclaim` gives
+a session working a todo the same removal in its own worktree; it is the
+runner's command in the `repo` namespace, beside repository's commit
+composition (`project/instrukt/spec/domain/repository`). The contract is
+`project/instrukt/spec/feature/runner/worktree-reclamation`: this work starts
+no session, emits no event and keeps no state of its own. It reaches only the
+worktrees the work record assigns to todos; every other checkout stays with
+its creator.
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -446,6 +463,11 @@ has no origin, as declared in Canonical fields.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+- **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
+  — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 ## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
@@ -500,6 +522,15 @@ covers every runner mutation: recording and reflecting execution claims,
 flushing pending reflection on ticks, writing last-fired stamps, setting
 automatic holds, purging expired retained records, and reading and writing
 per-role session bindings. Work owns validation and persistence of those writes.
+
+<!-- planned:runner-owned-workspace-cleanup -->
+For worktree reclamation the runner asks its suppliers and derives none of
+their answers: configuration supplies the project's admitted declaration of
+regenerable output, workflow each todo worktree's standing and what a
+delivered todo still owes, and work the section of its record in which no
+role attempt opens, together with the release of a delivered todo's worktree
+and work branch (`project/instrukt/spec/domain/context-map`).
+<!-- /planned:runner-owned-workspace-cleanup -->
 
 ## Known caveats
 
