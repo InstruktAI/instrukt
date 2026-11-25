@@ -545,6 +545,11 @@ fn read_existing(path: &std::path::Path) -> Result<Option<Vec<u8>>, ConfigError>
     }
 }
 
+/// What an ignored deployment record leaves, and how an operator returns to
+/// the shipped defaults: told whether the record could not be read or could
+/// not be understood.
+const IGNORED_RECORD_RECOVERY: &str = "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want";
+
 #[derive(Deserialize)]
 struct Deployment {
     schema_version: u64,
@@ -568,7 +573,7 @@ impl Deployment {
                     event = "agents_deployment_record_unreadable",
                     record = %state.display(),
                     %error,
-                    "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want"
+                    "{IGNORED_RECORD_RECOVERY}"
                 );
                 return None;
             }
@@ -580,7 +585,7 @@ impl Deployment {
                     event = "agents_deployment_record_invalid",
                     record = %state.display(),
                     %cause,
-                    "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want"
+                    "{IGNORED_RECORD_RECOVERY}"
                 );
                 None
             }
