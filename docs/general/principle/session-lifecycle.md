@@ -74,8 +74,11 @@ conversation still has an open question.
   Active, held, between-phase, and terminal (`delivered` or `withdrawn`) todo
   orchestrator threads use the single configured `runtime.finish_thread` action
   when resting or after all terminal record writes and handoffs are confirmed.
-  Finished threads stay quiet, readable, and wakeable in place; automation
-  never finishes or archives a standing agent.
+  A standing procedure likewise self-finishes when parked dormant with no
+  pending work or human obligation (`general/procedure/event-handling/overview`),
+  waking in place on its next subscribed event. Finished threads stay quiet,
+  readable, and wakeable in place; runner automation and other agents never
+  finish or archive a standing agent.
 - **Human questions stay in their thread.** Ask for approval or missing intent
   there and leave it waiting as `needs-input`. Resolve agent-owned technical
   work with its owner; disagreement alone does not transfer it to the human.

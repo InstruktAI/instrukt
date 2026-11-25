@@ -465,9 +465,10 @@ instruction prose is a separate configuration surface.
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
-wakes a new turn and un-settles it; automation never settles or archives a standing agent
-(`project/instrukt/spec/feature/runner/procedure-standing-agent`), and a human settling one
-is never evidence of absence or permission for a second keyed start. Archived or explicitly
+wakes a new turn and un-settles it; runner automation never settles or archives a standing agent
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`), and settling one (whether
+by a human or by the standing procedure itself when dormant) is never evidence of absence or
+permission for a second keyed start. Archived or explicitly
 unknown threads report `gone`, a released or terminal assignment receives no successor, and
 archived transcripts remain extractable (`project/instrukt/spec/feature/runner/history`).
 Agent-invoked settling and terminal retirement instructions are governed by
