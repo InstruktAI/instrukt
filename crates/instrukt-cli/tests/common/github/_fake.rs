@@ -644,7 +644,7 @@ impl FakeGitHub {
                 issue
                     .artifacts
                     .values()
-                    .map(|a| json!({"artifact": a.json(), "versions": a.versions_json()}))
+                    .map(|a| json!({"artifact": a.json(repo, number), "versions": a.versions_json()}))
                     .collect()
             })
             .unwrap_or_default()

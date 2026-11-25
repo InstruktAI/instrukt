@@ -229,6 +229,85 @@ fn commits_landed_on_a_todos_branch_reach_its_pull_request_on_github() {
     );
 }
 
+// spec: project/instrukt/spec/feature/work/github-record UC-GR14
+#[test]
+fn a_build_review_on_the_todos_pull_request_states_its_verdict_and_findings_and_links_the_findings_artifact()
+ {
+    let crew = workflow::Crew::new();
+    crew.project
+        .github
+        .serve_branches_from(REPOSITORY, &crew.origin.clone());
+    crate::fixtures::documented::sync(&crew.project.env, &crew.project.repo);
+    common::agent_profiles(
+        &crew.project.env,
+        "roles: {todo-lead: {github_app: author}, build-reviewer: {github_app: reviewer}}",
+    );
+    let workspace = worked_todo(&crew, "nested-lists");
+    let built = land(&crew, &workspace, "parser.rs", "fn parse() {}\n");
+    crew.project.env.run(crew.root(), ["tick"]).success();
+
+    crew.project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "review-findings",
+        "1. The parser keeps the depth of nested lists.\n2. Rendering is untouched.",
+    ]);
+    let worker = crew.worker(
+        "nested-lists",
+        "build-reviewer",
+        Some("crew/procedure/review-build"),
+    );
+    crew.project
+        .env
+        .instrukt(Path::new(worker["worktree"].as_str().unwrap()))
+        .env(
+            "T3CODE_THREAD_ID",
+            worker["session"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("t3:")
+                .unwrap(),
+        )
+        .args([
+            "todo",
+            "stamp",
+            "nested-lists",
+            "--verdict",
+            "changes_requested",
+            "--phase",
+            "build_review",
+        ])
+        .assert()
+        .success();
+    crew.project.env.run(crew.root(), ["tick"]).success();
+
+    let pull = crew
+        .project
+        .github
+        .issues(REPOSITORY)
+        .into_iter()
+        .find(|i| i.get("pull_request").is_some())
+        .unwrap()["number"]
+        .as_u64()
+        .unwrap();
+    let reviews: Vec<Value> = crew
+        .project
+        .github
+        .reviews(REPOSITORY, pull)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "reviewer": r["user"]["login"],
+                "state": r["state"],
+                "commit": if r["commit_id"] == built.as_str() { "the built commit" } else { "another commit" },
+                "body": r["body"].as_str().unwrap().replace(&built, "<the built commit>"),
+            })
+        })
+        .collect();
+    insta::assert_json_snapshot!("readable-build-review", reviews);
+}
+
 // spec: project/instrukt/spec/feature/work/github-record UC-GR13
 #[test]
 fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_issue() {

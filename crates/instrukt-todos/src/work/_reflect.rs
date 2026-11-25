@@ -7,6 +7,8 @@
 //! writes that already landed: an issue by the identity its body names, an
 //! artifact version by its digest, a review by its body and commit.
 
+use std::collections::BTreeMap;
+
 use serde_json::{Value, json};
 
 use instrukt_core::config::BoardRef;
@@ -181,6 +183,7 @@ pub(crate) fn read_events(
 pub(crate) fn flush(
     gh: &GitHub,
     item: &mut LocalItem,
+    root: &std::path::Path,
     base: &str,
     board: Option<&BoardRef>,
     needs_you: bool,
@@ -227,7 +230,7 @@ pub(crate) fn flush(
     if pull_request_owed(item)
         && let Some(issue) = item.reflection.issue
     {
-        reflect_pull_request(gh, item, issue, base)?;
+        reflect_pull_request(gh, item, issue, root, base)?;
     }
     if let (Some(board), Some(issue)) = (board, item.reflection.issue) {
         reflect_board(gh, board, item, issue, needs_you)?;
@@ -640,6 +643,7 @@ fn reflect_pull_request(
     gh: &GitHub,
     item: &mut LocalItem,
     issue: IssueRef,
+    root: &std::path::Path,
     base: &str,
 ) -> Result<(), GitHubError> {
     let Some(branch) = item.record.branch.clone() else {
@@ -701,48 +705,94 @@ fn reflect_pull_request(
         .iter()
         .filter(|v| !item.reflection.reviews.contains(&v.sequence))
         .collect();
-    for verdict in owed {
-        let BuildVerdictView {
-            sequence,
-            verdict,
-            commit,
-            report,
-            role,
-        } = verdict;
-        let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review);
-        let bot = reviewer.bot()?;
-        let pull_actor = gh.read(&format!("/pulls/{pull}"))?;
-        if bot.matches(&pull_actor["user"]) {
-            return Err(reviewer.app_failure(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into())));
-        }
-        let body = format!(
-            "[instrukt build review] verdict: {verdict} · reviewed commit {commit} · report {report}"
-        );
-        let state = if *verdict == "approve" {
-            "APPROVED"
-        } else {
-            "CHANGES_REQUESTED"
-        };
-        let reviews = gh.list(&format!("/pulls/{pull}/reviews"))?;
-        let landed = reviews.iter().any(|review| {
-            bot.matches(&review["user"])
-                && review["commit_id"].as_str() == Some(commit)
-                && review["body"].as_str() == Some(&body)
-                && review["state"].as_str() == Some(state)
-        });
-        if !landed {
-            let path = format!("/pulls/{pull}/reviews");
-            let review = json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body});
-            let identity = request_identity("POST", &path, &review, None);
-            let target = RefusedTarget::Review { verdict: *sequence };
-            if let Sent::Refused = send(&mut item.reflection, target, identity, || {
-                reviewer.post(&path, &review)
-            })? {
-                // A refused verdict holds back no other.
+    let mut waiting = None;
+    if !owed.is_empty() {
+        let pull_view = gh.read(&format!("/pulls/{pull}"))?;
+        let pull_head = pull_view["head"]["sha"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let mut links: BTreeMap<u64, String> = BTreeMap::new();
+        for verdict in owed {
+            let BuildVerdictView {
+                sequence,
+                verdict,
+                commit,
+                report,
+                role,
+            } = verdict;
+            // A verdict is reviewed once its report is a saved
+            // review-findings version on the issue and its commit is on the
+            // pull request (`github-record`, Issues and visible work).
+            let findings = item
+                .record
+                .artifact(crate::evidence::artifact_names::REVIEW_FINDINGS)
+                .and_then(|artifact| {
+                    let version = artifact
+                        .versions
+                        .iter()
+                        .find(|v| v.digest.as_str() == report.as_str() && v.remote.is_some())?;
+                    Some((artifact.address?, version.content.clone()?))
+                });
+            let Some((address, findings)) = findings else {
+                waiting = Some(format!(
+                    "the review of commit {commit} waits for its review findings on the issue"
+                ));
+                continue;
+            };
+            if !on_pull_head(root, commit, &pull_head) {
+                waiting = Some(format!(
+                    "the review of commit {commit} waits for that commit on pull request #{pull}"
+                ));
                 continue;
             }
+            let link = match links.get(&address) {
+                Some(link) => link.clone(),
+                None => {
+                    let read = gh.read(&format!(
+                        "/issues/{}/artifacts/{address}?per_page=1&page=1",
+                        issue.number
+                    ))?;
+                    let link = read["artifact"]["html_url"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_owned();
+                    links.insert(address, link.clone());
+                    link
+                }
+            };
+            let reviewer = gh.for_role(role.as_deref(), instrukt_core::github::Operation::Review);
+            let bot = reviewer.bot()?;
+            if bot.matches(&pull_view["user"]) {
+                return Err(reviewer.app_failure(instrukt_core::github::AppError::Setup("native review requires a different roles.<role>.github_app from the pull request author".into())));
+            }
+            let body = review_body(verdict, commit, &findings, &link);
+            let state = if *verdict == "approve" {
+                "APPROVED"
+            } else {
+                "CHANGES_REQUESTED"
+            };
+            let reviews = gh.list(&format!("/pulls/{pull}/reviews"))?;
+            let landed = reviews.iter().any(|review| {
+                bot.matches(&review["user"])
+                    && review["commit_id"].as_str() == Some(commit)
+                    && review["body"].as_str() == Some(&body)
+                    && review["state"].as_str() == Some(state)
+            });
+            if !landed {
+                let path = format!("/pulls/{pull}/reviews");
+                let review = json!({"event":if *verdict=="approve" {"APPROVE"} else {"REQUEST_CHANGES"}, "commit_id":commit, "body":body});
+                let identity = request_identity("POST", &path, &review, None);
+                let target = RefusedTarget::Review { verdict: *sequence };
+                if let Sent::Refused = send(&mut item.reflection, target, identity, || {
+                    reviewer.post(&path, &review)
+                })? {
+                    // A refused verdict holds back no other.
+                    continue;
+                }
+            }
+            item.reflection.reviews.push(*sequence);
         }
-        item.reflection.reviews.push(*sequence);
     }
     if item.record.delivery.is_some() && !item.reflection.pull_closed {
         author.patch(
@@ -751,8 +801,36 @@ fn reflect_pull_request(
         )?;
         item.reflection.pull_closed = true;
     }
-    item.reflection.pull_outstanding = None;
+    item.reflection.pull_outstanding = waiting;
     Ok(())
+}
+
+/// Whether `commit` is the pull request's head `head` or an ancestor of it
+/// in the repository at `root`; not while this computer lacks either.
+fn on_pull_head(root: &std::path::Path, commit: &str, head: &str) -> bool {
+    !head.is_empty()
+        && (commit == head
+            || instrukt_core::git::succeeds(root, ["merge-base", "--is-ancestor", commit, head])
+                .unwrap_or(false))
+}
+
+/// A build review's body: the verdict and the reviewed commit, then the
+/// findings, readable in place and shortened within the body limit, with
+/// the link to the complete review-findings artifact (SC-9).
+fn review_body(verdict: &str, commit: &str, findings: &str, link: &str) -> String {
+    let said = if verdict == "approve" {
+        "approved"
+    } else {
+        "changes requested"
+    };
+    let head = format!("**Build review: {said}** · reviewed commit `{commit}`\n\n");
+    let content = format!(
+        "{}\n\n[Complete review findings]({link})",
+        findings.trim_end()
+    );
+    let closing =
+        format!("\n\n(shortened; [the complete review findings]({link}) give them whole)\n");
+    super::review::shortened(&head, &content, &closing)
 }
 
 fn pull_body(record: &TodoRecord, issue: IssueRef) -> String {
@@ -841,7 +919,9 @@ pub(crate) fn output_label(label: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{KeptRefusal, RefusedTarget, refused_before, request_identity, walk_ends};
+    use super::{
+        KeptRefusal, RefusedTarget, refused_before, request_identity, review_body, walk_ends,
+    };
     use serde_json::json;
 
     #[test]
@@ -884,6 +964,25 @@ mod tests {
         assert!(refused_before(&kept, &target, "same"));
         assert!(!refused_before(&kept, &target, "changed"));
         assert!(!refused_before(&kept, &RefusedTarget::Issue, "same"));
+    }
+
+    #[test]
+    fn a_review_states_its_verdict_commit_and_findings_and_links_them() {
+        let link = "https://github.test/acme/demo/issues/1/artifacts/4";
+        let body = review_body("approve", "abc123", "No findings.\n", link);
+        assert!(body.starts_with("**Build review: approved** · reviewed commit `abc123`"));
+        assert!(body.contains("No findings."));
+        assert!(body.contains(link));
+    }
+
+    #[test]
+    fn long_findings_are_shortened_and_still_link_the_complete_ones() {
+        let link = "https://github.test/acme/demo/issues/1/artifacts/4";
+        let findings = "a finding\n".repeat(20_000);
+        let body = review_body("changes_requested", "abc123", &findings, link);
+        assert!(body.chars().count() <= 60_000);
+        assert!(body.contains("changes requested"));
+        assert!(body.contains("shortened") && body.contains(link));
     }
 
     #[test]

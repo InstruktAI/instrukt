@@ -455,8 +455,8 @@ impl Repo {
             "user": actor(&issue.login),
             "author_association": pull.association,
             "draft": pull.draft,
-            "head": {"ref": pull.head, "sha": self.branches.get(&pull.head), "repo": head_repo},
-            "base": {"ref": pull.base, "sha": self.branches.get(&pull.base), "repo": self.json()},
+            "head": {"ref": pull.head, "sha": self.branch_head(&pull.head), "repo": head_repo},
+            "base": {"ref": pull.base, "sha": self.branch_head(&pull.base), "repo": self.json()},
             "merged": pull.merged,
             "created_at": issue.created_at,
             "updated_at": issue.updated_at,
@@ -583,10 +583,12 @@ impl Label {
 }
 
 impl Artifact {
-    pub(super) fn json(&self) -> Value {
+    /// The artifact as GitHub serves it, on issue `issue` of `full`.
+    pub(super) fn json(&self, full: &str, issue: u64) -> Value {
         let body = self.versions.last().map(|v| v.body.as_str()).unwrap_or("");
         json!({
             "number": self.number,
+            "html_url": format!("https://github.test/{full}/issues/{issue}/artifacts/{}", self.number),
             "type": self.kind,
             "name": self.name,
             "body": body,

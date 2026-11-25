@@ -23,6 +23,7 @@ use jiff::Timestamp;
 
 pub use _moment::Moment;
 pub use _publication::Published;
+pub(crate) use _publication::shortened;
 pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};
 pub use _transfer::Statement;
 

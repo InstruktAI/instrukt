@@ -1366,6 +1366,7 @@ impl<'w> Session<'w> {
                     Remote::Client { gh, down: None } => Some(_reflect::flush(
                         gh,
                         &mut reflected,
+                        &self.project.root,
                         &self.base,
                         board.as_ref(),
                         needs_you,

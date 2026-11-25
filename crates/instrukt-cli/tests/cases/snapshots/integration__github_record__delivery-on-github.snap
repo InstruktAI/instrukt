@@ -30,4 +30,8 @@ Implements #1.
 
 Delivered in <commit 1>.
 
-review: [instrukt build review] verdict: approve · reviewed commit <commit 1> · report <digest 1>
+review: **Build review: approved** · reviewed commit `<commit 1>`
+
+No findings.
+
+[Complete review findings](https://github.test/acme/demo/issues/1/artifacts/4)

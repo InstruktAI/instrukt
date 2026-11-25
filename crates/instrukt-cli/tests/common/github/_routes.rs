@@ -687,7 +687,7 @@ fn issue_route(
                 .artifacts
                 .values()
                 .filter(|a| kind.is_none_or(|k| a.kind == k))
-                .map(Artifact::json)
+                .map(|a| a.json(full, n))
                 .collect();
             paginate(base, path, query, items)
         }
@@ -721,7 +721,7 @@ fn issue_route(
                     login: login.to_owned(),
                 }],
             };
-            let value = artifact.json();
+            let value = artifact.json(full, n);
             issue.artifacts.insert(number, artifact);
             Reply::created(value)
         }
@@ -760,7 +760,7 @@ fn issue_route(
                         .take(per_page)
                         .collect();
                     Reply::ok(json!({
-                        "artifact": artifact.json(),
+                        "artifact": artifact.json(full, n),
                         "versions": versions,
                         "has_next_page": page * per_page < total,
                         "total_count": total,
@@ -782,7 +782,7 @@ fn issue_route(
                     });
                     artifact.updated_at = now;
                     artifact.updated_by = login.to_owned();
-                    Reply::ok(artifact.json())
+                    Reply::ok(artifact.json(full, n))
                 }
                 "DELETE" => {
                     issue.artifacts.remove(&a);
