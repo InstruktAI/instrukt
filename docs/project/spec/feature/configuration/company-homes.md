@@ -15,6 +15,16 @@ its home folder holds a valid settings document, and it is listed nowhere
 else. A project belongs to no company, and a company home carries no roles and
 no authorization.
 
+<!-- planned:company-home-generation -->
+A new company's home is generated. An operator declares once, for the
+computer, the GitHub organisation that owns company homes; from then on an
+agent asked to add a company creates the company's private repository in that
+organisation with the one company skeleton every company receives, makes the
+company's GitHub administrator an administrator of it, and checks it out as the
+company's home. Nothing about a company is customised: two companies' homes
+differ only where each company's identity enters them.
+<!-- /planned:company-home-generation -->
+
 ## Canonical fields
 
 ### The home
@@ -36,6 +46,39 @@ no authorization.
 - Module enablement for a company home follows the machine's global layer; a
   company home carries no module switches.
 - instrukt never deletes a company home.
+
+<!-- planned:company-home-generation -->
+### Generation
+
+| Part | Contract |
+| --- | --- |
+| Owning organisation | `github.org` in the machine's global layer names the GitHub organisation that owns every company home repository on this computer. instrukt names no owner of its own. |
+| Repository | `company-<name>` in the owning organisation, private, where `<name>` is the company's key. |
+| Home | The repository's checkout at `~/.instrukt/companies/<name>/`. |
+| Administrator | The company's GitHub administrator, named when the company is added, is an administrator of the repository. |
+| Identity | The company's key, the name people write the company by, and its GitHub administrator. Generation takes nothing else. |
+
+- **One skeleton.** The repository is created holding the company skeleton,
+  which includes the ignore file of this spec, the company's knowledge index
+  with its documents folder, the committed `AGENTS.md` rendered from them
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`), and the
+  plugin catalog listing the company's plugin rendered from them
+  (`project/instrukt/spec/feature/publication/company-plugin`). The skeleton
+  comes from one source and is the same for every company except where the
+  company's identity enters it.
+- **Ready when it ends.** The generated home holds a valid settings document
+  naming the company, and instrukt's hook sections, so it is a company on the
+  computer and a commit made in it carries its rendered `AGENTS.md`.
+- **From anywhere.** Adding a company answers the same from any working
+  directory on the computer, for an operator and for an agent session.
+- **The organisation is a prerequisite.** A missing `github.org`, or one that
+  names a personal account rather than an organisation, is refused where it is
+  set and when a company is added, naming the key and the prerequisite; no
+  repository and no home is created.
+- **Nothing of a company's is overwritten.** When the company's repository
+  already exists, or its home folder already holds anything, adding the
+  company changes none of it, and names what it found.
+<!-- /planned:company-home-generation -->
 
 ### What stays out of the repository
 
@@ -187,15 +230,40 @@ When a commit tracks the secrets file anyway
 Then validating the company reports the file
 ```
 
+<!-- planned:company-home-generation -->
+### UC-CH5: Add a company whose home is generated the same as every other
+
+```gherkin
+Given an operator has declared the GitHub organisation that owns company homes on their computer
+When their agent adds a new company, given its key, its name and its GitHub administrator
+Then the organisation holds the company's private repository, named after its key, holding the company skeleton
+And the company's GitHub administrator is an administrator of that repository
+And the computer holds the company's home as the checkout of that repository, ready with no step taken by hand
+And the company's home holds the same skeleton as every other company added this way
+But when no organisation is declared, or the declared owner is a personal account
+Then no repository and no home is created, and the operator is told the organisation is a prerequisite
+But when the company's repository or home already exists
+Then nothing of it is changed, and the operator is told what was found
+```
+<!-- /planned:company-home-generation -->
+
 ## Known caveats
 
 - A company home publishes no documentation of its own. An agent working
   there starts with the global agent files, the home's rendered `AGENTS.md`
   and the assignment it is given.
+<!-- planned-change:company-home-generation -->
 - instrukt reads a company home as it stands. Obtaining the home — the first
   checkout, made by an agent at the request of someone with access to the
   company's repository — and keeping it current are the operator's, outside
   this contract.
+<!-- change:company-home-generation -->
+- instrukt reads a company home as it stands. A new company's repository and
+  home are generated (Generation). The first checkout on a computer of a
+  company repository that already exists — made by an agent at the request of
+  someone with access to it — and keeping a home current are the operator's,
+  outside this contract.
+<!-- /planned-change:company-home-generation -->
 - Company homes on one computer are separate folders of one operating-system
   user. What keeps a session working for one company from reading another
   company's home is that company's container
