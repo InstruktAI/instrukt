@@ -362,7 +362,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
                 target.map(|s| format!(" ({s})")).unwrap_or_default()
             ),
         );
-        if reclaim && assignment.workspace.is_none() {
+        if reclaim && (assignment.todo.is_none() || assignment.workspace.is_none()) {
             refusal.push_str(&format!(
                 "; reclaiming acts on the todo worktree an assignment records, and this session's assignment records none: {}",
                 crate::commands::repository::RECLAIM_BINDING_DOOR
