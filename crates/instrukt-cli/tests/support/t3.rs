@@ -159,6 +159,13 @@ def find(id):
     file=root/(id+'.json')
     if not file.exists(): print('Thread '+id+' is no longer available.',file=sys.stderr); sys.exit(1)
     return json.loads(file.read_text())
+# T3's new-worktree workspace: a worktree of the thread's checkout at
+# `folder` from `base`, on the new branch `branch` when one is named, recorded
+# on the thread.
+def create_worktree(t,folder,base,branch):
+    folder.parent.mkdir(exist_ok=True)
+    subprocess.run(['git','-C',t['checkout'],'worktree','add','--quiet']+(['-b',branch] if branch is not None else [])+[str(folder),base],check=True)
+    t['worktreePath']=str(folder); t['branch']=base if branch is None else branch; t['base']=base
 def project_for(checkout):
     path=str(pathlib.Path(checkout).resolve())
     default_id='project-'+hashlib.sha256(path.encode()).hexdigest()
@@ -219,10 +226,7 @@ elif command=='start':
         pending={'ordinal':int(preparing.read_text()),'reads':0,'folder':str(root/'worktrees'/id),'base':flags['--worktree'],'branch':flags.get('--branch')}
         (root/(launch['threadId']+'.preparing')).write_text(json.dumps(pending)); preparing.unlink()
     elif '--worktree' in flags:
-        folder=root/'worktrees'/id
-        folder.parent.mkdir(exist_ok=True)
-        subprocess.run(['git','-C',checkout,'worktree','add','--quiet']+(['-b',flags['--branch']] if '--branch' in flags else [])+[str(folder),flags['--worktree']],check=True)
-        t['worktreePath']=str(folder); t['branch']=flags.get('--branch',flags['--worktree']); t['base']=flags['--worktree']
+        create_worktree(t,root/'worktrees'/id,flags['--worktree'],flags.get('--branch'))
     if launch:
         t['runtimeMode']=launch['runtimeMode'];t['interactionMode']=launch['interactionMode'];t['createdBy']='user';t['commandId']=launch['commandId']
         if 'initialMessage' not in launch: t['messages']=[];t['status']='idle';t['latestRunId']=None;t['activeRunId']=None
@@ -321,9 +325,8 @@ elif command=='show':
     if preparing.exists():
         pending=json.loads(preparing.read_text()); pending['reads']+=1
         if pending['reads']>=pending['ordinal']:
-            folder=pathlib.Path(pending['folder']); folder.parent.mkdir(exist_ok=True)
-            subprocess.run(['git','-C',t['checkout'],'worktree','add','--quiet']+(['-b',pending['branch']] if pending['branch'] else [])+[str(folder),pending['base']],check=True)
-            t['worktreePath']=str(folder); t['base']=pending['base']; t['status']='running'; save(t); preparing.unlink()
+            create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
+            t['status']='running'; save(t); preparing.unlink()
         else: preparing.write_text(json.dumps(pending))
     sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():
