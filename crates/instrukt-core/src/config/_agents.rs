@@ -365,7 +365,7 @@ impl Agents {
                 if value
                     .get("schema_version")
                     .and_then(Value::as_u64)
-                    .is_some_and(|v| v < super::CURRENT_SCHEMA_VERSION) =>
+                    .is_some_and(|v| v < super::GLOBAL_SCHEMA_VERSION) =>
             {
                 let mut value = value.clone();
                 super::_migrate::selection(home, &super::Layer::Global, &mut value, false)?

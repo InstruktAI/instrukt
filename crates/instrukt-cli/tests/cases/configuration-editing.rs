@@ -12,7 +12,7 @@ use std::path::Path;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 use serde_yaml_ng::Value;
 
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
@@ -206,10 +206,7 @@ fn a_machine_without_configuration_is_initialized_without_a_project_identity() {
         &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
     )
     .unwrap();
-    assert_eq!(
-        global["schema_version"],
-        Value::from(CURRENT_SCHEMA_VERSION)
-    );
+    assert_eq!(global["schema_version"], Value::from(GLOBAL_SCHEMA_VERSION));
     assert!(
         global.get("project").is_none(),
         "a machine needs no project identity"
@@ -241,7 +238,7 @@ fn a_project_without_configuration_is_named_after_its_folder() {
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(
         repo.read("instrukt.yaml"),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: my-project-v2\n")
+        format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: my-project-v2\n")
     );
     env.run(repo.path(), ["config", "validate"]).success();
 }
@@ -265,7 +262,7 @@ fn a_linked_worktree_is_named_after_the_primary_worktree() {
     env.run(&linked, ["config", "init"]).success();
     assert_eq!(
         std::fs::read_to_string(linked.join("instrukt.yaml")).unwrap(),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: primary-checkout\n")
+        format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: primary-checkout\n")
     );
 }
 
@@ -285,7 +282,7 @@ fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
     let layer = format!(
-        "# my notes\nschema_version: {CURRENT_SCHEMA_VERSION}\nproject: chosen\nboard: acme/7\n"
+        "# my notes\nschema_version: {PROJECT_SCHEMA_VERSION}\nproject: chosen\nboard: acme/7\n"
     );
     repo.write("instrukt.yaml", &layer);
     env.run(repo.path(), ["config", "init"]).success();
@@ -299,7 +296,7 @@ fn existing_configuration_of_a_newer_schema_is_refused() {
     let repo = env.git_repo("newer");
     let layer = format!(
         "schema_version: {}\nproject: newer\n",
-        CURRENT_SCHEMA_VERSION + 1
+        PROJECT_SCHEMA_VERSION + 1
     );
     repo.write("instrukt.yaml", &layer);
     let refused = env.run(repo.path(), ["config", "init"]).failure();

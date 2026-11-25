@@ -9,7 +9,7 @@
 
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::PROJECT_SCHEMA_VERSION;
 use support::{Project, REPOSITORY, redact};
 use workflow::Crew;
 
@@ -144,7 +144,7 @@ fn prd_approved_by(crew: &Crew, approver: &str) {
     crew.project.repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\napprovals:\n  prd: {approver}\n"
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\napprovals:\n  prd: {approver}\n"
         ),
     );
 }

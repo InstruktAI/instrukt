@@ -999,7 +999,7 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\nmodules: {{todos: true}}\nworkflow: {{domain: crew}}\ngithub: {{repository: acme/demo}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     )
     .write(
@@ -1113,7 +1113,7 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\nworkflow:\n  domain: crew\ngithub:\n  repository: {}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION,
+            instrukt_core::config::PROJECT_SCHEMA_VERSION,
             crate::fixtures::work::REPOSITORY
         ),
     );

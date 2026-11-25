@@ -21,7 +21,7 @@ use common::github::{CannedResponse, FakeGitHub};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 use serde_json::Value;
 use support::{Project, REPOSITORY, redact};
 
@@ -449,7 +449,7 @@ fn todos_on_from_the_machine_for_code_hosted_elsewhere_refuse_and_validation_say
     std::fs::create_dir_all(global.parent().unwrap()).unwrap();
     std::fs::write(
         &global,
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nmodules:\n  todos: true\n"),
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nmodules:\n  todos: true\n"),
     )
     .unwrap();
     let repo = hosted_elsewhere(&env);
@@ -469,7 +469,7 @@ fn hosted_elsewhere(env: &TestEnv) -> common::Repo {
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
-        &format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\n"),
+        &format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\n"),
     );
     repo.commit("the developer's project");
     repo.git([

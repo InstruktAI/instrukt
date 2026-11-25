@@ -73,8 +73,8 @@ pub use _root::{RootDocument, classify_root};
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};
 pub use _schema::{
-    CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema,
-    layer_json_schema,
+    COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION,
+    SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema, layer_json_schema,
 };
 pub use _validate::{
     connector_procedure_finding, connector_role_procedure_finding, validate, validate_local,

@@ -9,8 +9,18 @@ use super::_interpolate::{join, key_text, mask_references};
 use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
-/// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 6;
+/// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
+/// this instrukt writes. The first is 1.
+pub const GLOBAL_SCHEMA_VERSION: u64 = 6;
+
+/// The schema version of a project layer (`instrukt.yaml` at a repository
+/// root) this instrukt writes. The first is 1.
+pub const PROJECT_SCHEMA_VERSION: u64 = 6;
+
+/// The schema version of a company home's document
+/// (`~/.instrukt/companies/<name>/instrukt.yaml`) this instrukt writes. The
+/// first is 1.
+pub const COMPANY_SCHEMA_VERSION: u64 = 6;
 
 pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 
@@ -41,6 +51,17 @@ pub enum LayerKind {
 }
 
 impl LayerKind {
+    /// The schema version of this kind of document this instrukt writes:
+    /// each kind versions its own shape, so a change to one raises only its
+    /// own (`project/instrukt/spec/feature/configuration/layered-configuration`).
+    pub fn current_schema_version(self) -> u64 {
+        match self {
+            LayerKind::Global => GLOBAL_SCHEMA_VERSION,
+            LayerKind::Project => PROJECT_SCHEMA_VERSION,
+            LayerKind::Company => COMPANY_SCHEMA_VERSION,
+        }
+    }
+
     /// The document as a finding names it.
     fn described(self) -> &'static str {
         match self {

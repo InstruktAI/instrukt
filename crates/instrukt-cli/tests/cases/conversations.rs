@@ -409,7 +409,7 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
             "instrukt.yaml",
             format!(
                 "schema_version: {}\nproject: fork\n",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         )],
     );
@@ -3679,7 +3679,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     std::fs::create_dir_all(&dormant).unwrap();
     std::fs::write(dormant.join("instrukt.yaml"), format!(
         "schema_version: {}\ncompany: dormant\nconnectors: {{slack: {{app_token: '${{MISSING}}', bot_token: '${{MISSING}}'}}}}\n",
-        instrukt_core::config::CURRENT_SCHEMA_VERSION
+        instrukt_core::config::COMPANY_SCHEMA_VERSION
     )).unwrap();
     let gap = |company: &str, channel: &str, through: jiff::Timestamp| {
         scans.execute(
@@ -3740,7 +3740,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
 fn an_operator_onboards_a_company_while_the_runner_runs() {
     use crate::fixtures::conversing::{MEMBERS, company_home, slack_settings};
     use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN};
-    use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+    use instrukt_core::config::GLOBAL_SCHEMA_VERSION;
     use instrukt_core::home::Home;
 
     let mut c = Company::with_fakes(common::TestEnv::new());
@@ -3748,7 +3748,7 @@ fn an_operator_onboards_a_company_while_the_runner_runs() {
     std::fs::create_dir_all(home.root()).unwrap();
     std::fs::write(
         home.root().join("instrukt.yaml"),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false, todos: true}}\n"),
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false, todos: true}}\n"),
     ).unwrap();
     let clock = c.env.path("admission-clock");
     let now: jiff::Timestamp = "2026-11-20T12:00:00Z".parse().unwrap();
@@ -3929,7 +3929,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
             "instrukt.yaml",
             format!(
                 "schema_version: {}\nproject: reacting\nmodules: {{history: false, events: true}}\n",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         )],
     );

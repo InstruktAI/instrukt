@@ -20,7 +20,7 @@ use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::GLOBAL_SCHEMA_VERSION;
 
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
 fn shown(env: &TestEnv, bytes: &[u8]) -> String {
@@ -39,7 +39,7 @@ fn configure_machine(env: &TestEnv) {
     std::fs::write(
         path,
         format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}
+            "schema_version: {GLOBAL_SCHEMA_VERSION}
 runner: {{runtime: t3}}
 agents:
   claude:
