@@ -225,6 +225,7 @@ And no file is changed
 
 ## Known caveats
 
+<!-- planned-change:company-home-integration -->
 - One plugin is rendered, and it holds every document: a document's
   `visibility` selects nothing.
 - A version is raised against what the working tree holds. Two branches that
@@ -252,6 +253,35 @@ And no file is changed
   else.
 - A `version` an operator sets on the plugin's catalog entry stays as it is,
   and so does not follow the manifest's.
+<!-- change:company-home-integration -->
+- One plugin is rendered, and it holds every document: a document's
+  `visibility` selects nothing.
+- A version is raised against what the working tree holds. Two branches that
+  each render the plugin and are then merged can carry one version for
+  different content; the rendering the catalog serves is the one each
+  integration candidate of the repository's default branch carries
+  (`project/instrukt/spec/feature/workflow/integration-gate`).
+- The rendering depends on the instrukt release that renders it. A release
+  that renders a plugin differently raises that plugin's version at its next
+  rendering although no document changed.
+- A company repository whose host also runs the shared workflows
+  repository's publisher (`project/instrukt/policy/shared-workflows`) has a
+  second writer of its default branch beside its integrator
+  (`general/policy/commits`): each writes `plugins/<key>/` whole and raises its
+  version, and the repository receives each renderer's bytes in turn.
+- When and whether a Claude client takes a new copy of an installed plugin is
+  Claude's (See Also).
+- What Claude does with a skill's main file before an agent reads it, and how
+  much of it Claude keeps in an agent's context, is Claude's (See Also).
+  Text of an `expanded` document in a form Claude replaces or runs there is
+  not delivered as written. A document the index lists stays out of the main
+  file.
+- Whether Claude accepts a plugin under the company's key is Claude's (See
+  Also): the key is held to the grammar of a company's key and to nothing
+  else.
+- A `version` an operator sets on the plugin's catalog entry stays as it is,
+  and so does not follow the manifest's.
+<!-- /planned-change:company-home-integration -->
 
 ## See Also
 

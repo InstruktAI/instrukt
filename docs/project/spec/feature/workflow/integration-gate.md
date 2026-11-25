@@ -15,6 +15,16 @@ readable. Promotion, failure judgment, revert-first recovery and separate
 repair are the integrator's obligations under its procedure, guarded by
 branch protection.
 
+<!-- planned:company-home-integration -->
+The gate serves every repository instrukt integrates the same way: each
+adopted project's repository and each company home's
+(`project/instrukt/spec/feature/configuration/company-homes`). Each has its
+own standing integrator, its own candidate and a canonical branch whose one
+writer is that integrator (`general/policy/commits`). A company home has no
+todos: its candidates are composed from reviewed worktree heads, such as
+changes to the company's knowledge.
+<!-- /planned:company-home-integration -->
+
 ## Canonical fields
 
 ### Candidate and verification
@@ -212,6 +222,24 @@ This local check is the integration gate. Builders, reviewers and the pure
 workflow evaluator do not add suite execution to their steps. Project-owned
 hooks and CI retain their own checks.
 
+<!-- planned:company-home-integration -->
+### A company home's candidate
+
+Every candidate of a company home carries the company's plugin and its
+catalog entry rendered from the knowledge that candidate holds
+(`project/instrukt/spec/feature/publication/company-plugin`), committed in the
+candidate before it is verified. The company's default branch therefore never
+holds knowledge its plugin does not carry, and the plugin's version rises
+exactly when an integration changes its rendering. Nothing other than the
+integrator renders the plugin onto that branch.
+
+A candidate whose knowledge the rendering refuses, or whose committed
+`AGENTS.md` and plugin differ from what its knowledge renders, holds no
+admission: it stays unpromoted and its failure stays with the integrator under
+the remediation routes above. For a company home without CI that comparison is
+the local admission evidence for the exact candidate.
+<!-- /planned:company-home-integration -->
+
 ### Recovery of a red canonical branch
 
 If the canonical branch becomes red despite admission, the integrator reverts
@@ -245,6 +273,7 @@ Dependency-branch failure does not imply red main or trigger a revert of main.
 
 ### Mechanical canonical-checkout synchronization
 
+<!-- planned-change:company-home-integration -->
 On each tick, before dispatch, the runner observes remote main with Git and
 fetches the observed commits without a GitHub API call. When remote main is
 ahead, it fast-forwards the clean project checkout's local main to that exact
@@ -255,6 +284,22 @@ of the events switch. Equal heads require no merge. Dirty checkouts, a checkout
 on another branch, failed fetches and non-fast-forward history are reported;
 no checkout is forced, switched, stashed or discarded. A later tick retries.
 The integrator promotes remote main; it no longer synchronizes other checkouts.
+<!-- change:company-home-integration -->
+On each tick, before dispatch, the runner observes remote main with Git and
+fetches the observed commits without a GitHub API call. When remote main is
+ahead, it fast-forwards the clean checkout's local main to that exact commit
+with `git merge --ff-only --no-overwrite-ignore`. The checkout is a considered
+project's canonical checkout, with todos or events enabled and independently
+of the events switch, or a company's home on this computer
+(`project/instrukt/spec/feature/configuration/company-homes`). For a project,
+the existing post-merge hook publishes documentation and hands the revision to
+blueprint when enabled; a company home's agents work in the advanced checkout
+itself. Equal heads require no merge. Dirty checkouts, a checkout on another
+branch, a company home that is no checkout of its repository, failed fetches
+and non-fast-forward history are reported; no checkout is forced, switched,
+stashed or discarded. A later tick retries. The integrator promotes remote
+main; it synchronizes no checkout.
+<!-- /planned-change:company-home-integration -->
 
 `runner.main_failing` wakes the integrator for revert-first recovery. The
 existing recovery obligation keeps subsequent deliveries from building on the
@@ -319,6 +364,19 @@ When their integrator assesses that evidence
 Then it judges whether the failure warrants a bug
 And when warranted it records the bug work once, reusing matching existing work
 ```
+
+<!-- planned:company-home-integration -->
+### UC-IG7: A company's reviewed knowledge change goes live with its plugin
+
+```gherkin
+Given a company's administrator has had a change to the company's knowledge reviewed
+When the reviewed change is handed to the company's integration
+Then the company's default branch advances to a verified commit holding the change
+And the company's plugin on that commit carries the knowledge it holds, at a raised version
+But when the changed knowledge does not render
+Then the default branch stays where it was and the integrator holds the failure
+```
+<!-- /planned:company-home-integration -->
 
 ## Known caveats
 
