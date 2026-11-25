@@ -36,6 +36,7 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
 - **Candidate binary:** Build `cargo build -p instrukt-cli` once per candidate
   HEAD and invoke the built candidate executable explicitly
   (`./target/debug/instrukt`), never a `PATH`-resolved installed binary.
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Isolation primitive:** Follow `project/instrukt/policy/testing` on
   inheriting the home and isolating application roots, and
   `project/instrukt/spec/feature/publication/agent-entrypoints`:
@@ -50,6 +51,33 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
   - Initialize the slot with the candidate binary (`init`), execute the smoke
     flow, then kill any spawned daemon/Redis process group and delete the
     temporary slot directory on exit (`general/policy/shared-machine-resources`).
+<!-- change:verification-stamp-and-evidence-store -->
+- **Isolation primitive:** Follow `project/instrukt/policy/testing` on
+  inheriting the home and isolating application roots, and
+  `project/instrukt/spec/feature/publication/agent-entrypoints`:
+  - Isolate `INSTRUKT_HOME`, `INSTRUKT_LOG_DIR`, T3 root, scheduler roots
+    (`SYSTEMD_UNIT_PATH`, `INSTRUKT_LAUNCH_AGENTS_DIR`,
+    `INSTRUKT_CRONTAB_FILE`), and only the six relocatable native runtime homes
+    (`CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `OPENCODE_CONFIG_DIR`, `FX_HOME`,
+    `KIRO_HOME`, `PI_CODING_AGENT_DIR`) inside per-slot temporary directories
+    paired with a temporary git repository.
+  - Inherit `HOME`, broad XDG base directories, and `TMPDIR` unchanged
+    (`sdlc/policy/testing`).
+  - Hold each slot under `scripts/with-runtime-homes.py`, which creates one
+    Python `tempfile.TemporaryDirectory`, points every isolated root above into
+    it, puts scheduler-command stubs first on `PATH`, runs the command it is
+    given, and removes the directory when that command ends, including when it
+    is stopped with `SIGTERM`. The slot's holder is one long-lived command
+    under it: initialize a temporary git repository inside the slot with the
+    candidate binary (`init`), print the slot's environment for the Driver, and
+    wait for a bounded time. The Driver runs the candidate binary with that
+    environment and keeps its raw evidence inside the slot directory, where
+    the Checker reads it.
+  - Teardown ends the holder: stop the process group of any daemon or Redis
+    started for the slot, then send `SIGTERM` to the holder, which removes the
+    slot and its raw evidence with it (`general/policy/shared-machine-resources`).
+    No command deletes the slot directory.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 - **Max parallel concurrency:** 4 isolated slots per host.
 - **Container stack:** None (`verification/Dockerfile.verify` omitted).
 

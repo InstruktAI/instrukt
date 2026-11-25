@@ -92,6 +92,7 @@ same name. That a todo is delivered, parked or held is work's fact, relayed
 from the evidence of the same derivation; parked and held are idle. Workflow
 derives the two other idle readings from that record:
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **A candidate waits for integration** while a finalized hand-off stands for
   the todo's current head.
 - **Work has gone back to preparation** while the todo has build evidence and
@@ -100,6 +101,17 @@ derives the two other idle readings from that record:
   todo's intent, requirements, diagnosis, architecture or plan, or a
   preparation review verdict. Build evidence is a build start or completion,
   a build review verdict, processed deferrals or a finalized hand-off.
+<!-- change:verification-stamp-and-evidence-store -->
+- **A candidate waits for integration** while a finalized hand-off stands for
+  the todo's current head.
+- **Work has gone back to preparation** while the todo has build evidence and
+  the latest of its preparation evidence is later in the record's order than
+  the latest of that build evidence. Preparation evidence is a version of the
+  todo's intent, requirements, diagnosis, architecture or plan, or a
+  preparation review verdict. Build evidence is a build start or completion,
+  a build review verdict, a verification disposition, processed deferrals or
+  a finalized hand-off.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 An active todo in none of these states is under way. A kickback is neither
 kind of evidence and its reason is never read
