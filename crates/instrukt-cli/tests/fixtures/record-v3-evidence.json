@@ -1,5 +1,5 @@
 {
-  "sequence": 3,
+  "sequence": 11,
   "stamps": [
     {
       "fact": {
@@ -14,7 +14,7 @@
       "eval_fingerprint": null,
       "role": "build-reviewer",
       "human_involved": null,
-      "sequence": 2,
+      "sequence": 10,
       "model_provenance": "unknown"
     },
     {
@@ -28,7 +28,7 @@
       "eval_fingerprint": null,
       "role": "todo-orchestrator",
       "human_involved": null,
-      "sequence": 3,
+      "sequence": 11,
       "model_provenance": "unknown"
     }
   ],
@@ -49,7 +49,7 @@
       "no_start_reason": null,
       "branch": "schema-change/work",
       "base_head": "1111111111111111111111111111111111111111",
-      "completion_sequence": 2,
+      "completion_sequence": 10,
       "completed_head": "1111111111111111111111111111111111111111",
       "failure_reason": null,
       "failure_head": null,

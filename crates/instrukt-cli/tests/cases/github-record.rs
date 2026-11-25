@@ -1530,13 +1530,9 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
         "converted-schema-evidence",
         project.ok(["artifacts", "read", "schema-change", "input"])
     );
-}
 
-// spec: project/instrukt/spec/feature/work/github-record UC-GR10
-#[test]
-fn schema_three_record_converts_to_four_with_its_retained_evidence_unchanged() {
-    let project = Project::new();
-    project.create("schema-change", "bug", INTENT);
+    // A schema 3 record's retained stamps and bindings (golden fixture)
+    // convert to schema 4 unchanged.
     let golden: Value =
         serde_json::from_str(include_str!("../fixtures/record-v3-evidence.json")).unwrap();
     let mut seeded = Value::Null;
@@ -1552,7 +1548,7 @@ fn schema_three_record_converts_to_four_with_its_retained_evidence_unchanged() {
         "write",
         "schema-change",
         "log",
-        "continued after conversion",
+        "continued after the schema 3 conversion",
     ]);
     let converted = &latest_envelope(&project.github)["record"];
     assert_eq!(converted["schema"], 4);

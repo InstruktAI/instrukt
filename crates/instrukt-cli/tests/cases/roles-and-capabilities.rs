@@ -135,31 +135,27 @@ fn a_bound_reviewer_can_write_its_own_evidence_but_cannot_choose_another_assignm
         "other-todo-refused",
         String::from_utf8_lossy(&refused.get_output().stderr)
     );
-}
-
-// spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
-#[test]
-fn a_shipped_verifier_records_its_own_evidence_but_never_commits_or_writes_docs() {
+    // The shipped `verifier`, with no local agents entry, is a focused
+    // reviewer: its own evidence and stamp, never a commit or a docs write.
     let crew = workflow::Crew::new();
     crew.project
-        .create("parser", "change", "Improve parser depth.");
-    let assignment = crew.worker("parser", "verifier", Some("crew/procedure/verify"));
-    let session = assignment["session"]
+        .create("verified", "change", "Verify parser depth.");
+    let verifier = crew.worker("verified", "verifier", Some("crew/procedure/verify"));
+    let verifier_session = verifier["session"]
         .as_str()
         .unwrap()
         .strip_prefix("t3:")
         .unwrap()
         .to_owned();
-    let workspace = std::path::PathBuf::from(assignment["worktree"].as_str().unwrap());
+    let verifier_workspace = std::path::PathBuf::from(verifier["worktree"].as_str().unwrap());
     let run = |args: &[&str]| {
         crew.project
             .env
-            .instrukt(&workspace)
-            .env("T3CODE_THREAD_ID", &session)
+            .instrukt(&verifier_workspace)
+            .env("T3CODE_THREAD_ID", &verifier_session)
             .args(args)
             .assert()
     };
-    // No local agents entry names `verifier`: the shipped role applies.
     let help = run(&["--help"]).success();
     let help = String::from_utf8_lossy(&help.get_output().stdout).into_owned();
     assert!(help.contains("Role: verifier · class: focused"), "{help}");
@@ -167,19 +163,30 @@ fn a_shipped_verifier_records_its_own_evidence_but_never_commits_or_writes_docs(
         "todo",
         "artifacts",
         "write",
-        "parser",
+        "verified",
         "verification-findings",
         "Tier 0: no live surface changed.",
     ])
     .success();
-    run(&["todo", "stamp", "parser", "--verification", "tier_0_skip"]).success();
-    let head = crew.project.env.git(&workspace, ["rev-parse", "HEAD"]);
-    std::fs::write(workspace.join("probe.txt"), "not the verifier's to commit").unwrap();
-    crew.project.env.git(&workspace, ["add", "probe.txt"]);
+    run(&["todo", "stamp", "verified", "--verification", "tier_0_skip"]).success();
+    let head = crew
+        .project
+        .env
+        .git(&verifier_workspace, ["rev-parse", "HEAD"]);
+    std::fs::write(
+        verifier_workspace.join("probe.txt"),
+        "not the verifier's to commit",
+    )
+    .unwrap();
+    crew.project
+        .env
+        .git(&verifier_workspace, ["add", "probe.txt"]);
     let commit = run(&["repo", "commit", "-m", "chore: verifier commit"]).failure();
     let render = run(&["docs", "render"]).failure();
     assert_eq!(
-        crew.project.env.git(&workspace, ["rev-parse", "HEAD"]),
+        crew.project
+            .env
+            .git(&verifier_workspace, ["rev-parse", "HEAD"]),
         head
     );
     insta::assert_snapshot!(
