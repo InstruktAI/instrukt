@@ -113,6 +113,18 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 
+<!-- planned:fixed-shape-commit-review-dispatch -->
+
+A requested review (`project/instrukt/spec/feature/runner/requested-review`)
+adds one crossing and is no part of the review gate: it emits no event and the
+runner holds no review request for it.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → runner | Customer / Supplier | A commit's current verdict with the session that recorded it, and the pinned base work admits the commit's verdict against, consulted when a requested review is admitted |
+
+<!-- /planned:fixed-shape-commit-review-dispatch -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

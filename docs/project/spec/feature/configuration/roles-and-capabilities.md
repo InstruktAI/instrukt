@@ -89,6 +89,21 @@ addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving
 computer changes).
 
+<!-- planned:fixed-shape-commit-review-dispatch -->
+
+`instrukt review start` asks for a requested review
+(`project/instrukt/spec/feature/runner/requested-review`) and is
+`assignment-write`, addressing the project the caller stands in: it records an
+assignment and starts the session that works it, as `todo attempt` reserves
+one, and records no review evidence. The shipped `orchestrate` bundle carries
+it; focused roles without that bundle, the reviewers and builders among them,
+are refused it. The requested reviewer it starts resolves to the
+`commit-reviewer` role, the project and its placement from the runner's
+requested-review record, and its `stamp` grant at `own` reaches that project's
+review evidence.
+
+<!-- /planned:fixed-shape-commit-review-dispatch -->
+
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
 reaches only objects bound by the recorded assignment. For machine-wide

@@ -916,6 +916,34 @@ worker attempts do not enter this keyed-discovery table.
 The old active start journal is removed after migration 29 accounts for its effect
 evidence in current bindings and immutable generation history.
 
+<!-- planned:fixed-shape-commit-review-dispatch -->
+
+**`requested_reviews`** — runner-owned record of each admitted requested review
+(`project/instrukt/spec/feature/runner/requested-review`). Key:
+`(project, head, ask)`, where `ask` numbers a head's admitted asks from 1.
+
+| Column | Meaning |
+| --- | --- |
+| `project`, `head`, `ask` | The project the caller stood in, the full head commit and the ask's number for that head. |
+| `kind` | `review`, `re_review` or `dispute`. |
+| `coordinates` | The admitted coordinates, as named and in their given order. |
+| `requester` | The requesting session the runtime recognised, or `NULL` when the caller was none. |
+| `assignment`, `assignment_digest` | The rendered assignment and its SHA-256 digest. |
+| `semantic_key`, `generation` | The requested reviewer's start key and the generation the ask was delivered to, joined to `runtime_bindings` and `runtime_generations`. |
+| `delivery` | `start` with its opening receipt, or `send` with its `runtime_inputs` identity. |
+| `admitted_at`, `accepted_at` | Admission, and the runtime's acceptance; `NULL` while not accepted. |
+
+The row is written by `instrukt review start` alone, in the transaction that
+captures the start or the send, and its acceptance commits with the runtime
+binding's. The requested reviewer's assignment — role `commit-reviewer`, the
+project and the registered checkout — resolves from it. A head's rows are
+current while the canonical branch does not contain the head and history once
+it does; history is retired after the retention period of review evidence
+history, inside `instrukt review start`. The table is added by its own
+migration and starts empty.
+
+<!-- /planned:fixed-shape-commit-review-dispatch -->
+
 **`task_failures`** — tasks held after a firing recorded `error`, and whether
 the developer was notified. Key: `(project, todo_id)`. Columns: `project`,
 `todo_id`, `session`, `notified`, `occurrence` (the failed run the hold was
