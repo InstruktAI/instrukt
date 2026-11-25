@@ -143,7 +143,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   runner's own; a runtime's task, schedule or event features are not used.
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
-  `instrukt history extract|import-teleclaude|search|show`,
+  `instrukt history extract|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
@@ -308,8 +308,7 @@ the activating computer fails visibly without forwarding.
 Published general/domain procedures reach every home of their declared kind:
 one published procedure runs in each company's own home, wherever its publishing
 project is checked out.
-A project-local subscribed procedure reaches only that project's origin; this
-preserves instrukt's project-local reach as an adaptation of TeleClaude's tiers.
+A project-local subscribed procedure reaches only that project's origin.
 
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
@@ -361,7 +360,7 @@ Existing vocabulary is retained explicitly: `runner.upstream_changed` →
 `runner.main_failing`, `runner.dependency_failing` → `runner.dependency_failing`,
 and `workflow.finalized` → `workflow.finalized`.
 The producing contexts remain owners of these facts; subscriptions keep
-these names. Event-platform types ported from `teleclaude.*` use `instrukt.*`.
+these names. Event-platform types use `instrukt.*`.
 No compatibility alias or second occurrence is emitted.
 
 The canonical received boundary is the open event envelope, not a closed enum
@@ -400,8 +399,7 @@ in data.
 
 ### Event-platform facts emitted
 
-`instrukt.system.event.dead_lettered` ports
-`teleclaude.system.event.dead_lettered`: subject is the failing stream entry,
+For `instrukt.system.event.dead_lettered`, subject is the failing stream entry,
 origin is none, and data declares string fields `attempt_count`, `consumer`,
 `consumer_id`, `dlq_destination`, `failing_stage`, `original_entry_id` and
 `original_stream`. It reports a parked act, not a failing lifecycle state.
@@ -433,7 +431,7 @@ has no origin, as declared in Canonical fields.
 
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
 
-- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3, one-time TeleClaude mirror import and merged search across computers.
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
 - **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
   — choose automatic or deliberate pickup of eligible work.
 - **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
@@ -543,8 +541,8 @@ and work branch (`project/instrukt/spec/domain/context-map`).
   steering degrades ASAP attention to queued input or idle entry without a
   validation finding. Standing T3 threads remain unsettled under automation
   and stay reachable after human settling.
-- A people registry, person homes, voice and memory stay in TeleClaude. tmux/TUI/chiptunes/person chips, the TeleClaude acceptance
-  harness, one-time layout migrations, experiment matching, dsh upgrades,
+- A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
+  one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
   instrukt. GitHub-backed todos cover work movement without a separate
   computer-transfer feature.

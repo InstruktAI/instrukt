@@ -864,7 +864,7 @@ mod tests {
         let mut retained = at_31();
         retained
             .execute(
-                "INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:kept',1,1)",
+                "INSERT INTO history_sources(source,position,imported) VALUES('archive:kept',1,1)",
                 [],
             )
             .unwrap();
@@ -872,7 +872,7 @@ mod tests {
         assert_eq!(history(&retained), [true; 5]);
         let kept: (i64, bool) = retained
             .query_row(
-                "SELECT position,imported FROM history_sources WHERE source='teleclaude:kept'",
+                "SELECT position,imported FROM history_sources WHERE source='archive:kept'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )

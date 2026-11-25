@@ -32,7 +32,7 @@ const BATCH_ROWS: usize = 128;
 const BATCH_BYTES: usize = 32 * 1024 * 1024;
 
 /// Version 1: the final shape earlier builds kept in the state database,
-/// with a TeleClaude position that is absent until a first batch commits,
+/// with an import position that is absent until a first batch commits,
 /// and the record of how far the move of that history has progressed.
 const V1: &str = r#"
 CREATE TABLE history_sources (
@@ -472,7 +472,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
     /// A home whose current state database holds `conversations` retained
     /// runtime conversations, each with its conversation record and one
     /// message of about `size` bytes, a run record, a runtime position, a
-    /// completed TeleClaude import and an inert `t3:` row.
+    /// completed import of an earlier archive and an inert `t3:` row.
     fn upgraded(conversations: u32, size: u32) -> (tempfile::TempDir, Home) {
         let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
@@ -506,7 +506,7 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         .unwrap();
         db.execute_batch(
             "INSERT INTO history_source_positions VALUES('t3:legacy','{\"version\":2}');
-             INSERT INTO history_sources VALUES('teleclaude:done',1,1),('t3:legacy',42,0);",
+             INSERT INTO history_sources VALUES('archive:done',1,1),('t3:legacy',42,0);",
         )
         .unwrap();
         (dir, home)
@@ -604,8 +604,8 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         assert_eq!(
             sources,
             [
-                ("t3:legacy".to_owned(), Some(42), 0),
-                ("teleclaude:done".to_owned(), Some(1), 1)
+                ("archive:done".to_owned(), Some(1), 1),
+                ("t3:legacy".to_owned(), Some(42), 0)
             ]
         );
     }
