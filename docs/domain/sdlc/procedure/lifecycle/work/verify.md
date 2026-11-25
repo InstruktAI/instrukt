@@ -66,6 +66,16 @@ exact HEAD.
 
 ## Steps
 
+<!-- planned:verification-stamp-and-evidence-store -->
+Every exit ends through Step 6, because your attempt holds `<slug>/work`
+until its disposition is recorded. Wherever a step below returns
+`Verdict: BLOCKED` or `Verdict: FAIL`, stop the run there, tear down what it
+started (Step 6, item 1), write `verification-findings` carrying that verdict
+and what was verified honestly (items 2 and 3), record
+`--verification blocked` or `--verification fail` (item 4), and report it
+(item 5).
+<!-- /planned:verification-stamp-and-evidence-store -->
+
 ### Project extension points
 
 This procedure declares two project-level extension points
@@ -182,6 +192,7 @@ Apply the archetype matrix, execution-host rules, and dynamic tiering of
   `Verdict: TIER_0_SKIP`, record the `tier_0_skip` disposition and report it
   (Step 6, items 3 to 5), and stop.
 <!-- /planned-change:verification-stamp-and-evidence-store -->
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - **Tier 1 / Tier 2:** compose the `verification-plan` payload naming:
   - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
   - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
@@ -192,6 +203,18 @@ Apply the archetype matrix, execution-host rules, and dynamic tiering of
   - every Layer 2 reliability trigger whose semantic condition matches the diff;
   - isolation slot strategy (single slot or CI job for Tier 1; parallel slots
     or CI matrix jobs bounded by Layer 1's concurrency cap for Tier 2).
+<!-- change:verification-stamp-and-evidence-store -->
+- **Tier 1 / Tier 2:** compose the `verification-plan` you write in Step 6, naming:
+  - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
+  - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
+    `local`) from Layer 1 or the archetype matrix;
+  - user goals derived from approved intent plus targeted adversarial
+    perturbations (cancel/abort mid-flow, reload/restart, duplicate submit,
+    invalid boundary input, post-run persisted-state check);
+  - every Layer 2 reliability trigger whose semantic condition matches the diff;
+  - isolation slot strategy (single slot or CI job for Tier 1; parallel slots
+    or CI matrix jobs bounded by Layer 1's concurrency cap for Tier 2).
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ### 3. Setup — provision isolated slot(s) on the declared execution host
 
@@ -546,6 +569,7 @@ Verdict: PASS | FAIL | BLOCKED | TIER_0_SKIP
 
 ## Recovery
 
+<!-- planned-change:verification-stamp-and-evidence-store -->
 - If a verification slot fails to boot due to a candidate defect (broken
   migration, crash on start, missing env wiring), record a sanitized failure
   summary as a structured blocking defect (`Verdict: FAIL`) and tear down
@@ -560,6 +584,28 @@ Verdict: PASS | FAIL | BLOCKED | TIER_0_SKIP
   unprovisioned, record the exact blocker and what was verified honestly with
   `Verdict: BLOCKED` — never substituting mocked fallbacks or emitting `PASS` /
   `TIER_0_SKIP`.
+<!-- change:verification-stamp-and-evidence-store -->
+- If a verification slot fails to boot due to a candidate defect (broken
+  migration, crash on start, missing env wiring), tear down what the run
+  started, then write `verification-findings` with the sanitized failure
+  summary as a structured blocking defect (`Verdict: FAIL`) and record
+  `--verification fail` (Step 6).
+- If `<canonical-ref>` or its Git history lookup fails, the CI host's
+  authoritative default branch cannot be verified or disagrees with
+  `<default-branch>`, the candidate SHA is unpublished for a CI-hosted run, the
+  candidate SHA predates delivered verification stack files on
+  `<canonical-ref>`, detached post-merge publication lags behind
+  `<canonical-ref>` on a required fill, a required substrate fill or workflow is
+  missing, CI/host tooling is unavailable, or a required external credential is
+  unprovisioned, tear down what the run started, write `verification-findings`
+  naming the exact blocker and what was verified honestly with
+  `Verdict: BLOCKED`, and record `--verification blocked` (Step 6) — never
+  substituting mocked fallbacks or recording `pass` or `tier_0_skip`.
+- If recording the disposition is refused, the refusal names what it lacks:
+  restore a clean tree at the captured HEAD or the missing findings report and
+  record again; when that is not yours to restore, report the refusal to
+  `todo-orchestrator`, which resolves the attempt.
+<!-- /planned-change:verification-stamp-and-evidence-store -->
 
 ## See Also
 
