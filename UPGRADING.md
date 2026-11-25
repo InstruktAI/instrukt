@@ -576,3 +576,36 @@ order:
    any project's `.instrukt/schemas/`. Nothing writes schemas or a modeline in
    a company home; point an editor there at it by hand. The domain index
    schema now requires `description`, as validation already did.
+
+### History keeps only what was said
+
+History now retains, of each conversation, its identity, title, parent,
+archive aliases and the runtime's record of it, and its messages with their
+roles, times and text, each message text stored once
+(`project/instrukt/spec/feature/runner/history`). It no longer retains what a
+conversation's tools ran and returned, the files it changed, its reasoning
+traces, its runs or its subagents; that text is no longer found by
+`instrukt history search`, and `instrukt history show` of a runtime
+conversation prints its `thread` and `messages` without the `runs`,
+`subagents` and `turnItems` collections. Conversations imported from
+TeleClaude keep their document and are found by the same text as before.
+
+The first history operation after upgrading, on each computer, converts
+`state/history.db` in place and then rewrites it to free the space the
+dropped records held, holding the history lock throughout; on a large store
+each step takes a while. While the conversion runs, every history command
+fails once its wait for the lock times out. Once the conversion has
+committed, and provided this computer had already finished moving its earlier
+history out of `state/instrukt.db`, `history show` and the search's own read
+work again while the rewrite continues; `history extract` and
+`history import-teleclaude` still time out, and `history search` returns what
+is retained and reports its catch-up as failed. If that earlier move had not
+finished, every history command, `history show` and `history search`
+included, keeps waiting for the lock and can time out until the rewrite and
+the move complete. The runner retries its extraction throughout. What the
+store held of tool records, runs and subagents is dropped by the conversion
+and nothing restores it. To keep a copy, take one before installing the new
+build, while the store is still in its earlier shape, with SQLite's online
+backup, which is safe while instrukt uses the store:
+
+    sqlite3 ~/.instrukt/state/history.db ".backup '/path/to/history-before-upgrade.db'"

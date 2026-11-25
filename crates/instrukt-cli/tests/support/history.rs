@@ -104,7 +104,17 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
                 "provider",
             ),
         ] {
-            let payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            let mut payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            if role == "user" {
+                // Composer context T3 stores beside what the person wrote:
+                // terminal lines they attached and a review comment on a diff.
+                payload["context"] = json!({"version":1,"records":[
+                    {"version":1,"contextId":"terminal-fixture","kind":"terminal","label":"Terminal 1 lines 1-2","terminalId":"terminal-1","terminalLabel":"Terminal 1","lineStart":1,"lineEnd":2,"text":"Terminalonlytoken printed."},
+                    {"version":1,"contextId":"review-comment-fixture","kind":"review-comment","label":"src/lib.rs lines 3-4","sectionId":"working-tree","sectionTitle":"Working tree","filePath":"src/lib.rs","startIndex":3,"endIndex":4,"rangeLabel":"Lines 3-4","text":"Keep this comment.","diff":"+Diffonlytoken added line"},
+                    {"version":1,"contextId":"annotation-fixture","kind":"preview-annotation","label":"Fixture page","annotationId":"annotation-1","pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","comment":"Make this button bigger.","targetSummary":"1 selected element","styleChanges":[],"elements":[{"pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","tagName":"button","selector":"#save","htmlPreview":"<button id=\"save\">Htmlonlytoken</button>","componentName":"SaveButton","source":null,"styles":"color: red;"}],"elementIds":["element-1"],"styleChangeDetails":[]},
+                    {"version":1,"contextId":"element-fixture","kind":"element","label":"button#save","pageUrl":"http://localhost:3000/","pageTitle":"Fixture page","tagName":"button","selector":"#save","htmlPreview":"<button id=\"save\">Htmlonlytoken</button>","componentName":"SaveButton","source":null,"styles":"color: red;"}
+                ]});
+            }
             self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child',?2,0,?3,?3,?4)",params![id,role,at,payload.to_string()]).unwrap();
         }
         let run = json!({"id":"native-run","threadId":"child","ordinal":1,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"providerThreadId":null,"userMessageId":"native-user-message","rootNodeId":null,"activeAttemptId":null,"status":"completed","requestedAt":at,"startedAt":at,"completedAt":at,"checkpointId":null,"contextHandoffId":null});
@@ -141,6 +151,42 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
                 item["streaming"] = json!(false);
             }
             self.db.execute("INSERT INTO orchestration_v2_projection_turn_items VALUES(?1,'child',?2,'completed',?3,?4)",params![id,kind,at,item.to_string()]).unwrap();
+        }
+    }
+    /// T3 changes a row of each of its run, subagent and turn-item tables
+    /// for `child`, and nothing else of it.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn rewrite_runs_subagents_and_turn_items(&self) {
+        let at = "2026-11-08T11:00:00.000Z";
+        self.db.execute("UPDATE orchestration_v2_projection_runs SET completed_at=?1,payload_json=json_set(payload_json,'$.completedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_subagents SET updated_at=?1,payload_json=json_set(payload_json,'$.result','Rewrittentoken result.','$.updatedAt',?1) WHERE thread_id='child'",[at]).unwrap();
+        self.db.execute("UPDATE orchestration_v2_projection_turn_items SET updated_at=?1,payload_json=json_set(payload_json,'$.output','Rewrittentoken output.','$.updatedAt',?1) WHERE thread_id='child' AND type='command_execution'",[at]).unwrap();
+    }
+    /// T3's run, subagent and turn-item tables are gone.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn remove_runs_subagents_and_turn_items(&self) {
+        self.db.execute_batch("DROP TABLE orchestration_v2_projection_runs; DROP TABLE orchestration_v2_projection_subagents; DROP TABLE orchestration_v2_projection_turn_items;").unwrap();
+    }
+    /// T3's server writes two notifications into `child`: its report that a
+    /// background command finished, with the command's output, and a
+    /// delegated task's result whose own words open as such a report does.
+    #[allow(dead_code, reason = "used by the history scenarios")]
+    pub fn background_reports(&self) {
+        let at = "2026-11-08T10:30:00.000Z";
+        for (id, text, source) in [
+            (
+                "background-command-report",
+                "Background command completed (exit 0): make check\n\nOutput tail:\nShelloutputtoken printed",
+                json!({"kind":"background_command"}),
+            ),
+            (
+                "delegated-task-report",
+                "Background command completed: Delegatedresulttoken done.",
+                json!({"kind":"delegated_task","taskIds":["node-fixture"]}),
+            ),
+        ] {
+            let payload = json!({"id":id,"threadId":"child","runId":null,"nodeId":null,"role":"user","text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":"agent","creationSource":"server","notification":{"source":source,"outcome":"completed","summary":"Background work finished"}});
+            self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child','user',0,?2,?2,?3)",params![id,at,payload.to_string()]).unwrap();
         }
     }
     #[allow(

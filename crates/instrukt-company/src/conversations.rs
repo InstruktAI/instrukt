@@ -34,7 +34,7 @@ use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
 use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
-    AuthorKind, ConversationSource, RecordKind, Role, Scope, SourcePosition,
+    AuthorKind, ConversationSource, RecordKind, Role, SourcePosition,
 };
 use instrukt_runner::runtime::{
     DispatchError, Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, SendEvidence,
@@ -1404,7 +1404,7 @@ fn assignment(
 /// conversation yet, so everything its own thread comes to hold is read after
 /// it. Capturing it reads no native history.
 fn opening_position(source: &dyn ConversationSource) -> Result<SourcePosition, ConversationError> {
-    Ok(source.changed_since(None, Scope::Only(&[]))?.position)
+    Ok(source.changed_since(None, &[])?.position)
 }
 
 fn set_failure(
@@ -2331,7 +2331,7 @@ fn harvest(
     // not, neither delay nor fail its answers.
     let own = std::slice::from_ref(&session.id);
     loop {
-        let batch = source.changed_since(read_from.as_ref(), Scope::Only(own))?;
+        let batch = source.changed_since(read_from.as_ref(), own)?;
         let presence = batch.scoped_presence.unwrap_or(Presence::Present);
         if batch.missing.iter().any(|id| id == &session.id) {
             return Ok(Presence::Absent);
