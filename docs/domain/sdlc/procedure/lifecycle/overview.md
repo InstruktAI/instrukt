@@ -138,9 +138,9 @@ on configured human approval (`approvals.prd` / `approvals.task`) or while a
 live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
 so the runner does not re-dispatch a fresh turn on every tick.
 <!-- planned:reduce-worktree-disk-usage -->
-When parking `<slug>/work` on an idle wait after build output has already been
-created there (such as returning to a human approval gate after a kickback or
-placing an explicit hold), remove the regenerable build output created by this
+When a kickback to preparation leaves `<slug>/work` idle after build output has
+already been created there (such as returning to a human approval gate after the
+kickback), remove the regenerable build output created by this
 todo's work sessions and their delegates (`general/policy/shared-machine-resources`),
 leaving the clean committed tree, the todo branch and any published head intact,
 and record any removal that cannot complete as an owed obligation. This does not

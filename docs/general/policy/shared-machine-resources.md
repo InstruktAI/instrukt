@@ -22,7 +22,7 @@ visibility: 'public'
 <!-- planned:reduce-worktree-disk-usage -->
 - **Waiting work checkouts drop their build output.** When a todo's work
   checkout transitions into an idle wait — after its candidate is handed to
-  integration, or when the orchestrator parks or holds the todo after build
+  integration, or when a kickback to preparation leaves it idle after build
   output was created there — the session that owns the regenerable build output
   created there removes that output at the transition. The clean committed
   tree, the todo branch and any published head remain intact; if work later
@@ -61,9 +61,9 @@ moves on steals CPU and memory from every other agent and application on the
 host until someone hunts it down.
 
 <!-- planned:reduce-worktree-disk-usage -->
-Once a todo's work checkout hands off to integration or parks on an external
-wait, it sits idle for the full duration of downstream integration or the wait
-with no live build inside it. Keeping its regenerable output turns disk usage
+Once a todo's work checkout hands off to integration or a kickback to
+preparation leaves it idle, it sits idle for the full duration of downstream
+integration or the wait after the kickback with no live build inside it. Keeping its regenerable output turns disk usage
 into a function of every todo in flight rather than active builds, risking the
 machine's headroom floor. Dropping that output at the transition leaves
 committed work untouched and pays at most one rebuild if work returns.
