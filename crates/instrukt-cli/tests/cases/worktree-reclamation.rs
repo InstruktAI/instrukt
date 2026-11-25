@@ -162,6 +162,7 @@ fn the_runner_reclaims_declared_output_from_an_idle_worktree_only() {
     );
     let (finalizer, _) = attempt(&crew, "handed", "finalizer", "crew/procedure/finalize");
     stamp_as(&crew, &finalizer, &handed, "handed", &["--role-complete"]);
+    crew.tier_0_skip("handed");
     stamp_as(&crew, &finalizer, &handed, "handed", &["--finalize-ready"]);
 
     // Between its rounds: built, its review not yet started.
