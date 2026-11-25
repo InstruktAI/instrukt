@@ -442,14 +442,23 @@ impl Store {
         self.read(Vec::new(), |conn, path, project| {
             let sql = StateDbError::sqlite(path);
             let mut statement = conn
+                // Each arm starts from the listed values and reaches the
+                // matching rows by index; no other todo is visited.
                 .prepare_cached(
-                    "SELECT DISTINCT t.id FROM todos t
-                     LEFT JOIN session_bindings b ON b.todo_id = t.id
+                    "SELECT t.id FROM json_each(?3) AS r
+                     CROSS JOIN todos AS t ON t.branch = r.value
                      WHERE t.project = ?1
-                       AND (t.branch IN (SELECT value FROM json_each(?3))
-                            OR b.branch IN (SELECT value FROM json_each(?3))
-                            OR b.worktree IN (SELECT value FROM json_each(?2)))
-                     ORDER BY t.id",
+                     UNION
+                     SELECT t.id FROM json_each(?3) AS r
+                     CROSS JOIN session_bindings AS b ON b.branch = r.value
+                     CROSS JOIN todos AS t ON t.id = b.todo_id
+                     WHERE t.project = ?1
+                     UNION
+                     SELECT t.id FROM json_each(?2) AS r
+                     CROSS JOIN session_bindings AS b ON b.worktree = r.value
+                     CROSS JOIN todos AS t ON t.id = b.todo_id
+                     WHERE t.project = ?1
+                     ORDER BY 1",
                 )
                 .map_err(&sql)?;
             let ids = statement

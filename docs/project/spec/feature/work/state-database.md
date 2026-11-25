@@ -207,6 +207,14 @@ holds `thinking_level` to carry it as T3's `thought_level`.
 Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
 withdrawal whose working resources are being released. It starts empty.
 
+<!-- planned:runner-owned-workspace-cleanup -->
+Version 38 adds lookups of `session_bindings` by `worktree` and by `branch`,
+and of `todos` by `branch`, so the todos a computer's worktrees and work
+branches name are found without reading the rest of the record
+(`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
+table, column or row.
+<!-- /planned:runner-owned-workspace-cleanup -->
+
 ### Work tables
 
 Owned and written by work through its command contract. Reflection to
