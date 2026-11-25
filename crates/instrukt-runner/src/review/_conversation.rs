@@ -20,7 +20,7 @@ pub struct Message {
 pub enum ConversationHolder {
     /// The runtime's own conversation store.
     Runtime,
-    /// The history store's retained records of a session the runtime no
+    /// The history store's retained messages of a session the runtime no
     /// longer holds.
     History,
 }
@@ -62,7 +62,7 @@ fn messages(mut records: Vec<ConversationRecord>) -> Vec<Message> {
 
 /// `session`'s conversation: read from the selected runtime's conversation
 /// source for that one session, or, for a session that source no longer
-/// holds, from the records the history store retained of it. Both are read
+/// holds, from the messages the history store retained of it. Both are read
 /// without a lock and change nothing.
 pub fn conversation(home: &Home, env: &Env, session: &SessionRef) -> Conversation {
     let source = match crate::history::source(home, env) {
@@ -94,12 +94,18 @@ pub fn conversation(home: &Home, env: &Env, session: &SessionRef) -> Conversatio
             messages: messages(records),
         },
         ConversationHolder::History => {
-            match crate::history::retained_records(home, source.identity(), session.id.as_str()) {
-                Ok(Some(records)) if !records.is_empty() => Conversation::Read {
+            match crate::history::retained_messages(home, source.identity(), session.id.as_str()) {
+                Ok(Some(retained)) => Conversation::Read {
                     holder: ConversationHolder::History,
-                    messages: messages(records),
+                    messages: retained
+                        .into_iter()
+                        .map(|message| Message {
+                            role: message.role,
+                            text: message.text,
+                        })
+                        .collect(),
                 },
-                Ok(_) => Conversation::CannotRead(format!(
+                Ok(None) => Conversation::CannotRead(format!(
                     "neither the runtime nor the history store holds session {session}"
                 )),
                 Err(error) => Conversation::CannotRead(error.to_string()),

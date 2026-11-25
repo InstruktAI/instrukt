@@ -1,0 +1,77 @@
+-- Frozen input for the history store's version 2 migration: a version 1
+-- store as earlier builds left it, with a runtime conversation and its
+-- records of every kind, two TeleClaude mirrors, an imported conversation
+-- with searchable text only, and the store's bookkeeping.
+PRAGMA user_version=1;
+
+CREATE TABLE history_sources (
+ source TEXT PRIMARY KEY, position INTEGER, imported INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE history_conversations (
+ id INTEGER PRIMARY KEY, source TEXT NOT NULL, native_id TEXT NOT NULL, computer TEXT NOT NULL,
+ title TEXT NOT NULL, parent TEXT, aliases TEXT NOT NULL, document TEXT NOT NULL,
+ body TEXT NOT NULL, limitations TEXT NOT NULL, UNIQUE(source,native_id)
+);
+CREATE VIRTUAL TABLE history_fts USING fts5(title,body,content='history_conversations',content_rowid='id');
+CREATE TRIGGER history_insert AFTER INSERT ON history_conversations BEGIN
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+CREATE TRIGGER history_delete AFTER DELETE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+END;
+CREATE TRIGGER history_update AFTER UPDATE ON history_conversations BEGIN
+ INSERT INTO history_fts(history_fts,rowid,title,body) VALUES('delete',old.id,old.title,old.body);
+ INSERT INTO history_fts(rowid,title,body) VALUES(new.id,new.title,new.body);
+END;
+CREATE TABLE history_projection_records (
+ source TEXT NOT NULL, projection TEXT NOT NULL, native_id TEXT NOT NULL,
+ thread_id TEXT NOT NULL, updated_at TEXT NOT NULL, payload_json TEXT NOT NULL,
+ PRIMARY KEY(source,projection,native_id)
+);
+CREATE INDEX history_projection_threads ON history_projection_records(source,thread_id);
+CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEXT NOT NULL);
+CREATE TABLE history_move (
+ id INTEGER PRIMARY KEY CHECK(id=1),
+ state TEXT NOT NULL CHECK(state IN ('copying','removal_pending','complete')),
+ conversations INTEGER, records INTEGER
+);
+
+INSERT INTO history_conversations(id,source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(3,'t3:fixture','thread-a','computer-a','Runtimetitle thread','parent-a','["thread-a"]','{"messages":[{"id":"m-a","threadId":"thread-a","role":"assistant","text":"Latertoken follows.","createdAt":"2026-11-08T10:00:02.500Z","updatedAt":"2026-11-08T10:00:02.500Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"},{"id":"m-user","threadId":"thread-a","role":"user","text":"Userwordtoken asks.","createdAt":"2026-11-08T10:00:01.000Z","updatedAt":"2026-11-08T10:00:01.000Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"user","creationSource":"web"},{"id":"m-z","threadId":"thread-a","role":"assistant","text":"Answertoken replies.","createdAt":"2026-11-08T10:00:02.000Z","updatedAt":"2026-11-08T10:00:02.000Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"}],"runs":[{"id":"run-1","threadId":"thread-a","status":"completed","requestedAt":"2026-11-08T10:00:00.000Z","completedAt":"2026-11-08T10:00:00.000Z","userMessageId":"m-user"}],"subagents":[{"id":"sub-1","threadId":"thread-a","runId":"run-1","status":"completed","result":"Subagentonlytoken result.","updatedAt":"2026-11-08T10:00:00.000Z"}],"turnItems":[{"id":"item-0","threadId":"thread-a","runId":"run-1","type":"user_message","messageId":"m-user","ordinal":0,"status":"completed","text":"Userwordtoken asks.","updatedAt":"2026-11-08T10:00:00.000Z"},{"id":"item-1","threadId":"thread-a","runId":"run-1","type":"assistant_message","messageId":"m-z","ordinal":1,"status":"completed","streaming":false,"text":"Answertoken replies.","updatedAt":"2026-11-08T10:00:00.000Z"},{"id":"item-2","threadId":"thread-a","runId":"run-1","type":"command_execution","ordinal":2,"status":"completed","input":"Commandonlytoken run","output":"Outputonlytoken printed","updatedAt":"2026-11-08T10:00:00.000Z"},{"id":"item-3","threadId":"thread-a","runId":"run-1","type":"reasoning","ordinal":3,"status":"completed","streaming":false,"text":"Reasononlytoken thought.","updatedAt":"2026-11-08T10:00:00.000Z"}],"thread":{"id":"thread-a","projectId":"project","title":"Runtimetitle thread","lineage":{"parentThreadId":"parent-a","relationshipToParent":"subagent"},"createdAt":"2026-11-08T10:00:00.000Z","updatedAt":"2026-11-08T10:00:00.000Z","archivedAt":null,"deletedAt":null}}','Userwordtoken asks.
+
+Answertoken replies.
+
+Answertoken replies.
+
+Latertoken follows.
+
+Subagentonlytoken result.
+
+Userwordtoken asks.
+
+Answertoken replies.
+
+Commandonlytoken run
+
+Outputonlytoken printed
+
+Reasononlytoken thought.','["Only content retained by the source runtime is available."]');
+INSERT INTO history_conversations(id,source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(5,'teleclaude:mirrors','archive-a','old-computer','Transcripttitle archive',NULL,'["alias-a","archive-a","native-a"]','{"mirror":{"id":1,"computer":"old-computer","title":"Transcripttitle archive","conversation_text":"Transcripttoken said.","metadata":"{}","native_session_id":"native-a","source_identity":"alias-a","session":1,"project_path":"/project","timestamp_start":"2026-01-01T00:00:00Z","timestamp_end":null},"session":{"id":1,"session_id":"archive-a","initiator_session_id":null},"sources":[{"id":1,"mirror":1,"source_identity":"alias-a","native_session_id":"native-a","agent":"claude","transcript_path":"/gone/a","position":0,"archival_text":"Transcripttoken said.","messages":[{"source":1,"ordinal":0,"entry_index":0,"block_ordinal":0,"timestamp":"2026-01-01T00:00:01Z","role":"user","text":"Mirrormessagetoken asked."}]}],"source_revision":11}','Transcripttoken said.','["Legacy archive: only material retained by the TeleClaude mirror is available."]');
+INSERT INTO history_conversations(id,source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(8,'teleclaude:mirrors','mirror:2','old-computer','Sourcetitle archive',NULL,'["alias-b","native-b"]','{"mirror":{"id":2,"computer":"old-computer","title":"Sourcetitle archive","conversation_text":"","metadata":"{}","native_session_id":null,"source_identity":null,"session":null,"project_path":null,"timestamp_start":null,"timestamp_end":null},"session":null,"sources":[{"id":2,"mirror":2,"source_identity":"alias-b","native_session_id":"native-b","agent":"codex","transcript_path":"/gone/b","position":7,"archival_text":"Archivaltoken kept.","messages":[{"source":2,"ordinal":9,"entry_index":0,"block_ordinal":0,"timestamp":"2026-01-02T00:00:01Z","role":"user","text":"Sourcemessagetoken asked."},{"source":2,"ordinal":3,"entry_index":1,"block_ordinal":0,"timestamp":"2026-01-02T00:00:02Z","role":"assistant","text":""},{"source":2,"ordinal":4,"entry_index":2,"block_ordinal":0,"timestamp":"2026-01-02T00:00:03Z","role":"assistant"},{"source":2,"ordinal":5,"entry_index":3,"block_ordinal":0,"timestamp":"2026-01-02T00:00:04Z","role":"assistant","text":"Sourcereplytoken answered."}]}],"source_revision":11}','
+Archivaltoken kept.
+Sourcemessagetoken asked.
+
+Sourcereplytoken answered.','["Legacy archive: only material retained by the TeleClaude mirror is available."]');
+INSERT INTO history_conversations(id,source,native_id,computer,title,parent,aliases,document,body,limitations) VALUES(9,'teleclaude:retired','retired-session','old-computer','Othertitle import',NULL,'["retired-alias"]','{}','Othertoken remembered.','["Legacy archive: only material retained by the TeleClaude mirror is available."]');
+INSERT INTO history_projection_records VALUES('t3:fixture','conversation','thread-a','thread-a','2026-11-08T10:00:00Z','{"kind":"conversation","id":"thread-a","conversation_id":"thread-a","parent_id":"parent-a","run_id":null,"role":null,"title":"Runtimetitle thread","text":null,"created_at":"2026-11-08T10:00:00Z","updated_at":"2026-11-08T10:00:00Z","completed":false,"native":{"id":"thread-a","projectId":"project","title":"Runtimetitle thread","lineage":{"parentThreadId":"parent-a","relationshipToParent":"subagent"},"createdAt":"2026-11-08T10:00:00.000Z","updatedAt":"2026-11-08T10:00:00.000Z","archivedAt":null,"deletedAt":null}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','message','m-user','thread-a','2026-11-08T10:00:01Z','{"kind":"message","id":"m-user","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":"user","title":null,"text":"Userwordtoken asks.","created_at":"2026-11-08T10:00:01Z","updated_at":"2026-11-08T10:00:01Z","completed":true,"native":{"id":"m-user","threadId":"thread-a","role":"user","text":"Userwordtoken asks.","createdAt":"2026-11-08T10:00:01.000Z","updatedAt":"2026-11-08T10:00:01.000Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"user","creationSource":"web"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','message','m-z','thread-a','2026-11-08T10:00:02Z','{"kind":"message","id":"m-z","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":"assistant","title":null,"text":"Answertoken replies.\n\nAnswertoken replies.","created_at":"2026-11-08T10:00:02Z","updated_at":"2026-11-08T10:00:02Z","completed":true,"native":{"id":"m-z","threadId":"thread-a","role":"assistant","text":"Answertoken replies.","createdAt":"2026-11-08T10:00:02.000Z","updatedAt":"2026-11-08T10:00:02.000Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','message','m-a','thread-a','2026-11-08T10:00:02.5Z','{"kind":"message","id":"m-a","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":"assistant","title":null,"text":"Latertoken follows.","created_at":"2026-11-08T10:00:02.5Z","updated_at":"2026-11-08T10:00:02.5Z","completed":true,"native":{"id":"m-a","threadId":"thread-a","role":"assistant","text":"Latertoken follows.","createdAt":"2026-11-08T10:00:02.500Z","updatedAt":"2026-11-08T10:00:02.500Z","streaming":false,"runId":"run-1","nodeId":null,"attachments":[],"createdBy":"agent","creationSource":"provider"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','run','run-1','thread-a','2026-11-08T10:00:00Z','{"kind":"run","id":"run-1","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":null,"created_at":"2026-11-08T10:00:00Z","updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"run-1","threadId":"thread-a","status":"completed","requestedAt":"2026-11-08T10:00:00.000Z","completedAt":"2026-11-08T10:00:00.000Z","userMessageId":"m-user"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','subagent','sub-1','thread-a','2026-11-08T10:00:00Z','{"kind":"subagent","id":"sub-1","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":"Subagentonlytoken result.","created_at":null,"updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"sub-1","threadId":"thread-a","runId":"run-1","status":"completed","result":"Subagentonlytoken result.","updatedAt":"2026-11-08T10:00:00.000Z"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','turn_item','item-0','thread-a','2026-11-08T10:00:00Z','{"kind":"turn_item","id":"item-0","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":"Userwordtoken asks.","created_at":null,"updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"item-0","threadId":"thread-a","runId":"run-1","type":"user_message","messageId":"m-user","ordinal":0,"status":"completed","text":"Userwordtoken asks.","updatedAt":"2026-11-08T10:00:00.000Z"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','turn_item','item-1','thread-a','2026-11-08T10:00:00Z','{"kind":"turn_item","id":"item-1","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":"Answertoken replies.","created_at":null,"updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"item-1","threadId":"thread-a","runId":"run-1","type":"assistant_message","messageId":"m-z","ordinal":1,"status":"completed","streaming":false,"text":"Answertoken replies.","updatedAt":"2026-11-08T10:00:00.000Z"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','turn_item','item-2','thread-a','2026-11-08T10:00:00Z','{"kind":"turn_item","id":"item-2","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":"Commandonlytoken run\n\nOutputonlytoken printed","created_at":null,"updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"item-2","threadId":"thread-a","runId":"run-1","type":"command_execution","ordinal":2,"status":"completed","input":"Commandonlytoken run","output":"Outputonlytoken printed","updatedAt":"2026-11-08T10:00:00.000Z"}}');
+INSERT INTO history_projection_records VALUES('t3:fixture','turn_item','item-3','thread-a','2026-11-08T10:00:00Z','{"kind":"turn_item","id":"item-3","conversation_id":"thread-a","parent_id":null,"run_id":"run-1","role":null,"title":null,"text":"Reasononlytoken thought.","created_at":null,"updated_at":"2026-11-08T10:00:00Z","completed":true,"native":{"id":"item-3","threadId":"thread-a","runId":"run-1","type":"reasoning","ordinal":3,"status":"completed","streaming":false,"text":"Reasononlytoken thought.","updatedAt":"2026-11-08T10:00:00.000Z"}}');
+INSERT INTO history_source_positions VALUES('t3:fixture','{"version":2,"loaded":{},"observed":["thread-a"],"after":null}');
+INSERT INTO history_sources(source,position,imported) VALUES('teleclaude:mirrors',8,1),('teleclaude:retired',NULL,0);
+INSERT INTO history_move(id,state,conversations,records) VALUES(1,'complete',NULL,NULL);

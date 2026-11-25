@@ -194,15 +194,3 @@ pub trait ConversationSource: Send {
     /// running one has written nothing yet.
     fn latest_update(&self, thread: &SessionId) -> Result<Option<String>, SourceError>;
 }
-
-impl RecordKind {
-    pub(crate) fn name(self) -> &'static str {
-        match self {
-            Self::Conversation => "conversation",
-            Self::Message => "message",
-            Self::Run => "run",
-            Self::Subagent => "subagent",
-            Self::TurnItem => "turn_item",
-        }
-    }
-}

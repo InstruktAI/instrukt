@@ -1,5 +1,6 @@
 //! Retains source conversations locally and answers searches with explicit source failures.
 mod _db;
+mod _earlier;
 mod _fleet;
 mod _legacy;
 mod _projection;
@@ -144,8 +145,9 @@ pub struct Extraction {
     pub position: Value,
 }
 
-/// Catch up through T3's ordered state into the history store, under the
-/// history lock alone; the state database's writer lock spans no runtime I/O.
+/// Catch up through the runtime's text read into the history store, under
+/// the history lock alone; the state database's writer lock spans no
+/// runtime I/O.
 pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     let source = source(home, env)?;
     let mut db = _db::open(home)?;
@@ -153,17 +155,20 @@ pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
     let mut report = Extraction::default();
     loop {
         let started = std::time::Instant::now();
-        let batch =
-            source.changed_since(position.as_ref(), crate::runtime::conversations::Scope::All)?;
-        let changed = position.as_ref() != Some(&batch.position);
-        let loaded = _projection::apply(home, &mut db, source.identity(), &batch)?;
-        if changed || !batch.records.is_empty() {
-            tracing::debug!(event="history_extract_completed",source=source.identity(),loaded,position=?batch.position,duration_ms=started.elapsed().as_millis() as u64);
+        let crate::runtime::conversations::TextChanges {
+            conversations,
+            position: next,
+            has_more,
+        } = source.text_since(position.as_ref())?;
+        let changed = position.as_ref() != Some(&next);
+        let loaded = _projection::apply(home, &mut db, source.identity(), conversations, &next)?;
+        if changed || loaded > 0 {
+            tracing::debug!(event="history_extract_completed",source=source.identity(),loaded,position=?next,duration_ms=started.elapsed().as_millis() as u64);
         }
         report.loaded += loaded;
-        report.position = serde_json::to_value(&batch.position)?;
-        position = Some(batch.position);
-        if !batch.has_more {
+        report.position = serde_json::to_value(&next)?;
+        position = Some(next);
+        if !has_more {
             break;
         }
     }
@@ -257,21 +262,30 @@ pub(super) fn local_search(
     Ok(SearchResult { matches, failures })
 }
 
-/// Read the retained source document, including its original metadata and aliases.
+/// Read a retained conversation's document as its source gave it, rebuilt
+/// with every retained text in its place.
 pub fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, HistoryError> {
     _store::show(home, source, conversation)
 }
 
-/// The normalized records the history store retained of conversation
-/// `thread` from `source`, read without the history lock from a store that
-/// is opened read-only and migrated by nothing here; `None` when no current
-/// store exists.
-pub(crate) fn retained_records(
+/// One retained message that carries its author's role.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RetainedMessage {
+    pub role: crate::runtime::conversations::Role,
+    pub text: String,
+}
+
+/// The messages with a role the history store retained of conversation
+/// `thread` from `source`, in order, read without the history lock from a
+/// read-only snapshot that changes nothing on disk; a store at an earlier
+/// schema version is brought forward in that snapshot only. `None` when the
+/// store does not exist or has not retained the conversation.
+pub(crate) fn retained_messages(
     home: &Home,
     source: &str,
     thread: &str,
-) -> Result<Option<Vec<crate::runtime::conversations::ConversationRecord>>, HistoryError> {
-    _db::retained_records(home, source, thread)
+) -> Result<Option<Vec<RetainedMessage>>, HistoryError> {
+    _db::retained_messages(home, source, thread)
 }
 
 pub(super) fn source(
