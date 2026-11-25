@@ -463,6 +463,7 @@ fn finalize_ready_keeps_its_stamp_and_occurrence_through_a_publication_failure()
         &reviewer,
         &["--verdict", "approve", "--phase", "build_review"],
     );
+    crew.tier_0_skip("handoff");
     stamp(&finalizer, &["--finalize-ready"]);
     redis::cmd("ACL")
         .arg("SETUSER")

@@ -199,7 +199,7 @@ model/provider choice.
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
 | `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
-| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
+| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
 | `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
 | `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
 | `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
@@ -210,6 +210,9 @@ model/provider choice.
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
+
+`verifier` takes the reviewer roles' model `order` and `tier`
+(`project/instrukt/spec/feature/configuration/agent-selection`).
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role

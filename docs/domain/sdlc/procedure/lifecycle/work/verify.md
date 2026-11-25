@@ -20,29 +20,37 @@ parameters:
 ## Goal
 
 Independently verify that the committed candidate HEAD works on its real user
-or runtime surface without relying on builder claims, and return sanitized,
-publishable `verification-plan` and `verification-findings` payloads for
-`todo-orchestrator` to persist on the todo record.
+or runtime surface without relying on builder claims, write sanitized,
+publishable `verification-plan` and `verification-findings` artifacts to the
+todo record, and record the verification disposition they support for that
+exact HEAD.
 
 ## Preconditions
 
 - The slug and clean candidate HEAD SHA were supplied by `todo-orchestrator`.
-- **Workspace isolation and access boundaries:** `verifier` never shares
-  `todo-orchestrator`'s admitted `<slug>/work` worktree and is not dispatched
-  as a `runtime.dispatch` repository child of `<slug>/work`; instead,
-  `todo-orchestrator` starts `verifier` on the same host in a separate one-off
-  worktree session branched from the exact candidate HEAD SHA
-  (`runtime.start_thread` in `sdlc/procedure/lifecycle/overview`), where both
-  the local todo record and candidate-targeted doc retrieval remain readable.
-  Structurally, this separate one-off worktree guarantees zero interference
-  with `<slug>/work`; leaving repository files and the todo ledger untouched is
-  prose-enforced by this procedure until dedicated `verifier` role grants and
-  native verification-phase stamping exist.
+- **Placement:** `todo-orchestrator` reserved and bound this `verifier`
+  attempt in `<slug>/work` after `build-reviewer` released, and you work there
+  as a shared child at the candidate HEAD the attempt captured. Your session is
+  distinct from the orchestrator and from every writer of the change, which is
+  what admits your `pass`, `fail` or `blocked`
+  (`general/principle/verification-independence`). Your disposition is
+  admitted only over a clean tree at that captured HEAD: build output the
+  repository ignores leaves it clean, and slots, raw evidence and every other
+  run file live outside the worktree (Step 3). Recording the disposition
+  releases the attempt (Step 6).
 - Approved intent (`input`, plus `prd` for a feature or settled `diagnosis` for
   a bug) is readable by artifact name via
   `instrukt todo artifacts read {slug} <name>`.
 
 ## Steps
+
+Every exit ends through Step 6, because your attempt holds `<slug>/work`
+until its disposition is recorded. Wherever a step below returns
+`Verdict: BLOCKED` or `Verdict: FAIL`, stop the run there, tear down what it
+started (Step 6, item 1), write `verification-findings` carrying that verdict
+and what was verified honestly (items 2 and 3), record
+`--verification blocked` or `--verification fail` (item 4), and report it
+(item 5).
 
 ### Project extension points
 
@@ -150,10 +158,11 @@ Read in full:
 Apply the archetype matrix, execution-host rules, and dynamic tiering of
 `sdlc/policy/live-verification`:
 
-- **Tier 0 (no live run warranted):** return a concise Tier 0
-  `verification-findings` payload citing the exact candidate HEAD SHA, reason,
-  and `Verdict: TIER_0_SKIP`, and stop.
-- **Tier 1 / Tier 2:** compose the `verification-plan` payload naming:
+- **Tier 0 (no live run warranted):** write a concise Tier 0
+  `verification-findings` citing the exact candidate HEAD SHA, reason, and
+  `Verdict: TIER_0_SKIP`, record the `tier_0_skip` disposition and report it
+  (Step 6, items 3 to 5), and stop.
+- **Tier 1 / Tier 2:** compose the `verification-plan` you write in Step 6, naming:
   - exact candidate HEAD SHA and selected tier (`Tier 1` or `Tier 2`);
   - cheapest honest oracle(s), real surface(s), and execution host (`ci` or
     `local`) from Layer 1 or the archetype matrix;
@@ -296,18 +305,22 @@ Select execution by archetype and Layer 1 `execution_host`:
   explicit local-stack override):**
   - Confirm ≥20 GiB free disk space before building binaries or containers
     (`general/policy/shared-machine-resources`).
-  - Boot the archetype's exact isolation primitive inside this isolated
-    checkout (for Compose stacks, pass
-    `-f verification/docker-compose.verify.yml` on both startup and teardown:
-    `docker compose -p verify-<slot> -f verification/docker-compose.verify.yml up -d`;
-    for CLI/daemon stacks, build and invoke the candidate binary path under
-    isolated temp homes honoring Layer 1 and `sdlc/policy/testing` on inheriting the home and isolating application
-    roots; for
-    native mobile/ERP hosts, boot the simulator or ephemeral tenant).
-  - Run deterministic seed shortcuts to reach precondition state, and register
-    guaranteed cleanup on both normal completion and error so every spawned
-    slot, process group, container, volume, and ephemeral temp directory is
-    removed before exit (`general/policy/shared-machine-resources`).
+  - Hold each slot — its isolated roots, ports, data and the Driver's raw
+    evidence location — in a temporary location outside the worktree that the
+    project's own test harness or its language's managed temporary-directory
+    facility creates and removes when the process holding it ends, following
+    the slot recipe Layer 1 names. Ending that process is the slot's teardown,
+    so the run never deletes a slot itself: a shell deletion trap stalls an
+    unattended session on a destructive-command approval.
+  - Boot the archetype's exact isolation primitive in that slot through
+    Layer 1's boot entrypoint (a container stack under its declared project
+    name and file on both boot and teardown; the candidate binary under
+    isolated temp homes for CLI/daemon stacks, honoring Layer 1 and
+    `sdlc/policy/testing` on inheriting the home and isolating application
+    roots; or a native simulator or ephemeral tenant).
+  - Run deterministic seed shortcuts to reach precondition state, and start
+    every process the run spawns in a tracked process group that is reaped on
+    both normal completion and error (`general/policy/shared-machine-resources`).
 
 ### 4. Driver — execute blind on the real surface
 
@@ -324,8 +337,9 @@ runs, or as fresh parallel subagents across isolated local slots per
   an authorized non-public evidence surface (`sdlc/policy/live-verification`
   publication boundary — private-repo CI artifacts, private authorized storage,
   the ephemeral CI VM prior to in-job Checker audit on public repos, or the
-  local ephemeral temp directory outside Git), and report both goal pass/fail
-  and an unprompted anomaly list of anything unexpected, slow, or broken.
+  local slot's managed temporary location from Step 3), and report both goal
+  pass/fail and an unprompted anomaly list of anything unexpected, slow, or
+  broken.
 
 Omit source code, repository file paths, git diffs, and implementation hints
 from the Driver brief (`sdlc/policy/live-verification`).
@@ -377,30 +391,44 @@ intent, and any firing Layer 2 triggers:
      reproduction steps for `deferrer` / `bug` intake, keeping this todo's
      scope bounded.
 
-### 6. Tear down and return sanitized payloads
+### 6. Tear down, record findings and the disposition
 
-1. For local runs, tear down every spawned verification slot, container,
-   volume, process group, and ephemeral temp evidence directory (for Compose:
-   `docker compose -p verify-<slot> -f verification/docker-compose.verify.yml down -v`)
-   and confirm zero orphans remain.
+1. For local runs, end each slot as Layer 1's recipe names: stop every process
+   group the run spawned (for a container stack, its declared teardown) and the
+   process holding the slot's managed temporary location, which removes the
+   slot and its raw evidence with it. Confirm zero orphaned processes remain
+   and that `git status --porcelain` in `<slug>/work` prints nothing.
 2. Enforce the publication boundary (`sdlc/policy/live-verification`,
    `sdlc/policy/security-awareness`): strip machine-local absolute paths, raw
    boot/environment dumps, unredacted payloads/headers, and sandbox credentials
-   from every payload returned for persistence or uploaded to a public CI
-   artifact.
-3. Return the publishable `verification-plan` payload (for Tier 1/2 runs) and
-   the publishable `verification-findings` payload in turn output using the
-   report format below so `todo-orchestrator` persists both verbatim via
-   `instrukt todo artifacts write`.
+   from every artifact you write and anything uploaded to a public CI
+   artifact. Where a CI-hosted run retained raw evidence, the findings name the
+   authorized home that holds it.
+3. Write the publishable `verification-plan` (for Tier 1/2 runs) and
+   `verification-findings` in the report format below with
+   `instrukt todo artifacts write {slug} verification-plan '<content>'` and
+   `instrukt todo artifacts write {slug} verification-findings '<content>'`.
+4. From `<slug>/work` at the captured HEAD, record the disposition matching
+   the report's `Verdict:` line:
+   `instrukt todo stamp {slug} --verification pass|fail|blocked|tier_0_skip`.
+   It binds that HEAD and the `verification-findings` version you just wrote,
+   and releases your attempt; an attempt records one disposition. A refusal
+   names what it lacks — a clean tree, the captured HEAD, a findings report —
+   so restore that and record again, or report the refusal to
+   `todo-orchestrator`.
+5. Report the candidate SHA, the recorded disposition and any pre-existing
+   observations to `todo-orchestrator`.
 
 ## Outputs
 
-- Sanitized, publishable `verification-plan` payload (for Tier 1/2 runs).
-- Sanitized, publishable `verification-findings` payload bound in its text to
+- Sanitized, publishable `verification-plan` artifact (for Tier 1/2 runs).
+- Sanitized, publishable `verification-findings` artifact bound in its text to
   the exact candidate HEAD SHA with verdict (`PASS | FAIL | BLOCKED | TIER_0_SKIP`),
   missing extension-point fills (if any), fired Layer 2 triggers, authorized
   evidence references/summaries, Driver honesty confirmation, actionable
   blocking defect records (when `FAIL`), and pre-existing observations.
+- A `--verification` disposition stamp bound to that exact HEAD and that
+  `verification-findings` version, which released this `verifier` attempt.
 
 ### Report format
 
@@ -440,9 +468,10 @@ Verdict: PASS | FAIL | BLOCKED | TIER_0_SKIP
 ## Recovery
 
 - If a verification slot fails to boot due to a candidate defect (broken
-  migration, crash on start, missing env wiring), record a sanitized failure
-  summary as a structured blocking defect (`Verdict: FAIL`) and tear down
-  cleanly.
+  migration, crash on start, missing env wiring), tear down what the run
+  started, then write `verification-findings` with the sanitized failure
+  summary as a structured blocking defect (`Verdict: FAIL`) and record
+  `--verification fail` (Step 6).
 - If `<canonical-ref>` or its Git history lookup fails, the CI host's
   authoritative default branch cannot be verified or disagrees with
   `<default-branch>`, the candidate SHA is unpublished for a CI-hosted run, the
@@ -450,9 +479,14 @@ Verdict: PASS | FAIL | BLOCKED | TIER_0_SKIP
   `<canonical-ref>`, detached post-merge publication lags behind
   `<canonical-ref>` on a required fill, a required substrate fill or workflow is
   missing, CI/host tooling is unavailable, or a required external credential is
-  unprovisioned, record the exact blocker and what was verified honestly with
-  `Verdict: BLOCKED` — never substituting mocked fallbacks or emitting `PASS` /
-  `TIER_0_SKIP`.
+  unprovisioned, tear down what the run started, write `verification-findings`
+  naming the exact blocker and what was verified honestly with
+  `Verdict: BLOCKED`, and record `--verification blocked` (Step 6) — never
+  substituting mocked fallbacks or recording `pass` or `tier_0_skip`.
+- If recording the disposition is refused, the refusal names what it lacks:
+  restore a clean tree at the captured HEAD or the missing findings report and
+  record again; when that is not yours to restore, report the refusal to
+  `todo-orchestrator`, which resolves the attempt.
 
 ## See Also
 

@@ -21,7 +21,7 @@ use crate::fixtures::work::{Project, REPOSITORY, stdout};
 
 /// The flavor's procedures: path below `procedure/`, and the role each
 /// declares.
-const PROCEDURES: [(&str, &str); 13] = [
+const PROCEDURES: [(&str, &str); 14] = [
     ("todo-lead", "todo-lead"),
     ("review-commits", "commit-reviewer"),
     ("intake", "intaker"),
@@ -31,6 +31,7 @@ const PROCEDURES: [(&str, &str); 13] = [
     ("build", "builder"),
     ("fix", "fixer"),
     ("review-build", "build-reviewer"),
+    ("verify", "verifier"),
     ("deferrals", "deferrer"),
     ("finalize", "finalizer"),
     ("drift-analyze", "drift-analyzer"),
@@ -51,6 +52,7 @@ roles:
   - builder
   - fixer
   - build-reviewer
+  - verifier
   - deferrer
   - finalizer
   - drift-analyzer
@@ -307,5 +309,48 @@ impl Crew {
         let mut all = vec!["stamp", slug];
         all.extend_from_slice(args);
         self.todo(all);
+    }
+
+    /// The orchestrator's Tier 0 skip of `slug`'s candidate: a
+    /// `verification-findings` report, and the record-only disposition at
+    /// the clean head of its shared worktree.
+    pub fn tier_0_skip(&self, slug: &str) {
+        self.write(
+            slug,
+            "verification-findings",
+            "Tier 0: deterministic change covered by compiler and tests.",
+        );
+        self.todo_in(
+            &self.workspace(slug),
+            ["stamp", slug, "--verification", "tier_0_skip"],
+        );
+    }
+
+    /// A verifier child of `slug` that writes its `verification-findings`
+    /// report and records `disposition` at the candidate head, releasing
+    /// its attempt; its assignment.
+    pub fn verified(&self, slug: &str, disposition: &str) -> serde_json::Value {
+        let verifier = self.worker(slug, "verifier", Some("crew/procedure/verify"));
+        let path = Path::new(verifier["worktree"].as_str().unwrap());
+        let session = verifier["session"]
+            .as_str()
+            .unwrap()
+            .strip_prefix("t3:")
+            .unwrap();
+        let report = format!("Live run of the candidate: {disposition}.");
+        for args in [
+            &["artifacts", "write", slug, "verification-findings", &report][..],
+            &["stamp", slug, "--verification", disposition],
+        ] {
+            self.project
+                .env
+                .instrukt(path)
+                .env("T3CODE_THREAD_ID", session)
+                .arg("todo")
+                .args(args)
+                .assert()
+                .success();
+        }
+        verifier
     }
 }

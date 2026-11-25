@@ -8,7 +8,7 @@ description: Reviews, approvals and drift judgments bind the evidence they asses
 The currency contract determines which recorded decisions still apply to
 current work. It supplies facts to the workflow; it neither classifies meaning
 in code nor stores a workflow phase. It governs preparation artifacts, build
-review evidence and drift settlement.
+review evidence, verification dispositions and drift settlement.
 
 ## Canonical fields
 
@@ -33,6 +33,14 @@ distinguishes:
 Both approval and changes-requested verdicts must have current bindings to
 route the work. An undetermined binding is neither an approval nor a
 revocation. These are facts for the configured flow, not hidden phase changes.
+
+A verification disposition binds the exact candidate commit and the findings
+digest (`project/instrukt/spec/feature/work/stamps`). Only the latest
+disposition recorded for the todo can be current, and it is current only while
+that commit is the current worktree head and the `verification-findings`
+report is unchanged. A later commit, a clean upstream merge included, or a
+rewritten report leaves no disposition current until one is recorded for the
+new head and report.
 
 ### Drift evidence
 

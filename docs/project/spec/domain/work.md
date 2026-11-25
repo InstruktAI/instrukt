@@ -37,6 +37,12 @@ runner owns dispatch, and the configured runtime owns conversations.
 : The first non-author recipient's recorded check that an intent version
   faithfully reflects its originating conversation.
 
+**Verification disposition**
+: A stamp recording what is established about a candidate commit's live
+  behavior — pass, fail, blocked, Tier 0 skip or hotfix deferral — bound to
+  that commit and its `verification-findings` report; workflow owns who may
+  record it and what handoff requires of it.
+
 **Prerequisite**
 : Another project todo whose evidence or delivery gates a dependent's pickup.
 
@@ -124,7 +130,8 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Published contracts:** the `instrukt todo` record and artifact surfaces,
   `instrukt todo update <slug> --unclaim` for releasing the execution claim,
   `instrukt todo deliver <slug> --commit <sha>`, `instrukt todo stamp <slug> --build-started`,
-  `--finalize-ready`, verdict stamps and `--prd-approved` / `--task-approved`
+  `--finalize-ready`, verdict stamps, verification disposition stamps
+  (`--verification`) and `--prd-approved` / `--task-approved`
   with `--by human|peer [--session <runtime:id>]`; evidence read capabilities for workflow, and
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
