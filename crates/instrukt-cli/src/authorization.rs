@@ -23,10 +23,8 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
     let Some(session) = config.caller(&env)? else {
         return Ok(None);
     };
-    // Admission precedes every command, read-only ones included: it reads
-    // the recorded assignment without migrating the state database.
     let assignment = instrukt_runner::assignments::resolve(
-        &inspection,
+        &ctx.home,
         &session,
         instrukt_todos::work::recorded_assignment,
         instrukt_company::conversations::conversation_assignment,
@@ -121,6 +119,16 @@ pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
         ["docs", "render"] | ["hooks", "run" | "worker" | "status"]
+    )
+}
+
+/// The documentation reads: they inspect the state database, so an older
+/// one is read through its migrated in-memory image and the file stays as
+/// found (`project/instrukt/spec/feature/work/state-database`).
+pub fn state_inspection(matches: &ArgMatches) -> bool {
+    matches!(
+        command_path(matches).0.as_slice(),
+        ["docs", "get" | "index" | "schema" | "validate"]
     )
 }
 
