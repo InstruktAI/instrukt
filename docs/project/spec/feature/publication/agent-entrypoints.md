@@ -5,6 +5,7 @@ description: Rendered agent instructions — a repository's rendered `AGENTS.md`
 
 ## What it is
 
+<!-- planned-change:native-company-skill-rendering -->
 Agents receive instrukt's instructions through files their programs already
 load. A repository carries at most one rendered instruction file, the
 `AGENTS.md` at its root: instrukt renders it at each commit from what the
@@ -22,6 +23,31 @@ makes a runtime load `AGENTS.md` files. Every file instrukt renders is its
 own: it opens with the generated line, is written whole each time, whatever it
 held, and no record is kept of what was written. There is no master file and
 there are no addenda: each rendering has one source, an `index.yaml`.
+<!-- change:native-company-skill-rendering -->
+Agents receive instrukt's instructions through files their programs already
+load. A repository carries at most one rendered instruction file, the
+`AGENTS.md` at its root: instrukt renders it at each commit from what the
+commit holds and stages it into it, so every checkout carries it — on a
+computer without instrukt, in a linked worktree, and in a cloud agent's clone.
+A project's root `AGENTS.md` is the selection in `docs/project/index.yaml`; a
+company home's `AGENTS.md` is the selection its `docs/index.yaml` makes from
+the company's own documents. No instruction file below a repository's root is
+rendered. A company's repository also carries the company's plugin, which
+instrukt renders from the same index when asked and which no agent program
+loads from a checkout
+(`project/instrukt/spec/feature/publication/company-plugin`).
+The project that owns `docs/general/` also renders a user-scope global file
+for each agent runtime the user has configured, found by asking the selected
+runtime: the always-on `general` content where a native loader is
+established, one line per on-demand domain with the command that loads it,
+and that runtime's own `agents` snippets. It sets the one settings key that
+makes a runtime load `AGENTS.md` files. Every instruction file instrukt
+renders is its own: it opens with the generated line, is written whole each
+time, whatever it held, and no record is kept of what was written. There is no
+master file and there are no addenda: each rendering has one source, an
+`index.yaml`.
+<!-- /planned-change:native-company-skill-rendering -->
+
 
 ## Canonical fields
 
