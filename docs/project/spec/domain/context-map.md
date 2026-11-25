@@ -129,7 +129,7 @@ Thread retention adds these crossings; its contract is
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
-| work → runner | Customer / Supplier | The native sessions bound to a project's todos that have not reached a terminal outcome, delivered or withdrawn |
+| work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
 <!-- /planned:archive-finished-threads -->
 
 Workflow and runner coordinate integration without making the workflow engine

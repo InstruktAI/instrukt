@@ -380,27 +380,34 @@ project switches on. The contract is
 A pass reads, for each such project, the finished threads the selected runtime
 lists for it through the adapter
 (`project/instrukt/spec/feature/runner/session-continuity`, Adapter
-primitives). It keeps every thread a current standing-responsibility binding
-names and every thread work reports bound to one of the project's todos
-without a terminal outcome. A project whose listing or whose work answer
-cannot be read in a pass is left whole for a later pass: nothing is archived
-on a partial answer. Of the remaining eligible threads across projects, the
-pass archives the longest quiet first, up to its bound, each only while the
-adapter finds the observation it was chosen from still holds.
+primitives). It keeps every thread a standing responsibility holds — the
+session of its current binding, of its standing runtime binding, or of its
+manual reservation, observed or bound — and every thread work associates with
+one of the project's todos without a terminal outcome. When the standing
+bindings or work's answers cannot be read, the pass archives nothing. A
+project whose listing or whose work answer cannot be read in a pass is left
+whole for a later pass: nothing is archived on a partial answer. Of the
+remaining eligible threads across projects, the pass attempts the longest
+quiet first, up to its bound on archive attempts whatever their outcome, each
+archived only while the adapter finds the observation it was chosen from still
+holds.
 
 No pickup, event reaction or command waits on a pass. In `instrukt run` it
 runs on a thread of its own, started after a wake once the one an earlier wake
 started has ended; in `instrukt tick` it runs after the tick has released the
 runner and runtime-invocation locks, before the tick returns. Passes that
 overlap converge, because archiving an archived thread counts as done. A pass
-keeps no state: it reads the window from the admitted configuration and
-eligibility from the runtime, work and the runner's standing bindings every
-time. Each archive, each failed archive with its cause, and each project a
-pass left for later with its cause, are structured log events.
+keeps no durable state: it reads the window from the admitted configuration
+and eligibility from the runtime, work and the runner's standing bindings
+every time. Each archive is a structured log event. A failed archive, a
+finished thread whose latest activity the runtime does not report, a project
+left for later and a pass that archived nothing for want of an answer
+are logged with their cause when that cause appears or changes for its thread,
+project or pass, as worktree reclamation reports what stays owed
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
-The window adds no wake-up demand to `instrukt install`
-(`project/instrukt/spec/feature/runner/task-timing`): retention runs where the
-runner already runs.
+Retention runs where the runner already runs: the window adds no wake-up
+demand (`project/instrukt/spec/feature/runner/module-installation`).
 <!-- /planned:archive-finished-threads -->
 
 ### Event naming and producer declarations
@@ -592,8 +599,8 @@ and work branch (`project/instrukt/spec/domain/context-map`).
 <!-- planned:archive-finished-threads -->
 For thread retention the runner asks its suppliers and derives none of their
 answers: configuration supplies the computer's admitted retention window, and
-work the native sessions bound to a project's todos that have not reached a
-terminal outcome. The runtime adapter lists finished threads and archives them
+work the native sessions bound to, or holding the execution claim of, a
+project's todos that have not reached a terminal outcome. The runtime adapter lists finished threads and archives them
 (`project/instrukt/spec/domain/context-map`).
 <!-- /planned:archive-finished-threads -->
 

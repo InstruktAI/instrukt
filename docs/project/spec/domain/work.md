@@ -344,9 +344,12 @@ owning design snippet or decision record is declared.
   when it asks.
 <!-- planned:archive-finished-threads -->
 - **Work → runner (thread retention)** — customer-supplier. Work answers which
-  native sessions its session bindings hold for a project's todos that have not
-  reached a terminal outcome, delivered or withdrawn, whatever the state of
-  each role attempt; the runner keeps those threads
-  (`project/instrukt/spec/feature/runner/thread-retention`). Work owns which
-  outcomes are terminal; the runner owns what it keeps.
+  native sessions it associates with a project's todos that have not reached a
+  terminal outcome, delivered or withdrawn: the sessions its session bindings
+  hold, whatever the state of each role attempt, and the session holding each
+  such todo's execution claim. It answers from its local record, with no
+  provider call and no write, whether or not the project's code is on GitHub;
+  a project with no local record has no such sessions. The runner keeps those
+  threads (`project/instrukt/spec/feature/runner/thread-retention`). Work owns
+  which outcomes are terminal; the runner owns what it keeps.
 <!-- /planned:archive-finished-threads -->

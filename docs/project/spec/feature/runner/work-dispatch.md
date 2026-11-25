@@ -43,9 +43,9 @@ Whether the runner considers the project, and its canonical checkout
 synchronization (the `main` fast-forward that feeds the blueprint), still follow
 its switches; its other work is unaffected.
 <!-- planned:archive-finished-threads -->
-A machine-layer finding at `runner.archive_finished_after` likewise withholds
-only thread retention: the layer is admitted with the window off
-(`project/instrukt/spec/feature/configuration/layered-configuration`).
+A machine layer whose retention window the selected runtime cannot carry is
+admitted with thread retention withheld, as
+`project/instrukt/spec/feature/configuration/layered-configuration` decides.
 <!-- /planned:archive-finished-threads -->
 No part
 of the runner reads those files on its own
@@ -100,8 +100,15 @@ deleting it orphans this computer's live claims until they are released. On that
 computer the holder is a session bound to the todo, or the session that claimed
 it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
+<!-- planned-change:archive-finished-threads -->
 it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup.
+<!-- change:archive-finished-threads -->
+it. The dispatcher records the handoff and retains conversations needed for
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
+<!-- /planned-change:archive-finished-threads -->
 Every tick also polls GitHub for the todos this computer has an interest in,
 with conditional requests: the todos it holds claims on, one pickup listing per
 project with `todos` on, and the prerequisites its own work is blocked on

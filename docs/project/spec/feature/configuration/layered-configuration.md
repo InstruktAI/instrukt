@@ -389,11 +389,12 @@ with `--global` answers from the global layer alone. Writes address one layer
   would set it so, or choose such a runtime while it is set, is refused with
   the same naming.
 
-A finding at `runner.archive_finished_after` withholds only thread retention:
-wherever the machine layer is admitted, the layer is admitted with the window
-off and the finding is reported with the others, while everything else it
-admits runs unchanged (`project/instrukt/spec/feature/runner/work-dispatch`,
-Admitted configuration).
+That capability finding withholds only thread retention: wherever the
+machine layer is admitted, a layer whose only findings are this one is
+admitted with the window off, the finding is reported with the others, and
+everything else the layer admits runs unchanged. Every other finding at
+`runner.archive_finished_after`, a value outside its shape among them, is a
+finding of the machine layer like any other.
 <!-- /planned:archive-finished-threads -->
 
 Every finding names the document and key; the exit status is non-zero when
@@ -511,7 +512,7 @@ And the configuration is unchanged
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 <!-- planned:archive-finished-threads -->
-| `runner.archive_finished_after` | a positive whole number followed by `s`, `m`, `h`, `d` or `w` (as `7d` or `24h`), or `off` | `off`: no thread is archived (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `runner.archive_finished_after` | a whole number from 1 followed by `s`, `m`, `h`, `d` or `w` (as `7d` or `24h`), naming a span instrukt can represent, or `off` | `off`: no thread is archived (`project/instrukt/spec/feature/runner/thread-retention`). |
 <!-- /planned:archive-finished-threads -->
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |

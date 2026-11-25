@@ -17,8 +17,15 @@ conversation reads, current-thread listing, status inspection and steering.
 Only a runtime capability absent natively may use an explicit adapter fallback.
 Native child reports and endings reach the parent through the runtime, without
 an instruction, instrukt child observation or a second parent wake.
+<!-- planned-change:archive-finished-threads -->
 The runtime owns lifecycle, input delivery, restart, revival, handover,
 transcripts and cleanup. instrukt owns its work facts, events and schedules.
+<!-- change:archive-finished-threads -->
+The runtime owns lifecycle, input delivery, restart, revival, handover,
+transcripts and cleanup, and performs the archives instrukt's thread retention
+decides (`project/instrukt/spec/feature/runner/thread-retention`). instrukt
+owns its work facts, events and schedules.
+<!-- /planned-change:archive-finished-threads -->
 
 ## Canonical fields
 
@@ -201,8 +208,7 @@ unavailable on T3's published CLI; instrukt does not rebuild it.
 <!-- planned:archive-finished-threads -->
 A retention window set while the selected runtime lacks thread archiving is
 refused and reported the same way, naming the runtime and the missing
-capability. A finding at the window withholds only thread retention
-(`project/instrukt/spec/feature/configuration/layered-configuration`).
+capability.
 <!-- /planned:archive-finished-threads -->
 
 ### Start keys and locks
@@ -477,8 +483,8 @@ instruction prose is a separate configuration surface.
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 <!-- planned:archive-finished-threads -->
-| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet excludes the `running` and `needs-input` statuses below, `snoozed`, `blockedOnThreadWait` and a non-empty `pendingBackgroundTasks`. Pinned is `pinned`. Latest activity is the latest of `updatedAt`, `settledAt` and `lastVisitedAt`: T3 records a person opening a thread only in `lastVisitedAt`, leaves `updatedAt` unchanged, and exposes it only in its projection database, which the adapter reads read-only as for the linked-thread source. A listed thread without a projection row is not reported finished. |
-| Archive | Re-reads the thread's projection row (archive and deletion marks, settlement, pin, snooze, `updatedAt`, `lastVisitedAt`) with its active runs and pending requests, and reports changed unless the observation still holds. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, through the same session-token path as sends. T3's refusal that the thread is already archived is reported as already archived. |
+| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed`, `blockedOnThreadWait` false and `pendingBackgroundTasks` empty; any other status, `unknown` included, is not quiet, and a missing or malformed field among these is not quiet. Pinned is `pinned`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds, recorded at most once per ten minutes), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned with unknown latest activity. |
+| Archive | Re-reads the projection: the thread row present with no `archivedAt` or `deletedAt`, `settledOverride` `settled` with `settledAt`, no `pinnedAt`, no `snoozedUntil` later than now, and no `updatedAt` or `opens.openedAt` later than observed; no run of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `rolled_back`; no runtime request of the thread `pending`; and no delegated task of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `idle`. Anything else, an unreadable table among them, reports changed. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, over the scoped-token connection runner-owned queued input uses, with a token issued and revoked for that command. T3's refusal that the thread is already archived is reported as already archived. |
 <!-- /planned:archive-finished-threads -->
 
 T3 project listing includes settled threads and supplies no server-side time
