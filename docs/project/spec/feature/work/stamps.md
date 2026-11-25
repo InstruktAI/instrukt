@@ -250,8 +250,8 @@ what finalize readiness requires of it, is workflow's rule in
 `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 The raw evidence a disposition rests on is part of neither the stamp nor the
-reflected report. Where it is kept is
-`project/instrukt/spec/feature/work/verification-evidence`.
+reflected report, and instrukt keeps no store of it. Where a run may keep it is
+the publication boundary of `sdlc/policy/live-verification`.
 <!-- /planned:verification-stamp-and-evidence-store -->
 
 ## Use cases
