@@ -52,9 +52,9 @@ env:
 #   under its own name.
 # - `fmt, clippy, test (ubuntu-latest)` is the aggregate. It always runs, also
 #   on a cancelled run, and none of its steps carries a condition.
-# - The Linux build job and the shard job carry no required name and skip
-#   themselves, as jobs, when the classifier deselected them, so they start no
-#   runner. The required platform jobs, the aggregate and
+# - The Linux build job, the archive job and the shard job carry no required
+#   name and skip themselves, as jobs, when the classifier deselected them, so
+#   they start no runner. The required platform jobs, the aggregate and
 #   `fmt, clippy, test (macos-latest)`, still start then, as the rows above say.
 jobs:
   changes:
@@ -105,9 +105,11 @@ jobs:
 
   # Builds once on Linux and runs the OS-independent checks once: every check
   # of .pre-commit-config.yaml over every file, use-case coverage, the
-  # committed configuration and the instruction files; where Rust is selected, also clippy, the test archive
-  # the shards run, and the doctests (scripts/ci-ubuntu-build.sh). Its last
-  # step writes the completion record the aggregate requires.
+  # committed configuration and the instruction files; where Rust is selected,
+  # also clippy and the doctests (scripts/ci-ubuntu-build.sh). The test archive
+  # the shards run is built by the archive job, so the shards do not wait for
+  # these checks. Its last step writes the completion record the aggregate
+  # requires.
   ubuntu-build:
     name: build ubuntu
     needs: changes
@@ -129,10 +131,6 @@ jobs:
           version: ${{ steps.test-tools.outputs.UV_VERSION }}
       - name: Install the commit-check framework
         run: uv tool install "pre-commit==${{ steps.test-tools.outputs.PRE_COMMIT_VERSION }}"
-      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
-        with:
-          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
       # Every check of .pre-commit-config.yaml over every file, document
       # validation with an instrukt built from this revision among them.
       # SKIP always leaves out three hook IDs, whatever the classifier
@@ -151,18 +149,9 @@ jobs:
         env:
           SKIP: shellcheck,cargo-clippy-and-unit-tests,config-validate,${{ needs.changes.result == 'success' && needs.changes.outputs.precommit_skip || '' }}
         run: scripts/commit-checks.sh --all-files
-      - name: clippy, test archive and doctests
+      - name: clippy and doctests
         if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
-        run: scripts/ci-ubuntu-build.sh nextest-archive.tar.zst
-      - name: Upload the test archive
-        if: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust != 'false' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: nextest-archive-ubuntu
-          path: nextest-archive.tar.zst
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
+        run: scripts/ci-ubuntu-build.sh
       - name: use-case coverage
         run: scripts/check-coverage.sh
       - name: committed configuration
@@ -173,15 +162,47 @@ jobs:
         id: record
         run: echo "record=built" >> "$GITHUB_OUTPUT"
 
-  # Runs the archive in four partitions (scripts/ci-ubuntu-shard.sh), from the
-  # matrix's own index and total. Each leg writes its completion record under
-  # its own output only after its partition passed. Adding or removing a matrix
+  # Builds the nextest archive of every test binary once, where Rust is
+  # selected, and uploads it for the shards. It runs beside the build job, so
+  # the shards wait on the archive alone. The aggregate examines it through the
+  # partitions it feeds: when it fails, is cancelled or never starts, the shard
+  # job does not start and no partition record exists.
+  ubuntu-archive:
+    name: archive ubuntu
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Read pinned test tools
+        id: test-tools
+        run: cat scripts/test-tools.env >> "$GITHUB_OUTPUT"
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-nextest@${{ steps.test-tools.outputs.NEXTEST_VERSION }}
+      - name: test archive
+        run: cargo nextest archive --workspace --locked --archive-file nextest-archive.tar.zst
+      - name: Upload the test archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nextest-archive-ubuntu
+          path: nextest-archive.tar.zst
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  # Runs the archive the archive job built in four partitions
+  # (scripts/ci-ubuntu-shard.sh), from the matrix's own index and total. Each
+  # leg writes its completion record under its own output only after its
+  # partition passed. Adding or removing a matrix
   # entry changes the partition count; the outputs below and the aggregate's
   # record arguments must then follow, or the required check is red.
   ubuntu-test:
     name: test ubuntu (${{ matrix.shard }}/${{ strategy.job-total }})
-    needs: [changes, ubuntu-build]
-    if: ${{ !cancelled() && needs.ubuntu-build.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
+    needs: [changes, ubuntu-archive]
+    if: ${{ !cancelled() && needs.ubuntu-archive.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust != 'false') }}
     strategy:
       fail-fast: false
       matrix:
@@ -218,8 +239,12 @@ jobs:
   # never ran, and a job keeps the outputs it wrote when it is cancelled or
   # fails afterwards. It leaves a job unexamined only where the classifier
   # deselected it: a document-only change requires the build job's record and
-  # result; a change reaching neither validation nor Rust requires nothing. It
-  # runs on always(), because a skipped required check reads as passing.
+  # result; a change reaching neither validation nor Rust requires nothing. The
+  # archive job is examined through the partitions it feeds and not on its own:
+  # every partition record is written by a leg that ran from its archive, and
+  # when it does not succeed the shard job does not start, so the shard job's
+  # result and every partition record are unmet. It runs on always(), because a
+  # skipped required check reads as passing.
   ubuntu-check:
     name: fmt, clippy, test (ubuntu-latest)
     needs: [changes, ubuntu-build, ubuntu-test]
