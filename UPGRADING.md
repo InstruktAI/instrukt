@@ -650,14 +650,14 @@ build's pickup listing without their bodies. The new build reads artifacts
 from the local record alone, so it cannot fetch them later. Before installing
 it, restore them with the build you have. List the versions without content:
 
-    sqlite3 ~/.instrukt/state/instrukt.db "SELECT t.project, t.slug, v.name, v.digest FROM artifact_versions v JOIN todos t ON t.id = v.todo_id WHERE v.content IS NULL AND t.status NOT IN ('delivered', 'removed')"
+    sqlite3 ~/.instrukt/state/instrukt.db "SELECT t.project, t.slug || '@' || substr(t.id, 1, 8), v.name, v.digest FROM artifact_versions v JOIN todos t ON t.id = v.todo_id WHERE v.content IS NULL"
 
-and, in a checkout of each project listed, read each version once with the
-installed build, which fetches its content from GitHub, checks it against
-its digest and keeps it in the record:
+The list covers every todo this computer retains — live, delivered and
+withdrawn ones alike — and names each by its exact address. In a checkout of
+each project listed, read each version once with the installed build, which
+fetches its content from GitHub, checks it against its digest and keeps it in
+the record:
 
-    instrukt todo artifacts diff <slug> <name> <digest> <digest>
+    instrukt todo artifacts diff <address> <name> <digest> <digest>
 
 A version the command reports GitHub no longer serves stays without content.
-Delivered and withdrawn todos may be left as they are; their evidence on
-GitHub is unchanged.
