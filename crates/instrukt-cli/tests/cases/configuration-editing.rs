@@ -395,7 +395,6 @@ fn switching_on_event_responses_asks_for_the_event_transport_first() {
     assert_eq!(std::fs::read_to_string(&machine).unwrap(), before);
 }
 
-/// Standard output of a finished command.
 fn stdout(assert: &Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).unwrap()
 }
