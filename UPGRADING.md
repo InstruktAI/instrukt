@@ -581,7 +581,7 @@ order:
 
 History now retains, of each conversation, its identity, title, parent,
 archive aliases and the runtime's record of it, and its messages with their
-roles, times and text, each text stored once
+roles, times and text, each message text stored once
 (`project/instrukt/spec/feature/runner/history`). It no longer retains what a
 conversation's tools ran and returned, the files it changed, its reasoning
 traces, its runs or its subagents; that text is no longer found by

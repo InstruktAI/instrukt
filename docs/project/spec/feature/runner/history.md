@@ -253,8 +253,11 @@ how far moving earlier history in has progressed.
 | `history_source_positions` | each runtime source's opaque committed position; history does not interpret adapter cursor fields | external bookkeeping; losing it reads the whole source again |
 | `history_sources` | for each TeleClaude source an import selected, whether the import completed and its position: the id of the last mirror it committed, absent until a first batch commits. Rows moved from the state database keep other values, described below | external bookkeeping; losing it reads the mirror store again |
 
-Nothing is stored twice: a text held in a row of `history_messages` is not in
-the conversation's document and no other table repeats it. The
+Each text is stored once: a text held in a row of `history_messages` is not in
+the conversation's document, and no other table repeats it. The conversation's
+row repeats beside its document only the identity, title, parent and aliases
+it is looked up and listed by, and a runtime message's record keeps the
+source's own fields, which may repeat its row's id, role and times. The
 full-text index stores terms and reads the text it shows from the retained
 rows. A row already retained stays when a later read of its conversation no
 longer returns it, so messages a source has dropped stay in history.

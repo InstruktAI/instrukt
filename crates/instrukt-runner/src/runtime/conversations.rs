@@ -246,9 +246,10 @@ pub trait ConversationSource: Send {
         conversations: &[SessionId],
     ) -> Result<ConversationChanges, SourceError>;
     /// The text read: the next bounded batch of changed conversations over
-    /// every conversation the source holds, each with its own record and
-    /// its finished messages and nothing else the source holds of it. Its
-    /// position is its own; the position commits with what it delivered.
+    /// every conversation the source holds, each with its own record where
+    /// the source holds one and its finished messages, and nothing else the
+    /// source holds of it. Its position is its own; the position commits
+    /// with what it delivered.
     fn text_since(&self, position: Option<&SourcePosition>) -> Result<TextChanges, SourceError>;
     fn subscribe(&self) -> Result<Box<dyn ConversationNotifications>, SourceError>;
     /// The newest assistant message the runtime has recorded in `thread`'s
