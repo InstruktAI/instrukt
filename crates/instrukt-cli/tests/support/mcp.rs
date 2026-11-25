@@ -309,19 +309,14 @@ struct OAuthState {
 /// Real loopback HTTP server implementing RFC 9728 PRM, RFC 8414 / OIDC
 /// metadata, JWKS, authorization-code + PKCE S256 + OIDC `id_token`,
 /// EMA `jwt-bearer` verification against the real ingress JWKS, and
-/// Bearer-protected Streamable HTTP MCP. Its requests are answered by a
-/// few workers sharing one listener, so a held token request never stalls
-/// another caller's discovery or MCP request.
+/// Bearer-protected Streamable HTTP MCP.
 pub struct FakeOAuthMcp {
     pub base_url: String,
     pub mcp_url: String,
     state: Arc<Mutex<OAuthState>>,
     stop: Arc<AtomicBool>,
-    workers: Vec<std::thread::JoinHandle<()>>,
+    thread: Option<std::thread::JoinHandle<()>>,
 }
-
-/// How many requests [`FakeOAuthMcp`] answers at once.
-const OAUTH_WORKERS: usize = 4;
 
 impl FakeOAuthMcp {
     pub fn start(opts: OAuthMcpOptions) -> Self {
@@ -353,7 +348,7 @@ impl FakeOAuthMcp {
         .to_string();
         let as_private_pem = pem::encode(&pem::Pem::new("PRIVATE KEY", pkcs8.as_ref()));
 
-        let http = Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let http = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let addr = http.server_addr().to_ip().unwrap();
         let base_url = format!("http://{addr}");
         let mcp_url = format!("{base_url}/mcp");
@@ -379,12 +374,12 @@ impl FakeOAuthMcp {
             next_token_id: 0,
         }));
         let stop = Arc::new(AtomicBool::new(false));
-        let workers = {
+        let thread = {
             let state = Arc::clone(&state);
             let stop = Arc::clone(&stop);
             let base = base_url.clone();
             let mcp = mcp_url.clone();
-            let worker = move || {
+            std::thread::spawn(move || {
                 let hdr =
                     |name: &str, value: &str| tiny_http::Header::from_bytes(name, value).unwrap();
                 while !stop.load(Ordering::Acquire) {
@@ -856,10 +851,7 @@ impl FakeOAuthMcp {
 
                     request.respond(tiny_http::Response::empty(404)).unwrap();
                 }
-            };
-            (0..OAUTH_WORKERS)
-                .map(|_| std::thread::spawn(worker.clone()))
-                .collect()
+            })
         };
 
         Self {
@@ -867,7 +859,7 @@ impl FakeOAuthMcp {
             mcp_url,
             state,
             stop,
-            workers,
+            thread: Some(thread),
         }
     }
 
@@ -1077,8 +1069,8 @@ fn verify_ema_assertion(
 impl Drop for FakeOAuthMcp {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
-        for worker in self.workers.drain(..) {
-            drop(worker.join());
+        if let Some(thread) = self.thread.take() {
+            drop(thread.join());
         }
     }
 }
