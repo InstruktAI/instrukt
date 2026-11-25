@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::sessions::{SessionState, SessionsError};
 pub use _diagnostics::{NativeCause, NativeDiagnostic};
 pub use _t3::T3;
+pub(crate) use _t3_conversations::without_captured_context;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorktreeRequest {

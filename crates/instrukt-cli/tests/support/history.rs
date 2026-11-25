@@ -104,7 +104,15 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
                 "provider",
             ),
         ] {
-            let payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            let mut payload = json!({"id":id,"threadId":"child","runId":"native-run","nodeId":null,"role":role,"text":text,"createdAt":at,"updatedAt":at,"streaming":false,"attachments":[],"createdBy":actor,"creationSource":origin});
+            if role == "user" {
+                // Composer context T3 stores beside what the person wrote:
+                // terminal lines they attached and a review comment on a diff.
+                payload["context"] = json!({"version":1,"records":[
+                    {"version":1,"contextId":"terminal-fixture","kind":"terminal","label":"Terminal 1 lines 1-2","terminalId":"terminal-1","terminalLabel":"Terminal 1","lineStart":1,"lineEnd":2,"text":"Terminalonlytoken printed."},
+                    {"version":1,"contextId":"review-comment-fixture","kind":"review-comment","label":"src/lib.rs lines 3-4","sectionId":"working-tree","sectionTitle":"Working tree","filePath":"src/lib.rs","startIndex":3,"endIndex":4,"rangeLabel":"Lines 3-4","text":"Keep this comment.","diff":"+Diffonlytoken added line"}
+                ]});
+            }
             self.db.execute("INSERT INTO orchestration_v2_projection_messages VALUES(?1,'child',?2,0,?3,?3,?4)",params![id,role,at,payload.to_string()]).unwrap();
         }
         let run = json!({"id":"native-run","threadId":"child","ordinal":1,"providerInstanceId":"fixture","modelSelection":{"instanceId":"fixture","model":"fixture"},"providerThreadId":null,"userMessageId":"native-user-message","rootNodeId":null,"activeAttemptId":null,"status":"completed","requestedAt":at,"startedAt":at,"completedAt":at,"checkpointId":null,"contextHandoffId":null});

@@ -144,7 +144,8 @@ pub(super) fn convert(records: &Connection, earlier: &Earlier) -> Result<Current
 
 /// A runtime conversation: its conversation record's native record as
 /// `thread`, and one text for each of its message records, placed in
-/// `messages`. Its run, subagent and turn-item records are not read.
+/// `messages`, each record without the context its runtime captured rather
+/// than a person wrote. Its run, subagent and turn-item records are not read.
 fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, ConversionError> {
     let mut statement = records.prepare_cached(
         "SELECT projection,native_id,payload_json FROM history_projection_records WHERE source=?1 AND thread_id=?2 AND projection IN ('conversation','message')",
@@ -172,6 +173,7 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
             conversation = Some(native);
             continue;
         }
+        crate::runtime::without_captured_context(&mut native);
         // The native record's text, where it has one; a record an earlier
         // state migration repaired holds that text twice in its own.
         let text = match native.get("text") {

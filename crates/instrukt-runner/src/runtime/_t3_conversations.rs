@@ -827,6 +827,30 @@ impl T3Conversations {
     }
 }
 
+/// Removes from `message`, a T3 message's native record, what T3's composer
+/// captured rather than a person wrote: the lines of each terminal context
+/// record and the diff lines of each review-comment context record. The
+/// context records stay, with their labels, locations and a review comment's
+/// own text.
+pub(crate) fn without_captured_context(message: &mut Value) {
+    let Some(records) = message
+        .pointer_mut("/context/records")
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+    for record in records {
+        let captured = match record["kind"].as_str() {
+            Some("terminal") => "text",
+            Some("review-comment") => "diff",
+            _ => continue,
+        };
+        if let Some(record) = record.as_object_mut() {
+            record.shift_remove(captured);
+        }
+    }
+}
+
 /// What the text read returns of `thread`'s finished rows of [`TEXT`]:
 /// `None` when it found neither the conversation's own record nor a
 /// finished message.
@@ -857,15 +881,11 @@ fn text(
                 let updated_at = Some(row_time(&row)?);
                 let created_at = created_at(&row.payload)?;
                 let role = message_role(&row.payload)?;
+                let mut native = row.payload;
+                without_captured_context(&mut native);
                 messages.push(
-                    MessageText::from_record(
-                        row.native_id,
-                        role,
-                        created_at,
-                        updated_at,
-                        row.payload,
-                    )
-                    .ok_or_else(|| source_error("invalid message shape"))?,
+                    MessageText::from_record(row.native_id, role, created_at, updated_at, native)
+                        .ok_or_else(|| source_error("invalid message shape"))?,
                 );
             }
             Projection::Runs | Projection::Subagents | Projection::TurnItems => {

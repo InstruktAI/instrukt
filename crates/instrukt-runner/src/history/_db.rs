@@ -736,6 +736,9 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
     struct Held {
         source: String,
         native_id: String,
+        computer: String,
+        parent: Option<String>,
+        aliases: Vec<String>,
         document: Value,
     }
 
@@ -750,13 +753,16 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             .execute_batch(include_str!("history-store-v1.sql"))
             .unwrap();
         let held: Vec<Held> = earlier
-            .prepare("SELECT source,native_id,document FROM history_conversations ORDER BY id")
+            .prepare("SELECT source,native_id,computer,parent,aliases,document FROM history_conversations ORDER BY id")
             .unwrap()
             .query_map([], |r| {
                 Ok(Held {
                     source: r.get(0)?,
                     native_id: r.get(1)?,
-                    document: serde_json::from_str(&r.get::<_, String>(2)?).unwrap(),
+                    computer: r.get(2)?,
+                    parent: r.get(3)?,
+                    aliases: serde_json::from_str(&r.get::<_, String>(4)?).unwrap(),
+                    document: serde_json::from_str(&r.get::<_, String>(5)?).unwrap(),
                 })
             })
             .unwrap()
@@ -801,9 +807,44 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
         assert!(
             found(
                 &home,
-                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken"
+                "Commandonlytoken OR Outputonlytoken OR Reasononlytoken OR Subagentonlytoken OR Runonlytoken OR Terminalonlytoken OR Diffonlytoken"
             )
             .is_empty()
+        );
+        // Each conversation keeps its computer, parent and archive aliases:
+        // search reports them, and every earlier alias still finds its
+        // conversation's document.
+        for conversation in &held {
+            let found = _store::search(
+                &home,
+                "Runtimetitle OR Transcripttitle OR Sourcetitle OR Othertitle",
+                10,
+            )
+            .unwrap()
+            .into_iter()
+            .find(|m| m.conversation == conversation.native_id)
+            .unwrap();
+            assert_eq!(
+                (&found.computer, &found.parent, &found.aliases),
+                (
+                    &conversation.computer,
+                    &conversation.parent,
+                    &conversation.aliases
+                )
+            );
+            let by_id = _store::show(&home, &conversation.source, &conversation.native_id).unwrap();
+            for alias in &conversation.aliases {
+                assert_eq!(
+                    _store::show(&home, &conversation.source, alias).unwrap(),
+                    by_id,
+                    "{alias}"
+                );
+            }
+        }
+        assert!(held.iter().any(|c| c.parent.is_some()));
+        assert!(
+            held.iter()
+                .any(|c| c.aliases.iter().any(|a| *a != c.native_id))
         );
         // A mirror with a transcript is indexed by that transcript alone, once.
         let body = |native_id: &str| -> String {
@@ -825,12 +866,25 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             assert_eq!(shown.to_string(), conversation.document.to_string());
         }
         // The shown runtime document holds the earlier thread and messages,
-        // in order, without the run, subagent and turn-item collections.
+        // in order, without the run, subagent and turn-item collections; a
+        // message keeps its composer context without the terminal lines and
+        // diff lines the composer captured.
         let shown = _store::show(&home, &runtime.source, &runtime.native_id).unwrap();
         let members: Vec<&String> = shown.as_object().unwrap().keys().collect();
         assert_eq!(members, ["messages", "thread"]);
         assert_eq!(shown["thread"], runtime.document["thread"]);
-        let earlier_messages = runtime.document["messages"].as_array().unwrap();
+        let mut earlier_messages = runtime.document["messages"].as_array().unwrap().clone();
+        let captured = earlier_messages
+            .iter_mut()
+            .find(|m| m.get("context").is_some())
+            .unwrap();
+        for (record, member) in [(0, "text"), (1, "diff")] {
+            let record = captured
+                .pointer_mut(&format!("/context/records/{record}"))
+                .and_then(Value::as_object_mut)
+                .unwrap();
+            assert!(record.shift_remove(member).is_some());
+        }
         let shown_messages = shown["messages"].as_array().unwrap();
         assert_eq!(shown_messages.len(), earlier_messages.len());
         for message in shown_messages {
