@@ -265,15 +265,17 @@ pub fn delete(staged: &Path) -> std::io::Result<()> {
     }
 }
 
-/// The todo identity the staging location named `name` carries, when it is
-/// one.
+/// The todo identity the staging location named `name` carries, when the
+/// name has exactly the form [`fresh_staging`] gives one: the prefix, a
+/// todo identity, then the process, the moment and the attempt, each
+/// decimal. Any other name is no staging location.
 fn staged_for(name: &OsStr) -> Option<TodoId> {
-    let identity = name
-        .to_str()?
-        .strip_prefix(STAGING_PREFIX)?
-        .split('-')
-        .next()?;
-    TodoId::parse(identity)
+    let rest = name.to_str()?.strip_prefix(STAGING_PREFIX)?;
+    let mut parts = rest.split('-');
+    let identity = TodoId::parse(parts.next()?)?;
+    let suffix: Vec<&str> = parts.collect();
+    let decimal = |part: &&str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    (suffix.len() == 3 && suffix.iter().all(decimal)).then_some(identity)
 }
 
 /// The owed causes this process last logged, so a cause is logged when it
@@ -621,6 +623,12 @@ mod tests {
             staged_for(name),
             TodoId::parse("0123456789abcdef0123456789abcdef")
         );
+    }
+
+    #[test]
+    fn a_name_with_the_prefix_and_an_identity_but_another_suffix_is_no_staging_location() {
+        let name = OsStr::new(".instrukt-rg-0123456789abcdef0123456789abcdef-copy");
+        assert_eq!(staged_for(name), None);
     }
 
     #[test]
