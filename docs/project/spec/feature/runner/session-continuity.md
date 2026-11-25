@@ -801,7 +801,7 @@ And those options carry no other effort option
 ```
 
 <!-- planned:fix-t3-verify-placement-launch-timing -->
-### UC-SS28: A developer's todo pickup is accepted while T3 is still preparing its worktree
+### UC-SS28: A developer's todo pickup is accepted once T3 finishes preparing its worktree
 
 ```gherkin
 Given the runner picks up a developer's eligible todo on T3
