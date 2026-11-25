@@ -463,6 +463,7 @@ instruction prose is a separate configuration surface.
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 
+<!-- planned-change:remove-retire-thread -->
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
 wakes a new turn and un-settles it; automation never settles or archives a standing agent
@@ -474,6 +475,19 @@ Agent-invoked settling and terminal retirement instructions are governed by
 `project/instrukt/spec/feature/configuration/layered-configuration`. The published CLI omits
 subagent threads from project listing; this surface reports only the threads the runtime
 exposes.
+<!-- change:remove-retire-thread -->
+T3 project listing includes settled threads and supplies no server-side time
+filter. The adapter reports their retained binding identities. Sending to a settled thread
+wakes a new turn and un-settles it; automation never settles or archives a standing agent
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`), and a human settling one
+is never evidence of absence or permission for a second keyed start. Archived or explicitly
+unknown threads report `gone`, a released or terminal assignment receives no successor, and
+archived transcripts remain extractable (`project/instrukt/spec/feature/runner/history`).
+Agent-invoked settling instructions are governed by
+`project/instrukt/spec/feature/configuration/layered-configuration`. The published CLI omits
+subagent threads from project listing; this surface reports only the threads the runtime
+exposes.
+<!-- /planned-change:remove-retire-thread -->
 
 ### One worktree per todo team
 
