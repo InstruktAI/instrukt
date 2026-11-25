@@ -731,6 +731,12 @@ impl FakeT3 {
         let id = resolved.as_str();
         self.read(id)["title"].as_str().unwrap().into()
     }
+    /// Whether thread `id` is marked settled.
+    pub fn settled(&self, id: &str) -> bool {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["settled"].as_bool().unwrap_or(false)
+    }
     pub fn message_count(&self, id: &str) -> usize {
         let resolved = self.native_id(id);
         let id = resolved.as_str();

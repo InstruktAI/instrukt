@@ -1,12 +1,17 @@
 //! Recovery of dispatched executions (`session-continuity`, "Five-state
 //! status contract"): a step is done only when the work record carries its
 //! evidence. The runner keeps each execution it dispatched in the state
-//! database's `executions` table until its todo is released again (the
-//! claim given back, so work offers it once more) or no lane is owed. While
-//! the execution lasts, each tick observes it:
+//! database's `executions` table while its session holds the todo's
+//! execution claim: the execution ends when work offers the todo for
+//! pickup again, when no lane is owed, or when workflow's assignment names
+//! another holder or none. While the execution lasts, each tick observes
+//! it:
 //!
 //! - the workflow state moved on since the last look: the session is
 //!   making progress; its recovery starts afresh;
+//! - the todo waits on a person (a hold, or an approval gate that waits for
+//!   a human): the next evidence is not the session's to produce, so
+//!   nothing is sent and nothing is reported;
 //! - the session is `running` or `needs-input`: it is working or waiting
 //!   in its own thread;
 //! - its status cannot be observed: retried next tick, never an anomaly;
@@ -59,12 +64,36 @@ pub enum Step {
     Reported,
 }
 
-/// The step for an execution whose session was observed as `observed`.
-pub fn step(execution: &Execution, progressed: bool, observed: &Observation) -> Step {
-    if progressed {
+/// What a tick read about an execution whose session still holds its
+/// todo's execution claim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Look {
+    /// The workflow state moved on since the last look.
+    pub progressed: bool,
+    /// The todo waits on a person, as workflow's assignment relays it.
+    pub waits_on_person: bool,
+    /// The recovery input sent for the current state ended without being
+    /// confirmed.
+    pub unconfirmed: bool,
+    /// The session as the runtime reports it.
+    pub observed: Observation,
+}
+
+/// The step for `execution` after the tick read `look`: progress first;
+/// then a todo waiting on a person is left alone, whatever its thread
+/// shows or an earlier recovery input became; then an unconfirmed
+/// recovery input is reported; then the session's state decides.
+pub fn step(execution: &Execution, look: &Look) -> Step {
+    if look.progressed {
         return Step::Progressed;
     }
-    match observed {
+    if look.waits_on_person {
+        return Step::Wait;
+    }
+    if look.unconfirmed && !execution.anomaly_raised {
+        return Step::RaiseAnomaly;
+    }
+    match &look.observed {
         Observation::Unobservable(_)
         | Observation::State(
             SessionState::Running | SessionState::NeedsInput | SessionState::Unknown,
@@ -238,8 +267,8 @@ impl<'a> Executions<'a> {
                 tracing::debug!(event = "execution_released", todo = %execution.todo, session = %execution.session);
                 continue;
             }
-            let current = match workflow.assignment(project, &execution.todo) {
-                Ok(Some(assignment)) => assignment.state,
+            let assignment = match workflow.assignment(project, &execution.todo) {
+                Ok(Some(assignment)) => assignment,
                 Ok(None) => {
                     tracing::debug!(event = "execution_finished", todo = %execution.todo, session = %execution.session);
                     continue;
@@ -250,6 +279,11 @@ impl<'a> Executions<'a> {
                     continue;
                 }
             };
+            if assignment.holder.as_ref() != Some(&execution.session) {
+                tracing::debug!(event = "execution_released", todo = %execution.todo, session = %execution.session);
+                continue;
+            }
+            let current = assignment.state;
             let progressed = current != execution.state;
             let observed = if progressed {
                 Observation::Unobservable(String::new())
@@ -301,17 +335,18 @@ impl<'a> Executions<'a> {
             }
             let recovery_id = format!("recovery:{}:{}", execution.session, execution.state);
             let unconfirmed = !progressed
-                && !execution.anomaly_raised
                 && matches!(
                     crate::inputs::outcome(self.state, &execution.session, &recovery_id)?,
                     crate::inputs::InputOutcome::Unconfirmed
                         | crate::inputs::InputOutcome::SetAside
                 );
-            let next = if unconfirmed {
-                Step::RaiseAnomaly
-            } else {
-                step(&execution, progressed, &observed)
+            let look = Look {
+                progressed,
+                waits_on_person: assignment.waits_on_person,
+                unconfirmed,
+                observed,
             };
+            let next = step(&execution, &look);
             match next {
                 Step::Wait | Step::Reported => {}
                 Step::Progressed => {
@@ -358,7 +393,7 @@ impl<'a> Executions<'a> {
                         anomaly::notify(config, env, &execution.session.to_string(), None);
                     }
                     Err(err) => {
-                        if observed == Observation::State(SessionState::Gone) {
+                        if look.observed == Observation::State(SessionState::Gone) {
                             execution.recovery_sent = true;
                             execution.anomaly_raised = true;
                             tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
@@ -425,17 +460,24 @@ mod tests {
         }
     }
 
+    /// A look with no progress, no person wait and no unconfirmed input.
+    fn seen(observed: Observation) -> Look {
+        Look {
+            progressed: false,
+            waits_on_person: false,
+            unconfirmed: false,
+            observed,
+        }
+    }
+
     #[test]
     fn an_ended_session_without_progress_is_sent_once_then_reported_once() {
-        let ended = Observation::State(SessionState::InputReady);
-        assert_eq!(step(&execution(false, false), false, &ended), Step::Recover);
-        assert_eq!(
-            step(&execution(true, false), false, &ended),
-            Step::RaiseAnomaly
-        );
-        assert_eq!(step(&execution(true, true), false, &ended), Step::Reported);
-        let gone = Observation::State(SessionState::Gone);
-        assert_eq!(step(&execution(false, false), false, &gone), Step::Recover);
+        let ended = seen(Observation::State(SessionState::InputReady));
+        assert_eq!(step(&execution(false, false), &ended), Step::Recover);
+        assert_eq!(step(&execution(true, false), &ended), Step::RaiseAnomaly);
+        assert_eq!(step(&execution(true, true), &ended), Step::Reported);
+        let gone = seen(Observation::State(SessionState::Gone));
+        assert_eq!(step(&execution(false, false), &gone), Step::Recover);
     }
 
     #[test]
@@ -445,9 +487,39 @@ mod tests {
             Observation::State(SessionState::NeedsInput),
             Observation::Unobservable("timed out".into()),
         ] {
-            assert_eq!(step(&execution(true, false), false, &observed), Step::Wait);
+            assert_eq!(step(&execution(true, false), &seen(observed)), Step::Wait);
         }
-        let ended = Observation::State(SessionState::EndedFailed);
-        assert_eq!(step(&execution(true, true), true, &ended), Step::Progressed);
+        let progressed = Look {
+            progressed: true,
+            ..seen(Observation::State(SessionState::EndedFailed))
+        };
+        assert_eq!(step(&execution(true, true), &progressed), Step::Progressed);
+    }
+
+    #[test]
+    fn an_ended_session_whose_todo_waits_on_a_person_is_left_alone() {
+        let waiting = Look {
+            waits_on_person: true,
+            ..seen(Observation::State(SessionState::InputReady))
+        };
+        assert_eq!(step(&execution(false, false), &waiting), Step::Wait);
+        assert_eq!(step(&execution(true, false), &waiting), Step::Wait);
+    }
+
+    #[test]
+    fn an_unconfirmed_recovery_input_is_reported_only_outside_a_person_wait() {
+        let unconfirmed = Look {
+            unconfirmed: true,
+            ..seen(Observation::State(SessionState::Running))
+        };
+        assert_eq!(
+            step(&execution(true, false), &unconfirmed),
+            Step::RaiseAnomaly
+        );
+        let waiting = Look {
+            waits_on_person: true,
+            ..unconfirmed
+        };
+        assert_eq!(step(&execution(true, false), &waiting), Step::Wait);
     }
 }
