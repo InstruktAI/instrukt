@@ -64,6 +64,15 @@ meaning and the writes of the conversation tables.
   Network waits and reaction execution run outside that section, so a blocked
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
+
+<!-- planned:fix-runner-snapshot-read-corrupts-state-db -->
+
+- A thread holds the writer lock. A write on another thread of the same
+  process waits for that hold as a write of another process does; only a write
+  nested in one its own thread already holds shares the hold.
+
+<!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
+
 - The state directory is resolved to its canonical location once, and the database,
   its sidecars and every lock — writer, reflection, withdrawal, runner,
   runtime-dispatch, history and conversation locks — derive from it, so a home or a state directory reached
@@ -144,6 +153,16 @@ adapter; an actor as JSON text, one of
   migrated in-memory image: they take no writer lock and leave the database
   and its sidecars as found. The todo-existence lookup reads that way for
   every caller.
+
+<!-- planned:fix-runner-snapshot-read-corrupts-state-db -->
+
+- A process that has opened the database through SQLite, such as the runner,
+  reads it through SQLite from then on, also where a status or documentation
+  read takes the in-memory image elsewhere. Copying the file from outside
+  SQLite would release the locks that process holds on it, and another process
+  could then remove the write-ahead log and shared-memory file beneath it.
+
+<!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -1226,6 +1245,21 @@ Then the local change completes without waiting for the in-flight GitHub request
 And listing the work and reading an artifact complete without waiting for that request or for a local write that is still open
 And the reflected change and the concurrent local change both reach GitHub intact, with no conflict between them
 ```
+
+<!-- planned:fix-runner-snapshot-read-corrupts-state-db -->
+
+### UC-SD6: A process that holds the database open keeps it intact while it inspects it
+
+```gherkin
+Given an instrukt process holds the state database open, as the runner does
+And that process also reads the database for inspection, as the runner's workers do
+When another instrukt command writes the database and exits
+Then the write-ahead log and shared-memory file stay in place for the process still holding the database
+And that process goes on reading and writing the database, seeing the other command's write
+And the database passes its integrity check
+```
+
+<!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
 
 ## Known caveats
 
