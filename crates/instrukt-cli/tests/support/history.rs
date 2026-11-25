@@ -169,7 +169,7 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
     }
     /// T3's server writes two notifications into `child`: its report that a
     /// background command finished, with the command's output, and a
-    /// delegated task's result.
+    /// delegated task's result whose own words open as such a report does.
     #[allow(dead_code, reason = "used by the history scenarios")]
     pub fn background_reports(&self) {
         let at = "2026-11-08T10:30:00.000Z";
@@ -181,7 +181,7 @@ CREATE TABLE orchestration_v2_projection_turn_items(turn_item_id TEXT PRIMARY KE
             ),
             (
                 "delegated-task-report",
-                "Delegatedresulttoken done.",
+                "Background command completed: Delegatedresulttoken done.",
                 json!({"kind":"delegated_task","taskIds":["node-fixture"]}),
             ),
         ] {
