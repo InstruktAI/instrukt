@@ -49,7 +49,28 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V36),
     Sql(V37),
     Sql(V38),
+    Sql(V39),
 ];
+
+/// Version 39: the runner's fleet-attention state (`state-database`,
+/// "Runner tables"). `input_waits` numbers each claim-holding session's waits
+/// for input on a todo and outlives the claim's release; it goes with the
+/// todo's other rows. `attention_episodes` holds a project's open attention
+/// episode and the occurrence that opened it. Both start empty.
+const V39: &str = "
+CREATE TABLE IF NOT EXISTS input_waits (
+    project TEXT NOT NULL,
+    todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    session TEXT NOT NULL,
+    wait    INTEGER NOT NULL,
+    waiting INTEGER NOT NULL,
+    PRIMARY KEY (project, todo_id, session)
+);
+CREATE TABLE IF NOT EXISTS attention_episodes (
+    project   TEXT PRIMARY KEY,
+    opened_by TEXT NOT NULL
+);
+";
 
 /// Version 38: lookups of the todos a worktree path or a work branch names,
 /// and of a todo's hold history and label actions, so worktree standing
