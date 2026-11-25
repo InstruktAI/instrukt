@@ -50,9 +50,24 @@ A condition that only an agent's judgment can establish is raised by that agent
 through instrukt (`general/principle/intelligence-boundaries`). A raise names
 the todos it concerns and the obligation at stake. It is recorded with the
 session that raised it. Raising needs no knowledge of which session, if any,
-answers the project's fleet attention. Which roles hold the raise, and what a
-role without it does, follow
-`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+answers the project's fleet attention.
+
+A raise belongs to one project: the one the raising session works in. For a
+session with a recorded assignment that is the assignment's project, never one
+a target argument or the current directory names
+(`project/instrukt/spec/feature/configuration/roles-and-capabilities`); a
+session with no assignment raises in the project it runs in. Every todo a
+raise names is active work of that project, as an event's todo subject lies
+within its origin (`project/instrukt/spec/feature/runner/event-envelope`). A
+raise that names a todo of another project, or comes from a session whose
+assignment places it outside that project, is refused before anything is
+recorded or published. The refusal names its door
+(`general/principle/trust-and-guardrails`): a raise comes from a session
+working in the project it concerns.
+
+That boundary binds every caller alike, whatever its role's class. Which roles
+hold the raise, and what a role without it does, are a separate matter and
+follow `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 ### What an attention event carries
 

@@ -69,7 +69,7 @@ operation inside acceptance or its write transaction.
 
 Identity deduplication retains occurrence IDs, ingress claims and consumer handled
 marks. In addition, every catalog type declares `occurrence` or `state` under
-event-envelope. Occurrences all count. A newer undelivered state event of the
+`project/instrukt/spec/feature/runner/event-envelope`. Occurrences all count. A newer undelivered state event of the
 same type and exact subject replaces an older pending state for that responsibility.
 Source time establishes newer state, with arrival order breaking ties. Superseded
 rows retain their identity and disposition. Selection freezes message content:
@@ -352,7 +352,8 @@ Examples:
   effects nor replay beyond retention.
 - Only-at-entry work may defer later events for its whole run. Standing T3
   threads remain unsettled under automation and reachable after human settling
-  under procedure-standing-agent; no revival or attendance-visibility gate applies.
+  under `project/instrukt/spec/feature/runner/procedure-standing-agent`; no
+  revival or attendance-visibility gate applies.
 <!-- change:standing-sdlc-coordinator -->
 - T3 today is queue-only: ASAP can wait until the next turn. Queue-consumption
   evidence must come from the adapter's runtime observation, and is distinct

@@ -48,11 +48,15 @@ refused with its source intact, naming both, until one is removed.
 
 <!-- planned:standing-sdlc-coordinator -->
 The standing project coordinator's role is `sdlc-coordinator`. A configured
-`roles.coordinator` entry converts to `roles.sdlc-coordinator` on the same
-owned migration path. What the operator changed in the entry carries over; a
-field that still holds the shipped `coordinator` value takes the shipped
-`sdlc-coordinator` value. Nothing else changes. A file that holds both entries
-is refused with its source intact, naming both, until one is removed.
+`roles.coordinator` entry becomes `roles.sdlc-coordinator` on the same owned
+migration path with every field as it was, and nothing else changes. The file
+overrides everything it names
+(`project/instrukt/spec/feature/configuration/agent-selection`), and a
+person's stated choices and restrictions are migrated, never discarded
+(`project/instrukt/policy/checks-and-guards`); the conversion takes no value
+from the shipped defaults. A file that holds both entries is refused with its
+source intact, naming both, until one is removed. A file that names neither
+entry is not converted.
 <!-- /planned:standing-sdlc-coordinator -->
 
 Every effective entry has a class and grants; model inputs inherit from
