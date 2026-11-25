@@ -1447,11 +1447,12 @@ impl<'w> Session<'w> {
                     &format!("refs/heads/{branch}^{{commit}}"),
                 ],
             ) {
-                Ok(head) => head.trim().to_owned(),
+                Ok(head) => instrukt_core::ids::CommitSha::parse(head.trim())
+                    .map_err(|e| WorkError::refused(e.to_string()))?,
                 Err(git::GitError::Failed { .. }) => continue,
                 Err(error) => return Err(error.into()),
             };
-            if item.reflection.published_head.as_deref() == Some(head.as_str())
+            if item.reflection.published_head.as_ref() == Some(&head)
                 && item.reflection.publication_outstanding.is_none()
             {
                 continue;
@@ -1473,7 +1474,7 @@ impl<'w> Session<'w> {
                         project = %self.project.slug,
                         todo = %self.items[index].record.slug,
                         branch,
-                        head,
+                        head = %head,
                         "the work branch is on the remote"
                     );
                     self.amend(index, |r| {

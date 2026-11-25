@@ -508,7 +508,7 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 break;
             };
             let target = RefusedTarget::Artifact {
-                name: artifact.name.as_str().to_owned(),
+                name: artifact.name.clone(),
                 sequence: version.sequence,
             };
             let sent = match artifact.address {
@@ -687,7 +687,10 @@ fn reflect_pull_request(
                 "POST",
                 "/pulls",
                 &body,
-                item.reflection.published_head.as_deref(),
+                item.reflection
+                    .published_head
+                    .as_ref()
+                    .map(instrukt_core::ids::CommitSha::as_str),
             );
             match send(
                 &mut item.reflection,
@@ -955,14 +958,14 @@ mod tests {
     fn only_the_same_request_to_the_same_target_is_skipped_as_refused() {
         let kept = [KeptRefusal {
             target: RefusedTarget::Artifact {
-                name: "prd".into(),
+                name: crate::evidence::ArtifactName::new("prd"),
                 sequence: 3,
             },
             identity: "same".into(),
             detail: "Validation Failed".into(),
         }];
         let target = RefusedTarget::Artifact {
-            name: "prd".into(),
+            name: crate::evidence::ArtifactName::new("prd"),
             sequence: 3,
         };
         assert!(refused_before(&kept, &target, "same"));

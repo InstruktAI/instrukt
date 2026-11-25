@@ -91,7 +91,7 @@ pub(crate) struct ReflectionState {
     pub events_page: Option<u64>,
     pub events_last: Option<u64>,
     /// The work-branch commit the last publication left on the remote.
-    pub published_head: Option<String>,
+    pub published_head: Option<CommitSha>,
     /// Why the work branch's local head is not on the remote.
     pub publication_outstanding: Option<String>,
     /// Requests GitHub refused as invalid, at most one per reflected target.
@@ -121,7 +121,7 @@ pub(crate) enum RefusedTarget {
     /// One build verdict's review, by its stamp's record order.
     Review { verdict: u64 },
     /// One artifact version, by its record order.
-    Artifact { name: String, sequence: u64 },
+    Artifact { name: ArtifactName, sequence: u64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1569,7 +1569,7 @@ fn save_in(tx: &Connection, path: &Path, item: &LocalItem) -> Result<(), WorkErr
             f.comments_since,
             f.events_page,
             f.events_last,
-            f.published_head,
+            f.published_head.as_ref().map(CommitSha::as_str),
             f.publication_outstanding,
             json_of(&f.refusals)?,
         ],
@@ -2078,7 +2078,7 @@ fn load_bindings(conn: &Connection, path: &Path, id: &str) -> Result<Vec<Binding
 
 fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<ReflectionState, WorkError> {
     let sql = StateDbError::sqlite(path);
-    type Row = (ReflectionState, String, String);
+    type Row = (ReflectionState, String, String, Option<String>);
     let row: Option<Row> = conn
         .query_row(
             "SELECT issue_number, remote_revision, pending, failure, pull_number, issue_id, etag,
@@ -2111,7 +2111,7 @@ fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<Reflectio
                         comments_since: row.get(14)?,
                         events_page: row.get(15)?,
                         events_last: row.get(16)?,
-                        published_head: row.get(17)?,
+                        published_head: None,
                         publication_outstanding: row.get(18)?,
                         refusals: Vec::new(),
                         commands_seen: Vec::new(),
@@ -2119,15 +2119,19 @@ fn load_reflection(conn: &Connection, path: &Path, id: &str) -> Result<Reflectio
                     },
                     row.get(8)?,
                     row.get(19)?,
+                    row.get(17)?,
                 ))
             },
         )
         .optional()
         .map_err(&sql)?;
     let mut reflection = match row {
-        Some((mut reflection, reviews, refusals)) => {
+        Some((mut reflection, reviews, refusals, published)) => {
             reflection.reviews = parse_json(path, &reviews)?;
             reflection.refusals = parse_json(path, &refusals)?;
+            reflection.published_head = published
+                .map(|head| CommitSha::parse(&head).map_err(|e| invalid(path, e)))
+                .transpose()?;
             reflection
         }
         None => ReflectionState::default(),
