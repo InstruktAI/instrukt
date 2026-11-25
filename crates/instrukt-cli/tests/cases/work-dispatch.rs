@@ -547,7 +547,9 @@ fn a_captured_native_start_retries_the_same_selection_without_an_operator() {
     p.tick();
     assert_eq!(p.rt.started_count(), 1);
     assert_eq!(fake.provider("s1").as_str(), "codex");
-    assert!(chosen(&p).contains("gpt-6.2-astra"));
+    let sessions: serde_json::Value = serde_json::from_str(&chosen(&p)).unwrap();
+    assert_eq!(sessions.as_array().unwrap().len(), 1);
+    insta::assert_json_snapshot!(sessions[0]["model"], @r#""gpt-6.2-astra""#);
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
