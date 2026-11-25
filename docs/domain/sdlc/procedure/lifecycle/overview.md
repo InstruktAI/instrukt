@@ -137,6 +137,13 @@ on configured human approval (`approvals.prd` / `approvals.task`) or while a
 (a human clarification, external input, or a peer reply), keep the claim on your
 live session or place an explicit hold (`instrukt todo update <slug> --hold --reason "..."`)
 so the runner does not re-dispatch a fresh turn on every tick.
+When a kickback to preparation leaves `<slug>/work` idle after build output has
+already been created there (such as returning to a human approval gate after the
+kickback), remove the regenerable build output created by this
+todo's work sessions and their delegates (`general/policy/shared-machine-resources`),
+leaving the clean committed tree, the todo branch and any published head intact,
+and record any removal that cannot complete as an owed obligation. This does not
+apply to a checkout still in active build or awaiting review before handoff.
 
 ## Preconditions
 
@@ -410,10 +417,15 @@ so the runner does not re-dispatch a fresh turn on every tick.
    scope (`sdlc/policy/definition-of-done-lanes`, Bug-fix review) is filed as a
    tracked follow-up cited in `escape-assessment`. Record
    `instrukt todo stamp {slug} --finalize-ready` (which atomically emits
-   `workflow.finalized`) and release the claim with
-   `instrukt todo update {slug} --unclaim`. Keep this orchestrator thread
-   wakeable (never retire it before delivery — `integrate` retires it once the
-   todo is delivered).
+   `workflow.finalized`). Then remove the regenerable build output created in
+   `<slug>/work` by this todo's work
+   sessions and their delegates (`general/policy/shared-machine-resources`),
+   leaving the clean committed tree, the todo branch and the published head
+   intact as bound by the readiness record; if removal cannot complete, record
+   it as an owed obligation without reopening the handoff. Then release the
+   claim with `instrukt todo update {slug} --unclaim`. Keep this orchestrator
+   thread wakeable (never retire it before delivery — `integrate` retires it
+   once the todo is delivered).
 6. **Retire on direct withdrawal.** When this orchestrator withdraws or removes
    a todo directly (for example under triage, retraction, or a no-fix exit),
    finish all record writes (`log`, `instrukt todo remove {slug}`) and confirm

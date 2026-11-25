@@ -100,6 +100,41 @@ impl EvidenceBuilder {
         self
     }
 
+    /// A manual hold set on the todo.
+    pub(crate) fn held(mut self) -> Self {
+        let at = self.next();
+        self.evidence.hold = Some(crate::evidence::HoldRecord {
+            source: crate::evidence::HoldSource::Manual,
+            reason: "waiting".into(),
+            by: crate::evidence::Actor::Person { name: "dev".into() },
+            at,
+        });
+        self
+    }
+
+    pub(crate) fn status(mut self, status: crate::evidence::TodoStatus) -> Self {
+        self.evidence.status = status;
+        self
+    }
+
+    /// `fact` appended to the stamp ledger by a reviewer session.
+    pub(crate) fn stamped(mut self, fact: crate::evidence::StampFact) -> Self {
+        let at = self.next();
+        self.evidence.stamps.push(crate::evidence::StampRecord {
+            source_comment: None,
+            fact,
+            at,
+            actor: crate::evidence::Actor::Session(session("reviewer")),
+            model: None,
+            eval_fingerprint: None,
+            role: None,
+            human_involved: None,
+            sequence: u64::try_from(self.tick).unwrap_or_default(),
+            model_provenance: Default::default(),
+        });
+        self
+    }
+
     pub(crate) fn build(self) -> crate::evidence::TodoEvidence {
         self.evidence
     }

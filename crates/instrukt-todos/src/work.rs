@@ -50,6 +50,7 @@ pub use _attempts::{
     StoppedChild, WorkspaceEntry, WorkspaceRequest,
 };
 pub use _diff::DiffLine;
+pub(crate) use _envelope::ShownStatus;
 pub use _error::WorkError;
 pub use _github::{GitHubError, OperationAppError};
 pub use _model::{
@@ -61,6 +62,7 @@ pub use _ops::{
     Selection, TodoView, UpdateReport, UpdateRequest,
 };
 pub use _ports::WorkExistence;
+pub(crate) use _ports::waits_on_person;
 pub use _session::{GitHubRead, PendingReason, ReflectionStatus, describe};
 pub use _stamps::StampRequest;
 

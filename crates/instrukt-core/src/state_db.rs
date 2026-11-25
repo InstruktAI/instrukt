@@ -191,6 +191,16 @@ pub enum StoreLock {
     Exclusive(PathBuf, Duration),
 }
 
+/// Which copy of a store a migration brings forward.
+#[derive(Debug, Clone, Copy)]
+enum Image {
+    /// The store's file itself: the new version is durable.
+    File,
+    /// An in-memory image, such as an inspection read's copy of the file;
+    /// the file keeps its version.
+    Memory,
+}
+
 /// What reading a store found when it holds a schema.
 pub enum Read {
     /// A connection at the store's current schema version.
@@ -250,7 +260,7 @@ impl Store {
             });
         }
         if snapshot {
-            migrate_store(&mut conn, self)?;
+            migrate_store(&mut conn, self, Image::Memory)?;
             conn.pragma_update(None, "query_only", true)
                 .map_err(StoreError::sqlite(self.name, path))?;
         } else if found < known {
@@ -352,7 +362,7 @@ impl StoreDb {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(StoreError::sqlite(store.name, &path))?;
         protect(&path)?;
-        migrate_store(&mut conn, store)?;
+        migrate_store(&mut conn, store, Image::File)?;
         Ok(Self {
             conn,
             path,
@@ -537,8 +547,9 @@ fn stored_version(conn: &Connection, store: &'static str, path: &Path) -> Result
 }
 
 /// Applies each of `store`'s migrations past the stored version, each in
-/// its own transaction that sets `user_version` too.
-fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError> {
+/// its own transaction that sets `user_version` too. Only a migration of
+/// the store's file is reported as the store moving to a new version.
+fn migrate_store(conn: &mut Connection, store: &Store, image: Image) -> Result<(), StoreError> {
     let path = &store.file;
     let sql = StoreError::sqlite(store.name, path);
     let found = stored_version(conn, store.name, path)?;
@@ -564,13 +575,15 @@ fn migrate_store(conn: &mut Connection, store: &Store) -> Result<(), StoreError>
         tx.pragma_update(None, "user_version", version)
             .map_err(&sql)?;
         tx.commit().map_err(&sql)?;
-        tracing::info!(
-            event = "state_db_migrated",
-            store = store.name,
-            path = %path.display(),
-            version,
-            "a store moved to a new schema version"
-        );
+        if let Image::File = image {
+            tracing::info!(
+                event = "state_db_migrated",
+                store = store.name,
+                path = %path.display(),
+                version,
+                "a store moved to a new schema version"
+            );
+        }
     }
     Ok(())
 }
@@ -588,7 +601,7 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
         file: path.to_path_buf(),
         ..Store::state(&Home::at_user_home(PathBuf::from("/")))
     };
-    Ok(migrate_store(conn, &store)?)
+    Ok(migrate_store(conn, &store, Image::Memory)?)
 }
 
 /// Inspect an existing SQLite store without opening a disk connection or
@@ -875,7 +888,7 @@ mod tests {
             migrations: &_schema::MIGRATIONS[..35],
             ..Store::state(&Home::at_user_home(PathBuf::from("/")))
         };
-        migrate_store(&mut conn, &at_35).unwrap();
+        migrate_store(&mut conn, &at_35, Image::Memory).unwrap();
         assert_eq!(user_version(&conn, path).unwrap(), 35);
         let request = |key: &str, selection: serde_json::Value| {
             serde_json::json!({
