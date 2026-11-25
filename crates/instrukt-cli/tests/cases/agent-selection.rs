@@ -149,51 +149,77 @@ fn open_models_accept_native_options_but_reject_malformed_shapes() {
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS4
 #[test]
 fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_selection() {
+    use crate::common::redis::RedisServer;
+    use crate::fixtures::{documented, event_transport::Computer, runtime::FakeT3};
     use instrukt_core::config::SHIPPED_AGENTS;
-    let mut crew = crate::fixtures::workflow::Crew::new();
+    let computer = Computer::new();
+    let runtime = FakeT3::create(&computer.env);
+    let redis = RedisServer::new(&computer.env);
+    computer.config(&redis, None);
     std::fs::write(
-        crew.project.env.instrukt_home().join("agents.yaml"),
+        computer.env.instrukt_home().join("agents.yaml"),
         "schema_version: 3\nroles:\n  planner: {order: [antigravity]}\n",
     )
     .unwrap();
-    // Each start is its own todo led from its own session: an outstanding
-    // role attempt holds its todo's workspace.
-    let mut start = |lead: &str, slug: &str, role: &str, procedure: &str| {
-        crew.project.env.set_env("T3CODE_THREAD_ID", lead);
-        crew.project
-            .create(slug, "change", "Keep one choice, receive the rest.");
-        crew.worker(slug, role, Some(procedure))
-    };
-    let chosen = start("lead-1", "own-choice", "planner", "crew/procedure/plan");
-    let untouched = start(
-        "lead-2",
-        "shipped-choice",
-        "plan-reviewer",
-        "crew/procedure/review-plan",
-    );
+    // Work for each role: a procedure of that role answering one fact.
+    for (name, role) in [
+        ("own-choice", "planner"),
+        ("shipped-choice", "plan-reviewer"),
+    ] {
+        computer.project.write(
+            &format!("docs/domain/reactions/procedure/{name}.md"),
+            &documented::snippet(
+                "procedure",
+                name,
+                "Answer a fact.",
+                &format!(
+                    "role: {role}\nsubscription_home: project\nsubscriptions: [example.changed]\n"
+                ),
+                &[],
+                "Inspect the current fact.\n",
+            ),
+        );
+    }
+    computer.project.commit("docs: publish work for two roles");
+    documented::sync(&computer.env, &computer.project);
+    computer.tick();
+    let event = serde_json::json!({"id":"one-fact","type":"example.changed","source":computer.computer(),"subject":"todo:sample","home":"project:fork","home_owner":"unresolved","time":"2026-11-05T00:00:00Z","data":{}});
+    redis::cmd("XADD")
+        .arg(instrukt_runner::transport::EVENT_STREAM)
+        .arg("*")
+        .arg("event")
+        .arg(event.to_string())
+        .query::<String>(&mut redis.connection())
+        .unwrap();
+    computer.tick();
+    let started: std::collections::BTreeMap<String, (String, String)> = runtime
+        .threads()
+        .iter()
+        .map(|id| {
+            (
+                runtime.title(id),
+                (runtime.provider(id).to_string(), runtime.model(id)),
+            )
+        })
+        .collect();
     let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
-    let profile = |selection: &serde_json::Value| {
-        (
-            selection["selection"]["profile"]
-                .as_str()
-                .unwrap()
-                .to_owned(),
-            selection["selection"]["model"].as_str().unwrap().to_owned(),
-        )
+    let selected = |role: &str, first: Option<&str>| {
+        let (profile, tier) = shipped.order(Some(role), None, None, None).unwrap()[0].clone();
+        let profile = first.map_or(profile, |name| {
+            instrukt_core::ids::ProfileName::parse(name).unwrap()
+        });
+        let model = shipped.model_chain(&profile, tier).unwrap().remove(0);
+        (model.instance.to_string(), model.model)
     };
-    let planner_tier = shipped.order(Some("planner"), None, None, None).unwrap()[0].1;
-    let antigravity = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
-    let own = &shipped.model_chain(&antigravity, planner_tier).unwrap()[0];
     assert_eq!(
-        profile(&chosen),
-        (own.profile.to_string(), own.model.clone())
-    );
-    let default = &shipped
-        .select(Some("plan-reviewer"), None, None, None)
-        .unwrap()[0];
-    assert_eq!(
-        profile(&untouched),
-        (default.profile.to_string(), default.model.clone())
+        started,
+        std::collections::BTreeMap::from([
+            (
+                "own-choice".to_owned(),
+                selected("planner", Some("antigravity"))
+            ),
+            ("shipped-choice".to_owned(), selected("plan-reviewer", None)),
+        ])
     );
 }
 
