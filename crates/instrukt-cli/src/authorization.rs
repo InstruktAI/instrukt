@@ -365,7 +365,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         if reclaim && (assignment.todo.is_none() || assignment.workspace.is_none()) {
             refusal.push_str(&format!(
                 "; reclaiming acts on the todo worktree an assignment records, and this session's assignment records none: {}",
-                crate::commands::repository::RECLAIM_BINDING_DOOR
+                crate::commands::repository::reclaim_door(Some(&assignment))
             ));
         }
         return Err(PermissionRefused(refusal).into());

@@ -510,9 +510,25 @@ pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     }
 }
 
-/// What binds a session to the todo worktree `instrukt repo reclaim` acts on;
-/// the command's refusals and its admission name it.
-pub(crate) const RECLAIM_BINDING_DOOR: &str = "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree> --branch <branch> --base <base>`, with the worktree, branch and base the reservation names)";
+/// What would let a caller reclaim a todo worktree, by what its assignment
+/// is; the command's refusals and its admission name it. A session without
+/// an assignment is bound to the attempt its dispatcher reserved. A session
+/// whose assignment carries no todo, such as a standing one, cannot also hold
+/// a todo's, so the request goes through a separate session. A todo worked
+/// without a worktree has nothing to reclaim.
+pub(crate) fn reclaim_door(
+    assignment: Option<&instrukt_core::capabilities::Assignment>,
+) -> &'static str {
+    match assignment {
+        None => {
+            "the todo attempt its dispatcher reserved would, once bound to this session in that attempt's worktree (`instrukt todo bind <slug> --role <role> --attempt <attempt> --session <session> --worktree <worktree> --branch <branch> --base <base>`, with the worktree, branch and base the reservation names)"
+        }
+        Some(assignment) if assignment.todo.is_none() => {
+            "this session's assignment cannot also hold a todo's, so ask the todo's dispatcher to reserve a writing role attempt in the todo's worktree, bind it to a separate session, and reclaim from that session"
+        }
+        Some(_) => "its todo is worked without a worktree, so there is nothing to reclaim",
+    }
+}
 
 /// `instrukt repo reclaim`: what the runner removes from a todo worktree,
 /// removed from the worktree the calling session's assignment records
@@ -524,7 +540,10 @@ fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         .caller(&env)?;
     let assignment = crate::authorization::caller(ctx)?.map(|(assignment, _)| assignment);
     let (Some(session), Some(assignment)) = (session, assignment) else {
-        anyhow::bail!("no todo assignment binds this caller to a worktree; {RECLAIM_BINDING_DOOR}");
+        anyhow::bail!(
+            "no todo assignment binds this caller to a worktree; {}",
+            reclaim_door(None)
+        );
     };
     let (Some(project), Some(todo), Some(worktree)) = (
         assignment.project.as_ref(),
@@ -532,8 +551,9 @@ fn reclaim(ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         assignment.workspace.as_deref(),
     ) else {
         anyhow::bail!(
-            "the assignment {} binds this session to no todo worktree; {RECLAIM_BINDING_DOOR}",
-            assignment.key
+            "the assignment {} binds this session to no todo worktree; {}",
+            assignment.key,
+            reclaim_door(Some(&assignment))
         );
     };
     let work = crate::wiring::work_ports(ctx)?
