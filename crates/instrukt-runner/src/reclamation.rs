@@ -431,8 +431,9 @@ impl Deferred {
                 .iter()
                 .filter_map(|todo| todo.worktree.as_ref()?.parent().map(Path::to_path_buf))
                 .collect();
+            let mut swept = Swept::default();
             for dir in beside {
-                self.sweep(project, &dir, reported);
+                self.sweep(project, &dir, reported, &mut swept);
             }
             for todo in &worktrees {
                 let WorktreeStanding::Delivered(remains) = todo.standing else {
@@ -442,6 +443,15 @@ impl Deferred {
                     continue;
                 }
                 let what = format!("delivered todo {}", todo.todo);
+                if swept.holds_back(todo) {
+                    // The worktree stays where that output is found again.
+                    reported.owed(
+                        &project.slug,
+                        &what,
+                        "output moved out of its worktree is not deleted yet; the worktree stays until it is",
+                    );
+                    continue;
+                }
                 match self.reclamation.release_delivered(project, todo) {
                     Ok(DeliveredRelease::Busy) => reported.owed(
                         &project.slug,
@@ -469,8 +479,9 @@ impl Deferred {
     }
 
     /// Deletes each staging location in `dir` whose todo identity is one
-    /// this home's work record holds for `project`.
-    fn sweep(&self, project: &ProjectRef, dir: &Path, reported: &mut Reported) {
+    /// this home's work record holds for `project`, noting in `swept` what
+    /// stays undeleted and a directory it could not read in full.
+    fn sweep(&self, project: &ProjectRef, dir: &Path, reported: &mut Reported, swept: &mut Swept) {
         let entries = match std::fs::read_dir(dir) {
             Ok(entries) => entries,
             Err(error) => {
@@ -479,6 +490,7 @@ impl Deferred {
                     &dir.display().to_string(),
                     &error.to_string(),
                 );
+                swept.unread.insert(dir.to_path_buf());
                 return;
             }
         };
@@ -486,6 +498,7 @@ impl Deferred {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(error) => {
+                    swept.unread.insert(dir.to_path_buf());
                     // The rest of the directory may still be read.
                     reported.owed(
                         &project.slug,
@@ -503,6 +516,7 @@ impl Deferred {
                 Ok(false) => continue,
                 Err(error) => {
                     reported.owed(&project.slug, "staging locations", &error.to_string());
+                    swept.remaining.insert(todo);
                     continue;
                 }
             }
@@ -510,9 +524,34 @@ impl Deferred {
             let what = staged.display().to_string();
             match delete(&staged) {
                 Ok(()) => reported.settled(&project.slug, &what),
-                Err(error) => reported.owed(&project.slug, &what, &error.to_string()),
+                Err(error) => {
+                    reported.owed(&project.slug, &what, &error.to_string());
+                    swept.remaining.insert(todo);
+                }
             }
         }
+    }
+}
+
+/// What a deferred pass's sweep left: todos whose output stays at a staging
+/// location, and directories it could not read in full.
+#[derive(Debug, Default)]
+struct Swept {
+    remaining: BTreeSet<TodoId>,
+    unread: BTreeSet<PathBuf>,
+}
+
+impl Swept {
+    /// Whether `todo`'s worktree must stay so output staged beside it is
+    /// found again: some of that output is undeleted, or the directory
+    /// beside its worktree could not be read in full.
+    fn holds_back(&self, todo: &crate::interfaces::TodoWorktree) -> bool {
+        self.remaining.contains(&todo.identity)
+            || todo
+                .worktree
+                .as_ref()
+                .and_then(|worktree| worktree.parent())
+                .is_some_and(|dir| self.unread.contains(dir))
     }
 }
 
