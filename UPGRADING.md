@@ -525,12 +525,20 @@ the owning project, named with `--project <slug>`. `instrukt todo create
 --kind bug` is refused and names that door. The capability catalog gains the
 action `bug-report`: the `record` bundle carries it at `own`, the new `report`
 bundle at `any`, and `company-agent` holds `read`, `tools` and `report`. An
-`~/.instrukt/agents.yaml` you never edited takes these defaults at the next
-deployment. One you edited keeps working as it is, without them: a
-`company-agent` there cannot report a defect until you add `report` to its
-`can`, and roles using your own `record` bundle report into their own project
-once you add `{action: bug-report, scope: own}` to it. A role naming `report`
-in a file that defines no such bundle receives the shipped one.
+`~/.instrukt/agents.yaml` that an earlier release wrote and its deployment
+record recognises as unedited is removed by the first writing command, and
+every role then takes these defaults. Any other file is kept as your
+overrides: every role, bundle and field it leaves out takes these defaults,
+and what it names stays as written. A `company-agent` whose `can` the file
+lists holds the union of the scoped grants that list expands to, across its
+explicit grants and the bundles it names. As a standing role it still sees
+`instrukt bugs report` in command help; its usual-capabilities summary and
+conversation briefing offer cross-project defect reporting (`bug-report:any`)
+only when those grants supply it, for example by naming the shipped `report`
+bundle where the file does not redefine it. Focused roles using a `record`
+bundle the file defines report into their own project once you add
+`{action: bug-report, scope: own}` to it. A role naming `report` in a file
+that defines no such bundle receives the shipped one.
 
 ### One root AGENTS.md, rendered from an index.yaml
 

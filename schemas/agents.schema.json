@@ -5,9 +5,7 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version",
-    "default",
-    "profiles"
+    "schema_version"
   ],
   "properties": {
     "schema_version": {
@@ -15,19 +13,29 @@
     },
     "default": {
       "$ref": "#/$defs/role",
-      "required": [
-        "order",
-        "tier"
-      ]
+      "properties": {
+        "order": {
+          "type": "array"
+        },
+        "tier": {
+          "type": "string"
+        }
+      }
     },
     "roles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "$ref": "#/$defs/role"
       }
     },
     "bundles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "type": "array",
         "items": {
@@ -36,7 +44,10 @@
       }
     },
     "profiles": {
-      "type": "object",
+      "type": [
+        "object",
+        "null"
+      ],
       "additionalProperties": {
         "$ref": "#/$defs/profile"
       }
@@ -48,7 +59,10 @@
       "additionalProperties": false,
       "properties": {
         "order": {
-          "type": "array",
+          "type": [
+            "array",
+            "null"
+          ],
           "minItems": 1,
           "items": {
             "type": "string"
@@ -59,7 +73,8 @@
             "light",
             "standard",
             "strong",
-            "premium"
+            "premium",
+            null
           ]
         },
         "class": {
@@ -84,7 +99,10 @@
           }
         },
         "github_app": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -94,12 +112,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -127,12 +140,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -160,12 +168,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -193,12 +196,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -226,12 +224,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -259,12 +252,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -292,12 +280,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -325,12 +308,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -358,12 +336,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -391,12 +364,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -424,12 +392,7 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "kind",
-            "instance",
-            "light",
-            "standard",
-            "strong",
-            "premium"
+            "kind"
           ],
           "properties": {
             "kind": {
@@ -452,8 +415,51 @@
               "$ref": "#/$defs/acpRegistry-chain"
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "not": {
+            "required": [
+              "kind"
+            ]
+          },
+          "properties": {
+            "instance": {
+              "type": "string",
+              "minLength": 1
+            },
+            "light": {
+              "$ref": "#/$defs/inherited-kind-chain"
+            },
+            "standard": {
+              "$ref": "#/$defs/inherited-kind-chain"
+            },
+            "strong": {
+              "$ref": "#/$defs/inherited-kind-chain"
+            },
+            "premium": {
+              "$ref": "#/$defs/inherited-kind-chain"
+            }
+          }
         }
       ]
+    },
+    "inherited-kind-chain": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
     },
     "codex-chain": {
       "type": "array",
