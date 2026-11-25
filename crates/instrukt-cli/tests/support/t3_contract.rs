@@ -14,7 +14,10 @@ use instrukt_core::{
 };
 use instrukt_runner::{
     process,
-    runtime::{InputState, RuntimeAdapter, T3, conversations::SourceWake},
+    runtime::{
+        InputState, RuntimeAdapter, T3,
+        conversations::{Role, SourceWake},
+    },
     sessions::SessionState,
 };
 use serde_json::{Value, json};
@@ -954,8 +957,9 @@ pub fn real(root: &Path) -> Result<()> {
     );
     token.revoke()?;
     // History reads T3's database at rest: the text read retains the
-    // fixture thread with its user messages and nothing else T3 wrote of
-    // it, and an unchanged second extraction loads nothing.
+    // fixture thread with every user message T3 persisted of it, each with
+    // its role and text as T3 holds them, and nothing else T3 wrote of it;
+    // an unchanged second extraction loads nothing.
     drop(_server);
     let history = |args: &[&str]| -> Result<Value> {
         let mut command = Command::new(env!("CARGO_BIN_EXE_instrukt"));
@@ -979,15 +983,50 @@ pub fn real(root: &Path) -> Result<()> {
         retained["thread"]["id"] == id,
         "history retained another thread"
     );
+    let users = |messages: Vec<Value>| -> Result<Vec<(String, String)>> {
+        let mut users = Vec::new();
+        for message in messages {
+            if serde_json::from_value::<Role>(message["role"].clone())? == Role::User {
+                let id = message["id"].as_str().context("message id")?.to_owned();
+                let text = message["text"].as_str().context("message text")?.to_owned();
+                users.push((id, text));
+            }
+        }
+        users.sort();
+        Ok(users)
+    };
+    let persisted = {
+        let db = instrukt_core::state_db::rusqlite::Connection::open_with_flags(
+            Path::new(&std::env::var("T3CODE_HOME")?).join("userdata/statev2.sqlite"),
+            instrukt_core::state_db::rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        let mut statement = db.prepare(
+            "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id=?1",
+        )?;
+        let payloads = statement
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        users(
+            payloads
+                .iter()
+                .map(|payload| serde_json::from_str(payload))
+                .collect::<Result<_, _>>()?,
+        )?
+    };
     ensure!(
-        retained["messages"]
-            .as_array()
-            .is_some_and(
-                |messages| messages.iter().any(|m| m["id"] == "contract-input"
-                    && m["role"] == "user"
-                    && m["text"].as_str().is_some_and(|text| !text.is_empty()))
-            ),
-        "history retained no user message"
+        persisted
+            .iter()
+            .any(|(message, _)| message == "contract-input"),
+        "T3 persisted no fixture user message"
+    );
+    ensure!(
+        users(
+            retained["messages"]
+                .as_array()
+                .context("retained messages")?
+                .clone()
+        )? == persisted,
+        "history retained other user messages than T3 persisted"
     );
     ensure!(
         ["runs", "subagents", "turnItems"]
