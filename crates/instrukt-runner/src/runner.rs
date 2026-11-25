@@ -261,14 +261,14 @@ pub fn tick(
         _readiness::ended(cx.home);
     }
     drop(invocation);
-    let mut reported = crate::reclamation::Reported::default();
-    crate::reclamation::stage_idle(&considered, cx.wiring, &mut reported);
+    let mut staged = crate::reclamation::Reported::default();
+    crate::reclamation::stage_idle(&considered, cx.wiring, &mut staged);
     let deferred = crate::reclamation::Deferred::prepare(&considered, cx.wiring);
     // What reclamation deletes and releases waits for nothing and nothing
     // waits for it: it runs once the runner lock is released.
     drop(runner);
     if let Some(deferred) = deferred {
-        deferred.run(&mut reported);
+        deferred.run(&mut crate::reclamation::Reported::default());
     }
     woke?;
     Ok(TickOutcome::Done)
@@ -422,7 +422,7 @@ pub fn run(
     // Worktree reclamation: what the wakes reported, and the thread its
     // deferred work runs on, started again for each wake once it ended.
     let mut reclaimed = crate::reclamation::Reported::default();
-    let mut deferred: Option<std::thread::JoinHandle<crate::reclamation::Reported>> = None;
+    let mut deferred = DeferredPass::Idle(crate::reclamation::Reported::default());
     tracing::info!(event = "runner_started");
     // A skipped wake stays in status until the next wake that is not skipped;
     // one left by an earlier runner is cleared by this runner's first.
@@ -573,39 +573,50 @@ pub fn run(
     }
 }
 
+/// The run loop's deferred reclamation: idle with what its last pass
+/// reported, or running on its thread, which hands that report back.
+enum DeferredPass {
+    Idle(crate::reclamation::Reported),
+    Running(std::thread::JoinHandle<crate::reclamation::Reported>),
+}
+
 /// Worktree reclamation after a run-loop wake: the declared output of idle
-/// worktrees is moved out now, and the deferred work starts on a thread of
-/// its own once the one an earlier wake started has ended. A thread that
-/// ended by a panic is logged and its reports are lost; the next one starts.
+/// worktrees is moved out now, reported in `staged`, and the deferred work
+/// starts on a thread of its own once the one an earlier wake started has
+/// ended. The two passes keep separate reports, so neither overwrites what
+/// the other observed. A thread that ended by a panic is logged and its
+/// report is lost; the next one starts.
 fn reclaim(
     considered: &[Considered],
     wiring: &RunnerWiring,
-    reported: &mut crate::reclamation::Reported,
-    running: Option<std::thread::JoinHandle<crate::reclamation::Reported>>,
-) -> Option<std::thread::JoinHandle<crate::reclamation::Reported>> {
-    if let Some(running) = running {
-        if !running.is_finished() {
-            crate::reclamation::stage_idle(considered, wiring, reported);
-            return Some(running);
+    staged: &mut crate::reclamation::Reported,
+    pass: DeferredPass,
+) -> DeferredPass {
+    crate::reclamation::stage_idle(considered, wiring, staged);
+    let reported = match pass {
+        DeferredPass::Running(thread) if !thread.is_finished() => {
+            return DeferredPass::Running(thread);
         }
-        match running.join() {
-            Ok(returned) => *reported = returned,
-            Err(_) => tracing::error!(event = "worktree_reclamation_thread_ended"),
-        }
-    }
-    crate::reclamation::stage_idle(considered, wiring, reported);
-    let deferred = crate::reclamation::Deferred::prepare(considered, wiring)?;
-    let mut carried = std::mem::take(reported);
+        DeferredPass::Running(thread) => thread.join().unwrap_or_else(|_| {
+            tracing::error!(event = "worktree_reclamation_thread_ended");
+            crate::reclamation::Reported::default()
+        }),
+        DeferredPass::Idle(reported) => reported,
+    };
+    let Some(deferred) = crate::reclamation::Deferred::prepare(considered, wiring) else {
+        return DeferredPass::Idle(reported);
+    };
+    let mut carried = reported;
     match std::thread::Builder::new()
         .name("worktree-reclamation".into())
         .spawn(move || {
             deferred.run(&mut carried);
             carried
         }) {
-        Ok(thread) => Some(thread),
+        Ok(thread) => DeferredPass::Running(thread),
         Err(error) => {
             tracing::error!(event = "worktree_reclamation_unstarted", %error);
-            None
+            DeferredPass::Idle(crate::reclamation::Reported::default())
         }
     }
 }

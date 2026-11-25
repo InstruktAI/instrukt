@@ -314,7 +314,10 @@ pub fn stage_idle(considered: &[Considered], wiring: &RunnerWiring, reported: &m
     {
         let slug = &project.project.slug;
         let worktrees = match standings.worktree_standings(&project.project) {
-            Ok(worktrees) => worktrees,
+            Ok(worktrees) => {
+                reported.settled(slug, "worktree standing");
+                worktrees
+            }
             Err(error) => {
                 reported.owed(slug, "worktree standing", &error.to_string());
                 continue;
@@ -415,7 +418,10 @@ impl Deferred {
     pub fn run(self, reported: &mut Reported) {
         for project in &self.projects {
             let worktrees = match self.standings.worktree_standings(project) {
-                Ok(worktrees) => worktrees,
+                Ok(worktrees) => {
+                    reported.settled(&project.slug, "worktree standing");
+                    worktrees
+                }
                 Err(error) => {
                     reported.owed(&project.slug, "worktree standing", &error.to_string());
                     continue;
