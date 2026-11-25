@@ -370,37 +370,37 @@ pub fn stage_idle(considered: &[Considered], wiring: &RunnerWiring, reported: &m
     }
 }
 
+/// Reports one worktree's staging, each part on its own: what stays owed
+/// (a section that refused, a path that could not be moved or examined),
+/// the declared paths it keeps with why, and what it moved out. One part
+/// never hides another; unchanged notices are not repeated.
 fn report_staged(reported: &mut Reported, project: &ProjectSlug, what: &str, staged: &Staged) {
-    match &staged.section {
-        Some(SectionOutcome::Held(holder)) => {
-            reported.owed(project, what, &format!("{holder} holds it"));
-            return;
-        }
+    let mut owed: Vec<String> = match &staged.section {
+        Some(SectionOutcome::Held(holder)) => vec![format!("{holder} holds it")],
         Some(SectionOutcome::RecordChanged) => {
-            reported.owed(project, what, "its todo's record changed meanwhile");
-            return;
+            vec!["its todo's record changed meanwhile".to_owned()]
         }
         Some(SectionOutcome::NotRecorded) => {
-            reported.owed(project, what, "its todo is no longer in the record");
-            return;
+            vec!["its todo is no longer in the record".to_owned()]
         }
-        Some(SectionOutcome::Ran) | None => {}
+        Some(SectionOutcome::Ran) | None => Vec::new(),
+    };
+    owed.extend(
+        staged
+            .left
+            .iter()
+            .filter(|(_, why)| matches!(why, Left::NotMoved(_) | Left::Unanswered(_)))
+            .map(|(entry, why)| format!("{entry}: {why}")),
+    );
+    if owed.is_empty() {
+        reported.settled(project, what);
+    } else {
+        reported.owed(project, what, &owed.join("; "));
     }
-    let not_moved: Vec<String> = staged
-        .left
-        .iter()
-        .filter(|(_, why)| matches!(why, Left::NotMoved(_) | Left::Unanswered(_)))
-        .map(|(entry, why)| format!("{entry}: {why}"))
-        .collect();
-    if !not_moved.is_empty() {
-        reported.owed(project, what, &not_moved.join("; "));
-        return;
-    }
-    reported.settled(project, what);
     let kept: Vec<String> = staged
         .left
         .iter()
-        .filter(|(_, why)| *why != Left::Absent)
+        .filter(|(_, why)| !matches!(why, Left::Absent | Left::NotMoved(_) | Left::Unanswered(_)))
         .map(|(entry, why)| format!("{entry}: {why}"))
         .collect();
     if kept.is_empty() {
