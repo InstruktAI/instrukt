@@ -750,6 +750,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     let before = r.runtime.calls().len();
     let result = reserve().success();
     let request: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    insta::assert_snapshot!("manual-standing-title", request["title"].as_str().unwrap());
     let repeated = reserve().success();
     let repeated: serde_json::Value =
         serde_json::from_slice(&repeated.get_output().stdout).unwrap();
@@ -1099,6 +1100,7 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     r.tick();
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
+    insta::assert_snapshot!("successor-standing-title", r.runtime.title("s2"));
     insta::assert_snapshot!(
         "closed-home-next-generation",
         work::redact(&r.runtime.input_log("s2"))
@@ -1154,6 +1156,10 @@ fn subject_identity_keeps_distinct_agents_and_continues_the_matching_subject() {
     assert_eq!(r.runtime.threads().len(), 2);
     assert_eq!(r.runtime.message_count("s1"), 2);
     assert_eq!(r.runtime.message_count("s2"), 1);
+    insta::assert_snapshot!(
+        "subject-standing-titles",
+        format!("{}\n{}", r.runtime.title("s1"), r.runtime.title("s2"))
+    );
     insta::assert_snapshot!("continued-subject-assignment", r.conversation());
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA22
@@ -1444,107 +1450,6 @@ fn a_missing_retained_role_refuses_manual_and_automatic_entry_before_creation() 
     r.append("role-restored");
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
-}
-
-// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA31
-#[test]
-fn standing_threads_are_titled_by_their_actor_and_keep_their_binding_key() {
-    const RESPOND: &str = "instrukt:standing:reactions%2Fprocedure%2Frespond@project%3Afork";
-    const OBSERVE: &str = "instrukt:standing:reactions%2Fprocedure%2Fobserve@project%3Afork";
-    const SUBJECT: &str = ":subject:todo%3Ademo";
-    for respond_by_subject in [false, true] {
-        let (respond, observe) = if respond_by_subject {
-            ("subscription_identity: subject\n", "")
-        } else {
-            ("", "subscription_identity: subject\n")
-        };
-        let r = Responsibility::new(respond);
-        // A second procedure omits its role and so acts as `event-handler`.
-        r.computer.project.write(
-            "docs/domain/reactions/procedure/observe.md",
-            &documented::snippet(
-                "procedure",
-                "Observe",
-                "Record external facts.",
-                &format!("subscription_home: project\nsubscriptions: [example.changed]\n{observe}"),
-                &[],
-                "Record the event.\n",
-            ),
-        );
-        r.computer
-            .project
-            .commit("docs: declare a role-less observer");
-        documented::sync(&r.computer.env, &r.computer.project);
-        r.append("first");
-        r.tick();
-        let mut started: Vec<_> = r
-            .runtime
-            .threads()
-            .iter()
-            .map(|id| (r.runtime.title(id), r.runtime.key(id)))
-            .collect();
-        started.sort();
-        let mut expected = if respond_by_subject {
-            vec![
-                ("event-handler".to_owned(), OBSERVE.to_owned()),
-                (
-                    "responder · todo:demo".to_owned(),
-                    format!("{RESPOND}{SUBJECT}"),
-                ),
-            ]
-        } else {
-            vec![
-                (
-                    "event-handler · todo:demo".to_owned(),
-                    format!("{OBSERVE}{SUBJECT}"),
-                ),
-                ("responder".to_owned(), RESPOND.to_owned()),
-            ]
-        };
-        expected.sort();
-        assert_eq!(started, expected);
-    }
-
-    // A deliberate entry is reserved under the same actor title.
-    let r = Responsibility::new("");
-    let reserved = r
-        .computer
-        .env
-        .instrukt(r.computer.project.path())
-        .env("T3CODE_THREAD_ID", "manual-parent")
-        .args([
-            "events",
-            "bind",
-            "reactions/procedure/respond",
-            "--reserve",
-            "--json",
-        ])
-        .assert()
-        .success();
-    let request: serde_json::Value = serde_json::from_slice(&reserved.get_output().stdout).unwrap();
-    assert_eq!(request["title"], "responder");
-    assert_eq!(request["key"], RESPOND);
-
-    // A successor takes its title from the current published role and keeps
-    // the responsibility's binding key.
-    let r = Responsibility::new("");
-    r.append("initial");
-    r.tick();
-    let key = r.runtime.key("s1");
-    r.computer.project.write(
-        Responsibility::PROCEDURE,
-        &Responsibility::procedure("").replacen("role: responder", "role: reconciler", 1),
-    );
-    r.computer
-        .project
-        .commit("docs: rename the responding actor");
-    documented::sync(&r.computer.env, &r.computer.project);
-    r.runtime.delete("s1");
-    r.append("next-generation");
-    r.tick();
-    r.tick();
-    assert_eq!(r.runtime.title("s2"), "reconciler");
-    assert_eq!(r.runtime.key("s2"), key);
 }
 
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA1

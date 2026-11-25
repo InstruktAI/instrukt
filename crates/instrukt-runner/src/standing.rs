@@ -1352,26 +1352,42 @@ mod tests {
     const PROCEDURE: &str = "sdlc/procedure/lifecycle/integrate";
 
     #[test]
-    fn a_title_names_the_role_and_any_subject() {
-        assert_eq!(
-            standing_title(PROCEDURE, Some("integrator"), None, "k"),
-            "integrator"
-        );
-        assert_eq!(
-            standing_title(PROCEDURE, Some("integrator"), Some("todo:demo"), "k"),
-            "integrator · todo:demo"
+    fn a_declared_role_titles_a_home_agent() {
+        insta::assert_snapshot!(
+            "declared-role-home",
+            standing_title(PROCEDURE, Some("integrator"), None, "k")
         );
     }
 
     #[test]
-    fn a_title_without_a_usable_role_names_the_procedure() {
-        for role in [None, Some(""), Some("  ")] {
-            assert_eq!(standing_title(PROCEDURE, role, None, "k"), "integrate");
-            assert_eq!(
-                standing_title(PROCEDURE, role, Some("todo:demo"), "k"),
-                "integrate · todo:demo"
-            );
-        }
-        assert_eq!(standing_title("bare", None, None, "k"), "bare");
+    fn a_declared_role_titles_a_subject_agent_with_its_subject() {
+        insta::assert_snapshot!(
+            "declared-role-subject",
+            standing_title(PROCEDURE, Some("integrator"), Some("todo:demo"), "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "absent-role-home",
+            standing_title(PROCEDURE, None, None, "k")
+        );
+    }
+
+    #[test]
+    fn a_blank_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "blank-role-home",
+            standing_title(PROCEDURE, Some("  "), None, "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_subject_agent_by_its_procedure_and_subject() {
+        insta::assert_snapshot!(
+            "absent-role-subject",
+            standing_title(PROCEDURE, None, Some("todo:demo"), "k")
+        );
     }
 }

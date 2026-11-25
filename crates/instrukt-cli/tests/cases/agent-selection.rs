@@ -192,13 +192,25 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         .query::<String>(&mut redis.connection())
         .unwrap();
     computer.tick();
-    // Each standing thread is titled by the role that answers it.
+    // Each thread is matched to its role through the assignment facts it
+    // was started with.
+    let role = |id: &str| {
+        let opening = runtime.message(id, 0);
+        let facts = opening
+            .lines()
+            .find_map(|line| line.strip_prefix("Assignment facts: "))
+            .unwrap();
+        serde_json::from_str::<serde_json::Value>(facts).unwrap()["role"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
     let started: std::collections::BTreeMap<String, (String, String)> = runtime
         .threads()
         .iter()
         .map(|id| {
             (
-                runtime.title(id),
+                role(id),
                 (runtime.provider(id).to_string(), runtime.model(id)),
             )
         })
