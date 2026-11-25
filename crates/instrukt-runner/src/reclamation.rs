@@ -287,11 +287,27 @@ pub struct Reported {
 
 impl Reported {
     fn owed(&mut self, project: &ProjectSlug, what: &str, cause: &str) {
-        let key = (project.clone(), what.to_owned());
-        if self.owed.get(&key).map(String::as_str) != Some(cause) {
+        if self.changed(project, what, cause) {
             tracing::warn!(event = "worktree_reclamation_owed", project = %project, what = %what, cause = %cause);
-            self.owed.insert(key, cause.to_owned());
         }
+    }
+
+    /// Declared paths a worktree keeps, with why, logged when they appear
+    /// or change.
+    fn kept(&mut self, project: &ProjectSlug, worktree: &str, paths: &str) {
+        if self.changed(project, &kept_key(worktree), paths) {
+            tracing::info!(event = "worktree_reclamation_kept", project = %project, worktree = %worktree, paths = %paths);
+        }
+    }
+
+    /// Records `cause` for `what`; whether it is new or changed.
+    fn changed(&mut self, project: &ProjectSlug, what: &str, cause: &str) -> bool {
+        let key = (project.clone(), what.to_owned());
+        if self.owed.get(&key).map(String::as_str) == Some(cause) {
+            return false;
+        }
+        self.owed.insert(key, cause.to_owned());
+        true
     }
 
     fn settled(&mut self, project: &ProjectSlug, what: &str) {
@@ -375,6 +391,17 @@ fn report_staged(reported: &mut Reported, project: &ProjectSlug, what: &str, sta
         return;
     }
     reported.settled(project, what);
+    let kept: Vec<String> = staged
+        .left
+        .iter()
+        .filter(|(_, why)| *why != Left::Absent)
+        .map(|(entry, why)| format!("{entry}: {why}"))
+        .collect();
+    if kept.is_empty() {
+        reported.settled(project, &kept_key(what));
+    } else {
+        reported.kept(project, what, &kept.join("; "));
+    }
     if !staged.moved.is_empty() {
         let paths: Vec<String> = staged
             .moved
@@ -383,6 +410,11 @@ fn report_staged(reported: &mut Reported, project: &ProjectSlug, what: &str, sta
             .collect();
         tracing::info!(event = "worktree_reclaimed", project = %project, worktree = %what, paths = %paths.join(", "));
     }
+}
+
+/// The report key of the declared paths the worktree `worktree` keeps.
+fn kept_key(worktree: &str) -> String {
+    format!("{worktree} (kept paths)")
 }
 
 /// The work an invocation leaves for after its wake, which nothing waits
