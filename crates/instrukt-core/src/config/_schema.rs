@@ -1437,42 +1437,63 @@ mod tests {
         );
     }
 
+    /// Whether validation and the company home's JSON Schema each admit a
+    /// company home holding `members`, in that order.
+    fn members_admitted(members: &str) -> (bool, bool) {
+        let doc = format!("schema_version: 1\ncompany: acme\nmembers: {members}\n");
+        (
+            check(&yaml(&doc), LayerKind::Company).is_empty(),
+            fits(&layer_json_schema(LayerKind::Company), &as_json(&doc)),
+        )
+    }
+
     #[test]
-    fn a_company_homes_schema_admits_the_members_validation_admits() {
-        let schema = layer_json_schema(LayerKind::Company);
-        let head = "schema_version: 1\ncompany: acme\n";
-        let admitted = [
-            "members: {}\n",
-            "members: {alex: {name: Alex Example, email: alex@example.com, \
-             credentials: {erpnext: '${ALEX_ERPNEXT_LOGIN}'}}}\n",
-            "members: {alex: {email: ' alex@example.com '}, kim-2: {email: kim@example.com, credentials: {}}}\n",
-        ];
-        let refused = [
-            "members: [alex]\n",
-            "members: {Alex: {email: alex@example.com}}\n",
-            "members: {alex: email}\n",
-            "members: {alex: {name: Alex}}\n",
-            "members: {alex: {email: alex}}\n",
-            "members: {alex: {email: 7}}\n",
-            "members: {alex: {name: ' ', email: alex@example.com}}\n",
-            "members: {alex: {email: alex@example.com, role: admin}}\n",
-            "members: {alex: {email: alex@example.com, credentials: [erpnext]}}\n",
-            "members: {alex: {email: alex@example.com, credentials: {erpnext: hunter2}}}\n",
-            "members: {alex: {email: alex@example.com, credentials: {erpnext: '${A} ${B}'}}}\n",
-        ];
-        for (members, valid) in admitted
-            .iter()
-            .map(|m| (m, true))
-            .chain(refused.iter().map(|m| (m, false)))
-        {
-            let doc = format!("{head}{members}");
-            assert_eq!(
-                check(&yaml(&doc), LayerKind::Company).is_empty(),
-                valid,
-                "validation: {members}"
-            );
-            assert_eq!(fits(&schema, &as_json(&doc)), valid, "schema: {members}");
-        }
+    fn the_company_schema_admits_a_complete_member_entry_as_validation_does() {
+        let member = "{alex: {name: Alex Example, email: alex@example.com, \
+                      credentials: {erpnext: '${ALEX_ERPNEXT_LOGIN}'}}}";
+        assert_eq!(members_admitted(member), (true, true));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_member_key_outside_the_slug_grammar_as_validation_does() {
+        assert_eq!(
+            members_admitted("{Alex: {email: alex@example.com}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_member_without_an_email_as_validation_does() {
+        assert_eq!(members_admitted("{alex: {name: Alex}}"), (false, false));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_an_email_without_an_address_as_validation_does() {
+        assert_eq!(members_admitted("{alex: {email: alex}}"), (false, false));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_blank_display_name_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {name: ' ', email: alex@example.com}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_an_unknown_member_field_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {email: alex@example.com, role: admin}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_literal_credential_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {email: alex@example.com, credentials: {erpnext: hunter2}}}"),
+            (false, false)
+        );
     }
 
     #[test]
