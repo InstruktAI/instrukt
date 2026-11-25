@@ -209,8 +209,9 @@ withdrawal whose working resources are being released. It starts empty.
 
 <!-- planned:runner-owned-workspace-cleanup -->
 Version 38 adds lookups of `session_bindings` by `worktree` and by `branch`,
-and of `todos` by `branch`, so the todos a computer's worktrees and work
-branches name are found without reading the rest of the record
+of `todos` by `branch`, and of `holds` and `github_label_actions` by todo, so
+the todos a computer's worktrees and work branches name, and their records,
+are read without reading the rest of the record
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
 table, column or row.
 <!-- /planned:runner-owned-workspace-cleanup -->
