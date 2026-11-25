@@ -327,6 +327,17 @@ owning design snippet or decision record is declared.
   opened the turn a session has in progress when it offers a revision, and a
   named session's conversation; work consults them when it admits a head
   verdict.
+
+
+- **Work → runner (requested review)** — customer-supplier. Work answers
+  whether a commit's head verdict stands here, with the session that recorded
+  its current version, or was handed off, with the export that handed it off,
+  and which pinned base it admits the commit's verdict against; the runner
+  consults this when it admits a requested review
+  (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
+  requested reviewer's verdict under its own rules.
+
+
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
   evidence is current for a commit and whether a candidate's derived
   approval is one GitHub does not show yet;

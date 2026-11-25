@@ -158,6 +158,7 @@ installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
 adapter verb templates.
 
+
 | Feature | Needs |
 | --- | --- |
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
@@ -166,7 +167,9 @@ adapter verb templates.
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
+| Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
+
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -199,14 +202,17 @@ generations. Each generation has a fixed native command key and thread ID,
 derived from its execution scope, runtime endpoint/home, object key and generation.
 Retries retain both IDs, the native project ID and the entire captured request.
 
+
 | Assignment | Semantic key |
 | --- | --- |
 | Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-home>[:subject:<encoded-subject>][:generation:<n>]` |
 | Runner-owned todo orchestrator | `instrukt:todo:<encoded-project>/<todo-id>:<encoded-role>:<attempt>` |
 | Native child assignment | The same role-attempt semantic key is supplied to native delegation and retained by work; it is not an adapter-discovery key. |
 | Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
+| Requested reviewer | `instrukt:review:<encoded-project>:<head>`, the full id of the head commit asked for |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
+
 
 For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
@@ -243,16 +249,19 @@ second launcher. Elapsed time never changes the generation.
 
 ### Human-facing thread titles
 
+
 Every start captures a readable label without an object-key suffix. Todo roles
-use `<role> · <todo-slug>`, standing procedures use their actor title
-(`project/instrukt/spec/feature/runner/procedure-standing-agent`), tasks use
-`task · <task-slug>`, and runs use `run · <procedure-name>`.
+use `<role> · <todo-slug>`, standing procedures use their name and optional typed
+subject, tasks use `task · <task-slug>`, requested reviewers use
+`review · <branch> @ <first 12 characters of the head>`, and runs use
+`run · <procedure-name>`.
 Company owns conversation title formatting from optional connector display facts:
 `<Company> · #<channel> · "<first words>"`, `<Company> · DM with <name>`, or
 `<Company> · Slack thread` without enrichment. The preview uses the first eight
 whitespace-separated words, capped at 80 Unicode characters with an ellipsis
 when shortened. Titles are presentation only, frozen with each launch request.
 Existing native titles are never rewritten by startup or migration.
+
 
 ### Keyed dispatch and recovery
 

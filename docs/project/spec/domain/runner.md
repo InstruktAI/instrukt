@@ -106,11 +106,27 @@ Native agent-operation prose is supplied by configuration and rendered through `
 : The login a sign-in yields, kept per company, person and server in the
   state database and renewed by instrukt until it ends.
 
+
+**Review request**
+: The runner's fact `runner.review_needed`: a commit owed a review on
+  instrukt's own initiative, answered by a standing reviewer
+  (`project/instrukt/spec/feature/runner/pull-request-review`).
+
+**Requested review**
+: An independent review of an exact committed worktree head that an authoring
+  session asks for with `instrukt review start`, naming coordinates only; the
+  runner renders the reviewer's assignment and starts the requested reviewer
+  on it. It is no review request and emits no event
+  (`project/instrukt/spec/feature/runner/requested-review`).
+
+
 ## Ownership boundary
+
 
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  activation from events; the admission, rendering and start of requested
+  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
   runtime capability translation, conversation-link membership, identity-envelope
   vocabulary and deterministic turn-end relay;
   unattended event/approval delivery and runner-owned execution observation; time
@@ -128,7 +144,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
   conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
-  import progress (`project/instrukt/spec/feature/runner/history`).
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
@@ -144,7 +162,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
   `instrukt history extract|search|show`,
-  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
@@ -171,6 +190,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+
 
 The runner also owns worktree reclamation: that and when the disk todo
 worktrees hold is reclaimed on a computer, the removal of a project's declared
@@ -456,6 +476,11 @@ has no origin, as declared in Canonical fields.
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
   — have trusted authors' pull-request heads reviewed independently without anyone asking.
 
+
+- **Requested review** — [project/instrukt/spec/feature/runner/requested-review](../feature/runner/requested-review.md)
+  — have an exact committed worktree head reviewed independently on an assignment instrukt rendered from its coordinates.
+
+
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
 - **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
@@ -502,6 +527,17 @@ session it reached and pinned base, with the input that opened the turn a
 session has in progress when it offers a revision, and with a named session's
 conversation
 (`project/instrukt/spec/domain/context-map`).
+
+
+For a requested review the runner asks work whether the head's verdict stands
+here, with the session that recorded its current version, or was handed off,
+with the export that handed it off, and for the pinned base work admits its
+verdict against; it reads the commit's review requests from its own delivery
+records.
+It starts the requested reviewer through the runtime adapter under its own
+start key; work admits that reviewer's verdict like any other
+(`project/instrukt/spec/feature/runner/requested-review`).
+
 
 The runtime adapter and the event-source boundary form an
 **Anti-corruption layer (ACL)** translating session operations and external
