@@ -22,10 +22,10 @@ canonical branch through the integration candidate.
 <!-- planned:company-home-integration -->
 In a company home (`project/instrukt/spec/feature/configuration/company-homes`),
 a pull request carrying a knowledge change proposed through the company's
-agent, for a proposer the company admits to change its knowledge, is handed to
+agent, whose proposer the company admits to change its knowledge, is handed to
 the company's standing integrator once its current head holds an approving
-verdict. It does not wait for a person to merge it
-(`project/instrukt/spec/feature/workflow/integration-gate`).
+verdict. No person merges it: the integrator is the one writer of the
+company's default branch (`general/policy/commits`).
 <!-- /planned:company-home-integration -->
 
 ## Canonical fields

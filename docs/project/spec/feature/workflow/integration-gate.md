@@ -35,15 +35,6 @@ independent authoring commits to discover: only the integrator merges
 candidates, and publication goes live atomically at that integration. A
 dependent todo waits for delivery of the contracts it requires.
 
-<!-- planned:company-home-integration -->
-In a company home, an adopted project without todos
-(`project/instrukt/spec/feature/configuration/company-homes`), the integrator
-also receives a knowledge change proposed through the company's agent, for a
-proposer the company admits to change its knowledge, once the change's exact
-head holds an approving independent review. No person hands it on
-(`project/instrukt/spec/feature/runner/pull-request-review`).
-<!-- /planned:company-home-integration -->
-
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
 already contained in remote main means no candidate is pending. A failed or
@@ -124,6 +115,7 @@ review-currency derivation of
 follows the candidate's first-parent commits back to the canonical branch, and
 each of them must be one of these.
 
+<!-- planned-change:company-home-integration -->
 | Commit on the candidate's first-parent line | Covered when | Evidence |
 | --- | --- | --- |
 | An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
@@ -132,6 +124,17 @@ each of them must be one of these.
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
 | A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+<!-- change:company-home-integration -->
+| Commit on the candidate's first-parent line | Covered when | Evidence |
+| --- | --- | --- |
+| An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
+| A merge of an approved head | Its second parent is exactly such a head, and its tree is what git's own merge of its two parents produces. A commit that an approved head merely contains, and a head that contains an approved commit, are not approved heads. | The head's approval as above; the merge reproduced from its parents. |
+| A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
+| A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
+| A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
+| A rendering of a company's knowledge | In a company home, its tree is what rendering the home's agent instructions and the company's skill with its catalog entry, from the knowledge its parent holds, produces from its parent's tree. | The rendering reproduced from its parent (`project/instrukt/spec/feature/publication/agent-entrypoints`; `project/instrukt/spec/feature/publication/company-plugin`). |
+| A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+<!-- /planned-change:company-home-integration -->
 
 Approval of a head that is not a todo's is work's answer on that commit's
 current evidence and nothing else
@@ -238,9 +241,9 @@ admission: it stays unpromoted and its failure stays with the integrator under
 the remediation routes above. For a company home without CI that comparison is
 the local admission evidence for the exact candidate.
 
-A commit whose tree is exactly what rendering the company's knowledge produces
-from its parent's tree is covered by reproduction, as a documentation fold is
-(Review coverage of a candidate). It owes no review of its own.
+The commit that carries the rendering is covered by reproduction (Review
+coverage of a candidate) and owes no review of its own, as a mechanical change
+owes none (`general/policy/commits`).
 <!-- /planned:company-home-integration -->
 
 ### Recovery of a red canonical branch

@@ -427,6 +427,7 @@ What a pull request receives follows the kind of verdict its head has.
 A covering item is referenced by the evidence its producer keeps, as
 workflow's finding names it.
 
+<!-- planned-change:company-home-integration -->
 | Covering item | Reference |
 | --- | --- |
 | A head approved by a head verdict | The commit, the reviewing session and the digest of the approving version's report. |
@@ -434,6 +435,15 @@ workflow's finding names it.
 | A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). No pull-request review exists for it and none is cited. |
 | An exempted commit | The commit, the exemption's basis and who declared it. |
 | A reproduced merge, documentation fold or revert | The commits it was reproduced from, named as reproduced. |
+<!-- change:company-home-integration -->
+| Covering item | Reference |
+| --- | --- |
+| A head approved by a head verdict | The commit, the reviewing session and the digest of the approving version's report. |
+| A finalized commit approved in its todo's record | The todo, the build-review approval bound to that exact commit and its report's digest, and the todo's pull request when that approval was reflected there as a review (`project/instrukt/spec/feature/work/github-record`, Artifacts and stamps). |
+| A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). No pull-request review exists for it and none is cited. |
+| An exempted commit | The commit, the exemption's basis and who declared it. |
+| A reproduced merge, documentation fold, revert or rendering of a company's knowledge | The commits it was reproduced from, named as reproduced. |
+<!-- /planned-change:company-home-integration -->
 
 Every eligible pull request at a commit thus receives its own native review
 from the commit's one verdict: the pull request a request was addressed to and
