@@ -175,12 +175,12 @@ Native agent-operation prose is supplied by configuration and rendered through `
 <!-- planned:standing-sdlc-coordinator -->
 Fleet attention is the runner's: which facts of a project's active work are
 attention conditions, the `runner.attention.*` vocabulary, each condition's
-occurrence identity, and the raise through `instrukt events raise`
+occurrence identity, a project's attention episode, the fleet-attention
+contract work calls inside its record transactions, and the raise through
+`instrukt events raise`
 (`project/instrukt/spec/feature/runner/fleet-attention`). Each underlying fact
-stays with its owner: work appends the hold and repeated-failure conditions in
-its own record transactions through the runner's event-log interface, and the
-runner appends the execution conditions with the observation that establishes
-them.
+stays with its owner: work passes the facts of its own record changes, and the
+runner decides which of them are conditions and appends their events.
 
 <!-- /planned:standing-sdlc-coordinator -->
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
@@ -392,18 +392,20 @@ project origin; which facts count, and from what point, is
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.attention.execution_stalled` | The runner records that the session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or that no session could be started for the todo from the model order available | Project, todo, session when one existed, the workflow state observed, and whether the session stopped, failed, was gone or never started | Project, todo, session or the start's model order, workflow state | The procedure subscribed to fleet attention in the project |
-| `runner.attention.input_waiting` | The runner observes the session holding a todo's execution claim waiting for input while work does not hold the todo waiting on a person | Project, todo, session, workflow state | Project, todo, session and that session's count of waits observed | The procedure subscribed to fleet attention in the project |
-| `runner.attention.hold_placed` | A record change places a dispatch hold on a todo, from any source | Project, todo, the hold's source, reason and time | Project, todo, the hold's placement time and source | The procedure subscribed to fleet attention in the project |
-| `runner.attention.hold_released` | A record change removes a todo's dispatch hold, by release, replacement, group joining or label | Project, todo, the released hold's source and placement time | Project, todo, the released hold's placement time and source | The procedure subscribed to fleet attention in the project |
-| `runner.attention.attempts_failing` | Work records a role's failed attempt on a todo on which an earlier attempt of that role already failed | Project, todo, role, attempt, failure reason | Project, todo, role, attempt | The procedure subscribed to fleet attention in the project |
+| `runner.attention.execution_stalled` | The runner records that the session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or a start for the todo found no model in the order available | Project, todo, session when one existed, the workflow state observed, and whether the session stopped, failed, was gone or never started | Project, todo, session or the start's model order, workflow state | The procedure subscribed to fleet attention in the project |
+| `runner.attention.input_waiting` | The runner observes the session holding a todo's execution claim begin a wait for input while work does not hold the todo waiting on a person | Project, todo, session, workflow state | Project, todo, session and that session's wait number on the todo | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_placed` | A change made on this computer places a dispatch hold on a todo, from any source | Project, todo, the hold's source, reason and time | Project, todo, the hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_released` | A change made on this computer removes a todo's dispatch hold, by release, replacement, group joining or label | Project, todo, the released hold's source and placement time | Project, todo, the released hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.attempts_failing` | A role's attempt on a todo fails where an earlier attempt of that role on that todo already failed | Project, todo, role, attempt, failure reason | Project, todo, role, attempt | The procedure subscribed to fleet attention in the project |
+| `runner.attention.fleet_quiet` | While the project's attention episode is open, its last active todo that is unheld and not a structural holder leaves active work or is held | Project, the todo whose change closed the episode | Project, the event that opened the episode | The procedure subscribed to fleet attention in the project |
 | `runner.attention.raised` | An agent raises a condition about active todos of the project it works in | Project, the todos named, the obligation at stake; the raising session as the caller reference | One identity per raise | The procedure subscribed to fleet attention in the project |
 
-Work emits the two hold types and `runner.attention.attempts_failing` in the
-transaction of the record change itself; adopting a record pulled from GitHub
-emits none. The runner emits the two execution types in the transaction that
-records its observation, and `runner.attention.raised` when the raise is
-admitted.
+The hold, repeated-failure and episode-end types are appended through the
+fleet-attention contract in the transaction of work's record change. A stopped
+execution's type is appended in the transaction that records the unrecovered
+stop, a wait's in the transaction that records the wait, and an exhausted
+start's in a transaction of its own; `runner.attention.raised` when the raise
+is admitted.
 
 <!-- /planned:standing-sdlc-coordinator -->
 
@@ -509,6 +511,17 @@ related references.
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+
+<!-- planned:standing-sdlc-coordinator -->
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+<!-- /planned:standing-sdlc-coordinator -->
 
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries

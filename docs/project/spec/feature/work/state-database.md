@@ -84,10 +84,18 @@ meaning and the writes of the conversation tables.
   in between, the later write is refused whole, naming the todo and its door:
   run the command again, which acts on the current record
   (`general/principle/trust-and-guardrails`, interference).
+<!-- planned-change:standing-sdlc-coordinator -->
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
   its `workflow.finalized` event, a dependency or group change across several
   todos, a delivery's outcome with its handled marks and cursor.
+<!-- change:standing-sdlc-coordinator -->
+- A change that spans several records commits in one transaction or not at
+  all: a todo with its new stamp and revision, a finalize-ready stamp with
+  its `workflow.finalized` event, a todo's status, hold or attempt change
+  with the fleet-attention events it leads to, a dependency or group change across several
+  todos, a delivery's outcome with its handled marks and cursor.
+<!-- /planned-change:standing-sdlc-coordinator -->
 - A committed transaction survives a process crash and a power loss
   (`synchronous = FULL`). An interrupted transaction leaves nothing of itself
   behind.
@@ -574,9 +582,18 @@ withdrawal to be run again.
 
 ### Runner tables
 
+<!-- planned-change:standing-sdlc-coordinator -->
 Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
 finalized publication and approval attention committed with their stamps.
+<!-- change:standing-sdlc-coordinator -->
+Owned by the runner and written through its interface, in the same
+transactions as the reactions they record. Work invokes that interface for
+finalized publication and approval attention committed with their stamps, and
+calls the runner's fleet-attention contract inside every change it makes on
+this computer to a todo's status, hold or attempts
+(`project/instrukt/spec/feature/runner/fleet-attention`).
+<!-- /planned-change:standing-sdlc-coordinator -->
 
 **History** — retained history is not stored in this database. It lives in the
 history store owned by `project/instrukt/spec/feature/runner/history`, which
@@ -852,6 +869,23 @@ preserving existing validator bodies and retry deadlines.
 `(project, remote, ref)`. Columns: `project`, `remote`, `ref`, `revision`,
 `observed_at`.
 
+<!-- planned:standing-sdlc-coordinator -->
+**`input_waits`** — the runner's record of each claim-holding session's waits
+for input on a todo. Key: `(project, todo_id, session)`. Columns: `project`,
+`todo_id`, `session`, `wait` (the number of the latest wait, counted from one)
+and `waiting`. A newly observed wait increments `wait`; observing the session
+not waiting clears `waiting`. The row outlives the release of the execution
+claim, so a retained session that takes the todo up again continues its
+count; it is removed with the todo's other rows.
+
+**`attention_episodes`** — each project's open attention episode. Key:
+`project`. Columns: `project` and `opened_by`, the occurrence identity of the
+condition that opened it. A row exists only while the episode is open and is
+removed when its end is appended.
+
+The migration that adds both tables starts them empty.
+
+<!-- /planned:standing-sdlc-coordinator -->
 **`executions`** — the runner-owned orchestrator or task execution currently
 watched for each todo. Key: `(project, todo_id, role)`. Columns are `project`,
 `todo_id`, `role`, `session`, `workflow_state`, `recovery_sent` and

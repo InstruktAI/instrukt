@@ -478,8 +478,8 @@ exposes.
 <!-- change:standing-sdlc-coordinator -->
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
-wakes a new turn and un-settles it; automation never archives a standing agent and settles
-one only at a rest its procedure names
+wakes a new turn and un-settles it; automation never archives or settles a standing agent, which
+settles its own thread only at a rest its procedure names
 (`project/instrukt/spec/feature/runner/procedure-standing-agent`), and a settled standing
 thread is never evidence of absence or permission for a second keyed start. Archived or explicitly
 unknown threads report `gone`, a released or terminal assignment receives no successor, and

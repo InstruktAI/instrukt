@@ -119,8 +119,9 @@ Fleet attention adds these crossings
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| runner → work | Customer / Supplier | Event-log append used when a record change places or removes a hold, or records a repeated attempt failure, in that change's own transaction |
-| work → runner | Customer / Supplier | A project's active todos with their holds, and whether work holds a todo waiting on a person, read when a raise is admitted and when a claimed session's input wait is observed |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts; the runner decides the conditions and appends their events |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an attention episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 <!-- /planned:standing-sdlc-coordinator -->
 
 Workflow and runner coordinate integration without making the workflow engine

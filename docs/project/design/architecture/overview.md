@@ -391,13 +391,13 @@ settles its own thread there through the configured settling action
 standing thread, by rest or by a human, stays reachable and wakes on its next
 activation or message.
 
-Fleet attention composes three owners without a watcher. Work appends a hold's
-placement or release and a role's repeated attempt failure through the
-runner's event-log interface in the record change's own transaction, as its
-finalize-ready stamp appends `workflow.finalized`. The runner appends a stalled
-or input-waiting execution in the transaction that records its observation,
-and an agent's raise through `instrukt events raise`. The project's subscribed
-coordinator answers them
+Fleet attention composes three owners without a watcher. Work calls the
+runner's fleet-attention contract with the facts of each change it makes to a
+todo's status, hold or attempts, inside that change's own transaction; the
+runner decides which facts are conditions and appends them, together with the
+conditions it observes in executions and an agent's raise through
+`instrukt events raise`. The project's subscribed coordinator answers them, and
+the end of an attention episode wakes it once so it can rest
 (`project/instrukt/spec/feature/runner/fleet-attention`).
 <!-- /planned-change:standing-sdlc-coordinator -->
 

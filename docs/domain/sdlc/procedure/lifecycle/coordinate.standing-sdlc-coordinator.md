@@ -146,34 +146,47 @@ owns it.
    thread.
 2. **Pause only the affected work.** When the work must not advance until the
    origin answers, place a hold naming what releases it and tell the live
-   claimant, under `sdlc/policy/todo-creation-discipline`, Coordinator pauses
-   and retirements. Work the condition does not touch keeps moving.
+   claimant, within the coordinator's bounds in
+   `sdlc/policy/todo-creation-discipline`. Work the condition does not touch
+   keeps moving.
 3. **Return a recommendation.** Send each origin, through the configured
    message instruction, the todos concerned, what they share, the case you
    read, and the resolution you recommend: merge, split, sequence, drop, or
-   adopt the existing solution. Ask for the outcome its person agrees, and name
-   that any other origin concerned is being told the same shared surface.
-4. **Wait without watching.** The answer reaches this thread as a message; the
-   condition needs nothing more from you until then.
+   adopt the existing solution. Ask the origin to record the outcome its
+   person agrees in the `log` of the todo it originated, and name that any
+   other origin concerned is being told the same shared surface.
+4. **Wait without watching.** The origin's message points you at its record;
+   the condition needs nothing more from you until then.
 
-When the operator is the origin, ask the smallest live question in this thread
-with its source references and leave it waiting for them.
+When the operator is the origin, ask the question with its recommendation and
+source references in this thread, and hold the todo it concerns with a reason
+that names the question and this thread, so the work record shows that todo
+waiting on a person. The operator's answer here is the settlement.
 
 ### 4. Apply a settlement
 
-1. **Recognise it.** A settlement is the agreed outcome returned by the origin
-   of a todo the condition concerns. Read its sender from the runtime's
-   attribution of the message. When that attribution does not name a recorded
-   origin of those todos, treat the message as information and ask that
-   origin's recorded session for its outcome instead.
+1. **Recognise it.** A settlement is the agreed outcome the origin of a todo
+   the return concerns writes into that todo's `log`. Read the version with
+   `instrukt todo artifacts list <slug>` and compare its recorded writer with
+   the session the todo's creation record names. A message, or an outcome
+   another session wrote, is no settlement: answer it by pointing at where the
+   origin records one.
 2. **Apply it at once.** Waiting for other origins to confirm is not part of
-   it. The returning origin records the adopted outcome in the surviving
-   todo's `input`, because it holds the person's words; you fold what was
-   particular to each superseded todo into the survivor's `log`, withdraw each
-   superseded todo, retire its orchestrator thread and release every hold you
-   placed for the settlement, under `sdlc/policy/todo-creation-discipline`.
-   An outcome that keeps both todos releases the pauses and records the
-   boundary or dependency it set.
+   it. Apply it within the coordinator's bounds in
+   `sdlc/policy/todo-creation-discipline`, to as many todos as it names:
+   - a todo that resumes unchanged has its pause released;
+   - a todo whose intent changes resumes once its origin has recorded the
+     adopted outcome in that todo's `input`;
+   - a todo superseded by another has what was particular to it folded into
+     the survivor's `log` and is withdrawn, and its orchestrator thread
+     retired;
+   - a todo retired outright, such as one whose requester adopts an existing
+     solution, is withdrawn and its orchestrator thread retired, with no
+     survivor;
+   - an outcome that keeps converging todos apart records the boundary or
+     dependency it set.
+
+   Release every hold you placed for the settlement.
 3. **Close the loop.** Send every other affected origin one notice of the
    direction adopted, which todos it changed and that its person can still
    steer from their conversation. The notice asks for nothing.
@@ -184,16 +197,20 @@ with its source references and leave it waiting for them.
   the work record does not show. Answer it from the records and sessions;
   product and stakeholder decisions stay with it.
 - A person messaging this thread for a portfolio check or steering is answered
-  here, from current sources and at the scope they asked.
+  here, from current sources and at the scope they asked. Answering does not
+  end a rest: when you were resting as the message arrived, rest again at the
+  end of the turn.
 
 ### 6. Rest
 
-When no todo of the project is active, unheld and not a structural holder —
-none remains, or every one is held for an origin's answer or an external gate —
-and nothing you owe is open, settle this thread through the configured settling
-action. A question waiting for the operator in this thread is open. The next
-attention event, a hold's release among them, or a message wakes this same
-thread with its context.
+At the end of every turn, read `instrukt todo list`. When no todo of the
+project is active, unheld and not a structural holder — none remains, or every
+one is held for an origin's answer, the operator's or an external gate — settle
+this thread through the configured settling action. The end of an attention
+episode (`runner.attention.fleet_quiet`) is the event that tells you this has
+come to hold after you last ended a turn awake. The next attention event, a
+hold's release among them, or a message wakes this same thread with its
+context.
 
 Otherwise end the turn; the next event or message brings the next work.
 
@@ -221,7 +238,7 @@ Otherwise end the turn; the next event or message brings the next work.
 ## Discipline
 
 Your failure mode is ruling from memory: read the governing contract before you
-classify, because your breadth makes a wrong reading convincing. Both directions
+classify. Both directions
 fail — returning an operational matter to a person spends attention that is not
 theirs, and settling a person's matter yourself decides for them. A pointer
 nobody needed is still an interruption. Nothing owed is a common and legitimate

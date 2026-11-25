@@ -466,12 +466,18 @@ acts on todos it does not hold, within these bounds alone.
   coordinator writes into the surviving todo's `log` what the redundant filing
   carried that the survivor lacks, with its source, and then withdraws it on
   the path below.
-- **A settlement withdraws the superseded todo.** When an origin authorized
-  for the converging work returns the agreed outcome, the coordinator
-  withdraws each todo it supersedes, including one that carries a person's
-  request: that origin is where the people concerned decided it, and every
-  other affected origin receives a closure notice from which its person can
-  still steer.
+- **A settlement is the origin's record.** A settlement counts when the
+  origin of a todo the return concerns — the session that todo's creation
+  record names — writes the agreed outcome into that todo's `log`. The
+  coordinator reads the version's recorded writer and compares it with the
+  creation record; a message tells it only where to look, and an outcome
+  recorded by any other session is no settlement.
+- **A settlement is applied as recorded.** The coordinator resumes, changes or
+  withdraws each todo the settlement names, one todo or several, including one
+  that carries a person's request: the origin is where the people concerned
+  decided it. A todo it retires outright, such as one whose requester adopts
+  an existing solution, leaves no survivor. Every other affected origin
+  receives a closure notice from which its person can still steer.
 - **Withdrawal settles running work first.** The coordinator has the live
   claimant settle its running work and release its claim, and confirms the
   release; a claimant that cannot answer has its unreachability established
@@ -580,7 +586,12 @@ settles running work before release and removal, so a claim never outlives
 the work it covers. A person's filing is withdrawn on a settlement because the
 people concerned decided it through an origin; the closure notice and the
 work record's recovery window keep that decision correctable by every other
-person it affected.
+person it affected. Only the origin's own record can show it decided:
+messages between agent threads carry no authenticated sender, while the work
+record names the session that wrote each version. A duplicate that agents
+filed is the coordinator's to retire because no claimant sees the other
+filing and no person's intent rests on it; folding its evidence into the
+survivor keeps what it found.
 <!-- /planned:standing-sdlc-coordinator -->
 
 ## Scope
@@ -615,6 +626,14 @@ this policy.
   filing that carries a human's request, violates this policy.
 - Parking a flagged todo with `instrukt todo update <slug> --hold --reason <text>` without
   the associated todo-log explanation is incomplete reconciliation.
+<!-- planned:standing-sdlc-coordinator -->
+- A coordinator that holds work without naming its release, withdraws a todo
+  carrying a person's request without that todo's origin's recorded
+  settlement, retires a filing that carries a person's request as redundant,
+  or removes a todo before its running work is settled and its claim released,
+  violates this policy. A coordinator acting within **Coordinator pauses and
+  retirements** is not a flagger.
+<!-- /planned:standing-sdlc-coordinator -->
 
 ## Exceptions
 

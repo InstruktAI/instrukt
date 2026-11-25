@@ -28,22 +28,46 @@ that owner's contract and decides none of it again
 
 | Condition | Underlying facts and their owner | Event, and where it is appended |
 | --- | --- | --- |
-| The session holding a todo's execution claim stopped, failed or is gone, or no session could be started for the todo, and the recovery its contract provides did not move the work. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). | `runner.attention.execution_stalled`, by the runner, in the transaction that records the execution's unrecovered stop or the exhausted start. |
-| The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides (`project/instrukt/spec/feature/work/github-record`). | `runner.attention.input_waiting`, by the runner, in the transaction that records the observed wait. |
-| A dispatch hold is placed on a todo, or released from it. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). | `runner.attention.hold_placed` or `runner.attention.hold_released`, by work, in the record change's own transaction. |
-| A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). | `runner.attention.attempts_failing`, by work, in the transaction that records the failure. |
+| The session holding a todo's execution claim stopped, failed or is gone and the recovery its contract provides did not move the work, or no session could be started for the todo from the model order available. | The runner's observation of the executions it owns and of its own starts (`project/instrukt/spec/feature/runner/session-continuity`). | `runner.attention.execution_stalled`, by the runner: for a stopped execution in the transaction that records the unrecovered stop, for a start that found no model in a transaction of its own. |
+| The session holding a todo's execution claim waits for input while the todo does not wait on a person. | The runner's observation of that execution (`project/instrukt/spec/feature/runner/session-continuity`) and the person wait work decides and workflow's assignment carries (`project/instrukt/spec/domain/workflow`). | `runner.attention.input_waiting`, by the runner, in the transaction that records the observed wait. |
+| A dispatch hold is placed on a todo, or released from it, by a change made on this computer. | Work, for every source of a hold (`project/instrukt/spec/feature/work/dependencies-and-holds`). | `runner.attention.hold_placed` or `runner.attention.hold_released`, through the fleet-attention contract, in the record change's own transaction. |
+| A role's attempts on one todo fail repeatedly: an attempt fails where an earlier attempt of that role on that todo already failed. | Work's record of each failed attempt (`project/instrukt/spec/feature/work/todos`). | `runner.attention.attempts_failing`, through the fleet-attention contract, in the transaction that records the failure. |
+| An attention episode ends: while one is open, the project's last active todo that is unheld and not a structural holder leaves active work or is held. | Work's record of the todo's status and hold (`project/instrukt/spec/feature/work/todos`). | `runner.attention.fleet_quiet`, through the fleet-attention contract, in the record change's own transaction. |
 | A worker waits for input its orchestrator cannot supply. | That orchestrator, by raising it. | `runner.attention.raised`, when the raise is admitted. |
 | The work of two or more live todos of the project converges, overlaps or conflicts. | The agent that meets it, by raising it. | `runner.attention.raised`. |
 | An agent working a live todo finds that a solution existing outside the project already provides what the todo is building. | That agent, by raising it. | `runner.attention.raised`. |
 | An agent meets a decision owned by a person and has no conversation with that person to ask it in. | That agent, by raising it. | `runner.attention.raised`. |
 
 Each event is appended together with the fact that establishes it, so a
-condition is never recorded without its event or published without its
-fact. The payloads and occurrence identities are declared in
-`project/instrukt/spec/domain/runner`, Domain events emitted. A hold placed or
-released counts whatever its source; a record adopted from GitHub carries
-another computer's change and appends nothing here. A release of a todo that
-holds nothing changes no hold and appends nothing.
+condition is never recorded without its event or published without its fact;
+a start that found no model records no observation of its own, and its event's
+occurrence identity keeps repeated attempts in the same state from publishing
+it again. Payloads and occurrence identities are declared in
+`project/instrukt/spec/domain/runner`.
+
+#### The fleet-attention contract
+
+The runner publishes one contract that work calls inside the transaction of
+every change it makes on this computer to a todo's status, hold or attempts.
+Work passes the facts of that change: the todo and its project, its hold
+before and after, whether it left active work, a failed attempt's role and
+number with that role's earlier failed attempts on the todo, and whether the
+project has an active todo that is unheld and not a structural holder after the
+change. The runner decides which of those facts are conditions and appends
+their events. A record adopted from GitHub carries another computer's change;
+work makes no call for it. A release of a todo that holds nothing changes no
+hold and is no condition.
+
+#### Attention episodes
+
+An attention episode of a project opens when any condition other than the end
+of an episode is appended while the project has an active todo that is unheld
+and not a structural holder, and closes when `runner.attention.fleet_quiet` is
+appended. The runner keeps whether a project's episode is open. A project whose
+work leaves or is held with no episode open appends nothing, so healthy work
+that finishes wakes nobody and starts no agent; the end of an open episode is
+how a standing agent that rests when nothing is runnable learns that it may
+rest (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
 
 The runner observes the session holding a todo's execution claim and no worker
 that session delegated: a worker's failure, wait for input or absence reaches
@@ -100,6 +124,8 @@ follow `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
   waiting on a person's approval as work decides that wait
   (`project/instrukt/spec/feature/work/github-record`), and an execution whose
   claim was released or transferred.
+- A todo delivered, iceboxed or withdrawn while its project has no attention
+  episode open.
 - A project with no active todo. Every condition concerns an active todo, so a
   quiet project starts no standing agent for fleet attention
   (`project/instrukt/spec/feature/runner/procedure-standing-agent`).

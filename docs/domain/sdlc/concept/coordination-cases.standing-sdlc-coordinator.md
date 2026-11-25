@@ -45,6 +45,7 @@ applies, and a condition that has cleared opens none.
 | `runner.attention.execution_stalled` | `NC-37`, `NC-38`, `NC-05` |
 | `runner.attention.input_waiting` | `NC-39`, `NC-29`, `NC-34` |
 | `runner.attention.hold_placed`, `runner.attention.hold_released` | `NC-41`, `NC-15-a`, `NC-15-b`, `NC-48` |
+| `runner.attention.fleet_quiet` | `NC-50` |
 | `runner.attention.attempts_failing` | `NC-40`, `NC-08` |
 | `runner.attention.raised` | `NC-44-a` to `NC-44-e`, `NC-45`, `NC-46`, `NC-47` |
 | An origin's message about a return | `NC-48` |
@@ -153,7 +154,7 @@ applies, and a condition that has cleared opens none.
   clause of `sdlc/policy/todo-creation-discipline` defines; never
   perform the audit, decide validity, or select the claimant's exit.
   If no live claimant or recovery path exists, ground the broken mechanism and
-  report it per the coordinate procedure's step 2 — an unclaimed todo has no
+  report it through `general/procedure/bug-reporting` — an unclaimed todo has no
   flag path.
 - **Stop and settlement:** the flag exchange and its settlement follow the
   reconciliation clause of `sdlc/policy/todo-creation-discipline`; a deadlock
@@ -173,7 +174,7 @@ applies, and a condition that has cleared opens none.
   progression.
 - **Coordinator:** leave a correctly delivered beacon alone. If the human-owned need
   is newly live and reaches no person, return it once to the todo's origin with
-  its evidence and the smallest live question (coordinate procedure step 3).
+  its evidence and the smallest live question (`general/principle/origin-routing`).
 - **Stop and settlement:** delivery ends the intervention, not the need. Settle when
   the decision is recorded and Prepare resumes, revises, or retires the work.
 
@@ -189,7 +190,7 @@ applies, and a condition that has cleared opens none.
   record remains the only state authority.
 - **Coordinator:** route to a grounded recovery owner. If none or the path is broken,
   check existing defect coverage and, when uncovered, report one grounded defect
-  per the coordinate procedure's step 2; never invent an owner or adopt the slug
+  through `general/procedure/bug-reporting`; never invent an owner or adopt the slug
   by claiming or driving its orchestration.
 - **Stop and settlement:** the intervention stops after routing, or after the defect is
   reported. The
@@ -199,14 +200,13 @@ applies, and a condition that has cleared opens none.
 ##### NC-06 — Unresolvable or orphaned `working_slug`
 
 - **Evidence available:** session `working_slug`, project identity, project todo
-  registry, and session association record (`sdlc/procedure/lifecycle/coordinate`, Frame).
+  registry, and session association record (`sdlc/procedure/lifecycle/coordinate`).
 - **Ownership:** project resolution is a factual lookup. Cross-project work belongs to
   that project's coordinator; an orphan has no execution owner, so its disposition is
   the Coordinator's. Only the session/todo registry mechanism
   may mutate the association.
 - **Coordinator:** establish cross-project versus orphan. Leave cross-project work out
-  of management scope; report an orphan association once as a defect per the
-  coordinate procedure's step 2, from evidence and existing coverage. No origin
+  of management scope; report an orphan association once as a defect through `general/procedure/bug-reporting`, from evidence and existing coverage. No origin
   is told of it.
 - **Stop and settlement:** stop after classification and the report.
   Settle when the association resolves to its project, is repaired, or disappears
@@ -370,8 +370,7 @@ applies, and a condition that has cleared opens none.
 - **Coordinator:** leave work alone when a standing gate or current owner explains the
   wait. When an existing owner owes an act, point that owner to the relevant
   addresses. When configured automation should have acted but no owner or governing
-  explanation exists, ground the broken mechanism and report it per the coordinate
-  procedure's step 2. Never recreate eligibility from prose, drive the lifecycle,
+  explanation exists, ground the broken mechanism and report it through `general/procedure/bug-reporting`. Never recreate eligibility from prose, drive the lifecycle,
   or dispatch work.
 - **Stop and settlement:** stop after leaving, one pointer, or the reported
   defect. Continue
@@ -404,7 +403,7 @@ applies, and a condition that has cleared opens none.
 - **Coordinator:** no intervention while an unmet dependency or standing gate explains
   waiting. If dependencies are satisfied and a contract-named owner has missed a due
   act, point that owner to the addresses; if the mechanism itself is demonstrably
-  broken, report the defect per the coordinate procedure's step 2.
+  broken, report the defect through `general/procedure/bug-reporting`.
   Never force movement or recreate eligibility from prose.
 - **Stop and settlement:** stop after leaving, one pointer, or the reported
   defect. Reassess
@@ -479,8 +478,7 @@ applies, and a condition that has cleared opens none.
   occurred, event/notification records showing absence or demotion, and bounded source
   inspection where needed (`project/<slug>/design/architecture/notification-delivery`).
 - **Ownership:** Coordinator judges only whether the path is demonstrably broken.
-  The defect is reported once or routed to existing coverage, per the coordinate
-  procedure's step 2. Event and notification mechanisms are state authority.
+  The defect is reported once or routed to existing coverage, through `general/procedure/bug-reporting`. Event and notification mechanisms are state authority.
 - **Coordinator:** preserve the affected signal, report the broken path once, and
   return any still-live person's need to its origin. Audit no path the condition
   does not name.
@@ -495,7 +493,7 @@ applies, and a condition that has cleared opens none.
   coverage.
 - **Ownership:** Coordinator judges the observability gap and its disposition. The
   todo mechanism remains the only authority over individual holds.
-- **Coordinator:** check existing defect coverage and, when uncovered, log one
+- **Coordinator:** check existing defect coverage and, when uncovered, report one
   grounded defect. Do not call the schema corrupt,
   mutate holds, or turn every hold into a separate defect.
 - **Stop and settlement:** the report settles the mechanism
@@ -513,8 +511,9 @@ applies, and a condition that has cleared opens none.
   decision; the todo work record owns approval state and enforces `approvals.prd`.
 - **Coordinator:** none. An approval gate produces no attention event; it waits
   with its orchestrator. Never approve or refine it.
-- **Stop and settlement:** delivery ends the intervention. Settle when the human
-  decision is durably recorded and `todo-orchestrator` produces resulting state/artifact evidence.
+- **Stop and settlement:** nothing to settle for the Coordinator; the gate settles
+  when the human decision is durably recorded and `todo-orchestrator` produces
+  resulting state/artifact evidence.
 
 ##### NC-28 — Kickback
 
@@ -547,8 +546,8 @@ applies, and a condition that has cleared opens none.
 ##### NC-30 — Human asks for fleet status
 
 - **Evidence available:** current source-linked fleet surface, relevant governed state,
-  and the coordinator's current session context. Never answer from a copied snapshot
-  or the write-only daily log.
+  and the coordinator's current session context. Never answer from a copied
+  snapshot.
 - **Ownership:** Coordinator judges status interpretation and executes the response;
   no lifecycle state mutation occurs.
 - **Coordinator:** answer only the question Human asked, from current source-linked
@@ -566,7 +565,7 @@ applies, and a condition that has cleared opens none.
   mechanism owns state.
 - **Coordinator:** do not interpose in live collaboration. If no owner currently holds
   the question, return the smallest live question and its evidence to the todo's
-  origin (coordinate procedure step 3).
+  origin (`general/principle/origin-routing`).
 - **Stop and settlement:** delivery ends intervention. Settle when Human's decision is
   durable and the owning role produces the resulting artifact/state evidence.
 
@@ -622,7 +621,7 @@ applies, and a condition that has cleared opens none.
   failure is its orchestrator's evidence; the work record owns state.
 - **Coordinator:** read why it stopped. Point a live orchestrator to the failure
   address; where the claim-holding session is gone and no recovery path exists,
-  apply `NC-05`. A platform cause is reported per the coordinate procedure's step 2.
+  apply `NC-05`. A platform cause is reported through `general/procedure/bug-reporting`.
 - **Stop and settlement:** stop after one pointer or the report. Settle on recorded
   progress, a grounded deliberate wait, or terminal state.
 
@@ -635,7 +634,8 @@ applies, and a condition that has cleared opens none.
   answer; a question an agent asked belongs to the owner its contract names.
 - **Coordinator:** diagnose what the session waits for. A stalled permission or
   tool-approval prompt is shown to the operator in the coordinator's thread with
-  the session's address and what it asks; a question an agent can answer goes to
+  the session's address and what it asks, and the todo is held with a reason
+  naming that question; a question an agent can answer goes to
   that owner under `NC-29`; a person-owned question goes to the work's origin
   under `NC-46`.
 - **Stop and settlement:** stop after routing. Settle when the session resumes or
@@ -649,8 +649,7 @@ applies, and a condition that has cleared opens none.
   approach; the work record owns attempts.
 - **Coordinator:** distinguish a repeated environmental or platform cause from a
   work cause. Point the orchestrator to both failure addresses when its next
-  attempt would repeat the same premise; report a platform cause per the
-  coordinate procedure's step 2.
+  attempt would repeat the same premise; report a platform cause through `general/procedure/bug-reporting`.
 - **Stop and settlement:** stop after one pointer or the report. Settle on a
   changed approach, a succeeding attempt, or a grounded stop.
 
@@ -691,9 +690,9 @@ applies, and a condition that has cleared opens none.
 #### Responsibility 7 — Converging work and origin routing
 
 Which of these cases applies is the coordinator's reading of a raised
-condition; the raise does not say. Each return follows the coordinate
-procedure's step 3 and carries the shared surface, never what a person said in
-another conversation (`general/principle/origin-routing`).
+condition; the raise does not say. Each return carries the shared surface and
+a recommended resolution, never what a person said in another conversation
+(`general/principle/origin-routing`).
 
 ##### NC-44-a — One capability framed differently by different people
 
@@ -780,15 +779,23 @@ another conversation (`general/principle/origin-routing`).
 
 ##### NC-48 — A settlement returned
 
-- **Evidence available:** the origin's message with its runtime attribution, the
-  open return it answers, the holds placed for it, and the todos concerned.
-- **Ownership:** the people decided; the returning origin records the adopted
-  outcome in the surviving todo's `input`; the Coordinator applies the rest.
-- **Coordinator:** apply it under the coordinate procedure's step 4: fold, withdraw,
-  retire, release and send the closure notices. An unattributed message is
-  answered by asking the recorded origin.
-- **Stop and settlement:** settle when no superseded todo, hold or open return
-  remains and every other affected origin has its notice.
+- **Evidence available:** the outcome recorded in the `log` of a todo the return
+  concerns, that version's recorded writer and the todo's creation record, the
+  open return it answers, the holds placed for it, and the todos concerned. A
+  message from the origin only points at the record.
+- **Ownership:** the people decided; the origin records the outcome, and the
+  adopted intent in a todo whose intent changes; the Coordinator applies the
+  rest within `sdlc/policy/todo-creation-discipline`.
+- **Coordinator:** apply it to every todo it names, one or several: release the
+  pause of a todo that resumes, resume a changed todo once its `input` carries
+  the adopted outcome, fold a superseded todo into its survivor and withdraw it,
+  withdraw a todo retired outright, record a boundary or dependency the outcome
+  sets, release the holds placed for it and send the closure notices
+  (`sdlc/procedure/lifecycle/coordinate`). An outcome no recorded origin wrote
+  is no settlement.
+- **Stop and settlement:** settle when no todo the outcome retires, hold placed
+  for it or open return remains and every other affected origin has its
+  notice.
 
 ##### NC-49 — A technical coordinator's live-overlap consult
 
@@ -797,6 +804,18 @@ another conversation (`general/principle/origin-routing`).
 - **Coordinator:** answer the one question from live records and sessions; add no
   recommendation on intent unless asked.
 - **Stop and settlement:** the answer settles the consult.
+
+##### NC-50 — An attention episode ended
+
+- **Evidence available:** the `runner.attention.fleet_quiet` event and the
+  project's current todo list.
+- **Ownership:** the runner established that no unheld work remains; the
+  Coordinator owns only its own rest.
+- **Coordinator:** confirm from `instrukt todo list` that no todo is active,
+  unheld and not a structural holder, then rest
+  (`sdlc/procedure/lifecycle/coordinate`). Work that has become runnable again
+  since the event is read as any other condition.
+- **Stop and settlement:** settles when the thread rests.
 
 ### Control and boundary cases
 

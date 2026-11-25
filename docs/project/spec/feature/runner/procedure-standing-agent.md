@@ -83,8 +83,9 @@ standing agent: one whose procedure names no rest condition stays unsettled in
 the sidebar by design. A standing agent whose procedure names a rest condition
 rests when that condition holds and its current work is recorded: it settles
 its own thread out of the active list through the configured settling action
-(`project/instrukt/spec/feature/configuration/layered-configuration`). A human
-may settle any standing thread.
+(`project/instrukt/spec/feature/configuration/layered-configuration`). Only a
+turn can settle the thread, so such a procedure subscribes to the events that
+tell it its condition has come to hold. A human may settle any standing thread.
 Settled by rest or by a human, the thread remains findable and reachable, wakes
 on a message or its next activation and can be unsettled. Later activations
 reuse the same keyed assignment for home and subject identity, attended and
@@ -126,8 +127,9 @@ has its own attendance; it does not inherit unattended status.
 <!-- change:standing-sdlc-coordinator -->
 `attended` is the default. `unattended` declares an audience, never reach,
 authorization or event trust: it changes neither whether an agent is started nor
-which events it receives. Outside a rest its procedure names, a standing T3
-thread stays visible and unsettled under automation regardless of attendance.
+which events it receives. Automation never settles a standing T3 thread,
+whatever its attendance; only the agent settles its own, at a rest its
+procedure names.
 Work an unattended agent dispatches has its own attendance; it does not inherit
 unattended status.
 <!-- /planned-change:standing-sdlc-coordinator -->

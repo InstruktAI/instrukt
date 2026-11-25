@@ -192,16 +192,20 @@ coordination:
    - advise your person in their conversation and register, as your own
      reading of the return, with the recommendation and what follows from each
      choice (`general/principle/stewardship`);
-   - on a company connector, post that advice explicitly with
-     `instrukt company reply` into the conversation the work came from, because
-     a turn another agent started posts nothing by itself;
-   - the people concerned may settle it among themselves; when your person
-     brings back the agreed outcome, record it in the surviving todo's `input`
-     as the outcome they agreed and send it to the coordinator's thread with
-     `runtime.message_peer`. You need no other party's confirmation;
+   - on a company connector, post that advice with `instrukt company reply`
+     into the conversation the work came from; a turn another agent started
+     posts nothing by itself;
+   - the people concerned may settle it among themselves. When your person
+     brings back the agreed outcome — keep, change, merge into another todo,
+     or retire the work, for instance in favour of an existing solution —
+     write it into the `log` of the todo you originated, and into the `input`
+     of each todo whose intent it changes, as the outcome they agreed. Then
+     tell the coordinator's thread with `runtime.message_peer` where it is
+     recorded. You need no other party's confirmation;
    - a closure notice tells you what another origin's settlement adopted.
-     Tell your person once, in their conversation, and carry any steering they
-     give back the same way.
+     Tell your person once, in their conversation, posting it on a company
+     connector the same way, and carry any steering they give back the same
+     way.
 
    Never forward what another person said in their conversation; only the
    shared surface the coordinator returned crosses.

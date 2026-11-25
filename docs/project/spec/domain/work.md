@@ -141,8 +141,8 @@ runner owns dispatch, and the configured runtime owns conversations.
   published eval provenance; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub supplies the required reflected store; the runner supplies the event-log
-  append the finalize-ready stamp, hold changes and repeated attempt failures
-  use. Standing-agent event delivery
+  append the finalize-ready stamp uses, and the fleet-attention contract its
+  status, hold and attempt changes call. Standing-agent event delivery
   is optional and is not the work record.
 <!-- /planned-change:standing-sdlc-coordinator -->
 - **Implementation roots:** the `instrukt-todos` crate.
@@ -254,15 +254,14 @@ through the runner’s event-log interface. This atomic work mutation retains
 the reviewed head; workflow owns the lifecycle vocabulary.
 
 <!-- planned:standing-sdlc-coordinator -->
-A record change that places or removes a todo's dispatch hold, from any
-source, appends the runner's `runner.attention.hold_placed` or
-`runner.attention.hold_released`, and recording a role's failed attempt on a
-todo on which that role already failed appends
-`runner.attention.attempts_failing`, each through the same event-log interface
-in that change's own transaction. Work decides the hold and the failure; which
-of them is an attention condition is the runner's
-(`project/instrukt/spec/feature/runner/fleet-attention`). Adopting a record
-pulled from GitHub appends none.
+Every change work makes on this computer to a todo's status, hold or attempts
+calls the runner's fleet-attention contract inside its own transaction, with
+the facts of that change: the todo, its hold before and after, whether it left
+active work, a failed attempt with that role's earlier failed attempts, and
+whether the project still has an active todo that is unheld and not a
+structural holder. Which of those facts are conditions, and their events, are
+the runner's (`project/instrukt/spec/feature/runner/fleet-attention`). A record
+adopted from GitHub is another computer's change and makes no call.
 <!-- /planned:standing-sdlc-coordinator -->
 
 ### Domain events consumed
@@ -279,9 +278,8 @@ Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 <!-- change:standing-sdlc-coordinator -->
 Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 `workflow.finalized`, concerning the todo in its project origin
-(`project/instrukt/spec/domain/workflow`); its hold and failed-attempt changes
-append the runner's fleet-attention conditions about the todo in its project
-origin (`project/instrukt/spec/domain/runner`).
+(`project/instrukt/spec/domain/workflow`); the fleet-attention events its
+record changes lead to are the runner's (`project/instrukt/spec/domain/runner`).
 <!-- /planned-change:standing-sdlc-coordinator -->
 
 ## Use cases
@@ -330,9 +328,12 @@ owning design snippet or decision record is declared.
   stamp's own transaction.
 <!-- change:standing-sdlc-coordinator -->
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
-  `workflow.finalized`, and a hold's placement or removal and a repeated
-  attempt failure append the runner's fleet-attention conditions, through the
-  runner's event-log interface, each in its record change's own transaction.
+  `workflow.finalized` through the runner's event-log interface, and every
+  change to a todo's status, hold or attempts calls the runner's
+  fleet-attention contract, each in its record change's own transaction.
+- **Work → runner (fleet attention)** — customer-supplier. The runner reads a
+  project's active todos with their status and holds when it admits a raise and
+  when one of its own observations opens an attention episode.
 <!-- /planned-change:standing-sdlc-coordinator -->
 - **Work → runner (state database)** — customer-supplier. The runner's
   operational tables live in work's state database, under its writer lock and
