@@ -584,6 +584,12 @@ pub enum WorkflowInterfaceError {
     /// Observing the repository or facts failed.
     #[error("workflow observation for `{todo}`: {message}")]
     Observation { todo: TodoSlug, message: String },
+    /// Reading what git lists of a project's worktrees and branches failed.
+    #[error("git's worktrees and branches of {project}: {message}")]
+    Listing {
+        project: ProjectSlug,
+        message: String,
+    },
     /// The work record could not supply the evidence.
     #[error(transparent)]
     Work(#[from] WorkInterfaceError),
@@ -640,6 +646,85 @@ pub trait WorkflowAssignments: Send + Sync {
     ) -> Result<Option<Assignment>, WorkflowInterfaceError>;
 }
 
+/// A todo's durable identity as work records it: stable across renames and
+/// never reused, where a slug may be.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TodoIdentity(String);
+
+impl TodoIdentity {
+    pub fn new(identity: impl Into<String>) -> Self {
+        Self(identity.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Display for TodoIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// What git still lists on this computer of a delivered todo's working
+/// resources: the cleanup it still owes (`delivery-cycle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveredRemains {
+    pub worktree: bool,
+    pub local_branch: bool,
+    pub origin_branch: bool,
+}
+
+impl DeliveredRemains {
+    /// Whether any of them remains.
+    pub fn any(self) -> bool {
+        self.worktree || self.local_branch || self.origin_branch
+    }
+}
+
+/// A todo worktree's standing on this computer, as workflow derives it
+/// (`workflow` domain, "Worktree standing").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorktreeStanding {
+    /// Its todo's rounds of building, reviewing and fixing are under way.
+    UnderWay,
+    /// Its todo is parked or held, its candidate waits for integration, or
+    /// its work has gone back to preparation.
+    Idle,
+    /// Its todo is delivered, with what git still lists of it.
+    Delivered(DeliveredRemains),
+}
+
+/// One todo whose worktree or work branch git lists for a project on this
+/// computer, with its standing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TodoWorktree {
+    pub todo: TodoSlug,
+    pub identity: TodoIdentity,
+    /// The record revision the standing was derived at: advanced by every
+    /// accepted change to the todo's record.
+    pub revision: u64,
+    /// The worktree git lists for it, when it has one.
+    pub worktree: Option<PathBuf>,
+    /// Its work branch, when its record names one.
+    pub branch: Option<String>,
+    pub standing: WorktreeStanding,
+}
+
+/// Reading workflow's worktree standing for reclamation.
+pub trait WorktreeStandings: Send + Sync {
+    /// Each todo whose worktree, local work branch or work branch on
+    /// `origin` git lists for `project` on this computer, with its standing.
+    /// Pure derivation from the work record this computer holds and git:
+    /// it records nothing and makes no GitHub request
+    /// (`worktree-reclamation`, "Idle worktrees").
+    fn worktree_standings(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<TodoWorktree>, WorkflowInterfaceError>;
+}
+
 // ---------------------------------------------------------------------
 // Wiring
 // ---------------------------------------------------------------------
@@ -675,6 +760,8 @@ pub struct RunnerWiring {
     pub review: Option<Arc<dyn AutomaticReview>>,
     pub work: Option<WorkPorts>,
     pub workflow: Option<Arc<dyn WorkflowAssignments>>,
+    /// Workflow's worktree standing, read for worktree reclamation.
+    pub standings: Option<Arc<dyn WorktreeStandings>>,
     /// The company the runner hosts: its conversations. `None` hosts none.
     pub company: Option<Arc<dyn CompanyPorts>>,
 }

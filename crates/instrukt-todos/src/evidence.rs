@@ -46,6 +46,14 @@ pub trait WorkEvidence: Send + Sync {
         project: &ProjectRef,
         id: &crate::work::TodoId,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError>;
+
+    /// Every todo of `project` this computer's record holds, delivered and
+    /// removed ones within their retention included, read from the local
+    /// record alone: no GitHub request is made and nothing is pulled
+    /// through. Prerequisites are left unexpanded (empty), since expanding
+    /// a structural holder may read GitHub.
+    fn local_evidence(&self, project: &ProjectRef)
+    -> Result<Vec<TodoEvidence>, WorkInterfaceError>;
 }
 
 /// A todo's record as evidence.
@@ -57,6 +65,8 @@ pub struct TodoEvidence {
     pub slug: TodoSlug,
     pub kind: TodoKind,
     pub status: TodoStatus,
+    /// The record's revision: advanced by every accepted change to it.
+    pub revision: u64,
     /// Every artifact with its retained versions.
     pub artifacts: Vec<ArtifactHistory>,
     /// The stamp ledger, oldest first.

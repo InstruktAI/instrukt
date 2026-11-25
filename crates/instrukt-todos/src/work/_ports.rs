@@ -1123,6 +1123,16 @@ impl WorkEvidence for Work {
         let prerequisites = expand(&mut s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
     }
+
+    fn local_evidence(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
+        Ok(_store::read_items(self.home(), &project.slug)?
+            .into_iter()
+            .map(|item| to_evidence(item.record, Vec::new()))
+            .collect())
+    }
 }
 
 /// Pulls local item `index` for a read: a conflicted item is still read.
@@ -1315,6 +1325,7 @@ pub(crate) fn to_evidence(record: TodoRecord, prerequisites: Vec<Prerequisite>) 
         slug: record.slug,
         kind: record.kind,
         status: record.status,
+        revision: record.revision,
         artifacts: record
             .artifacts
             .into_iter()

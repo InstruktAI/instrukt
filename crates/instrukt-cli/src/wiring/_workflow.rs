@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use instrukt_core::interfaces::FlavorRoles;
-use instrukt_runner::interfaces::WorkflowAssignments;
+use instrukt_runner::interfaces::{WorkflowAssignments, WorktreeStandings};
 use instrukt_todos::evidence::WorkEvidence;
 use instrukt_todos::workflow::{SelectedFlavorRoles, Workflow, todos_enabled};
 
@@ -34,8 +34,25 @@ pub(super) fn assignments(
     ctx: &Ctx,
     evidence: Option<Arc<dyn WorkEvidence>>,
 ) -> anyhow::Result<Option<Arc<dyn WorkflowAssignments>>> {
+    Ok(
+        runner_workflow(ctx, evidence)?
+            .map(|workflow| -> Arc<dyn WorkflowAssignments> { workflow }),
+    )
+}
+
+/// The runner-declared worktree standing, reading work's evidence, for
+/// worktree reclamation.
+pub(super) fn standings(
+    ctx: &Ctx,
+    evidence: Option<Arc<dyn WorkEvidence>>,
+) -> anyhow::Result<Option<Arc<dyn WorktreeStandings>>> {
+    Ok(runner_workflow(ctx, evidence)?.map(|workflow| -> Arc<dyn WorktreeStandings> { workflow }))
+}
+
+fn runner_workflow(
+    ctx: &Ctx,
+    evidence: Option<Arc<dyn WorkEvidence>>,
+) -> anyhow::Result<Option<Arc<Workflow>>> {
     let env = super::environment(ctx)?;
-    Ok(evidence.map(|evidence| -> Arc<dyn WorkflowAssignments> {
-        Arc::new(Workflow::new(ctx.home.clone(), evidence, env))
-    }))
+    Ok(evidence.map(|evidence| Arc::new(Workflow::new(ctx.home.clone(), evidence, env))))
 }

@@ -19,8 +19,8 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{FlavorMembership, FlavorRoles, InterfaceError};
 use instrukt_runner::interfaces::{
-    Assignment, ClaimOutcome, Claimant, Claims, Lane, ProjectRef, TodoKind, WorkInterfaceError,
-    WorkflowAssignments, WorkflowInterfaceError,
+    Assignment, ClaimOutcome, Claimant, Claims, Lane, ProjectRef, TodoKind, TodoWorktree,
+    WorkInterfaceError, WorkflowAssignments, WorkflowInterfaceError, WorktreeStandings,
 };
 
 use crate::evidence::{TodoEvidence, TodoStatus, WorkEvidence};
@@ -280,6 +280,22 @@ fn approvers_of(config: &Configuration) -> Result<Approvers, ConfigError> {
         prd: config.approver(ConfigGate::Prd)?,
         task: config.approver(ConfigGate::Task)?,
     })
+}
+
+impl WorktreeStandings for Workflow {
+    fn worktree_standings(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<TodoWorktree>, WorkflowInterfaceError> {
+        let listed = super::_standing::Listed::read(&project.root).map_err(|error| {
+            WorkflowInterfaceError::Listing {
+                project: project.slug.clone(),
+                message: error.to_string(),
+            }
+        })?;
+        let evidence = self.evidence.local_evidence(project)?;
+        Ok(super::_standing::worktree_standings(&evidence, &listed))
+    }
 }
 
 impl WorkflowAssignments for Workflow {
@@ -543,6 +559,13 @@ mod tests {
             id: &crate::work::TodoId,
         ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
             Ok(self.0.get(id).cloned())
+        }
+
+        fn local_evidence(
+            &self,
+            _project: &ProjectRef,
+        ) -> Result<Vec<TodoEvidence>, WorkInterfaceError> {
+            Ok(self.0.values().cloned().collect())
         }
     }
 

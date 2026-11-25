@@ -14,6 +14,7 @@ mod _observe;
 mod _provider;
 mod _schema;
 mod _service;
+mod _standing;
 #[cfg(test)]
 pub(crate) mod _testing;
 
