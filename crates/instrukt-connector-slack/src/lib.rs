@@ -85,7 +85,8 @@ const DEFAULT_CONTEXT_MESSAGES: u64 = 30;
 /// What `context_messages` is, as its finding and editor schema say it.
 const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted";
 
-/// The manifest the company's Slack app is created from, in full.
+/// The manifest the company's Slack app is created from, in full; its bot
+/// scopes are the ones admission requires.
 const MANIFEST: &str = include_str!("app-manifest.yaml");
 
 /// The fields a `connectors.slack` entry takes.
@@ -869,6 +870,24 @@ fn cached_names<T>(
     })
 }
 
+/// The bot scopes the app's manifest requests: the scopes admission requires
+/// the bot token to hold (`slack-connector` spec, Connection).
+fn manifest_bot_scopes() -> Result<Vec<String>, serde_yaml_ng::Error> {
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        oauth_config: OauthConfig,
+    }
+    #[derive(serde::Deserialize)]
+    struct OauthConfig {
+        scopes: Scopes,
+    }
+    #[derive(serde::Deserialize)]
+    struct Scopes {
+        bot: Vec<String>,
+    }
+    serde_yaml_ng::from_str::<Manifest>(MANIFEST).map(|manifest| manifest.oauth_config.scopes.bot)
+}
+
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
     ConnectorError {
         cause: error.to_string(),
@@ -886,28 +905,21 @@ mod read_back;
 
 impl Connector for Slack {
     fn check_permissions(&self) -> Result<(), ConnectorError> {
-        const REQUIRED: &[&str] = &[
-            "app_mentions:read",
-            "chat:write",
-            "channels:history",
-            "channels:read",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "users:read",
-            "users:read.email",
-        ];
+        let required = manifest_bot_scopes().map_err(|error| {
+            failed(format!(
+                "the Slack app manifest names no bot scopes: {error}"
+            ))
+        })?;
         let (_, scopes) = self
             .api
             .call_with_headers("auth.test", false, &[], None)
             .map_err(failed)?;
         let scopes = scopes.ok_or_else(|| failed("Slack did not report the bot token's scopes"))?;
         let granted: std::collections::HashSet<_> = scopes.split(',').map(str::trim).collect();
-        let missing: Vec<_> = REQUIRED
+        let missing: Vec<&str> = required
             .iter()
-            .filter(|scope| !granted.contains(**scope))
-            .copied()
+            .map(String::as_str)
+            .filter(|scope| !granted.contains(scope))
             .collect();
         if !missing.is_empty() {
             return Err(failed(format!(
@@ -1414,9 +1426,16 @@ fn render_context(
 
 #[cfg(test)]
 mod tests {
-    use super::{Me, SlackEndpoint, admission, notice, split_conversation, ts_micros};
+    use super::{
+        Me, SlackEndpoint, admission, manifest_bot_scopes, notice, split_conversation, ts_micros,
+    };
     use serde_json::{Value, json};
     use std::collections::HashMap;
+
+    #[test]
+    fn the_shipped_manifest_names_the_bot_scopes_admission_requires() {
+        assert!(!manifest_bot_scopes().unwrap().is_empty());
+    }
 
     fn system() -> super::Clock {
         std::sync::Arc::new(jiff::Timestamp::now)
