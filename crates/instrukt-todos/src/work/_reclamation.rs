@@ -343,7 +343,7 @@ fn worktree_command(verb: &str, path: &Path, to: Option<&Path>) -> Vec<std::ffi:
 
 /// The todo's work branch: the one its record names, else the one its
 /// latest work-lane attempt was given.
-fn work_branch(record: &TodoRecord) -> Option<String> {
+pub(super) fn work_branch(record: &TodoRecord) -> Option<String> {
     record.branch.clone().or_else(|| {
         record
             .bindings

@@ -229,9 +229,11 @@ impl Claims for Work {
 /// The tick's polling of the todos this computer has an interest in,
 /// beyond the pickup listing (`github-record`, "Interest-driven refresh"):
 /// the todos it holds claims on, so what a human does on GitHub reaches the
-/// worker holding the claim, and the prerequisites that claimed work is
-/// blocked on. Local items are pulled with conditional requests; a
-/// prerequisite that is not a local item refreshes its listing copy.
+/// worker holding the claim, the prerequisites that claimed work is
+/// blocked on, and the todos whose worktree or work branch it holds, so it
+/// learns of a delivery made on another computer. Local items are pulled
+/// with conditional requests; a prerequisite that is not a local item
+/// refreshes its listing copy.
 fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
     let machine = s.machine()?;
     let claimed: Vec<usize> = (0..s.items.len())
@@ -243,6 +245,16 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
                 .is_some_and(|c| c.machine == machine)
         })
         .collect();
+    let here = HeldHere::read(&s.project.root)?;
+    let held: Vec<usize> = (0..s.items.len())
+        .filter(|&index| here.interests(&s.items[index].record, &machine))
+        .collect();
+    for index in held {
+        match s.pull_through(index) {
+            Ok(()) | Err(WorkError::Conflicted { .. }) => {}
+            Err(err) => return Err(err),
+        }
+    }
     let mut blocking: Vec<TodoId> = Vec::new();
     for &index in &claimed {
         match s.pull_through(index) {
@@ -287,6 +299,62 @@ fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
         }
     }
     Ok(())
+}
+
+/// The worktrees and work branches git lists for a project on this
+/// computer: its worktrees' paths, local branches and branches on origin.
+#[derive(Debug, Default)]
+struct HeldHere {
+    worktrees: std::collections::BTreeSet<std::path::PathBuf>,
+    branches: std::collections::BTreeSet<String>,
+}
+
+impl HeldHere {
+    /// Reads it from the repository at `root`, in one worktree listing and
+    /// one branch listing.
+    fn read(root: &std::path::Path) -> Result<Self, WorkError> {
+        let worktrees = super::_worktrees::worktrees(root)?
+            .into_iter()
+            .skip(1)
+            .map(|listed| listed.path)
+            .collect();
+        let branches = instrukt_core::git::run(
+            root,
+            [
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/heads",
+                "refs/remotes/origin",
+            ],
+        )?
+        .lines()
+        .filter_map(|name| {
+            name.strip_prefix("refs/heads/")
+                .or_else(|| name.strip_prefix("refs/remotes/origin/"))
+        })
+        .map(str::to_owned)
+        .collect();
+        Ok(Self {
+            worktrees,
+            branches,
+        })
+    }
+
+    /// Whether `record` is refreshed for what this computer holds of it:
+    /// it is not delivered in this computer's record, `machine` does not
+    /// claim it (claimed work is refreshed as such), and git lists a
+    /// worktree its bindings recorded or its work branch here.
+    fn interests(&self, record: &TodoRecord, machine: &instrukt_core::machine::MachineId) -> bool {
+        record.status != TodoStatus::Delivered
+            && !record.claim.as_ref().is_some_and(|c| &c.machine == machine)
+            && (record
+                .bindings
+                .iter()
+                .filter_map(|binding| binding.worktree.as_ref())
+                .any(|path| self.worktrees.contains(path))
+                || super::_reclamation::work_branch(record)
+                    .is_some_and(|branch| self.branches.contains(&branch)))
+    }
 }
 
 fn claim_outcome(status: ReflectionStatus) -> ClaimOutcome {
@@ -1427,6 +1495,66 @@ mod tests {
             Ok::<_, Infallible>(waiting_for_human_approval(evidence, approver, approver))
         });
         waits
+    }
+
+    /// A local record of `demo`, active and unclaimed, with no binding.
+    fn local_record() -> crate::work::TodoRecord {
+        use instrukt_core::ids::{ProjectSlug, TodoSlug};
+        crate::work::TodoRecord {
+            schema: super::super::_model::SCHEMA,
+            id: crate::work::TodoId::parse(&"ab".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("depth").unwrap(),
+            prior_slugs: Vec::new(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: "2026-11-03T10:00:00Z".parse().unwrap(),
+            created_by: crate::evidence::Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision: 3,
+            sequence: 0,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: None,
+            hold_history: Vec::new(),
+            label_actions: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: instrukt_runner::interfaces::CatchUp::Once,
+            agent: None,
+            branch: Some("depth/work".into()),
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    /// This computer, holding `depth/work`.
+    fn holding_the_work_branch() -> (super::HeldHere, instrukt_core::machine::MachineId) {
+        let here = super::HeldHere {
+            worktrees: Default::default(),
+            branches: ["depth/work".to_owned()].into_iter().collect(),
+        };
+        let machine = instrukt_core::machine::MachineId::parse(&"0".repeat(16)).unwrap();
+        (here, machine)
+    }
+
+    #[test]
+    fn an_unclaimed_todo_whose_work_branch_this_computer_holds_is_refreshed() {
+        let (here, machine) = holding_the_work_branch();
+        assert!(here.interests(&local_record(), &machine));
+    }
+
+    #[test]
+    fn a_todo_this_computer_already_reads_as_delivered_is_not_refreshed_for_its_branch() {
+        let (here, machine) = holding_the_work_branch();
+        let delivered = crate::work::TodoRecord {
+            status: TodoStatus::Delivered,
+            ..local_record()
+        };
+        assert!(!here.interests(&delivered, &machine));
     }
 
     #[test]
