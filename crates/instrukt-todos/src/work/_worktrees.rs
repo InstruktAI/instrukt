@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
 
+use super::_error::WorkError;
 use super::_model::TodoId;
 use super::_store::Checkout;
 
@@ -126,6 +127,32 @@ pub(super) fn exists(path: &Path) -> std::io::Result<bool> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err),
     }
+}
+
+/// The commit ref `reference` points at; `None` when git reports no such
+/// ref. A failure to read it is an error.
+pub(super) fn ref_tip(root: &Path, reference: &str) -> Result<Option<CommitSha>, WorkError> {
+    let listed = git::run(
+        root,
+        [
+            "for-each-ref",
+            "--format=%(objectname) %(refname)",
+            reference,
+        ],
+    )?;
+    for line in listed.lines() {
+        if let Some((sha, name)) = line.split_once(' ')
+            && name == reference
+        {
+            let sha = CommitSha::parse(sha).map_err(|err| {
+                WorkError::refused(format!(
+                    "git reports {reference} at {sha}, not a commit: {err}"
+                ))
+            })?;
+            return Ok(Some(sha));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

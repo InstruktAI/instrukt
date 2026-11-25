@@ -29,7 +29,7 @@ use instrukt_runner::interfaces::{
 use super::_error::WorkError;
 use super::_model::{Binding, TodoId, TodoRecord};
 use super::_store::Store;
-use super::_worktrees::{self, Kept, Worktree, worktrees};
+use super::_worktrees::{self, Kept, Worktree, ref_tip, worktrees};
 use super::Work;
 use crate::evidence::{StampFact, TodoStatus};
 
@@ -371,20 +371,6 @@ fn handed_head(record: &TodoRecord) -> Option<&CommitSha> {
             _ => None,
         })
         .or(record.delivery.as_ref().map(|delivery| &delivery.commit))
-}
-
-/// The commit `reference` points at in the repository at `root`; `None`
-/// when it does not exist.
-fn ref_tip(root: &Path, reference: &str) -> Result<Option<CommitSha>, WorkError> {
-    let spec = format!("{reference}^{{commit}}");
-    let output = git::run_output(root, ["rev-parse", "--verify", "--quiet", spec.as_str()])?;
-    if !output.status.success() {
-        return Ok(None);
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    CommitSha::parse(&text)
-        .map(Some)
-        .map_err(|_| WorkError::refused(format!("git printed `{text}` for {reference}")))
 }
 
 /// Why `admission` admits no section on `record`'s worktree; `None` when it

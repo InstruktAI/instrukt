@@ -71,7 +71,7 @@ use super::_store::{
     BranchRelease, Checkout, IntentWorktree, Store, WithdrawalIntent, WorkspaceRelease,
     WorktreeStage, WorktreeTie,
 };
-use super::_worktrees::{self, Kept, Worktree, worktrees};
+use super::_worktrees::{self, Kept, Worktree, ref_tip, worktrees};
 
 /// The working resources a withdrawal releases, as checked before any is
 /// released (`todos`, "Parking, withdrawal and delivery").
@@ -615,32 +615,6 @@ fn marker_step(state: BranchRelease, at: Option<CommitSha>) -> MarkerStep {
         (BranchRelease::Pending, Some(at)) => MarkerStep::Deletion(at),
         (BranchRelease::PartialMarker | BranchRelease::Deleted, Some(at)) => MarkerStep::Remove(at),
     }
-}
-
-/// The commit ref `reference` points at; `None` when git reports no such
-/// ref. A failure to read it is an error.
-fn ref_tip(root: &Path, reference: &str) -> Result<Option<CommitSha>, WorkError> {
-    let listed = git::run(
-        root,
-        [
-            "for-each-ref",
-            "--format=%(objectname) %(refname)",
-            reference,
-        ],
-    )?;
-    for line in listed.lines() {
-        if let Some((sha, name)) = line.split_once(' ')
-            && name == reference
-        {
-            let sha = CommitSha::parse(sha).map_err(|err| {
-                WorkError::refused(format!(
-                    "git reports {reference} at {sha}, not a commit: {err}"
-                ))
-            })?;
-            return Ok(Some(sha));
-        }
-    }
-    Ok(None)
 }
 
 /// Whether `tip` is `recorded` or descends from it. A `recorded` commit
