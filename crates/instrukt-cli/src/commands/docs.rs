@@ -275,11 +275,15 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let plan = publication::plan_plugin(&root, &args.key, &args.name)?;
     let mut failed = !plan.findings.is_empty();
     if args.check {
-        if let Some(drift) = &plan.drift {
-            for line in check_lines(&drift.writes, &drift.removals, "instrukt docs plugin") {
-                ctx.out.line(&line)?;
-                failed = true;
-            }
+        // What differs is named wherever it is known, findings or not: the
+        // plugin's files with its drift, the catalog with its entry.
+        let (writes, removals) = plan.drift.as_ref().map_or((&[][..], &[][..]), |drift| {
+            (drift.writes.as_slice(), drift.removals.as_slice())
+        });
+        let writes: Vec<PlannedFile> = writes.iter().chain(&plan.catalog).cloned().collect();
+        for line in check_lines(&writes, removals, "instrukt docs plugin") {
+            ctx.out.line(&line)?;
+            failed = true;
         }
     } else if let Some(drift) = plan.drift.as_ref().filter(|_| !failed) {
         ctx.out.line(&format!(

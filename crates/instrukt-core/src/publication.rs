@@ -231,7 +231,7 @@ pub fn write_plugin(root: &Path, plan: &PluginPlan) -> Result<Vec<PathBuf>, Publ
             }
         }
     }
-    for file in &drift.writes {
+    for file in drift.writes.iter().chain(&plan.catalog) {
         let target = _tx::own_destination(root, &file.path)?;
         crate::fsx::atomic_write(&target, file.text.as_bytes())?;
         changed.push(file.path.clone());

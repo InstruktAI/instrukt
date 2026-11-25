@@ -585,6 +585,12 @@ pub struct PluginPlan {
     /// a finding leaves the rendering, the held version or the plugin's
     /// folder unknown. It is applied only when the plan holds no finding.
     pub drift: Option<PluginDrift>,
+    /// The catalog with the plugin's entry set, when that differs from what
+    /// the view holds: known from the key, the name and the catalog alone,
+    /// whatever the plugin's files. `None` when the entry already holds its
+    /// values, or a finding or a link leaves the catalog unread. It is
+    /// written last, with the drift, only when the plan holds no finding.
+    pub catalog: Option<PlannedFile>,
 }
 
 /// What a rendering changes against what the view holds.
@@ -592,9 +598,9 @@ pub struct PluginPlan {
 pub struct PluginDrift {
     /// The plugin's version once the rendering is applied.
     pub version: PluginVersion,
-    /// Each file whose content differs from what the view holds, or that it
-    /// does not hold, in the order they are written: the plugin's files
-    /// other than its manifest, then its manifest, then the catalog.
+    /// Each file of the plugin whose content differs from what the view
+    /// holds, or that it does not hold, in the order they are written: the
+    /// plugin's files other than its manifest, then its manifest.
     pub writes: Vec<PlannedFile>,
     /// Each file the view holds under the plugin's folder that the plugin
     /// does not hold, relative to the repository's root.
@@ -705,39 +711,35 @@ pub(super) fn plan(
     name: &CompanyName,
 ) -> Result<PluginPlan, PublicationError> {
     let assessment = assess(tree, key, name)?;
+    let catalog = match assessment.catalog {
+        Some((document, bytes)) => catalog_entry(document, bytes, key, name)?,
+        None => None,
+    };
     let drift = match (assessment.files, assessment.held, assessment.folder_linked) {
-        (Some(files), Held::Absent, false) => {
-            Some(drift(tree, key, name, files, None, assessment.catalog)?)
+        (Some(files), Held::Absent, false) => Some(drift(tree, key, name, files, None)?),
+        (Some(files), Held::Version(version), false) => {
+            Some(drift(tree, key, name, files, Some(version))?)
         }
-        (Some(files), Held::Version(version), false) => Some(drift(
-            tree,
-            key,
-            name,
-            files,
-            Some(version),
-            assessment.catalog,
-        )?),
         _ => None,
     };
     Ok(PluginPlan {
         folder: PathBuf::from(folder(key)),
         findings: assessment.findings,
         drift,
+        catalog,
     })
 }
 
 /// What the rendering `files`, every file but the manifest, changes against
 /// what `tree` holds: the version kept from `held` when the rendering with
 /// it equals the folder file for file, and raised otherwise; the files to
-/// write, in their order, the catalog's entry among them when `catalog`
-/// could be read; and the files to remove.
+/// write, in their order; and the files to remove.
 fn drift(
     tree: &Committed,
     key: &ProjectSlug,
     name: &CompanyName,
     mut files: BTreeMap<String, String>,
     held: Option<PluginVersion>,
-    catalog: Option<(Json, &[u8])>,
 ) -> Result<PluginDrift, PublicationError> {
     let folder = folder(key);
     let manifest_path = format!("{folder}/{MANIFEST}");
@@ -768,9 +770,6 @@ fn drift(
         .map(|(path, text)| planned(path, text))
         .collect();
     writes.extend(manifest_text.map(|text| planned(manifest_path, text)));
-    if let Some((document, bytes)) = catalog {
-        writes.extend(catalog_entry(document, bytes, key, name)?);
-    }
     writes.retain(PlannedFile::differs);
     Ok(PluginDrift {
         version,
@@ -1186,7 +1185,7 @@ mod tests {
     }
 
     #[test]
-    fn the_manifest_is_written_after_the_plugins_other_files_and_the_catalog_last() {
+    fn the_manifest_is_written_after_the_plugins_other_files() {
         let tree = repository(Some(CATALOG_TEXT), &[]);
         let paths: Vec<PathBuf> = drift_of(&tree)
             .writes
@@ -1198,8 +1197,19 @@ mod tests {
             [
                 PathBuf::from("plugins/acme/skills/acme/SKILL.md"),
                 PathBuf::from("plugins/acme/.claude-plugin/plugin.json"),
-                PathBuf::from(CATALOG),
             ]
+        );
+    }
+
+    #[test]
+    fn the_catalogs_entry_is_known_without_the_plugins_files() {
+        let tree = Committed::of(&[(CATALOG, CATALOG_TEXT)]);
+        let plan = plan(&tree, &key(), &name()).unwrap();
+        assert_eq!(plan.findings, [PluginFinding::NoIndex]);
+        assert_eq!(plan.drift, None);
+        assert_eq!(
+            plan.catalog.map(|file| file.path),
+            Some(PathBuf::from(CATALOG))
         );
     }
 
