@@ -496,6 +496,88 @@ fn disappearing_optional_native_project_metadata_still_recovers_the_same_reserve
     );
 }
 
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS27
+#[test]
+fn a_released_orchestrator_stays_settled_after_another_session_takes_its_todo_up() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let first = fake.native_id("s1");
+    let worktree = fake.worktree("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &first)
+        .args(["todo", "update", "parser", "--unclaim"])
+        .assert()
+        .success();
+    fake.set_status("s1", "completed");
+    fake.change("s1", "settled", true.into());
+    let released = fake.message_count("s1");
+    // Another session takes the todo up in its workspace before the
+    // runner looks again.
+    let start = p
+        .env
+        .command(std::path::Path::new("t3"), p.repo.path())
+        .args([
+            "thread",
+            "start",
+            "--title",
+            "todo-orchestrator · parser",
+            "--",
+            p.repo.path().to_str().unwrap(),
+            "Developer picks the parser up.",
+        ])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+    let second = String::from_utf8(start.stdout).unwrap().trim().to_owned();
+    // Its native record places it in the retained todo worktree, as T3
+    // records a thread started in an existing worktree.
+    let branch = p.env.git(&worktree, ["branch", "--show-current"]);
+    fake.change(&second, "worktreePath", worktree.to_str().unwrap().into());
+    fake.change(&second, "branch", branch.into());
+    let proof = runtime::placement_evidence(
+        &p.env,
+        &runtime::NativePlacement {
+            cwd: &worktree,
+            slug: "parser",
+            role: "todo-orchestrator",
+            session: &second,
+        },
+    );
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &second)
+        .args(["todo", "work", "parser", "--placement-evidence", "-"])
+        .write_stdin(proof)
+        .assert()
+        .success();
+    p.tick();
+    p.tick();
+    // Any turn the runner started on the first thread ends again without
+    // recording evidence.
+    fake.set_status("s1", "completed");
+    p.tick();
+    let status = p
+        .env
+        .run(p.repo.path(), ["events", "status", "--json"])
+        .success();
+    let report: serde_json::Value = serde_json::from_slice(&status.get_output().stdout).unwrap();
+    // Inputs received after the release, the settled marker, and the
+    // stopped executions listed, checked together.
+    assert_eq!(
+        (
+            fake.message_count("s1") - released,
+            fake.settled("s1"),
+            report["stopped_executions"].clone(),
+        ),
+        (0, true, serde_json::json!([])),
+        "{}",
+        fake.messages("s1")
+    );
+}
+
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
 fn deliberate_entry_requires_native_recorded_placement_and_never_adopts_incidental_cwd() {
@@ -1503,4 +1585,56 @@ fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
         .unwrap();
     let normalized: serde_json::Value = serde_json::from_str(&normalized).unwrap();
     assert_eq!(normalized["title"], key);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS28
+#[test]
+fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_that_worktree() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    fake.prepare_worktree_until_read(2);
+    p.tick();
+    assert_eq!(p.rt.started_count(), 1);
+    let native = format!("t3:{}", fake.native_id("s1"));
+    let shown: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.repo.path(), ["todo", "show", "parser", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let orchestrator = shown["ledger"]["active_attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|attempt| attempt["role"] == "todo-orchestrator")
+        .unwrap();
+    assert_eq!(orchestrator["session"], native.as_str());
+    let workspace = &shown["ledger"]["workspace"];
+    let worktree = fake.worktree("s1");
+    assert_eq!(
+        std::path::Path::new(workspace["worktree_path"].as_str().unwrap()),
+        worktree
+    );
+    assert_eq!(workspace["worktree_exists"], true);
+    insta::assert_snapshot!(p.env.git(&worktree, ["branch", "--show-current"]), @"parser/work");
+    let start = format!("runtime-start:t3:{}", fake.key("s1"));
+    let events: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.env.home(), ["events", "status", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    assert!(
+        events["workers"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|worker| worker["worker"] != start.as_str())
+    );
+    assert_eq!(fake.message_count("s1"), 1);
 }

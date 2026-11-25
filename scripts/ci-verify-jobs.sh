@@ -1,11 +1,14 @@
 #!/bin/sh
 # Decides CI's required Linux check, `fmt, clippy, test (ubuntu-latest)`
 # (project/instrukt/policy/testing), from the classification and from the
-# build and shard jobs. A part is deselected only when the `changes` job
-# succeeded and wrote the literal `false` for it; validation is also selected
-# whenever Rust is. Every selected job must both have left its completion
-# record and be reported as `success`: a record shows the job finished its
-# work, a result shows how the job ended, and neither stands in for the other.
+# build and shard jobs. The archive job that builds the shards' test archive is
+# not examined: it is reached through the partition records, which exist only
+# when it succeeded and the shards ran from its archive. A part is deselected
+# only when the `changes` job succeeded and wrote the literal `false` for it;
+# validation is also selected whenever Rust is. Every selected job must both
+# have left its completion record and be reported as `success`: a record shows
+# the job finished its work, a result shows how the job ended, and neither
+# stands in for the other.
 # The k-th of N partition records must read exactly k/N. A deselected part is
 # not examined. Prints each requirement and whether it was met, and exits
 # non-zero when a selected requirement is unmet.

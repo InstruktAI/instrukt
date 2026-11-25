@@ -1576,14 +1576,22 @@ impl<'w> Session<'w> {
                 || _reflect::pull_request_owed(&reflected)
                 || (board.is_some() && reflected.reflection.issue.is_some());
             if owed && !reflected.reflection.conflicted {
-                let needs_you = super::_envelope::record_status(&reflected.record) == "held"
-                    || crate::workflow::waiting_for_human_approval(
-                        &super::_ports::to_evidence(reflected.record.clone(), Vec::new()),
-                        self.config
-                            .approver(instrukt_core::config::ApprovalGate::Prd)?,
-                        self.config
-                            .approver(instrukt_core::config::ApprovalGate::Task)?,
-                    );
+                // A todo shown as held already needs you: its record is not
+                // projected and no approver is resolved for it.
+                let needs_you = super::_ports::waits_on_person(
+                    super::_envelope::record_status(&reflected.record),
+                    || {
+                        Ok::<_, instrukt_core::config::ConfigError>(
+                            crate::workflow::waiting_for_human_approval(
+                                &super::_ports::to_evidence(reflected.record.clone(), Vec::new()),
+                                self.config
+                                    .approver(instrukt_core::config::ApprovalGate::Prd)?,
+                                self.config
+                                    .approver(instrukt_core::config::ApprovalGate::Task)?,
+                            ),
+                        )
+                    },
+                )?;
                 let result = match &self.remote {
                     Remote::Client { gh, down: None } => Some(_reflect::flush(
                         gh,

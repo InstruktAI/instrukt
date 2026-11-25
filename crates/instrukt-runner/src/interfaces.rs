@@ -616,12 +616,20 @@ pub struct Assignment {
     /// A factual progress fingerprint over record & workspace state, used by
     /// the runner to detect whether a dispatched session made progress.
     pub state: String,
+    /// The session holding the todo's execution claim, relayed from work;
+    /// `None` while no session holds it.
+    pub holder: Option<SessionRef>,
+    /// Whether the todo waits on a person (a hold, or an approval gate
+    /// that waits for a human), as work decides it.
+    pub waits_on_person: bool,
 }
 
 /// Reading workflow's derived state for dispatch.
 pub trait WorkflowAssignments: Send + Sync {
-    /// The todo's current assignment, or `None` when no lane is owed
-    /// (delivered, removed, or a prerequisite blocks every lane). Pure
+    /// The todo's current assignment, or `None` when no lane is owed: the
+    /// todo is not active, it is held while no session holds its claim, a
+    /// prerequisite is undelivered, or no claim is held while it waits on
+    /// a human approval or on integration of a finalized hand-off. Pure
     /// derivation: it records nothing and appends no event. Serves
     /// `workflow` domain "Published contracts" and `work-dispatch` "Todo
     /// pickup".

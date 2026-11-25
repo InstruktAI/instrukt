@@ -2,9 +2,11 @@
 //! (`state-database`, "Work tables"): each local item is one `todos` row
 //! with its prerequisites, artifacts and versions, stamps, holds, session
 //! bindings, reflection state and answered inbound commands. Reads take no
-//! lock (a database behind this build's schema migrates once under the
-//! writer lock); each write takes the per-computer writer lock for its one
-//! transaction alone, and one accepted change commits in one transaction.
+//! lock: an ordinary read of a database behind this build's schema migrates
+//! it once under the writer lock, while an inspection read, the existence
+//! read always among them, brings it forward in memory only. Each write
+//! takes the per-computer writer lock for its one transaction alone, and
+//! one accepted change commits in one transaction.
 //! GitHub reflection serializes on the separate reflection lock, taken
 //! before the writer lock and never while it is held.
 
@@ -1501,12 +1503,14 @@ pub(crate) fn read_items(home: &Home, project: &ProjectSlug) -> Result<Vec<Local
 }
 
 /// Local items, listing copies and provider state of `project`, read
-/// without the writer lock; no database yet is empty state.
+/// through an inspection snapshot: without the writer lock, and with older
+/// state brought forward in memory only, so the file stays as found; no
+/// database yet is empty state.
 pub(crate) fn read_existence_state(
     home: &Home,
     project: &ProjectSlug,
 ) -> Result<(Vec<LocalItem>, Vec<ListingCopy>, ProviderState), WorkError> {
-    Store::new(home, project).existence()
+    Store::new(&home.for_inspection(), project).existence()
 }
 
 /// Writes every row of `item` inside `tx`: the `todos` row first, then the

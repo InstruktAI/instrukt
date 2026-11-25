@@ -122,6 +122,14 @@ pub fn repository_local(matches: &ArgMatches) -> bool {
     )
 }
 
+/// The documentation reads, as the catalog classifies them: they inspect the
+/// state database, so an older one is read through its migrated in-memory
+/// image and the file stays as found
+/// (`project/instrukt/spec/feature/work/state-database`).
+pub fn state_inspection(matches: &ArgMatches) -> bool {
+    action(&command_path(matches).0) == Some(Action::DocsRead)
+}
+
 /// The commands that write no log: `docs render [--check]`, so a check
 /// writes nothing anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
@@ -145,6 +153,15 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
             _ => None,
         },
     )
+}
+
+/// The commands that know only once they run whether they write: `mcp
+/// clients` lists read-only in an admin's direct message and materializes
+/// registrations for the local operator
+/// (`project/instrukt/spec/feature/runner/mcp-access`). They enter reading
+/// and turn writing themselves ([`crate::context::Ctx::enter_writing`]).
+pub fn deferred_writing(matches: &ArgMatches) -> bool {
+    command_path(matches).0 == ["mcp", "clients"]
 }
 
 pub fn strict_inspection(matches: &ArgMatches) -> bool {
@@ -193,6 +210,10 @@ pub fn read_only(matches: &ArgMatches) -> bool {
     if path == ["bugs", "report"] {
         return !leaf.get_flag("approved");
     }
+    // A coverage measurement reads; updating its baseline writes.
+    if path == ["specs", "coverage"] {
+        return !leaf.get_flag("update_baseline");
+    }
     matches!(
         path.as_slice(),
         ["status"]
@@ -208,7 +229,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["todo", "list" | "show"]
             | ["review", "show"]
             | ["todo", "artifacts", "list" | "read" | "diff"]
-            | ["specs", "coverage" | "trace"]
+            | ["specs", "trace" | "reserve"]
             | [
                 "mcp",
                 "list" | "list-tools" | "call" | "discover" | "check-ingress"

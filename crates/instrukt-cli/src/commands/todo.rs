@@ -64,6 +64,12 @@ enum TodoCommand {
     /// Record the confirmed delivered commit.
     Deliver(DeliverArgs),
     /// Reserve a native role assignment, or record no-start/failure evidence.
+    ///
+    /// A reservation's reply carries `prior_session` when the role has an
+    /// earlier attempt bound on the selected runtime: the session and attempt
+    /// number of the most recent such attempt, with its recorded selection and
+    /// dispatching session where the record holds them. The reply omits it
+    /// otherwise.
     Attempt(AttemptArgs),
     /// Bind a reserved assignment to its native shared child.
     Bind(BindArgs),
@@ -671,7 +677,7 @@ impl Session<'_> {
                     let env = crate::wiring::environment(ctx)?;
                     let dispatch = configuration.get_str("runtime.dispatch", &env)?;
                     let continuation = configuration.get_str("runtime.message_child", &env)?;
-                    let assignment = work.prepare_attempt(
+                    let reserved = work.prepare_attempt(
                         project,
                         &instrukt_todos::work::AttemptRequest {
                             todo: &args.slug,
@@ -681,7 +687,7 @@ impl Session<'_> {
                             brief: &message,
                         },
                     )?;
-                    let mut reply = serde_json::to_value(&assignment)?;
+                    let mut reply = serde_json::to_value(&reserved)?;
                     if let Some(reply) = reply.as_object_mut() {
                         reply.insert("dispatch_instruction".into(), dispatch.into());
                         reply.insert("continuation_instruction".into(), continuation.into());
