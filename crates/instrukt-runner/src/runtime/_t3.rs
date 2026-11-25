@@ -592,6 +592,25 @@ pub(crate) fn verify_request(request: &RuntimeStart, thread: &Thread) -> Result<
     verify_placement(request, thread)
 }
 
+/// Whether T3 is still preparing the new worktree `request` asks for: the
+/// present thread is on the requested branch, T3 reports it as preparing, and
+/// it has no worktree path yet. T3 records the path after it answers the
+/// launch (`project/instrukt/spec/feature/runner/t3-contract`).
+fn placement_preparing(request: &RuntimeStart, thread: &Thread) -> bool {
+    let new_worktree = request
+        .native_launch
+        .as_ref()
+        .is_none_or(|launch| launch.existing_worktree.is_none());
+    new_worktree
+        && request
+            .worktree
+            .as_ref()
+            .is_some_and(|worktree| thread.branch.as_deref() == Some(&worktree.branch))
+        && thread.presence == super::Presence::Present
+        && ThreadStatus::parse(&thread.native_status) == Some(ThreadStatus::Preparing)
+        && thread.worktree.is_none()
+}
+
 fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
     if let Some(path) = request
         .native_launch
@@ -623,6 +642,9 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
         }
     }
     if let Some(worktree) = &request.worktree {
+        if placement_preparing(request, thread) {
+            return Err(SessionsError::PlacementPreparing(thread.session.clone()));
+        }
         if thread.branch.as_deref() != Some(&worktree.branch)
             || thread.worktree.as_ref().is_none_or(|p| !p.is_absolute())
         {
@@ -808,5 +830,64 @@ fn failure(operation: &str, detail: impl Into<String>) -> SessionsError {
         runtime: "t3".into(),
         operation: operation.into(),
         detail: detail.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A todo pickup asking T3 for a new worktree of `parser/work`.
+    fn new_worktree_request() -> RuntimeStart {
+        RuntimeStart {
+            launch_modes: None,
+            native_launch: Some(crate::runtime::NativeLaunch {
+                command_id: "instrukt:launch:1".into(),
+                thread_id: "instrukt:launch:1".into(),
+                project_id: "project".into(),
+                existing_worktree: None,
+            }),
+            preferences: Vec::new(),
+            selection: None,
+            selection_evidence: None,
+            checkout: std::path::PathBuf::from("/checkout"),
+            key: "instrukt:todo:demo/parser:todo-orchestrator:1".into(),
+            title: "parser".into(),
+            brief: "Assignment.".into(),
+            worktree: Some(crate::runtime::WorktreeRequest {
+                from: "origin/main".into(),
+                base: "base".into(),
+                branch: "parser/work".into(),
+            }),
+            profiles: crate::runtime::Profiles::default(),
+        }
+    }
+
+    /// The thread `t3 thread show --json` reports with T3 status `status`, on
+    /// the requested branch and with no worktree path.
+    fn shown_without_worktree(status: &str) -> Thread {
+        let native: NativeThread = serde_json::from_value(serde_json::json!({
+            "threadId": "instrukt:launch:1", "projectId": "project", "title": "parser",
+            "status": status, "branch": "parser/work", "worktreePath": null,
+            "pendingRequestCount": 0, "archived": false,
+            "latestRunId": "run:1", "activeRunId": if status == "failed" { None } else { Some("run:1") },
+        }))
+        .unwrap();
+        native.decode().unwrap()
+    }
+
+    #[test]
+    fn a_new_worktree_t3_is_still_preparing_is_pending_placement() {
+        let thread = shown_without_worktree("preparing");
+        let outcome = verify_request(&new_worktree_request(), &thread);
+        assert!(
+            matches!(outcome, Err(SessionsError::PlacementPreparing(ref session)) if *session == thread.session)
+        );
+    }
+
+    #[test]
+    fn a_failed_preparation_on_the_requested_branch_is_a_failed_placement() {
+        let outcome = verify_request(&new_worktree_request(), &shown_without_worktree("failed"));
+        assert!(matches!(outcome, Err(SessionsError::Failed { .. })));
     }
 }
