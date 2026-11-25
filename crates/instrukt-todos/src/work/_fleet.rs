@@ -27,12 +27,17 @@ impl Facts {
 
 /// The facts of the change from `before` (`None` for a todo the change
 /// creates) to `after`, when its hold, its departure from active work or a
-/// newly failed attempt changed; otherwise `None`.
+/// newly failed attempt changed; otherwise `None`. Every condition concerns
+/// active work, so a change to a todo that is active neither before nor
+/// after it has no facts.
 pub(super) fn facts(before: Option<&TodoRecord>, after: &TodoRecord) -> Option<Facts> {
+    let was_active = before.is_some_and(|record| record.status == TodoStatus::Active);
+    if !was_active && after.status != TodoStatus::Active {
+        return None;
+    }
     let hold_before = before.and_then(|record| record.hold.as_ref()).map(hold);
     let hold_after = after.hold.as_ref().map(hold);
-    let left_active = before.is_some_and(|record| record.status == TodoStatus::Active)
-        && after.status != TodoStatus::Active;
+    let left_active = was_active && after.status != TodoStatus::Active;
     let failed_attempt = newly_failed(before, after);
     if hold_before == hold_after && !left_active && failed_attempt.is_none() {
         return None;
@@ -233,5 +238,19 @@ mod tests {
             ..before.clone()
         };
         assert_eq!(facts(Some(&before), &after), None);
+    }
+
+    #[test]
+    fn a_hold_placed_or_released_on_an_iceboxed_todo_has_no_facts() {
+        let iceboxed = TodoRecord {
+            status: TodoStatus::Iceboxed,
+            ..record()
+        };
+        let held = TodoRecord {
+            status: TodoStatus::Iceboxed,
+            ..held(HoldSource::Manual)
+        };
+        assert_eq!(facts(Some(&iceboxed), &held), None);
+        assert_eq!(facts(Some(&held), &iceboxed), None);
     }
 }
