@@ -244,8 +244,9 @@ second launcher. Elapsed time never changes the generation.
 ### Human-facing thread titles
 
 Every start captures a readable label without an object-key suffix. Todo roles
-use `<role> · <todo-slug>`, standing procedures use their name and optional typed
-subject, tasks use `task · <task-slug>`, and runs use `run · <procedure-name>`.
+use `<role> · <todo-slug>`, standing procedures use their actor title
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`), tasks use
+`task · <task-slug>`, and runs use `run · <procedure-name>`.
 Company owns conversation title formatting from optional connector display facts:
 `<Company> · #<channel> · "<first words>"`, `<Company> · DM with <name>`, or
 `<Company> · Slack thread` without enrichment. The preview uses the first eight

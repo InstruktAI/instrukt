@@ -67,6 +67,13 @@ actor or repair lost identity. The opening loader directs
 `instrukt docs get <procedure-id> --closure` before handling events; continuation
 retains its initialized role, home, subject, attendance and delivery facts.
 
+The thread title names its actor (`sdlc/principle/domain-driven-design`): the
+assignment's effective role alone for home identity, or `{role} · {subject}`
+with the complete typed subject for subject identity. An assignment without an
+effective role is titled by the last segment of its procedure ID in the same
+shape. Automatic activation, manual entry reservation and successors title
+their generation this way.
+
 ### Continuation and successors
 
 Standing T3 threads are settled, never closed. Runner automation never settles a
