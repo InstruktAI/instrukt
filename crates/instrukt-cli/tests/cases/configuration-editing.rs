@@ -400,18 +400,43 @@ fn stdout(assert: &Assert) -> String {
     String::from_utf8(assert.get_output().stdout.clone()).unwrap()
 }
 
-/// The Slack app manifest the Slack connector's specification gives, as YAML.
-fn specified_slack_manifest() -> Value {
-    let spec = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/project/spec/feature/company/slack-connector.md"),
-    )
-    .unwrap();
-    let (_, app) = spec.split_once("### The Slack app").unwrap();
-    let (_, block) = app.split_once("```yaml\n").unwrap();
-    let (manifest, _) = block.split_once("\n```").unwrap();
-    serde_yaml_ng::from_str(manifest).unwrap()
-}
+/// The Slack app manifest `project/instrukt/spec/feature/company/slack-connector`
+/// gives in full (`### The Slack app`).
+const SPECIFIED_SLACK_MANIFEST: &str = r#"display_information:
+  name: agent
+  description: The company's agent. Tag it in a channel or message it directly.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: agent
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+"#;
 
 /// Whether `part`'s lines appear, in order and together, among `whole`'s.
 fn shown_within(part: &str, whole: &str) -> bool {
@@ -466,7 +491,7 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
     let (_, manifest) = setup.split_once("\nManifest:\n").unwrap();
     assert_eq!(
         serde_yaml_ng::from_str::<Value>(manifest).unwrap(),
-        specified_slack_manifest()
+        serde_yaml_ng::from_str::<Value>(SPECIFIED_SLACK_MANIFEST).unwrap()
     );
     assert_eq!(
         json["required"],
