@@ -93,8 +93,11 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     tagged release publication, not pull requests.
   - A pull request runs, of the checks above, only those its changed files
     reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
-    release runs every check. A change to documents and configuration alone,
-    root `instrukt.yaml` among them, reaches no Rust input: Linux builds the
+    release runs every check. The shipped documents the workspace tests
+    read, everything under `docs/domain/sdlc/` and `docs/general/`, are Rust
+    inputs, and a change to them runs the Rust checks alongside the document
+    checks. A change to other documents and configuration alone, root
+    `instrukt.yaml` among them, reaches no Rust input: Linux builds the
     CLI binary and runs the document,
     configuration, use-case coverage and instruction-file checks with it,
     without the workspace test suite, doctests, macOS, the dependency audit,
@@ -184,8 +187,10 @@ once for parallel shards, and scoping macOS pull-request runs to
 platform-specific surfaces keeps pull-request feedback fast while preserving
 full cross-platform verification on `main` and every tagged release.
 Running, of those checks, only the ones a pull request's files reach spares a
-document change the workspace test suite, macOS and every check its files do
-not reach; an unnamed, unreadable or unclassified change runs everything, so a
+change to documents no test reads the workspace test suite, macOS and every
+check its files do not reach. A document a test reads is that test's input:
+sparing its change the suite would let a pull request pass that then turns
+`main` red. An unnamed, unreadable or unclassified change runs everything, so a
 gap in the classification costs time, never a missed check.
 
 ## Scope
