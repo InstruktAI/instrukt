@@ -28,6 +28,18 @@ missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
+<!-- planned:compressed-global-entrypoints -->
+Every entrypoint rendering — the global agent files, a repository's root
+`AGENTS.md` and a company plugin's skill — holds each source it holds in full
+as that source's current compressed unit, and as its prose wherever the unit
+is stale or missing, deciding that per source
+(`project/instrukt/spec/feature/publication/compressed-units`). Publication
+reads units, decides their currency and structural admissibility, renders
+with them, publishes them with their positions, records their lineage and
+reports their state through `instrukt docs units`; it never writes a unit's
+text, calls a model or judges whether a unit means what its source means.
+<!-- /planned:compressed-global-entrypoints -->
+
 ## Ubiquitous language
 
 **Home**
@@ -98,6 +110,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    home, which selects from the company's own documents
    (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
+<!-- planned-change:compressed-global-entrypoints -->
 **Rendering**
 :  Producing one instruction file from documentation: selected snippets in
    full with their closure, listing lines, triggered-procedure lines, planned
@@ -108,6 +121,19 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    admits no configured value. Producing a company plugin from the company
    index is a rendering too: the same selection, held as the files of the
    plugin.
+<!-- change:compressed-global-entrypoints -->
+**Rendering**
+:  Producing one instruction file from documentation: selected snippets in
+   full with their closure, each held as its current compressed unit or in
+   its prose, listing lines, triggered-procedure lines, planned material
+   dropped, no import left for an agent program to resolve. A
+   global agent file inlines what is published on the computer and resolves
+   `@config`; a committed entrypoint inlines only what its repository holds,
+   names other repositories' doctrine by the command that reads it, and
+   admits no configured value. Producing a company plugin from the company
+   index is a rendering too: the same selection, held as the files of the
+   plugin.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 **Committed entrypoint**
 :  The `AGENTS.md` at the root of a repository that holds its entry index, a
@@ -151,10 +177,87 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 :  The one key in an agent runtime's user settings that makes it load
    `AGENTS.md` files.
 
+<!-- planned-change:compressed-global-entrypoints -->
 **Eval fingerprint**
 :  The digest of every published snippet that declares `eval: true`, recorded
    per published commit; the current digest is available to work
    (`project/instrukt/spec/feature/publication/eval-fingerprint`).
+<!-- change:compressed-global-entrypoints -->
+**Eval fingerprint**
+:  The digest of the doctrine in force on the computer, derived from a prose
+   digest over every published evaluated snippet and always-on source and a
+   units digest over the always-on sources' current units, recorded with both
+   per published commit; the current fingerprint is available to work
+   (`project/instrukt/spec/feature/publication/eval-fingerprint`).
+
+**Compressed unit**
+:  A source's dense counterpart, written by an agent and committed in the
+   repository that holds the source, declaring in its frontmatter the source
+   digest it was written from and the model that wrote it
+   (`project/instrukt/spec/feature/publication/compressed-units`). A unit is
+   no snippet and no company document. instrukt reads units and never writes
+   one.
+
+**Place for units**
+:  `docs/_compressed/` in every repository that holds documentation, a unit
+   standing at its source's path relative to `docs/`:
+   `docs/_compressed/general/…`, `docs/_compressed/domain/<x>/…`,
+   `docs/_compressed/project/…`, and a company document's own path below it.
+   It lies outside every position, and its leading underscore keeps it out of
+   every snippet and position walk the docs context makes. In the home, a
+   published position's units stand under `_compressed/` inside that
+   position's published directory, at the source's path relative to the
+   position.
+
+**Source**
+:  What an entrypoint rendering holds in full: a delivered snippet in the
+   closure of an entry index's `expanded` ids or of `general`'s `agents`
+   lists, or a company document in the closure of the company index's
+   `expanded` documents.
+
+**Delivered prose**
+:  A source as a rendering holds it in full before anything the computer
+   supplies: its body after the frontmatter under the docs context's
+   current-contract lens — planned additions dropped, each planned change
+   reduced to its current side, marker lines removed — with configured-value
+   directives, references and required reads exactly as written and line
+   endings as line feeds. A company document's delivered prose is its body
+   after the frontmatter, the same way. It depends on the source's bytes
+   alone.
+
+**Source digest**
+:  The SHA-256 of a source's delivered prose, in lowercase hexadecimal. A
+   unit declares the source digest it was written from.
+
+**Unit state**
+:  Current, stale, missing or orphaned, decided from a repository's content
+   alone by comparing each unit's declared source digest with its source's
+   (`project/instrukt/spec/feature/publication/compressed-units`).
+
+**Unit framing**
+:  How a rendering holds a unit where it would hold its source: one heading
+   naming the source's canonical id, or a company document's path, at the
+   level the source's own title takes there, then the unit's body without
+   its frontmatter, its headings demoted as a source's are. In a company
+   plugin's main file, a line under that heading names the plugin file that
+   carries the document's prose. Framing reads nothing of the unit's prose.
+
+**Legend**
+:  One fixed passage of the release explaining the units' notation, carried
+   once, in visible text, immediately before the first unit a rendering
+   holds, and in no rendering that holds none.
+
+**Uncompressed copy**
+:  The rendering of one runtime's global agent file with every source in its
+   prose, written into the home's `rendered/` folder under a name no agent
+   runtime loads as an instruction file.
+
+**Lineage facts**
+:  What a sync records per published snippet in the global index: the
+   snippet's source digest and, when it has a unit, the source digest the
+   unit declares and the SHA-256 of the unit's body. Raw facts, never a
+   verdict on currency.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 **Docs lock**
 :  The home-wide lock under which every write to the home's publication
@@ -227,12 +330,43 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
+<!-- planned:compressed-global-entrypoints -->
+Compressed units extend each part of that boundary:
+
+- **Owns** — the place for units and a unit's format; delivered prose's
+  digest and each unit's state; the structural rules a unit entering a
+  rendering is held to, and their findings; holding a unit in place of its
+  source, the per-source fallback and the legend, in every entrypoint
+  rendering; the inspection of a repository's units; publishing units with
+  their positions and retracting them; the lineage facts in the global index;
+  the units digest of the eval fingerprint; the uncompressed copies of the
+  global agent files.
+- **Does not own** — a unit's text, its notation and whether it keeps its
+  source's rules (the agent that writes it, under the general doctrine's
+  notation and procedure); when units are written and committed (the
+  repository's maintainers and the post-merge automation they compose from
+  their shared workflows, `project/instrukt/policy/shared-workflows`); the
+  current-contract lens, the `@config` grammar and the reference forms
+  (docs).
+- **Published contracts** — `docs/_compressed/` and a unit's frontmatter,
+  `source_sha256` and `model`; `instrukt docs units [--json]`, which reads the
+  checkout it runs in and writes nothing, exiting 0 when there is nothing to
+  compress, 3 when it names only stale, missing or orphaned units, and 1
+  when it names a finding; the lineage facts of the global index; the
+  prose and units digests beside each recorded fingerprint; the uncompressed
+  copies under the home's `rendered/`.
+- **Allowed dependencies** — docs, as customer, also for a source's
+  current-contract body, its `@config` directives and its reference forms,
+  which unit checks compare with the unit's.
+<!-- /planned:compressed-global-entrypoints -->
+
 ## Canonical fields
 
 ### Aggregates
 
 #### Global index (aggregate)
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Root:** the home's global index.
 - **Contains:** index entries (id, description, position, owner, published-file
   location, source checkout provenance and pending ownership).
@@ -244,6 +378,24 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Identifier:** one per home.
 - **Lifecycle:** created by the first sync on a computer; patched by every
   sync that publishes; re-created from the projects if the home is deleted.
+<!-- change:compressed-global-entrypoints -->
+- **Root:** the home's global index.
+- **Contains:** index entries (id, description, position, owner, published-file
+  location, source checkout provenance, pending ownership and lineage facts).
+- **Invariants:**
+  - An id appears at most once.
+  - Every entry names exactly one owner.
+  - A published position's entries all have the position's owner.
+  - A patch by one project changes only entries that project owns.
+  - An entry's lineage facts were computed from the committed bytes its
+    owner's sync published, and no later read recomputes them. A pending
+    snippet carries no source digest. An entry without a unit carries none of
+    the unit's facts, and an entry written before lineage facts existed
+    carries none until its owner's next sync.
+- **Identifier:** one per home.
+- **Lifecycle:** created by the first sync on a computer; patched by every
+  sync that publishes; re-created from the projects if the home is deleted.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 #### Project publication (aggregate)
 
@@ -264,6 +416,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 #### Global agent files (aggregate)
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Root:** the set of user-scope instruction files of the configured agent
   runtimes.
 - **Contains:** one rendered file per configured agent runtime that has a
@@ -280,9 +433,35 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Lifecycle:** written by the `docs/general/` owner's sync; replaced on its
   next sync that publishes; left where it is when its runtime is no longer
   configured or that project stops publishing `docs/general/`.
+<!-- change:compressed-global-entrypoints -->
+- **Root:** the set of user-scope instruction files of the configured agent
+  runtimes.
+- **Contains:** one rendered file per configured agent runtime that has a
+  user-scope file, per home its instances run with; one uncompressed copy per
+  such runtime in the home; one entrypoint-loading key per agent runtime that
+  needs one. Nothing records which files were written.
+- **Invariants:**
+  - Written only by the sync of the project that owns `docs/general/`.
+  - Written whole by every sync that publishes them, whatever the destination
+    held; never removed. An uncompressed copy is written whole with its
+    runtime's file and is never removed either.
+  - A file holds a unit only while the unit is current and has no finding;
+    otherwise it holds that source's prose, and the sync reports any
+    finding.
+  - A file that holds a unit names, before its first section, where its
+    uncompressed copy stands and how to read a named snippet in full.
+  - A settings merge changes the entrypoint-loading key and no other key.
+  - Targets only the agent runtimes the selected runtime reports as
+    configured; when it cannot be asked, nothing in the set changes.
+- **Identifier:** one per computer.
+- **Lifecycle:** written by the `docs/general/` owner's sync; replaced on its
+  next sync that publishes; left where it is when its runtime is no longer
+  configured or that project stops publishing `docs/general/`.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 #### Committed entrypoint (aggregate)
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Root:** the one `AGENTS.md` at the root of a project's repository or a
   company home.
 - **Contains:** the rendered file, its generated line and the entry index it
@@ -306,9 +485,35 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   commit, or written by `instrukt docs render`, including a repository's CI
   workflow; removed with its entry index
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- change:compressed-global-entrypoints -->
+- **Root:** the one `AGENTS.md` at the root of a project's repository or a
+  company home.
+- **Contains:** the rendered file, its generated line and the entry index it
+  is rendered from.
+- **Invariants:**
+  - A function of the repository's committed content, its units included,
+    and the rendering instrukt release: nothing published on the computer, no
+    configuration layer and no environment enters it.
+  - Changes only in a commit, or in the working tree through
+    `instrukt docs render`; no sync, checkout, start or tick writes it.
+  - Written over whatever the file holds; removed, when its entry index no
+    longer exists, only while it is instrukt's rendering.
+  - At most one per repository, at its root; a rendering of instrukt's below
+    the root is removed.
+  - A company home's rendering is the selection its index makes from the
+    company's own documents and references nothing outside them.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the file's path in its repository or home.
+- **Lifecycle:** rendered and staged by the `pre-commit` section at each
+  commit, or written by `instrukt docs render`, including a repository's CI
+  workflow; removed with its entry index
+  (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+<!-- /planned-change:compressed-global-entrypoints -->
 
 #### Company plugin (aggregate)
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
   being the company's key.
 - **Contains:** the manifest with the plugin's version; the skill's main
@@ -339,6 +544,73 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Lifecycle:** rendered when a caller asks for it; committed by that
   caller; left as it is where the repository holds no company index
   (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- change:compressed-global-entrypoints -->
+- **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
+  being the company's key.
+- **Contains:** the manifest with the plugin's version; the skill's main
+  file; one file for each other document the plugin carries; the plugin's
+  entry in the repository's plugin catalog.
+- **Invariants:**
+  - A function of the repository's company index, documents and units, the
+    key and the name its caller gives, the plugin the repository already
+    holds and the rendering instrukt release: nothing published on the
+    computer, no configuration layer and no environment enters it.
+  - It holds the selection the company index makes, as the repository's
+    committed `AGENTS.md` does, and carries every document it names.
+  - The version is the one thing a rendering takes from the plugin the
+    repository holds. Its last number is raised by one exactly when the
+    rendering differs from that plugin; instrukt never changes the first
+    two.
+  - Changes only in the working tree, through `instrukt docs plugin`; no
+    commit, sync, checkout, start or tick writes it, and rendering a
+    repository's `AGENTS.md` writes none.
+  - The folder is written whole, whatever it held, and never removed.
+    Nothing is read, written or removed through a symbolic link.
+  - Of the plugin catalog, a rendering changes the plugin's entry and
+    nothing else; it creates no catalog.
+  - With a finding, no file is written or removed.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the company's key, in its repository.
+- **Lifecycle:** rendered when a caller asks for it; committed by that
+  caller; left as it is where the repository holds no company index
+  (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- /planned-change:compressed-global-entrypoints -->
+
+<!-- planned:compressed-global-entrypoints -->
+#### Compressed units of a repository (aggregate)
+
+- **Root:** the place for units of one repository, `docs/_compressed/`.
+- **Contains:** one unit per source path, each with its declared source
+  digest, its declared model and its body.
+- **Invariants:**
+  - instrukt never writes, moves or removes a unit; every unit is the
+    repository's own content, committed like its sources.
+  - A unit is read from the place for units alone, and never through a
+    symbolic link at, above or inside it; such a link is a finding naming it.
+  - A unit's state depends on the repository's content alone, the same on
+    every computer, in every view of it a rendering reads: the commit a sync
+    publishes, the staged index the `pre-commit` section renders and the
+    working tree `instrukt docs render` and `instrukt docs units` read.
+  - Only a current unit with no finding stands in for its source. A unit
+    whose frontmatter cannot be read, or lacks its source digest or model,
+    is a finding and no unit.
+  - A unit entering a rendering carries no `@exec` or `@include`, carries
+    exactly its source's `@config` directives under the current-contract
+    lens, carries no reference form its source does not carry, and meets
+    every rule the rendering applies to its source; in a company's
+    repository, it meets the company's standalone and visibility rules. A
+    break is a finding naming the unit.
+  - No index entry, required read or reference of a company's knowledge
+    names a path under the place for units: such a name is a finding, as a
+    path not ending in `.md` is.
+- **Identifier:** the source's path relative to `docs/`.
+- **Lifecycle:** written and renewed by an agent — in a change that alters
+  the source, or by the repository's post-merge automation — and committed;
+  published by the owning project's sync with the position its source
+  belongs to, and retracted with it; orphaned units are never rendered and
+  are removed by whoever maintains the repository.
+<!-- /planned:compressed-global-entrypoints -->
 
 ### Domain events emitted
 
@@ -363,6 +635,10 @@ This context emits no events.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
 - **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version changes exactly when the knowledge does.
+
+<!-- planned:compressed-global-entrypoints -->
+- **compressed-units** — `project/instrukt/spec/feature/publication/compressed-units` — every agent starts with the whole selection its entrypoint makes, compressed, while a prose change reaches agents at once and a repository's automation learns offline exactly which units to renew.
+<!-- /planned:compressed-global-entrypoints -->
 
 ## Governing designs and decisions
 
@@ -408,6 +684,14 @@ This context emits no events.
   formats as their vendor states them
   (`project/instrukt/spec/feature/publication/company-plugin`). instrukt
   writes files in those formats and runs no Claude program.
+
+<!-- planned:compressed-global-entrypoints -->
+For compressed units, the docs relationship also carries a source's
+current-contract body, its `@config` directives and its reference forms,
+which docs supplies; publication keeps units in `docs/_compressed/`, which
+docs' walks skip as they skip every folder whose name begins with an
+underscore.
+<!-- /planned:compressed-global-entrypoints -->
 
 ## Known caveats
 

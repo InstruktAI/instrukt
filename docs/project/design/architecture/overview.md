@@ -120,6 +120,7 @@ Committed sources recreate publication. User-owned configuration and secrets, lo
 history and work-record writes not yet reflected to GitHub need preservation;
 deleting the home is not a lossless reset.
 
+<!-- planned-change:compressed-global-entrypoints -->
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
@@ -142,6 +143,31 @@ deleting the home is not a lossless reset.
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+<!-- change:compressed-global-entrypoints -->
+| Path | Holds | Re-created from |
+| --- | --- | --- |
+| `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
+| `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
+| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
+| `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
+| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, a domain's `workflow/` flavor files, and under `_compressed/` the compressed units the position's sources have, at each source's path relative to the position | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts — `content_sha256`, the source digest, and with a unit `compressed_source_sha256`, the digest the unit declares, and `compressed_content_sha256`, the digest of the unit's body; project entries resolve to the committed project store | each project's `sync`; an entry written before lineage facts existed gains them at its owner's next sync |
+| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
+| `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
+| `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
+| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
+| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
+| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
+| `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
+| `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
+| `state/eval-fingerprint/` | per published commit and as the current record, the eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`); a record written before the two digests existed keeps its fingerprint alone and stays as history | `sync` |
+| `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
+| `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
+| `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
+| `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+<!-- /planned-change:compressed-global-entrypoints -->
 
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
@@ -156,11 +182,20 @@ service publishes no identity: both converge by name
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:
 
+<!-- planned-change:compressed-global-entrypoints -->
 ```
 docs/general/       always on: rendered into every agent CLI's user-scope instruction file   ids general/<type>/…
 docs/domain/<x>/    on demand: one line in the global file; rendered by `instrukt docs get --domain <x>`   ids <x>/<type>/…
 docs/project/       the project: rendered into its root AGENTS.md   ids project/<slug>/<type>/…
 ```
+<!-- change:compressed-global-entrypoints -->
+```
+docs/general/       always on: rendered into every agent CLI's user-scope instruction file   ids general/<type>/…
+docs/domain/<x>/    on demand: one line in the global file; rendered by `instrukt docs get --domain <x>`   ids <x>/<type>/…
+docs/project/       the project: rendered into its root AGENTS.md   ids project/<slug>/<type>/…
+docs/_compressed/   no position: one compressed unit per source an entrypoint holds in full, at the source's path relative to docs/
+```
+<!-- /planned-change:compressed-global-entrypoints -->
 
 Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
 publish it; one project owns each on a computer, and `general`, `project` and
@@ -192,6 +227,7 @@ configured value it could not resolve, `docs schema` with findings, a
 after its output, exit status 1; its line points at what that output holds
 in the mode it was asked for, text or JSON.
 
+<!-- planned-change:compressed-global-entrypoints -->
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
 validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
@@ -205,6 +241,23 @@ rendered, and its output says why.
 Nothing on the terminal is a program's debug rendering of a value: durations
 are whole seconds, kinds and verdicts their plain names. Usage errors keep
 the command-line parser's own text and exit status 2.
+<!-- change:compressed-global-entrypoints -->
+A command whose job is to report findings keeps its report as its output
+and adds no line: its exit status says there are findings. `config
+validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
+`docs plugin --validate`, `docs units`, `install --check` and `specs
+coverage --check` exit 1 with findings; `docs units` exits 3 when it names
+only stale, missing or orphaned compressed units, and 0 when there is
+nothing to compress; `status` exits 0 whatever its
+report says once every part was read, and 1 when a part could not be read
+(`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
+exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
+exits 1 when the todo cannot be claimed or its factual ledger cannot be
+rendered, and its output says why.
+Nothing on the terminal is a program's debug rendering of a value: durations
+are whole seconds, kinds and verdicts their plain names. Usage errors keep
+the command-line parser's own text and exit status 2.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ### External surfaces
 
@@ -279,6 +332,7 @@ configuration layers, never into the skill
 
 ### Publish
 
+<!-- planned-change:compressed-global-entrypoints -->
 ```mermaid
 flowchart LR
   A[commit / merge / rebase on main] --> B[hook section]
@@ -294,6 +348,53 @@ flowchart LR
   H --> J[refresh editor schemas and modelines]
   J --> I[write only what is missing or different; record published commit]
 ```
+<!-- change:compressed-global-entrypoints -->
+```mermaid
+flowchart LR
+  A[commit / merge / rebase on main] --> B[hook section]
+  B --> C[instrukt sync, detached, under lock]
+  R[commit] --> S[pre-commit section: render AGENTS.md from the commit's content and units, stage]
+  K[checkout] --> Q{primary checkout?}
+  Q -- yes --> C
+  Q -- no --> P[return to git]
+  C --> M[configuration migration before any refusal]
+  M --> F[validate and render main, units checked; claim and compare general, domain and project positions with their units]
+  F --> G[patch global index by owner, with lineage facts]
+  G --> H[global agent files, each source as its current unit or its prose, and their uncompressed copies, if owner of general]
+  H --> J[refresh editor schemas and modelines]
+  J --> I[fingerprint: prose and units digests; write only what is missing or different; record published commit]
+```
+<!-- /planned-change:compressed-global-entrypoints -->
+
+<!-- planned:compressed-global-entrypoints -->
+### Compress
+
+```mermaid
+flowchart LR
+  A[prose change merged to main] --> B[renderings hold that source in prose]
+  A --> C[post-merge automation of the repository]
+  C --> D[instrukt docs units --json in a fresh clone]
+  D -- exit 0 --> Z[nothing to compress]
+  D -- exit 3 or 1 --> E[agent writes or renews each named unit, removes orphans]
+  E --> F[instrukt docs units, then instrukt docs render]
+  F --> G[commit units and AGENTS.md to main]
+  G --> H[sync publishes the units; renderings hold the source compressed again]
+```
+
+instrukt is the mechanical half of this loop and the repository's automation
+the intelligent half. instrukt decides each unit's state and structural
+admissibility from the checkout alone, renders with current units and falls
+back to prose per source, and tells the automation, with a distinct no-op
+outcome, exactly which units to write. It never starts the automation, calls
+a model or holds a model credential; the automation is composed from the
+repository's shared workflows (`project/instrukt/policy/shared-workflows`),
+and an authoring agent may renew a unit in its own change the same way
+(`project/instrukt/spec/feature/publication/compressed-units`). Units live
+with their sources in each repository, so every view a rendering reads — the
+commit sync publishes, the staged index of the `pre-commit` section, the
+working tree of `instrukt docs render` — decides currency from the same
+committed bytes on every computer.
+<!-- /planned:compressed-global-entrypoints -->
 
 ### Read
 
