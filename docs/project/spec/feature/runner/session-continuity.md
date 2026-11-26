@@ -493,7 +493,7 @@ instruction prose is a separate configuration surface.
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 <!-- planned:archive-finished-threads -->
-| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed` false and no `pendingBackgroundTasks`; any other status, `unknown` included, is not quiet. A missing or malformed `status` or `snoozed`, or a malformed `pendingBackgroundTasks`, is not quiet; a listing that omits `pendingBackgroundTasks` reports none. Pinned is the projection row's `pinnedAt`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds, recorded at most once per ten minutes), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned pinned, with unknown latest activity. |
+| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed` false and no `pendingBackgroundTasks`; any other status, `unknown` included, is not quiet. A missing or malformed `status` or `snoozed`, or a malformed `pendingBackgroundTasks`, is not quiet; a listing that omits `pendingBackgroundTasks` reports none. Pinned is the projection row's `pinnedAt`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned pinned, with unknown latest activity. |
 | Archive | Re-reads the projection: the thread row present with no `archivedAt` or `deletedAt`, `settledOverride` `settled` with `settledAt`, no `pinnedAt`, no `snoozedUntil` later than now, and no `updatedAt` or `opens.openedAt` later than observed; no run of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `rolled_back`; no runtime request of the thread `pending`; and no delegated task of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `idle`. Anything else reports changed. A projection that cannot be read, or whose tables lack what the re-read consumes, fails the archive with its cause, and nothing is archived. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, over the scoped-token connection runner-owned queued input uses, with a token issued and revoked for that command. T3's refusal that the thread is already archived is reported as already archived. |
 <!-- /planned:archive-finished-threads -->
 
@@ -877,6 +877,8 @@ And the orchestrator has received its opening brief once
   person sends between the adapter's re-read and its archive command still
   reaches an archived thread, whose queued run T3 then cancels; the person
   unarchives the thread to continue.
+- T3 does not record every opening of a thread in `opens.openedAt`. A reading
+  it leaves unrecorded does not restart the thread's quiet time.
 <!-- /planned:archive-finished-threads -->
 
 - T3 reports a turn that ended on a plain message, with no pending request, as
@@ -918,3 +920,6 @@ And the orchestrator has received its opening brief once
 - [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)
+<!-- planned:archive-finished-threads -->
+- https://github.com/pingdotgg/t3code/blob/bf469bb19669671d0df2efda74ed73867a7137c0/packages/shared/src/paletteSearch.ts — T3's `recordThreadOpen`, which decides which openings `opens.openedAt` records.
+<!-- /planned:archive-finished-threads -->
