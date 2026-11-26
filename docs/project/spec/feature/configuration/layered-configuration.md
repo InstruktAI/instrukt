@@ -116,6 +116,7 @@ todo's worktree does not depend on it
 
 ### Layer rules
 
+<!-- planned-change:capability-free-model-call -->
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
@@ -149,6 +150,42 @@ todo's worktree does not depend on it
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- change:capability-free-model-call -->
+| Key | Layer | Meaning owned by |
+| --- | --- | --- |
+| `schema_version` | each document | configuration |
+| `agents.<name>.git_author` | global only | commit composition |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
+| `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), optional `reply_mode` (`turn_output` \| `explicit`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
+| `screening` (`url`, the base address of an OpenAI-compatible chat-completions service, `http` or `https`; `model`; optional `api_key`, an exact `${NAME}` reference into the machine's `secrets.env`; optional `timeout`, whole seconds, default 45; optional `max_text_chars`, default 12000). Bring a plain model, one with no built-in search or browsing; a model that searches on its own is outside the capability-free guarantee | global only | screening (`project/instrukt/spec/domain/screening`) |
+| `ticks` | global only | the runner |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
+| `runner.notify` | global only | the runner |
+| `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
+| `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
+| `project` | project only | docs and publication |
+| `requires` (modules the flavor needs) | project only | publication |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
+| `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
+| `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
+| `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- /planned-change:capability-free-model-call -->
 
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;

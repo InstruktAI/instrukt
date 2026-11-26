@@ -230,6 +230,12 @@ This context emits no events.
   enters, a window the selected runtime cannot carry
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
+<!-- planned:capability-free-model-call -->
+- **Screening** — customer / supplier: configuration supplies the global-only
+  `screening` settings and resolves `screening.api_key` from the machine's
+  secrets (`project/instrukt/spec/domain/screening`).
+<!-- /planned:capability-free-model-call -->
+
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except
 the connector declarations, which it consumes.
