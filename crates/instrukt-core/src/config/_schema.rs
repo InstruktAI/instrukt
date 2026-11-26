@@ -1,7 +1,6 @@
 //! The `instrukt.yaml` schema: which key may live in which layer, each
 //! value's shape, and the defaults reads answer when a key is unset.
 
-use serde_json::json;
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_error::FindingKind;
@@ -849,6 +848,7 @@ fn insert_at(root: &mut Mapping, path: &[&str], value: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn yaml(text: &str) -> Value {
         serde_yaml_ng::from_str(text).unwrap()

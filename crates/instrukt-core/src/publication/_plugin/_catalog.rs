@@ -3,7 +3,15 @@
 //! an earlier rendering's manifest where the entry holds none), and the
 //! catalog with the entry set, or created where the repository holds none.
 
-use super::*;
+use std::path::PathBuf;
+
+use serde_json::Value as Json;
+
+use super::super::_render::PlannedFile;
+use super::super::_source::Committed;
+use super::super::PublicationError;
+use super::{CATALOG, CompanyName, PluginFinding, PluginVersion, folder, plugin_description};
+use crate::ids::ProjectSlug;
 
 /// The manifest an earlier rendering of the plugin of `key` wrote, from the
 /// repository's root: read for its version alone, never written or removed.

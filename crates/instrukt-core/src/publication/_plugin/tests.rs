@@ -1,3 +1,5 @@
+use serde_json::Value as Json;
+
 use super::*;
 
 const INDEX: &str = super::_company::COMPANY_INDEX;

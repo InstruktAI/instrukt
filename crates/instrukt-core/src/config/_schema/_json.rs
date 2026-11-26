@@ -2,7 +2,10 @@
 //! editor schema, each layer's schema, and the text `instrukt config schema`
 //! prints, all from the same schema [`check`](super::check) validates with.
 
-use super::*;
+use serde_json::json;
+
+use super::super::_module::Module;
+use super::{LayerKind, Node, Rule, SHIPPED_BLUEPRINT_ENGINES, Shape, schema};
 
 /// The JSON Schema of the project layer for the developer's editor,
 /// generated from the same schema [`check`] validates a project layer

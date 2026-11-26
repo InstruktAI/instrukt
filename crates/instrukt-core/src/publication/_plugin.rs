@@ -24,7 +24,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-use serde_json::Value as Json;
 use serde_yaml_ng::Value;
 
 use super::_company::{self, COMPANY_PASSAGE, DOCS, Selection, listed_line};
