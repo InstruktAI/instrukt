@@ -97,6 +97,8 @@ pub enum RepositoryError {
     #[error(transparent)]
     Publication(#[from] PublicationError),
     #[error(transparent)]
+    PublicationState(#[from] crate::publication::PublicationStateError),
+    #[error(transparent)]
     Id(#[from] IdError),
     #[error(transparent)]
     Config(#[from] ConfigError),

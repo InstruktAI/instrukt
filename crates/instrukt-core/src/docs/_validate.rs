@@ -60,40 +60,15 @@ pub struct Validation {
 pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError> {
     let started = Instant::now();
     let scope = scope_of(request.repo_root, request.paths)?;
-    let corpus = Corpus::load(request.repo_root, request.home)?;
-    let schemas = Schemas::load(request.repo_root)?;
     let config = Configuration::load(request.home, Some(request.repo_root))?;
-    // The flavor-role lookup is wired exactly when the configuration being
-    // validated switches `todos` on: the working tree's for `docs
-    // validate`, the committed one's at publication.
-    if request.wiring.flavor_roles.is_some() {
-        // The workflow comes from the domain `workflow.domain` names: the
-        // repository's own authored one, or one published on the computer.
-        let domain = config.workflow_domain()?;
-        let authored = request
-            .repo_root
-            .join(Position::of_domain(&domain).dir())
-            .is_dir();
-        if !authored && !request.home.domain_dir(&domain).is_dir() {
-            return Err(DocsError::DomainUnpublished {
-                domain,
-                required_by: "`workflow.domain`".to_owned(),
-            });
-        }
-    }
-    let env = CheckEnv {
-        repo_root: request.repo_root,
-        wiring: request.wiring,
-        schemas: &schemas,
-    };
-    let (mut findings, mut notices) = check_all(&corpus, &env)?;
-    notices.extend(unreferenced(&corpus, request.repo_root)?);
-    super::_directives::check(
-        &corpus,
-        request.repo_root,
-        &super::_render::Values::publish(&config, request.wiring.caller_identity.as_deref()),
-        &mut findings,
-    )?;
+    // A company's documents are its knowledge, not snippets: in its
+    // repository nothing under `docs/` is read or judged here.
+    let (mut findings, mut notices) =
+        if crate::publication::is_company_repository(request.repo_root)? {
+            (Vec::new(), Vec::new())
+        } else {
+            documentation(request, &config)?
+        };
     for module in config.requires()? {
         if !config.module_enabled(module)? {
             findings.push(Finding::new(
@@ -134,6 +109,49 @@ pub fn validate(request: &ValidationRequest<'_>) -> Result<Validation, DocsError
         duration_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
     );
     Ok(Validation { findings, notices })
+}
+
+/// The findings and notices of the documentation of `request.repo_root`'s
+/// working tree, configured by `config`: its corpus, positions, indexes and
+/// directives, unscoped and unordered.
+fn documentation(
+    request: &ValidationRequest<'_>,
+    config: &Configuration,
+) -> Result<(Vec<Finding>, Vec<Notice>), DocsError> {
+    let corpus = Corpus::load(request.repo_root, request.home)?;
+    let schemas = Schemas::load(request.repo_root)?;
+    // The flavor-role lookup is wired exactly when the configuration being
+    // validated switches `todos` on: the working tree's for `docs
+    // validate`, the committed one's at publication.
+    if request.wiring.flavor_roles.is_some() {
+        // The workflow comes from the domain `workflow.domain` names: the
+        // repository's own authored one, or one published on the computer.
+        let domain = config.workflow_domain()?;
+        let authored = request
+            .repo_root
+            .join(Position::of_domain(&domain).dir())
+            .is_dir();
+        if !authored && !request.home.domain_dir(&domain).is_dir() {
+            return Err(DocsError::DomainUnpublished {
+                domain,
+                required_by: "`workflow.domain`".to_owned(),
+            });
+        }
+    }
+    let env = CheckEnv {
+        repo_root: request.repo_root,
+        wiring: request.wiring,
+        schemas: &schemas,
+    };
+    let (mut findings, mut notices) = check_all(&corpus, &env)?;
+    notices.extend(unreferenced(&corpus, request.repo_root)?);
+    super::_directives::check(
+        &corpus,
+        request.repo_root,
+        &super::_render::Values::publish(config, request.wiring.caller_identity.as_deref()),
+        &mut findings,
+    )?;
+    Ok((findings, notices))
 }
 
 /// The scope paths, repository-relative. A path that does not exist is an
