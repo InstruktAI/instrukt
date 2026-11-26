@@ -193,7 +193,8 @@ for it, without reading the content of earlier versions.
 The `instrukt todo artifacts` command family provides `list <slug>`,
 `read <slug> <name>`, `write <slug> <name> <content>` and
 `diff <slug> <name> <old-digest> <new-digest>` through the local record.
-Writing appends a version; diff compares retained evidence. Stamp evidence is
+Writing appends a version, except that a write matching the current version's
+content, provenance and writer records nothing; diff compares retained evidence. Stamp evidence is
 owned by `project/instrukt/spec/feature/work/stamps`.
 
 ### Writer and convergence

@@ -953,7 +953,8 @@ impl Work {
         })
     }
 
-    /// `instrukt todo artifacts write`: appends a version.
+    /// `instrukt todo artifacts write`: appends a version, unless the write
+    /// changes nothing about the current one.
     pub fn write_artifact(
         &self,
         project: &ProjectRef,
@@ -987,11 +988,13 @@ impl Work {
             })
             .collect();
         let grounding = grounding_now(&mut s, index, name, content, &[])?;
+        let writer = s.actor()?;
         // Content that does not change does not move: a write matching the
-        // current version's content and provenance records nothing.
+        // current version's content, provenance and writer records nothing.
         if let Some(current) = s.items[index].record.current_version(name)
             && (&current.digest, &current.derived_from, &current.grounding)
                 == (&digest_of(content), &derived_from, &grounding)
+            && current.writer == writer
         {
             let value = current.clone();
             let docs_changed = std::mem::take(&mut s.docs_changed);
@@ -1004,7 +1007,7 @@ impl Work {
         }
         let version = Version {
             digest: digest_of(content),
-            writer: s.actor()?,
+            writer,
             created: s.now,
             derived_from,
             sequence: 0,

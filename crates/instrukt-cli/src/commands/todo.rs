@@ -378,7 +378,7 @@ enum ArtifactsCommand {
     List { slug: TodoAddress },
     /// An artifact's current content.
     Read { slug: TodoAddress, name: String },
-    /// Append a version to an artifact.
+    /// Append a version to an artifact; a write that changes nothing records none.
     Write {
         slug: TodoSlug,
         name: String,

@@ -57,8 +57,8 @@ An artifact declares its grounding in its own content:
 - **Snippets:** its inline `@` snippet references, in the form validation
   accepts.
 
-A write whose content and provenance both match the artifact's current version
-records no version.
+A write whose content, provenance and writer all match the artifact's current
+version records no version.
 
 When a version is written, its provenance records the canonical branch's head
 commit, the referenced paths, the digest of each non-owned referenced snippet

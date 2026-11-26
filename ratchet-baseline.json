@@ -29,7 +29,7 @@
     "crates/instrukt-runner/src/runtime/_t3_readiness.rs": 1738,
     "crates/instrukt-runner/src/standing.rs": 1419,
     "crates/instrukt-todos/src/work/_attempts.rs": 2875,
-    "crates/instrukt-todos/src/work/_ops.rs": 2253,
+    "crates/instrukt-todos/src/work/_ops.rs": 2256,
     "crates/instrukt-todos/src/work/_ports.rs": 1341,
     "crates/instrukt-todos/src/work/_reflect.rs": 1018,
     "crates/instrukt-todos/src/work/_session.rs": 1971,
