@@ -50,6 +50,8 @@ default test commands run without a T3 release or provider.
 Each feature use case is realized by exactly one named test checking its
 complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
+<!-- planned-change:ratchet-file-size-and-suppressions -->
+
 - This repository's pre-commit check runs what the content of the commit
   needs, without services. `.pre-commit-config.yaml` assigns each check the
   pattern of the files it applies to, and a check runs when the commit adds,
@@ -118,6 +120,84 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 - Code is synchronous by default; a crate that needs concurrent network I/O
   keeps it behind its own interface. Clippy runs with `-D warnings`, denying
   `dbg_macro` and `print_stdout` outside the command output writer.
+
+<!-- change:ratchet-file-size-and-suppressions -->
+
+- This repository's pre-commit check runs what the content of the commit
+  needs, without services. `.pre-commit-config.yaml` assigns each check the
+  pattern of the files it applies to, and a check runs when the commit adds,
+  changes, renames or deletes a file its pattern matches: the document
+  validation for documents, shellcheck for shell scripts and hook files, the
+  lint and the type check for Python scripts, the configuration validation
+  for `instrukt.yaml`, the size and suppression ratchet for Rust, Python and
+  shell files and its baseline
+  (`project/instrukt/policy/size-and-suppression-ratchet`), and fmt, clippy
+  and the colocated unit tests for
+  everything a crate is built from and everything its unit tests read: its
+  sources and manifests, the files compiled into the program, the unit tests'
+  snapshots, and the two inputs that live outside the crates' folders: the
+  shared test support under `tests/support/`, which is compiled into unit
+  tests, and the workflow flavor under `docs/domain/sdlc/workflow/`, which the
+  `instrukt-todos` unit tests run against. No commit runs the functional
+  tests. These are project tooling, not quality hooks installed by instrukt in
+  adopting repositories.
+- A commit's checks take under ten seconds once what the commit changed is
+  built. The budget counts running the validators, the linter and the unit
+  tests; it does not count the compiler rebuilding changed crates. That
+  rebuild is limited to the crates the commit touches and the crates that
+  depend on them, and a commit that touches nothing a crate is built from or
+  tested against builds nothing.
+- A check's tool that is not installed yet is installed when it is first
+  needed: by `make hooks`, which installs the tools `.pre-commit-config.yaml`
+  pins when it enables the hook, or by the first commit or every-file run
+  that needs it. That installation and the tool's first run after it are not
+  counted in the ten seconds. No commit is refused because a tool is missing.
+- GitHub CI runs every check in `.pre-commit-config.yaml` over every file
+  without running colocated unit tests more than once per selected platform
+  or repeating OS-independent checks across platforms:
+  - On every pull request, Linux runs the OS-independent checks once,
+    doctests and the full workspace test suite (built once and sharded across
+    parallel runners); macOS runs workspace clippy across all targets and the
+    macOS-specific test suite (launchd, module installation, Darwin
+    process-group cleanup, kqueue notifications, hooks and write-fence paths).
+    `main` requires these pull-request checks: a failing Linux test or scoped
+    macOS test blocks a pull request, not a commit.
+  - On every `main` push and tagged release, macOS runs workspace clippy
+    across all targets, the full workspace test suite and doctests; a failure
+    in a non-platform-specific test that manifests only on macOS is detected
+    by the full macOS job on `main` pushes and tagged releases and blocks
+    tagged release publication, not pull requests.
+  - A pull request runs, of the checks above, only those its changed files
+    reach, as `scripts/ci-changes.sh` classifies them; a `main` push or tagged
+    release runs every check. A shipped document or configuration file a
+    workspace test reads is a Rust input, and a change to it runs the Rust
+    checks alongside the document checks. A change confined to documents and
+    configuration that no Rust check or test reads, root `instrukt.yaml`
+    among them, reaches no Rust input:
+    Linux builds the CLI binary and runs the document, configuration,
+    use-case coverage and instruction-file checks with it,
+    without the workspace test suite, doctests, macOS, the dependency audit,
+    the pinned contracts, or the commit checks whose inputs did not change.
+    Among the commit checks, fmt, clippy and the unit tests run when a Rust
+    input changes, shellcheck when a script or a hook file changes, the
+    size and suppression ratchet when a Rust, Python or shell file, a hook
+    file or the ratchet baseline changes, and the Python lint and type check
+    when a Python file or their configuration changes. A change the ratchet
+    reads starts the Linux build job, which runs it. A contract check runs when a crate on its path, the workspace
+    manifest or lock, or a pinned tool changes. A moved file counts as both
+    the path it left and the path it reached. A path no rule names, a change
+    whose files cannot be read, a classification that does not succeed, and
+    a change to the pipeline, `scripts/ci-changes.sh`, or `scripts/test-tools.env`
+    run every check. Every check `main` requires reports on every pull request,
+    skipping its steps rather than itself. CI runs for a branch only through
+    its pull request.
+- A version tag produces release binaries for macOS arm64 and Linux
+  x86_64/arm64, and only from a revision that passed those checks.
+- Code is synchronous by default; a crate that needs concurrent network I/O
+  keeps it behind its own interface. Clippy runs with `-D warnings`, denying
+  `dbg_macro` and `print_stdout` outside the command output writer.
+
+<!-- /planned-change:ratchet-file-size-and-suppressions -->
 
 Subfunctions (pending-doc folding, graph status, tick status and eval
 fingerprint computation) are exercised by the stakeholder use cases that
