@@ -103,25 +103,29 @@ Requests and answers travel through the runner's bounded fleet query
 (`project/instrukt/spec/domain/runner`), which decides which named computers
 answer. A computer answers from its own work record and publication state,
 applying the requested range, whether or not history is switched on there.
-Its answer holds, per project, window and model, only the outcome measures,
-each window's eval set with its first and last stamp times and the commits
-that computer records setting it, and the limitations it found. No stamp,
+Its answer holds, per project, only outcome measures with their eval sets and
+models, their first and last stamp times, the commits that computer records
+setting each eval set, and the limitations it found. No stamp,
 artifact, findings report or conversation leaves the computer, and no
 computer but the requesting one writes a report.
 
 Each contributing computer forms its windows from its own stamps and its own
 recorded eval-set changes, as this spec describes. The report shows no
 process change, restoration or commit setting an eval set that no
-contributing computer recorded, and counts no todo, review or finding twice;
+contributing computer recorded, keeps process-document changes
+distinguishable from changes in the model used, and counts no todo, review or
+finding twice;
 a todo's record is held on one computer only
-(`project/instrukt/spec/feature/work/state-database`). A report of one
-computer shows exactly that computer's windows.
+(`project/instrukt/spec/feature/work/state-database`). A report naming no
+other computer shows exactly this computer's windows.
 
-The report names every computer whose answer it holds, and each limitation a
-computer reports appears under that computer's identity. A named computer the
-fleet query reports as not answering is named as a limitation of the report
-with the reason the fleet query gives, and the report is written from the
-answers it has.
+Every named computer appears in the report, either among the computers whose
+answer it holds or as a limitation of the report with its reason, whatever
+made its answer missing or unusable: one the fleet query reports as not
+answering carries the reason the fleet query gives, and one whose answer this
+computer cannot read is named as answering in a form it cannot read. Each
+limitation a computer reports appears under that computer's identity, and the
+report is written from the answers it has.
 <!-- /planned:fleet-eval-aggregation -->
 
 ## Use cases
