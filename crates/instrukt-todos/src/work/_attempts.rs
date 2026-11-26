@@ -1553,6 +1553,18 @@ fn admit_driver<'a>(
     if takeover && !resumable {
         return Err(claimed_elsewhere());
     }
+    // A recorded orchestrator of another driver role (a retired one) that
+    // resumes its own placement with evidence would be recorded in the
+    // requested role beside its own binding, and its session would then
+    // resolve to no assignment. Its door is the reopen of that binding.
+    if let Some(held) = recorded
+        .filter(|b| evidence.is_some() && resumable && existing.is_none() && b.role != *role)
+    {
+        return Err(WorkError::refused(format!(
+            "this session is the todo's recorded orchestrator on `{}`; placement evidence would also record it as `{role}`, a second assignment it could not resolve, so nothing was written. Enter again from this worktree without --placement-evidence: that reopens its recorded binding",
+            held.attempt.semantic_key
+        )));
+    }
     // Without evidence, a released recorded binding is reopened rather
     // than followed by a new attempt, as dispatch resumes a retained driver.
     let reopen = evidence.is_none() && existing.is_none() && resumable;
@@ -2852,6 +2864,63 @@ mod tests {
             ),
             Err(WorkError::Refused(_))
         ));
+    }
+
+    /// The released driver binding of the retired `work-orchestrator` role,
+    /// bound to `bound` in `tree`.
+    fn retired_driver_binding(bound: &str, tree: &Path) -> Binding {
+        let mut binding = driver_binding(bound, tree, true);
+        binding.role = RoleName::parse("work-orchestrator").unwrap();
+        binding.attempt.semantic_key = "demo/bug-fix:work-orchestrator:1".into();
+        binding
+    }
+
+    #[test]
+    fn admission_refuses_evidence_from_the_retired_role_recorded_orchestrator() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(retired_driver_binding("driver-1", repo.path()));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let proof = placement_evidence(&record, "driver-1", repo.path());
+        let refused = decide(
+            &record,
+            &role,
+            Some(&caller),
+            &in_workspace(repo.path()),
+            Some(&proof),
+        );
+        let Err(WorkError::Refused(reason)) = refused else {
+            panic!("evidence from the retired-role orchestrator was admitted");
+        };
+        assert!(
+            reason.contains("`demo/bug-fix:work-orchestrator:1`")
+                && reason.contains("without --placement-evidence"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn admission_reopens_the_retired_role_recorded_orchestrator_without_evidence() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(retired_driver_binding("driver-1", repo.path()));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let entry = decide(
+            &record,
+            &role,
+            Some(&caller),
+            &in_workspace(repo.path()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(entry.admission, Admission::Bound { reopen: true });
+        assert_eq!(entry.key, "demo/bug-fix:work-orchestrator:1");
     }
 
     #[test]
