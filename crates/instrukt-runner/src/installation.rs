@@ -609,15 +609,16 @@ fn fleet_permissions(
         let history = !demand.history.is_empty();
         let events = !demand.events.is_empty()
             || (global.module_enabled(Module::Events)? && global.ingress_url()?.is_some());
+        let sign_in = !demand.sign_in.is_empty();
         let wake_up = !demand.projects().is_empty() && global.ticks_enabled()?;
         let service = !demand.conversations.is_empty();
         Ok(if request.conversations {
             service
         } else {
             match request.module {
-                None => history || events || wake_up || service,
+                None => history || events || sign_in || wake_up || service,
                 Some(Module::History) => history,
-                Some(Module::Events) => events,
+                Some(Module::Events) => events || sign_in,
                 Some(Module::Todos) => wake_up,
                 Some(Module::Blueprint) => false,
             }
