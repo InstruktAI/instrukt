@@ -12,7 +12,7 @@ description of an outside contributor's pull request. Before such text reaches
 a tool-capable agent, screening judges whether it tries to manipulate the model
 that reads it. The text is cut into shuffled fragments of 3 to 8 words,
 and independent classifiers judge the fragments through capability-free calls
-(`project/instrukt/spec/feature/runner/capability-free-calls`). A classifier
+(`project/instrukt/spec/feature/screening/capability-free-calls`). A classifier
 never sees the text in its original order, and a manipulation that succeeds
 against a classifier can change only that classifier's verdict.
 
@@ -33,17 +33,19 @@ model on its side has read.
 | Fragments | The complete text cut into fragments of 3 to 8 words, of random length within that range, and shuffled, carrying no original position. |
 | Classification | One capability-free call that sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
 | Verdict | `benign` or `flagged`, with reasons from a bounded set. A classifier passes on no free text. |
-| Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, or `pending` while a model service is unavailable. A held outcome never carries the text. |
+| Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, `pending` while the endpoint is unavailable, or `refused` when no endpoint is configured. A held outcome never carries the text. |
 
 ### Release and holding
 
 A text is `released` only when every classification returns `benign`. It is
-`held` when any classification is flagged, malformed or refused, when
-classifications disagree, and when the text exceeds the size screening judges.
-A text is never truncated, judged in part or partly released. While a
-classification waits on an unavailable model service
-(`project/instrukt/spec/feature/runner/capability-free-calls`), the text is
-`pending`: neither released nor held.
+`held` when any classification is flagged, when an answer is not of the
+verdict's shape or was cut off, when classifications disagree, and when the
+text exceeds the size screening judges. A text is never truncated, judged in
+part or partly released. While a classification waits on an unavailable
+endpoint (`project/instrukt/spec/feature/screening/capability-free-calls`),
+the text is `pending`: neither released nor held. Without a configured
+endpoint, screening is refused before any text is taken, and nothing is
+released.
 
 A held text is kept durably with its verdicts and reasons. Only a person can
 see it through the reference its outcome carries; no instrukt surface returns
@@ -55,7 +57,7 @@ never releases or deletes a held text by itself.
 ### UC-SC1: An agent has outside text screened before it reaches a tool-capable agent
 
 ```gherkin
-Given an operator's computer with admitted agent CLIs
+Given an operator has configured an endpoint for capability-free calls
 And an agent acting for the operator holds text written outside the project that it has not read
 When the agent has the text screened
 And every classification judges it benign
