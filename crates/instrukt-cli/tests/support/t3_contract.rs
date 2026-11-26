@@ -9,8 +9,9 @@ use crate::common::{self, TestEnv};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
+    config::company_repository,
     home::Home,
-    ids::{SessionId, SessionRef},
+    ids::{ProjectSlug, SessionId, SessionRef},
 };
 use instrukt_runner::{
     process,
@@ -944,17 +945,50 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     )
 }
 
+/// The title of the live project the project snapshot lists with id `id`.
+fn project_title(id: &str) -> Result<Option<String>> {
+    let port = descriptor_port(Path::new(&std::env::var("T3CODE_HOME")?))?;
+    let mut token = Token::scoped(&["orchestration:read"])?;
+    let snapshot: Value = serde_json::from_str(
+        &ureq::get(format!("http://127.0.0.1:{port}/api/projects"))
+            .header("Authorization", &format!("Bearer {}", token.secret))
+            .call()?
+            .body_mut()
+            .read_to_string()?,
+    )?;
+    token.revoke()?;
+    Ok(snapshot["projects"]
+        .as_array()
+        .context("project snapshot")?
+        .iter()
+        .find(|project| project["id"] == id && project["deletedAt"].is_null())
+        .and_then(|project| project["title"].as_str().map(str::to_owned)))
+}
+
 /// Project registration and resolution: a root without a project is
 /// reported, ensured once and then reused, `t3 project add` refuses a root
 /// that has one, and a launch for a checkout whose only containing project
-/// is rooted at an ancestor registers the checkout and resolves to it.
-/// `project` is a registered project's root.
+/// is rooted at an ancestor registers the checkout and resolves to it. An
+/// ensured company home is titled with its repository name; another root
+/// keeps the title T3 gives it. `project` is a registered project's root.
 pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
     let adapter = T3::default();
     let added = root.join("added-root");
     fs::create_dir_all(&added)?;
     let before = adapter.execution_root(&added, ExecutionRootMode::Check)?;
     let ensured = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    let company_name = ProjectSlug::parse("contract")?;
+    let company = Home::from_env()?.company_dir(&company_name);
+    fs::create_dir_all(&company)?;
+    let company_project = adapter
+        .execution_root(&company, ExecutionRootMode::Ensure)?
+        .project_id
+        .context("ensured company home project")?;
+    let company_title = project_title(&company_project)?;
+    ensure!(
+        company_title == Some(company_repository(&company_name)?.to_string()),
+        "the ensured company home is not titled with its repository name"
+    );
     let duplicate = cli(&["project", "add", added.to_str().unwrap()], None);
     let reused = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
     ensure!(
@@ -990,6 +1024,8 @@ pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
     Ok(json!({
         "check_before_add": {"present": before.project_id.is_some(), "created": before.created},
         "ensure": {"present": ensured.project_id.is_some(), "created": ensured.created},
+        "ensured_title": project_title(ensured.project_id.as_deref().unwrap_or_default())?,
+        "company_home_title": company_title,
         "duplicate_add_refused": duplicate.is_err(),
         "ensure_again": {"present": reused.project_id.is_some(), "created": reused.created},
         "ancestor_only_launch_registers_the_checkout": registered.project_id.is_some()
@@ -1199,8 +1235,9 @@ pub fn real(root: &Path) -> Result<()> {
 }
 
 fn grammar() -> Result<()> {
-    let commands: [(&str, &[&str], &[&str]); 4] = [
+    let commands: [(&str, &[&str], &[&str]); 5] = [
         ("server", &["--help"], &["--base-dir", "--no-browser"]),
+        ("project add", &["project", "add", "--help"], &["--title"]),
         (
             "start",
             &["thread", "start", "--help"],
@@ -1236,6 +1273,9 @@ fn grammar() -> Result<()> {
       "list": [
         "--project string",
         "--json"
+      ],
+      "project add": [
+        "--title string"
       ],
       "server": [
         "--base-dir string",
