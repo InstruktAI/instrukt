@@ -282,12 +282,16 @@ mod tests {
             (CONFIG_FILE_NAME, &legacy),
             (".gitignore", "/instrukt.yaml\n"),
         ]);
+        // The home is the checkout of the company's repository.
+        crate::git::run(&dir, ["init", "--quiet"]).unwrap();
         convert(&home, &acme()).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
             legacy
         );
         assert!(!dir.join(CONFIG_FILE_NAME).exists());
+        // Git keeps the converted settings out of the repository.
+        assert!(crate::git::succeeds(&dir, ["check-ignore", "--quiet", COMPANY_DOCUMENT]).unwrap());
         // Converting again finds nothing to convert.
         convert(&home, &acme()).unwrap();
         assert_eq!(
