@@ -73,22 +73,39 @@ Record the verdict in Work's review evidence store for **both** requested review
 instrukt review record --head <head> --base <base> --verdict approve|needs_work --report <file|->
 ```
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - Name no pull request and no request number on the command — Work binds the verdict to the exact `<head>` commit, verifies independence and range currency, and publishes the commit status and per-PR reviews for every eligible pull request at `<head>`.
 - Never post GitHub pull-request reviews or commit statuses directly; `instrukt review record` is the single verdict-recording surface.
 - If a pull request moved to a newer head while this review was in flight, the verdict still belongs to the exact `<head>` reviewed and may be recorded for `<head>` alone.
 - **For one-off worktree reviews:** also retain the worktree path, branch, reviewed base, exact head, report path, report digest and verdict, and return them to the authoring session and integrator through the configured native route. Recording through `instrukt review record` feeds Work's evidence store so candidate coverage recognizes the already-approved one-off head without triggering a duplicate review.
 - Do not write per-commit git notes or author commits on main. A changed head requires a fresh independent review.
+<!-- change:commit-rereview-reuses-reviewer -->
+- Name no pull request and no request number on the command — Work binds the verdict to the exact `<head>` commit, verifies independence and range currency, and publishes the commit status and per-PR reviews for every eligible pull request at `<head>`.
+- Never post GitHub pull-request reviews or commit statuses directly; `instrukt review record` is the single verdict-recording surface.
+- If a pull request moved to a newer head while this review was in flight, the verdict still belongs to the exact `<head>` reviewed and may be recorded for `<head>` alone.
+- **For one-off worktree reviews:** also retain the worktree path, branch, reviewed base, exact head, report path, report digest and verdict, and end your turn with them. Recording through `instrukt review record` returns the verdict: instrukt delivers it to the session that asked for a requested review, and a reviewer delegated natively also returns it through native completion delivery. Recording also feeds Work's evidence store so candidate coverage recognizes the already-approved one-off head without triggering a duplicate review.
+- Do not write per-commit git notes or author commits on main. A changed head requires its own independent review.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ### 4. Continue remediation
 
 Follow the shared re-review boundaries:
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - **New commits:** a new push on a pull request produces a new `head` and a fresh `runner.review_needed` request; a revised one-off branch receives a fresh review at its new head against its merge base.
 - **Evidence-only dispute on the same exact `<head>`:** when an author challenges a finding without changing `<head>`, read the disposition file named in the follow-up coordinates (`general/policy/commits`), verify its cited sources directly, and independently judge every unresolved finding (`sdlc/procedure/lifecycle/review`). If the verdict changes, the same reviewing session records the new verdict version with `instrukt review record --head <head> --base <base> --verdict approve|needs_work --report <file|->`. An acknowledgement is no verdict, and approving a fixing commit alone never closes the candidate's review.
+<!-- change:commit-rereview-reuses-reviewer -->
+- **New commits:** a new push on a pull request produces a new `head` and a fresh `runner.review_needed` request; a revised one-off branch is reviewed at its new head against its merge base. When its review is asked for naming the prior report, it reaches the reviewer that recorded the earlier head's verdict while that session is available: that reviewer executes Steps 1–3 for the new head over its whole `base..head` range, starting from the closure of its own earlier findings and the change since the earlier head, and records the new head's verdict. Otherwise a fresh reviewer reviews the new head.
+- **Evidence-only dispute on the same exact `<head>`:** when an author challenges a finding without changing `<head>`, read the disposition file named in the follow-up coordinates (`general/policy/commits`), verify its cited sources directly, and independently judge every unresolved finding (`sdlc/procedure/lifecycle/review`). If the verdict changes, the same reviewing session records the new verdict version with `instrukt review record --head <head> --base <base> --verdict approve|needs_work --report <file|->`. An acknowledgement is no verdict, and approving a fixing commit alone never closes the candidate's review.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ## Outputs
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - Complete review report, exact reviewed `head`, pinned `base`, and verdict (`approve` or `needs_work`) recorded via `instrukt review record` (and, for one-off worktree reviews, returned with its report digest to the authoring session and integrator).
+<!-- change:commit-rereview-reuses-reviewer -->
+- Complete review report, exact reviewed `head`, pinned `base`, and verdict (`approve` or `needs_work`) recorded via `instrukt review record` (and, for one-off worktree reviews, returned with its report digest to the session that asked).
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ## Recovery
 

@@ -96,6 +96,7 @@ All Committizen types are allowed.
   it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - A `REQUEST CHANGES` verdict stays with the authoring session for
   evidence-based rejection or in-scope remediation and re-review, applying the
   finding-validation and disposition rules in
@@ -114,6 +115,28 @@ All Committizen types are allowed.
   (`general/principle/autonomy`).
   The authoring session owns acting on its review verdict — remediation,
   re-review routing and recovery; the verdict itself is the reviewer's.
+<!-- change:commit-rereview-reuses-reviewer -->
+- A `REQUEST CHANGES` verdict stays with the authoring session for
+  evidence-based rejection or in-scope remediation and re-review, applying the
+  finding-validation and disposition rules in
+  `sdlc/procedure/lifecycle/fix-review-findings`. For commit review, fixing
+  commits carry each finding's disposition, independently established basis,
+  and closure evidence in their commit bodies; an evidence-only rejection on
+  the same head records its dispositions and sources in a disposition file
+  beside the prior report. A re-review of the fixing head, and a dispute
+  on the same head, are asked for by their coordinates only (`head`, prior
+  report path, and any disposition file path) and reach the continuing
+  reviewer, the session that recorded the earlier verdict; no free-text
+  narrative or constraints travel with them
+  (`sdlc/procedure/lifecycle/work/review-commits`). The author
+  retains commit and review-routing responsibilities; the reviewer alone
+  determines the verdict. What cannot proceed — a genuine human-owned decision,
+  a safety gate, or a disagreement author and reviewer cannot resolve — is
+  held, and the session goes idle with it; nothing routes it to another party
+  (`general/principle/autonomy`).
+  The authoring session owns acting on its review verdict — remediation,
+  re-review routing and recovery; the verdict itself is the reviewer's.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ## Rationale
 
