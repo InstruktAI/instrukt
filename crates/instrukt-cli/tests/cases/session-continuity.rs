@@ -1738,8 +1738,7 @@ fn an_unaccepted_pickup_idle_in_another_runtime_project_rolls_over_to_the_checko
     p.env.run(p.env.home(), ["tick"]);
     let key = fake.key("s1");
     let own = fake.project_at(p.repo.path()).unwrap();
-    // As a launch captured before exact-project selection left it: the
-    // thread belongs to a project rooted at a folder containing the
+    // The thread belongs to a project rooted at a folder containing the
     // checkout, holds a folder of that project that is no worktree of the
     // checkout, and is idle; the retained request names that project.
     let ancestor = p.repo.path().parent().unwrap().to_path_buf();
