@@ -224,7 +224,7 @@ fn native_identity(
         thread_id: command_id.clone(),
         command_id,
         project_id: String::new(),
-        existing_worktree: None,
+        existing_worktree: request.existing_worktree.clone(),
     })
 }
 
@@ -532,7 +532,7 @@ fn capture_legacy(
         command_id: String::new(),
         thread_id: session.id.to_string(),
         project_id: recorded.project_id.clone().unwrap_or_default(),
-        existing_worktree: None,
+        existing_worktree: input.existing_worktree.clone(),
     });
     realized.launch_modes = realized
         .launch_modes
@@ -590,7 +590,7 @@ pub(crate) fn recover_binding(
         command_id: String::new(),
         thread_id: thread.session.id.to_string(),
         project_id: recorded.project_id.clone().unwrap_or_default(),
-        existing_worktree: None,
+        existing_worktree: assignment.request.existing_worktree.clone(),
     });
     input = adapter.resolve_launch(&input, Some(&thread.session))?;
     let project = input
@@ -795,6 +795,8 @@ fn succeed_claimed(
         // it, not the rendering its predecessor opened with.
         if kind(key) == "review" {
             request.brief = replacement.brief.clone();
+            request.worktree = replacement.worktree.clone();
+            request.existing_worktree = replacement.existing_worktree.clone();
         }
     }
     request.launch_modes = None;
@@ -816,7 +818,11 @@ fn succeed_claimed(
         })?
         .flatten()
         .map(Into::into);
-    native.existing_worktree = thread.worktree.clone().or(retained_path);
+    native.existing_worktree = thread
+        .worktree
+        .clone()
+        .or(retained_path)
+        .or_else(|| request.existing_worktree.clone());
     if request.worktree.is_none()
         && let Some(path) = native.existing_worktree.as_ref()
     {

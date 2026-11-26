@@ -76,6 +76,10 @@ pub struct RuntimeStart {
     pub title: String,
     pub brief: String,
     pub worktree: Option<WorktreeRequest>,
+    /// An already-existing worktree of `checkout` to attach instead of
+    /// creating a new worktree or starting in the project root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_worktree: Option<PathBuf>,
     /// The agent profiles of the admitted generation the start was prepared
     /// in; a request without them reads `agents.yaml` when it is started.
     #[serde(skip)]

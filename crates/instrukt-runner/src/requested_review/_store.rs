@@ -89,7 +89,7 @@ pub(super) struct NewAsk<'a> {
     pub rendering: &'a str,
     pub digest: &'a str,
     pub start_key: &'a str,
-    /// The project's registered checkout the reviewer is started in.
+    /// The worktree the reviewer is started in.
     pub checkout: &'a std::path::Path,
     pub delivery: Delivery,
     /// The generation a send goes to; none for a start.

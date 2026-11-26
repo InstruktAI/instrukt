@@ -446,6 +446,7 @@ fn deliver_group(
             key: responsibility.into(),
             brief: content,
             worktree: None,
+            existing_worktree: None,
             launch_modes: None,
             native_launch: None,
             profiles: crate::runtime::Profiles::default(),
@@ -840,6 +841,7 @@ fn manual_start(request: &ManualReservation, adapter: &dyn RuntimeAdapter) -> Ru
         key: request.key.clone(),
         brief: request.brief.clone(),
         worktree: None,
+        existing_worktree: None,
         launch_modes: None,
         native_launch: None,
         profiles: crate::runtime::Profiles::default(),
@@ -1286,7 +1288,7 @@ fn prepare_successor(
         let mut pending=Vec::new();for item in pending_on(tx,&path)? {if responsibility(&item)?.0==cx.responsibility{pending.push(item);}}
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);
         let content=compose_opening(tx,cx.now,&prefix,&mut pending)?;
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.current.role.as_deref(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.current.role.as_deref(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,existing_worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;

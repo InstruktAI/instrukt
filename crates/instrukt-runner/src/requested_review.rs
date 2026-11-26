@@ -179,8 +179,8 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
 
 /// The assignment of the requested reviewer started under `start_key`, from
 /// the latest ask recorded under it, accepted or not: role
-/// `commit-reviewer`, the project and the registered checkout it was
-/// started in (`roles-and-capabilities`, Caller and object resolution).
+/// `commit-reviewer`, the project and the worktree it was started in
+/// (`roles-and-capabilities`, Caller and object resolution).
 pub(crate) fn assignment(
     home: &Home,
     start_key: &str,
@@ -344,6 +344,7 @@ impl Delivering<'_> {
             Route::Start | Route::Successor => (Delivery::Start, None),
             Route::Send { generation, .. } => (Delivery::Send, Some(*generation)),
         };
+        let worktree_path = self.worktree_path()?;
         let named = serde_json::to_string(&self.coordinates.named()).map_err(failed)?;
         let ask = _store::record(
             self.context.home,
@@ -355,7 +356,7 @@ impl Delivering<'_> {
                 rendering: &self.rendering.text,
                 digest: &self.rendering.digest,
                 start_key: self.key,
-                checkout: self.checkout,
+                checkout: &worktree_path,
                 delivery,
                 send_generation,
                 admitted_at: self.context.now,
@@ -455,8 +456,14 @@ impl Delivering<'_> {
         Ok(thread.session)
     }
 
-    /// The start request: the same construction a standing start uses, in
-    /// the registered checkout, under the review procedure's role.
+    fn worktree_path(&self) -> Result<PathBuf, AskError> {
+        std::fs::canonicalize(&self.coordinates.worktree).map_err(failed)
+    }
+
+    /// The start request: rooted in the project's registered checkout so the
+    /// runtime resolves the project, attached to the candidate's linked
+    /// worktree when it differs from that checkout, under the review
+    /// procedure's role.
     fn request(&self) -> Result<RuntimeStart, AskError> {
         let context = self.context;
         let preferences = crate::agents::role_order(
@@ -472,6 +479,20 @@ impl Delivering<'_> {
                 .into_iter()
                 .next();
         let head = self.head().as_str();
+        let worktree_path = self.worktree_path()?;
+        let checkout_path = std::fs::canonicalize(self.checkout).map_err(failed)?;
+        let (worktree, existing_worktree) = if worktree_path == checkout_path {
+            (None, None)
+        } else {
+            (
+                Some(crate::runtime::WorktreeRequest {
+                    from: self.coordinates.branch.clone(),
+                    base: self.coordinates.base.as_str().to_owned(),
+                    branch: self.coordinates.branch.clone(),
+                }),
+                Some(worktree_path),
+            )
+        };
         Ok(RuntimeStart {
             preferences,
             selection,
@@ -487,7 +508,8 @@ impl Delivering<'_> {
             ),
             key: self.key.to_owned(),
             brief: self.rendering.text.clone(),
-            worktree: None,
+            worktree,
+            existing_worktree,
             launch_modes: None,
             native_launch: None,
             profiles: crate::runtime::Profiles::default(),

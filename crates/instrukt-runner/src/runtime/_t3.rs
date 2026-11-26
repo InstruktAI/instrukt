@@ -859,6 +859,7 @@ mod tests {
                 base: "base".into(),
                 branch: "parser/work".into(),
             }),
+            existing_worktree: None,
             profiles: crate::runtime::Profiles::default(),
         }
     }

@@ -29,6 +29,16 @@ fn committed_work_is_reviewed_from_its_coordinates_alone() {
         .ask(&worktree, "feature", &head, &report, &[])
         .success();
     assert_eq!(project.rt.started_count(), 1, "one reviewer is started");
+    assert_eq!(
+        project.rt.worktree("s1"),
+        Some(std::fs::canonicalize(&worktree).unwrap()),
+        "the requested reviewer starts in the candidate's linked worktree"
+    );
+    assert_eq!(
+        project.rt.branch("s1").as_deref(),
+        Some("feature"),
+        "the requested reviewer attaches to the candidate's branch"
+    );
     insta::assert_snapshot!(
         "requested-review-reply",
         project.redact(&stdout(&asked), &commits, &["s1"])
@@ -73,6 +83,26 @@ fn committed_work_is_reviewed_from_its_coordinates_alone() {
         project.rt.started_count(),
         1,
         "a refused ask starts no reviewer"
+    );
+}
+
+#[test]
+fn requested_review_in_registered_checkout_starts_in_project_root() {
+    let project = Reviewed::new();
+    project
+        .repo
+        .git(["checkout", "--quiet", "-b", "root-feature", "main"]);
+    let head = project.commit_in(project.root(), "root.txt");
+    let report = project.report("root.md", None);
+
+    project
+        .ask(project.root(), "root-feature", &head, &report, &[])
+        .success();
+    assert_eq!(project.rt.started_count(), 1, "one reviewer is started");
+    assert_eq!(
+        project.rt.worktree("s1"),
+        None,
+        "a candidate in the registered checkout starts in the project root"
     );
 }
 

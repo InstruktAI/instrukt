@@ -321,6 +321,7 @@ impl<'c> Sessions<'c> {
             key,
             brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
             worktree,
+            existing_worktree: None,
             launch_modes: None, native_launch: None, profiles: crate::runtime::Profiles::default(),
         };
         Ok((input, project))
