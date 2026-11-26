@@ -229,6 +229,7 @@ status calls already under way. The status is a courtesy, kept on a best-effort
 basis; no timing of it is promised. Slack drops a status after two minutes and
 when the app posts, so
 while a status stays the connector sets it again about every half minute, and
+<!-- planned-change:outside-gate-foundation -->
 after a post of the app's own it can be missing until the next setting. When a
 status no longer stays the connector clears it once; where that does not
 happen, Slack drops it within two minutes. After a restart the connector sets
@@ -237,6 +238,17 @@ before. A status call falls under Slack's named wait like any other call and
 is skipped while the wait lasts; nothing skipped is made up for. Setting a
 status never delays a message, and a status Slack refuses or the connector
 skips does not fail the conversation.
+<!-- change:outside-gate-foundation -->
+after a post of the app's own it can be missing until the next setting. When a
+status no longer stays the connector clears it; where that does not happen,
+Slack drops it within two minutes. After a restart the connector sets the
+status again for every message still unfinished and clears nothing it set
+before. A status call the outside gate answers with a wait, a clear among
+them, is made at a later status pass once the wait is over; a status call
+that fails otherwise is not made up for. Setting a status never delays a
+message, and a status Slack refuses or the connector skips does not fail the
+conversation.
+<!-- /planned-change:outside-gate-foundation -->
 
 ### What accompanies an addressed message
 
@@ -371,10 +383,18 @@ When instrukt has something for one person alone, such as a sign-in link
 with `chat.postMessage` and the bot token to that person's Slack id, which
 Slack delivers in the person's direct messages with the agent. It is never
 posted in a channel or a thread, whichever conversation the person was in.
+<!-- planned-change:outside-gate-foundation -->
 Slack's `ratelimited`, a server error and a failed connection are retried;
 every other error Slack answers for that call fails the delivery, and the
 connector never posts the message anywhere else. Such a message is no answer:
 it starts no turn and is not delivered to the agent.
+<!-- change:outside-gate-foundation -->
+A call the outside gate answers with a wait is retried: Slack's
+`ratelimited`, Slack unavailable, a failed request or connection, and a token
+Slack refuses. Every other error Slack answers for that call fails the
+delivery, and the connector never posts the message anywhere else. Such a
+message is no answer: it starts no turn and is not delivered to the agent.
+<!-- /planned-change:outside-gate-foundation -->
 
 Each such message is posted with Slack message metadata whose `event_type` is
 `instrukt_private`, and the connector reads conversation history with that
