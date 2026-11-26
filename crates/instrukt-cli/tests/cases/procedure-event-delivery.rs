@@ -911,12 +911,15 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         .unwrap();
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
-    let finding = start_anomalies(&r)[0].clone();
-    assert!(
-        finding["failure"]
+    let folder = r.computer.env.path("");
+    let canonical = folder.canonicalize().unwrap();
+    insta::assert_snapshot!(
+        start_anomalies(&r)[0]["failure"]
             .as_str()
             .unwrap()
-            .contains("runtime project")
+            .replace(canonical.to_str().unwrap().trim_end_matches('/'), "[TMP]")
+            .replace(folder.to_str().unwrap().trim_end_matches('/'), "[TMP]"),
+        @"thread t3:s1 runs in a runtime project not rooted at [TMP]/fork; it rolls over once idle or archived"
     );
     r.runtime.change("s1", "projectId", retained_project.into());
     r.runtime.change("s1", "title", request["title"].clone());
