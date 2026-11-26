@@ -20,11 +20,13 @@
 //! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
 //! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
+//! | [`EvaluationAnswers`] | `runner` "Fleet query and membership", `eval-report` "Computers in a report" | work (`instrukt_todos::eval`) | runner evaluation responder and tick |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
 //! wiring.rs`); the runner checks `modules.todos` per project before using
 //! them, except [`OpenWorkSessions`], which thread retention asks for every
-//! registered project whatever its switches. The event-log
+//! registered project whatever its switches, and [`EvaluationAnswers`],
+//! which answers wherever a cluster connection is configured. The event-log
 //! append work's finalize-ready stamp uses is the other direction: the
 //! runner implements [`crate::events::EventLog`] and the CLI hands it to
 //! work.
@@ -901,11 +903,21 @@ impl std::fmt::Debug for WorkPorts {
     }
 }
 
+/// Work's answer to another computer's evaluation request
+/// (`project/instrukt/spec/feature/work/eval-report`, "Computers in a
+/// report"): the request payload in, the answer out, both opaque to the
+/// runner, which returns the answer unread. It always yields an answer: what
+/// this computer cannot read becomes a limitation in it.
+pub trait EvaluationAnswers: Send + Sync {
+    fn answer(&self, request: serde_json::Value) -> serde_json::Value;
+}
+
 /// What the CLI wired into the runner for this invocation. The
 /// implementations serve any project; the runner itself decides per
 /// project whether `modules.todos` is on (`work-dispatch`, "Execution
-/// contract"). A `None` slot means the implementation is not available in
-/// this build, and the runner dispatches no todos.
+/// contract"). A `None` work slot means the implementation is not available
+/// in this build, and the runner dispatches no todos; a `None` evaluation
+/// slot means this computer answers no evaluation requests.
 #[derive(Clone, Default)]
 pub struct RunnerWiring {
     pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
@@ -918,6 +930,9 @@ pub struct RunnerWiring {
     pub standings: Option<Arc<dyn WorktreeStandings>>,
     /// The company the runner hosts: its conversations. `None` hosts none.
     pub company: Option<Arc<dyn CompanyPorts>>,
+    /// Work's answers to other computers' evaluation requests, apart from
+    /// `work` because answering does not depend on todos pickup.
+    pub evaluation: Option<Arc<dyn EvaluationAnswers>>,
 }
 
 /// Why a company port could not do what was asked, as the company words it.
@@ -1005,6 +1020,7 @@ impl std::fmt::Debug for RunnerWiring {
             .field("review", &self.review.is_some())
             .field("workflow", &self.workflow.is_some())
             .field("company", &self.company.is_some())
+            .field("evaluation", &self.evaluation.is_some())
             .finish()
     }
 }
