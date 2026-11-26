@@ -175,6 +175,8 @@ pub fn adopt_company(
     let intent_path = staging.join("intent.yaml");
     // Read at entry: the run writes the intent itself.
     let resuming = present(&intent_path)?;
+    // Configuration names the repository; adoption consumes that name.
+    let named = config::company_repository(key)?;
     let global = Configuration::load_global(home)?;
     let host = crate::github::api_host(global.github_api_url()?);
     let mut unused = Vec::new();
@@ -195,13 +197,12 @@ pub fn adopt_company(
             .map(|org| ports.accounts.account_kind(org))
             .transpose()?;
         let reachable = match (declared, kind) {
-            (Some(org), Some(AccountKind::Organisation)) => reachable(
-                &staging_parent(&staging),
-                &url(&host, org, &repository_of(key)),
-            )?,
+            (Some(org), Some(AccountKind::Organisation)) => {
+                reachable(&staging_parent(&staging), &url(&host, org, named.as_str()))?
+            }
             _ => false,
         };
-        match config::decide_generation(key, &home_dir, false, declared, kind, reachable)? {
+        match config::decide_generation(&named, &home_dir, false, declared, kind, reachable)? {
             Generation::CheckOut {
                 organisation,
                 repository,
@@ -281,10 +282,6 @@ pub fn adopt_company(
         hooks,
         sync,
     })
-}
-
-fn repository_of(key: &ProjectSlug) -> String {
-    format!("company-{key}")
 }
 
 /// The folder git is run from to read a remote before the staging checkout

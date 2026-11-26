@@ -68,12 +68,13 @@ pub fn company_repository(key: &ProjectSlug) -> Result<ProjectSlug, crate::ids::
     ProjectSlug::parse(&format!("company-{key}"))
 }
 
-/// Decides what adding the company `key` does: refused when its home
-/// exists, when `github.org` is not declared, or when the account it names
-/// (`org_kind`) is no organisation; otherwise checked out by contract when
-/// the repository is `reachable`, created when it is not.
+/// Decides what adding the company whose repository is `repository`
+/// ([`company_repository`]) does: refused when its home exists, when
+/// `github.org` is not declared, or when the account it names (`org_kind`)
+/// is no organisation; otherwise checked out by contract when the
+/// repository is `reachable`, created when it is not.
 pub fn decide(
-    key: &ProjectSlug,
+    repository: &ProjectSlug,
     home: &Path,
     home_exists: bool,
     declared_org: Option<&str>,
@@ -98,7 +99,7 @@ pub fn decide(
         }
     }
     let organisation = organisation.to_owned();
-    let repository = format!("company-{key}");
+    let repository = repository.to_string();
     Ok(if reachable {
         Generation::CheckOut {
             organisation,
@@ -168,7 +169,7 @@ mod tests {
         reachable: bool,
     ) -> Result<Generation, GenerationRefusal> {
         decide(
-            &acme(),
+            &company_repository(&acme()).unwrap(),
             Path::new("/h/companies/acme"),
             home_exists,
             org,
