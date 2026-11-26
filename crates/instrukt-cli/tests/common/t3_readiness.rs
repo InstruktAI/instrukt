@@ -430,8 +430,57 @@ fn launch(dir: &Path, _home: &Path, payload: &Value, owner: u64) -> Value {
     json!({"_tag":"Success","value":{"threadId":id,"projection":{"thread":thread},"resumed":false,"sequence":1}})
 }
 
+/// `thread.archive` as the pinned release takes it: the thread leaves the
+/// listing, its projection row records when it was archived, and a second
+/// archive of it is refused. Each archive command is recorded.
+fn archive(dir: &Path, payload: &Value) -> Value {
+    let refused = |detail: String| json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":detail}}]});
+    let fields: std::collections::BTreeSet<&str> = payload
+        .as_object()
+        .map(|fields| fields.keys().map(String::as_str).collect())
+        .unwrap_or_default();
+    let (Some(command), Some(thread)) = (
+        payload["commandId"].as_str().filter(|id| !id.is_empty()),
+        payload["threadId"].as_str().filter(|id| !id.is_empty()),
+    ) else {
+        return refused("invalid thread.archive request".into());
+    };
+    if fields != ["commandId", "threadId", "type"].into() {
+        return refused("invalid thread.archive request".into());
+    }
+    let state = dir.parent().unwrap().join("t3-state");
+    let file = state.join(format!("{thread}.json"));
+    let Ok(bytes) = std::fs::read(&file) else {
+        return refused(format!("Thread '{thread}' was not found."));
+    };
+    let mut native: Value = serde_json::from_slice(&bytes).unwrap();
+    if native["archived"] == true {
+        return refused(format!("Thread '{thread}' is already archived."));
+    }
+    native["archived"] = true.into();
+    let staged = state.join(format!("{thread}.archiving"));
+    std::fs::write(&staged, serde_json::to_vec(&native).unwrap()).unwrap();
+    std::fs::rename(&staged, &file).unwrap();
+    let environment: std::collections::BTreeMap<String, String> =
+        serde_json::from_slice(&std::fs::read(dir.join("fixture-environment.json")).unwrap())
+            .unwrap();
+    let database = Path::new(&environment["T3CODE_HOME"]).join("userdata/statev2.sqlite");
+    let db = instrukt_core::state_db::rusqlite::Connection::open(database).unwrap();
+    db.execute(
+        "UPDATE orchestration_v2_projection_threads SET archived_at=?2,\
+         payload_json=json_set(payload_json,'$.archivedAt',?2) WHERE thread_id=?1",
+        [thread, &now(dir).to_string()],
+    )
+    .unwrap();
+    record(dir, "archive-commands", &format!("{command} {thread}"));
+    json!({"_tag":"Success","value":{"sequence":1}})
+}
+
 fn dispatch(dir: &Path, _home: &Path, payload: &Value) -> Value {
     use std::io::Write as _;
+    if payload["type"] == "thread.archive" {
+        return archive(dir, payload);
+    }
     // The required message.dispatch shape exercised by the pinned release
     // contract. Reject malformed requests before the fake accepts input.
     for field in ["createdBy", "creationSource"] {
@@ -499,6 +548,15 @@ fn dispatch(dir: &Path, _home: &Path, payload: &Value) -> Value {
 }
 
 /// How many snapshot reads were held so far.
+/// The threads archived through `thread.archive`, in order.
+pub fn archived(env: &TestEnv) -> Vec<String> {
+    std::fs::read_to_string(env.path("t3-readiness").join("archive-commands"))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| line.split_once(' ').unwrap().1.to_owned())
+        .collect()
+}
+
 pub fn held_reads(env: &TestEnv) -> usize {
     std::fs::read_dir(env.path("t3-readiness/held-reads")).map_or(0, Iterator::count)
 }

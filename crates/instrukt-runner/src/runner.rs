@@ -272,6 +272,11 @@ pub fn tick(
     if let Some(deferred) = deferred {
         deferred.run(&mut crate::reclamation::Reported::default());
     }
+    // Thread retention runs after the locks are released too, on the
+    // runner's clock as it reads when the pass starts.
+    if let Some(pass) = crate::thread_retention::Pass::prepare(cx.home, &admitted, cx.wiring) {
+        pass.run(clock(), &mut crate::thread_retention::Reported::default());
+    }
     woke?;
     Ok(TickOutcome::Done)
 }
@@ -425,6 +430,9 @@ pub fn run(
     // deferred work runs on, started again for each wake once it ended.
     let mut reclaimed = crate::reclamation::Reported::default();
     let mut deferred = DeferredPass::Idle(crate::reclamation::Reported::default());
+    // Thread retention: the thread its passes run on, carrying what they
+    // reported across wakes.
+    let mut retention = DeferredPass::Idle(crate::thread_retention::Reported::default());
     tracing::info!(event = "runner_started");
     // A skipped wake stays in status until the next wake that is not skipped;
     // one left by an earlier runner is cleared by this runner's first.
@@ -530,6 +538,7 @@ pub fn run(
                 }
                 drop(invocation);
                 deferred = reclaim(&considered, cx.wiring, &mut reclaimed, deferred);
+                retention = retain(cx.home, &admitted, cx.wiring, &clock, retention);
             }
             Err(error) => {
                 tracing::warn!(event = "runner_wakeup_skipped", %error);
@@ -648,6 +657,33 @@ fn reclaim(
         "worktree_reclamation_unstarted",
         reported,
         move |carried| deferred.run(carried),
+    )
+}
+
+/// Thread retention after a run-loop wake: a pass starts on a thread of its
+/// own once the one an earlier wake started has ended, while the admitted
+/// window is set. A thread that ended by a panic is logged and its report is
+/// lost; the next one starts.
+fn retain(
+    home: &Home,
+    admitted: &Admitted,
+    wiring: &RunnerWiring,
+    clock: &Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    pass: DeferredPass<crate::thread_retention::Reported>,
+) -> DeferredPass<crate::thread_retention::Reported> {
+    let reported = match pass.settled("thread_retention_thread_ended") {
+        Ok(reported) => reported,
+        Err(running) => return running,
+    };
+    let Some(retention) = crate::thread_retention::Pass::prepare(home, admitted, wiring) else {
+        return DeferredPass::Idle(reported);
+    };
+    let clock = Arc::clone(clock);
+    DeferredPass::start(
+        "thread-retention",
+        "thread_retention_unstarted",
+        reported,
+        move |reported| retention.run(clock(), reported),
     )
 }
 
