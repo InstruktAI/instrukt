@@ -1,4 +1,4 @@
-.PHONY: hooks commit-checks format lint test audit coverage check dev
+.PHONY: hooks commit-checks format lint ratchet test audit coverage check dev
 
 # Point git at the repository's checked-in hooks. pre-commit runs the checks the
 # staged files need (.pre-commit-config.yaml); the functional suite runs in CI.
@@ -13,9 +13,11 @@ format:
 	cargo fmt --all
 
 lint:
-	shellcheck -x scripts/*.sh scripts/dev-instrukt scripts/instrukt-for-checks .githooks/*
-	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets --locked -- -D warnings
+	scripts/lint.sh
+
+# Lower the size and suppression baseline to the tree; it never raises an entry.
+ratchet:
+	scripts/check-ratchet.py --update
 
 test:
 	scripts/check-test-tool.sh nextest
