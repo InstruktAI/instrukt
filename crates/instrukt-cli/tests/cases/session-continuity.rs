@@ -1725,3 +1725,97 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     );
     assert_eq!(c.runtime.message_count(&successor), received);
 }
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS29
+#[test]
+fn an_unaccepted_pickup_idle_in_another_runtime_project_rolls_over_to_the_checkouts_own() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    // T3 creates the orchestrator, and the runner dies before it accepts
+    // the start: the pickup stays recorded and unaccepted.
+    fake.flag("die-after-start", true);
+    p.env.run(p.env.home(), ["tick"]);
+    let key = fake.key("s1");
+    let own = fake.project_at(p.repo.path()).unwrap();
+    // As a launch captured before exact-project selection left it: the
+    // thread belongs to a project rooted at a folder containing the
+    // checkout, holds a folder of that project that is no worktree of the
+    // checkout, and is idle; the retained request names that project.
+    let ancestor = p.repo.path().parent().unwrap().to_path_buf();
+    fake.add_project(&ancestor);
+    let foreign = fake.project_at(&ancestor).unwrap();
+    let created = fake.worktree("s1");
+    p.env.git(
+        p.repo.path(),
+        ["worktree", "remove", "--force", created.to_str().unwrap()],
+    );
+    p.env.git(p.repo.path(), ["branch", "-D", "parser/work"]);
+    let misplaced = p.env.path("foreign-worktrees/parser");
+    std::fs::create_dir_all(&misplaced).unwrap();
+    fake.place_thread("s1", &ancestor);
+    fake.change("s1", "worktreePath", misplaced.to_str().unwrap().into());
+    fake.set_status("s1", "completed");
+    state_db(&p)
+        .execute(
+            "UPDATE runtime_bindings SET project_id=?1,request=json_set(request,'$.native_launch.project_id',?1) WHERE semantic_key=?2",
+            [foreign.as_str(), key.as_str()],
+        )
+        .unwrap();
+    p.tick();
+    // A successor starts in the checkout's own project, on a registered
+    // worktree of the todo's branch, and is the orchestrator the todo binds.
+    let threads = fake.threads();
+    assert_eq!(threads.len(), 2, "{threads:?}");
+    let successor = threads
+        .iter()
+        .find(|id| **id != fake.native_id("s1"))
+        .unwrap()
+        .clone();
+    assert_eq!(fake.project_id(&successor), own);
+    assert_eq!(fake.key(&successor), key);
+    let worktree = fake.worktree(&successor);
+    insta::assert_snapshot!(p.env.git(&worktree, ["branch", "--show-current"]), @"parser/work");
+    assert!(
+        p.env
+            .git(p.repo.path(), ["worktree", "list", "--porcelain"])
+            .lines()
+            .any(|line| line == format!("worktree {}", worktree.display()))
+    );
+    let shown: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.repo.path(), ["todo", "show", "parser", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let orchestrator = shown["ledger"]["active_attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|attempt| attempt["role"] == "todo-orchestrator")
+        .unwrap();
+    assert_eq!(orchestrator["session"], format!("t3:{successor}"));
+    // The misplaced thread is left as it is and receives nothing more, and
+    // no failed start is reported for the pickup.
+    assert_eq!(fake.project_id("s1"), foreign);
+    assert_eq!(fake.message_count("s1"), 1);
+    assert_eq!(fake.message_count(&successor), 1);
+    let events: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.env.home(), ["events", "status", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let start = format!("runtime-start:t3:{key}");
+    let failures: Vec<_> = events["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|worker| worker["worker"] == start.as_str())
+        .collect();
+    assert!(failures.is_empty(), "{failures:?}");
+}
