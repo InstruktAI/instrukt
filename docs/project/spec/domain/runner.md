@@ -560,11 +560,15 @@ The evaluation kind's uses of the cluster store — `instrukt run`'s evaluation
 responder, `instrukt tick`'s fleet step, membership writes and the evaluation
 report's asking — write nothing into the state database: the transport they
 use keeps no reachability record there, and whether the store can be reached
-shows in the failure file instead. They never wait on, or hold, the writer
-lock that work commands wait on (`sdlc/policy/state-storage`, Write
-isolation). Reachability recorded for event transport
-(`project/instrukt/spec/feature/runner/event-transport`) and merged history
-search's uses of the store are unchanged.
+shows in the failure file instead. The one exception is an answer read from a
+state database older than this build's schema, which first brings it to the
+current schema once under the writer lock, as every read of an older database
+does (`project/instrukt/spec/feature/work/state-database`). Beyond that they
+never wait on, or hold, the writer lock that work commands wait on
+(`sdlc/policy/state-storage`, Write isolation). Event transport and merged
+history search keep each Redis's one reachability record in the state
+database, logging its loss and return once per transition
+(`project/instrukt/spec/feature/runner/event-transport`).
 Whether the cluster user permits the fleet query is checked where the
 connection enters, at installation
 (`project/instrukt/spec/feature/runner/module-installation`).
