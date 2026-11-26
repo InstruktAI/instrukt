@@ -109,8 +109,8 @@ reason. A report covering only this computer reads as described above, with
 its windows in time order and a restored eval set a window of its own.
 
 Requests and answers travel through the runner's bounded fleet query
-(`project/instrukt/spec/domain/runner`), which decides which of the covered
-computers answer. A computer answers over the cluster connection it already has, from
+(`project/instrukt/spec/domain/runner`), which returns each covered computer's
+answer or what it observed instead. A computer answers over the cluster connection it already has, from
 its own work record and publication state, applying the requested range,
 whether or not history is switched on there; a covered computer without a
 cluster connection of its own does not answer.
@@ -145,17 +145,19 @@ Every computer the report covers appears in it, either among the computers
 whose answer it holds or as a limitation of the report with its reason,
 whatever made its answer missing or unusable, a named computer included when
 no cluster connection is configured here or the cluster store cannot be
-reached: one the fleet query reports as
-not answering carries the reason the fleet query gives, together with when the
+reached. One without an answer carries the report's reason for what the
+fleet query observed: that the fleet could not be reached, that its request
+could not be delivered, that the store failed while its answer was awaited,
+or that it answered after the wait ends; together with when the
 membership record last saw it where the record holds it and could be read at
-report time; and one whose answer this computer cannot read
+report time. One whose answer this computer cannot read
 is named as answering in a form it cannot read. Each
 limitation a computer reports appears under that computer's identity. The
 reason that the fleet could not be reached is given only when no cluster
 connection is configured here or the cluster store cannot be reached; when the
 store answers but the membership record cannot be read, the report carries
-that as a limitation of its own and each named computer carries the reason the
-fleet query gives. A report covering any other computer waits no longer than
+that as a limitation of its own and each named computer without an answer
+carries its reason as above. A report covering any other computer waits no longer than
 the fleet query's maximum deadline, 120 seconds, which lets a member on the
 default once-a-minute tick answer; a covered computer whose answer has not
 arrived by then is named as answering after the wait ends, and the report is
