@@ -432,7 +432,7 @@ fn launch(dir: &Path, _home: &Path, payload: &Value, owner: u64) -> Value {
 
 /// `thread.archive` as the pinned release takes it: the thread leaves the
 /// listing, its projection row records when it was archived, and a second
-/// archive of it is refused. Each archive command is recorded.
+/// archive of it is refused. Each archive that succeeds is recorded.
 fn archive(dir: &Path, payload: &Value) -> Value {
     let refused = |detail: String| json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":detail}}]});
     let fields: std::collections::BTreeSet<&str> = payload
