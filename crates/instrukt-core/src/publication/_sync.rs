@@ -14,6 +14,7 @@ use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
 use super::_units;
+use super::_units::LEGEND;
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
@@ -192,6 +193,9 @@ pub enum SyncFinding {
     /// version, persisted without its source digest: its published file
     /// could not be read. It gains one when its owner next publishes it.
     EntryUndigested { id: SnippetId, owner: ProjectSlug },
+    /// A unit the global files hold its source's prose in place of, for its
+    /// finding.
+    UnitInProse { finding: super::UnitFinding },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -328,6 +332,9 @@ struct Prepared {
     owners: BTreeMap<DomainName, ProjectSlug>,
     /// Global agent files, each with where it is written.
     global: Vec<GlobalWrite>,
+    /// The uncompressed copy of each runtime's global file, by where it is
+    /// written in the home.
+    copies: Vec<(PathBuf, String)>,
     /// Merged settings files, by where each is written.
     settings: Vec<(PathBuf, Vec<u8>)>,
     /// Links to global agent files, each `(where it stands, what it points
@@ -466,14 +473,17 @@ fn publish(
     let renderer = Renderer {
         home,
         project: &project.slug,
+        tree: &committed,
         corpus: &corpus,
         owned: &owned,
         index: &patched,
         indexes: &indexes,
         values: &values,
+        units: true,
     };
     let GlobalPlan {
         global,
+        copies,
         settings,
         links,
         findings,
@@ -502,6 +512,7 @@ fn publish(
         patched,
         owners,
         global,
+        copies,
         settings,
         links,
     };
@@ -561,7 +572,8 @@ pub(super) fn lock_outputs(home: &Home) -> Result<LockGuard, PublicationError> {
 /// write. A location the repository or instrukt controls — a rendered
 /// output in the project or one recorded for retraction; in the home a
 /// published domain, a third-party doc, the index, the eval
-/// fingerprint records, the outputs record or the published record — that
+/// fingerprint records, an uncompressed copy of a global agent file, the
+/// outputs record or the published record — that
 /// lies behind a symbolic link refuses the sync; a link at the location
 /// itself is replaced by the write. An agent-CLI file in the user's home
 /// whose directory's link leads nowhere refuses too. The writes check again
@@ -601,6 +613,7 @@ fn preflight(
     targets.push(_tree::project_claim_path(home, &project.slug));
     targets.push(home.index_file());
     targets.extend(_fingerprint::record_paths(home, commit));
+    targets.extend(prepared.copies.iter().map(|(path, _)| path.clone()));
     targets.push(record_path(home, &project.slug));
     for target in targets {
         own_destination(root, &relative_to(root, &target)?)?;
@@ -667,6 +680,7 @@ pub(super) fn committed_index(
 #[derive(Default)]
 struct GlobalPlan {
     global: Vec<GlobalWrite>,
+    copies: Files<String>,
     settings: Files<Vec<u8>>,
     links: Vec<(PathBuf, PathBuf)>,
     findings: Vec<SyncFinding>,
@@ -681,9 +695,12 @@ struct GlobalPlan {
 /// whatever it holds; one that keeps a reference for an agent program to
 /// resolve is written as rendered and named. A settings file that cannot
 /// take the key, or is a symbolic link, is the user's: it is left untouched
-/// and named, and the instruction file is still written.
+/// and named, and the instruction file is still written. A file that holds a
+/// unit names its uncompressed copy, rendered with every source in prose and
+/// written once per runtime file name into the home's `rendered/` folder; a
+/// unit held in prose for a finding is reported.
 fn global_files(
-    _home: &Home,
+    home: &Home,
     renderer: &Renderer<'_>,
     answer: Option<Answer>,
 ) -> Result<GlobalPlan, PublicationError> {
@@ -713,14 +730,38 @@ fn global_files(
     // One rendering per runtime, with the references it keeps: every file
     // written from it is named with them.
     let mut rendered = BTreeMap::new();
+    let prose = Renderer {
+        units: false,
+        ..*renderer
+    };
+    let mut copies: BTreeMap<&str, String> = BTreeMap::new();
     for file in &targets.files {
         let runtime = file.destination;
         let global = match rendered.entry(file.runtime.clone()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(renderer.global_file(&file.runtime)?)
+                let global = renderer.global_file(&file.runtime)?;
+                for finding in &global.fallbacks {
+                    let finding = SyncFinding::UnitInProse {
+                        finding: finding.clone(),
+                    };
+                    if !plan.findings.contains(&finding) {
+                        plan.findings.push(finding);
+                    }
+                }
+                entry.insert(global)
             }
         };
+        let copy = home
+            .rendered_dir()
+            .join(format!("{}.uncompressed.md", runtime.cli));
+        if !copies.contains_key(runtime.cli) {
+            let uncompressed = prose.global_file(&file.runtime)?;
+            copies.insert(
+                runtime.cli,
+                global_file_text(runtime.cli, &uncompressed.text, None),
+            );
+        }
         plan.findings
             .extend(
                 global
@@ -731,7 +772,11 @@ fn global_files(
                         reference: reference.clone(),
                     }),
             );
-        let text = global_file_text(runtime.cli, &global.text);
+        let text = global_file_text(
+            runtime.cli,
+            &global.text,
+            global.units.then_some(copy.as_path()),
+        );
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
@@ -774,6 +819,15 @@ fn global_files(
             }
         }
     }
+    plan.copies = copies
+        .into_iter()
+        .map(|(cli, text)| {
+            (
+                home.rendered_dir().join(format!("{cli}.uncompressed.md")),
+                text,
+            )
+        })
+        .collect();
     for link in &targets.links {
         let folder = link.link.parent().unwrap_or(Path::new("/"));
         let name = link
@@ -893,6 +947,11 @@ fn write(
     for (path, bytes) in &prepared.settings {
         tx.write(path, bytes)?;
     }
+    // The uncompressed copies, written whole with their files and never
+    // removed.
+    for (path, text) in &prepared.copies {
+        tx.write(&in_home(path)?, text.as_bytes())?;
+    }
     // The links the instances read through, ensured after their files.
     let mut links = Vec::new();
     for (link, target) in &prepared.links {
@@ -950,16 +1009,25 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
 }
 
 /// The text written to the global file of the agent runtime `cli`: the
-/// generated line, then `rendering`. Where the runtime's file format puts
+/// generated line, then, for a file that holds a unit, the line naming its
+/// uncompressed `copy` and how to read a snippet in full followed by the
+/// units' legend, then `rendering`. Where the runtime's file format puts
 /// something of its own first, as Cursor's rule file does with its
 /// frontmatter, the generated line follows it.
-fn global_file_text(cli: &str, rendering: &str) -> String {
+fn global_file_text(cli: &str, rendering: &str, copy: Option<&Path>) -> String {
+    let opening = match copy {
+        Some(copy) => format!(
+            "{GENERATED_LINE}\nThis file holds compressed sections. The same instructions in full prose stand in `{}`, which no agent runtime loads; read any snippet this file names in full with `instrukt docs get <id>`.\n\n{LEGEND}\n\n",
+            copy.display()
+        ),
+        None => format!("{GENERATED_LINE}\n"),
+    };
     if cli == "cursor" {
         format!(
-            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{GENERATED_LINE}\n{rendering}"
+            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{opening}{rendering}"
         )
     } else {
-        format!("{GENERATED_LINE}\n{rendering}")
+        format!("{opening}{rendering}")
     }
 }
 
@@ -971,11 +1039,23 @@ mod tests {
 
     #[test]
     fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
-        insta::assert_snapshot!(global_file_text("cursor", RENDERING));
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING, None));
     }
 
     #[test]
     fn another_runtimes_file_opens_with_the_generated_line() {
-        insta::assert_snapshot!(global_file_text("claude", RENDERING));
+        insta::assert_snapshot!(global_file_text("claude", RENDERING, None));
+    }
+
+    const COPY: &str = "/home/someone/.instrukt/rendered/claude.uncompressed.md";
+
+    #[test]
+    fn a_file_holding_a_unit_names_its_copy_then_the_legend_after_the_generated_line() {
+        insta::assert_snapshot!(global_file_text("claude", RENDERING, Some(Path::new(COPY))));
+    }
+
+    #[test]
+    fn a_cursor_file_holding_a_unit_opens_with_its_frontmatter_before_the_copy_line() {
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING, Some(Path::new(COPY))));
     }
 }

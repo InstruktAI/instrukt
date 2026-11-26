@@ -24,6 +24,7 @@ use crate::docs::{
     self, CompanyReference, Corpus, Directive, Lens, Position, PositionIndex, RefTarget, Reference,
     View,
 };
+use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
 
 /// The place for units in a repository: every unit stands at its source's
@@ -165,6 +166,9 @@ pub enum UnitFindingKind {
     },
     /// The unit carries a reference its source does not.
     Reference { reference: String },
+    /// The unit, as one rendering holds it, breaks a rule that rendering
+    /// applies to its source.
+    RenderingRule { rule: String },
 }
 
 impl UnitFindingKind {
@@ -177,6 +181,7 @@ impl UnitFindingKind {
             Self::ForbiddenDirective { .. } => "forbidden-directive",
             Self::ConfiguredValues { .. } => "configured-values",
             Self::Reference { .. } => "references",
+            Self::RenderingRule { .. } => "rendering-rule",
         }
     }
 
@@ -199,6 +204,7 @@ impl UnitFindingKind {
             Self::Reference { reference } => {
                 format!("references `{reference}`, which its source does not")
             }
+            Self::RenderingRule { rule } => format!("breaks a rule of the rendering: {rule}"),
         }
     }
 }
@@ -561,6 +567,41 @@ pub(super) fn published_findings(
         }
     }
     found.into_iter().collect()
+}
+
+/// The units a published position holds in the home: read from
+/// `<position>/_compressed/` alone, never through a symbolic link at, above
+/// or inside it below the home's published tree.
+pub(super) fn read_home(home: &Home, position: &DomainName, rel: &str) -> UnitRead {
+    let relative = Path::new(position.as_str()).join(RESERVED).join(rel);
+    let shown = home.docs_dir().join(&relative).display().to_string();
+    let found = |kind| {
+        Some(Err(UnitFinding {
+            path: shown.clone(),
+            kind,
+        }))
+    };
+    let path = match super::_tx::confined(&home.docs_dir(), &relative) {
+        Ok(path) => path,
+        Err(PublicationError::Unconfined { path }) => {
+            return Some(Err(UnitFinding {
+                path: path.display().to_string(),
+                kind: UnitFindingKind::Link,
+            }));
+        }
+        Err(err) => {
+            return found(UnitFindingKind::Unreadable {
+                reason: err.to_string(),
+            });
+        }
+    };
+    match std::fs::read(&path) {
+        Ok(bytes) => Some(Unit::parse(&shown, &bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => found(UnitFindingKind::Unreadable {
+            reason: err.to_string(),
+        }),
+    }
 }
 
 /// Every entry of a position the view holds — file, folder or link — whose

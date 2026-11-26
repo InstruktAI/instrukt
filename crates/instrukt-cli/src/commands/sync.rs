@@ -159,6 +159,9 @@ fn global_lines(
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
             ),
+            SyncFinding::UnitInProse { finding } => format!(
+                "notice: {finding}; the global files hold its source in prose until the unit is fixed"
+            ),
             SyncFinding::EntryUndigested { id, owner } => format!(
                 "notice: index entry `{id}` of project `{owner}` is kept without its source digest, because its published file cannot be read; it gains one when `{owner}` next syncs"
             ),
