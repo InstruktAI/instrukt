@@ -206,7 +206,8 @@ pub(crate) fn assignment(
     }))
 }
 
-/// The project's registered checkout, where the requested reviewer starts.
+/// The project's registered checkout, used to validate linked worktrees and
+/// resolve the runtime project.
 fn registered_checkout(home: &Home, slug: &ProjectSlug) -> Result<PathBuf, AskError> {
     instrukt_core::publication::PublishedRecord::load(home, slug)
         .map_err(failed)?
@@ -425,13 +426,14 @@ impl Delivering<'_> {
     /// opening input; `successor` succeeds an archived or deleted generation.
     fn start(&self, successor: bool) -> Result<SessionRef, AskError> {
         let context = self.context;
-        let request = self.request()?;
+        let (request, existing_worktree) = self.request()?;
         let thread = if successor {
             keyed::succeed_owned(
                 self.guard,
                 self.invocation,
                 self.adapter,
                 &request,
+                existing_worktree.as_deref(),
                 context.now,
             )
         } else {
@@ -440,6 +442,7 @@ impl Delivering<'_> {
                 invocation: self.invocation,
                 project: Some(self.slug().as_str()),
                 request: &request,
+                existing_worktree: existing_worktree.as_deref(),
                 now: context.now,
             };
             let result = keyed::start_owned(self.adapter, &assignment, self.guard);
@@ -457,14 +460,14 @@ impl Delivering<'_> {
     }
 
     fn worktree_path(&self) -> Result<PathBuf, AskError> {
-        std::fs::canonicalize(&self.coordinates.worktree).map_err(failed)
+        canonicalize_path(&self.coordinates.worktree, "candidate worktree")
     }
 
-    /// The start request: rooted in the project's registered checkout so the
-    /// runtime resolves the project, attached to the candidate's linked
-    /// worktree when it differs from that checkout, under the review
-    /// procedure's role.
-    fn request(&self) -> Result<RuntimeStart, AskError> {
+    /// The start request and optional linked existing worktree: rooted in the
+    /// project's registered checkout so the runtime resolves the project, and
+    /// attaching the candidate's linked worktree when it differs from that
+    /// checkout, under the review procedure's role.
+    fn request(&self) -> Result<(RuntimeStart, Option<PathBuf>), AskError> {
         let context = self.context;
         let preferences = crate::agents::role_order(
             context.config,
@@ -480,40 +483,31 @@ impl Delivering<'_> {
                 .next();
         let head = self.head().as_str();
         let worktree_path = self.worktree_path()?;
-        let checkout_path = std::fs::canonicalize(self.checkout).map_err(failed)?;
-        let (worktree, existing_worktree) = if worktree_path == checkout_path {
-            (None, None)
-        } else {
-            (
-                Some(crate::runtime::WorktreeRequest {
-                    from: self.coordinates.branch.clone(),
-                    base: self.coordinates.base.as_str().to_owned(),
-                    branch: self.coordinates.branch.clone(),
-                }),
-                Some(worktree_path),
-            )
-        };
-        Ok(RuntimeStart {
-            preferences,
-            selection,
-            selection_evidence: Some(
-                self.adapter
-                    .selection_realization(crate::runtime::SelectionOperation::ThreadStart),
-            ),
-            checkout: self.checkout.to_path_buf(),
-            title: format!(
-                "review · {} @ {}",
-                self.coordinates.branch,
-                &head[..head.len().min(12)]
-            ),
-            key: self.key.to_owned(),
-            brief: self.rendering.text.clone(),
-            worktree,
+        let checkout_path = canonicalize_path(self.checkout, "registered checkout")?;
+        let existing_worktree = linked_worktree(worktree_path, &checkout_path);
+        Ok((
+            RuntimeStart {
+                preferences,
+                selection,
+                selection_evidence: Some(
+                    self.adapter
+                        .selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+                ),
+                checkout: self.checkout.to_path_buf(),
+                title: format!(
+                    "review · {} @ {}",
+                    self.coordinates.branch,
+                    &head[..head.len().min(12)]
+                ),
+                key: self.key.to_owned(),
+                brief: self.rendering.text.clone(),
+                worktree: None,
+                launch_modes: None,
+                native_launch: None,
+                profiles: crate::runtime::Profiles::default(),
+            },
             existing_worktree,
-            launch_modes: None,
-            native_launch: None,
-            profiles: crate::runtime::Profiles::default(),
-        })
+        ))
     }
 
     /// Sends the rendering under the ask's recorded command identity; the
@@ -610,6 +604,23 @@ fn retire(context: &AskContext<'_>, slug: &ProjectSlug) {
     }
 }
 
+/// Resolves `path` to its canonical form, naming `label` and `path` on error.
+fn canonicalize_path(path: &Path, label: &str) -> Result<PathBuf, AskError> {
+    std::fs::canonicalize(path).map_err(|error| {
+        failed(format!(
+            "cannot resolve {label} path {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// Returns `Some(worktree)` when the canonical candidate worktree is a linked
+/// worktree distinct from the canonical registered `checkout`, or `None` when
+/// the candidate lives in the registered checkout itself.
+fn linked_worktree(worktree: PathBuf, checkout: &Path) -> Option<PathBuf> {
+    (worktree != checkout).then_some(worktree)
+}
+
 /// The canonical branch as the checkout knows it: the remote-tracking
 /// branch when it exists, else the local one.
 fn canonical_branch(root: &Path) -> Result<String, instrukt_core::git::GitError> {
@@ -625,4 +636,22 @@ fn canonical_branch(root: &Path) -> Result<String, instrukt_core::git::GitError>
             branch
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linked_worktree_returns_none_for_registered_checkout() {
+        let checkout = PathBuf::from("/workspace/project");
+        assert_eq!(linked_worktree(checkout.clone(), &checkout), None);
+    }
+
+    #[test]
+    fn linked_worktree_returns_some_for_distinct_worktree() {
+        let checkout = PathBuf::from("/workspace/project");
+        let worktree = PathBuf::from("/worktrees/project-feature");
+        assert_eq!(linked_worktree(worktree.clone(), &checkout), Some(worktree));
+    }
 }

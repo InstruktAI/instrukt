@@ -72,7 +72,7 @@ from work and derives none of its own.
 | Re-review of a revised head | The prior report, no disposition file | None stands here, and none was handed off. |
 | Dispute of findings on an unchanged head | The prior report and the disposition file | It stands here, and its current version was recorded by this head's requested reviewer (Starting the reviewer). |
 
-The head's verdict here is the head verdict work's Settlement row reads: one
+The head's verdict here is the head verdict work records for this computer: one
 that stands here with the session that recorded its current version, one an
 export handed off, or none
 (`project/instrukt/spec/feature/work/github-apps`). A head whose verdict was handed off admits no ask of
@@ -97,7 +97,7 @@ asked for.
 | Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`). |
 | Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the head's requested reviewer has no turn in progress (Starting the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
-| Runtime | The selected runtime starts a session under a fixed key, sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
+| Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
 A refused ask starts no reviewer, sends nothing and records nothing.

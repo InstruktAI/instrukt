@@ -31,7 +31,7 @@ creates no replacement session identity.
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
 | `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
-| `start` | Project or company home, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences and conversation sessions. |
+| `start` | Project or company home, durable start key, opening brief and optional worktree placement (creating a todo worktree on the derived phase branch or attaching an existing linked worktree); returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences, conversation sessions and requested reviews. |
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
@@ -309,8 +309,9 @@ without captured modes supplies its actual pair through
 `orchestration.getThreadProjection`.
 
 Native placement uses `root`, `worktree` with the captured base/branch, or
-`existing_worktree` with the retained verified absolute path/branch for a
-successor. T3 owns preparation and release; a launch reply can precede completed
+`existing_worktree` with the verified absolute path and branch (for a
+successor's retained worktree or an initial launch into an existing linked
+worktree). T3 owns preparation and release; a launch reply can precede completed
 workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
@@ -466,6 +467,7 @@ instruction prose is a separate configuration surface.
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
 | Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Existing linked-worktree start | An initial launch targeting an existing linked worktree (such as a requested review) attaches it via `existing_worktree` with its verified absolute path and branch. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |

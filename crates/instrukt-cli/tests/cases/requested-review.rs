@@ -86,26 +86,6 @@ fn committed_work_is_reviewed_from_its_coordinates_alone() {
     );
 }
 
-#[test]
-fn requested_review_in_registered_checkout_starts_in_project_root() {
-    let project = Reviewed::new();
-    project
-        .repo
-        .git(["checkout", "--quiet", "-b", "root-feature", "main"]);
-    let head = project.commit_in(project.root(), "root.txt");
-    let report = project.report("root.md", None);
-
-    project
-        .ask(project.root(), "root-feature", &head, &report, &[])
-        .success();
-    assert_eq!(project.rt.started_count(), 1, "one reviewer is started");
-    assert_eq!(
-        project.rt.worktree("s1"),
-        None,
-        "a candidate in the registered checkout starts in the project root"
-    );
-}
-
 // spec: project/instrukt/spec/feature/runner/requested-review UC-RQ2
 #[test]
 fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_them() {

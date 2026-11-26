@@ -62,7 +62,14 @@ impl T3 {
                 serde_json::json!({"type":"worktree", "baseRef":worktree.from, "branch":worktree.branch})
             }
             (None, Some(path)) => {
-                serde_json::json!({"type":"existing_worktree","worktreePath":path})
+                let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
+                    .map_err(|e| failure("launch", e.to_string()))?;
+                let branch = branch.trim();
+                if branch.is_empty() {
+                    serde_json::json!({"type":"existing_worktree","worktreePath":path})
+                } else {
+                    serde_json::json!({"type":"existing_worktree","worktreePath":path,"branch":branch})
+                }
             }
             (None, None) => serde_json::json!({"type":"root"}),
         };
@@ -859,7 +866,6 @@ mod tests {
                 base: "base".into(),
                 branch: "parser/work".into(),
             }),
-            existing_worktree: None,
             profiles: crate::runtime::Profiles::default(),
         }
     }

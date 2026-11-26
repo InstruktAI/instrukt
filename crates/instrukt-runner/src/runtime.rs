@@ -76,10 +76,6 @@ pub struct RuntimeStart {
     pub title: String,
     pub brief: String,
     pub worktree: Option<WorktreeRequest>,
-    /// An already-existing worktree of `checkout` to attach instead of
-    /// creating a new worktree or starting in the project root.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub existing_worktree: Option<PathBuf>,
     /// The agent profiles of the admitted generation the start was prepared
     /// in; a request without them reads `agents.yaml` when it is started.
     #[serde(skip)]
@@ -213,6 +209,9 @@ pub struct RuntimeAssignment<'a> {
     pub invocation: &'a crate::keyed::RuntimeInvocation,
     pub project: Option<&'a str>,
     pub request: &'a RuntimeStart,
+    /// An existing linked worktree of `request.checkout` to attach on initial
+    /// launch; persisted on [`NativeLaunch::existing_worktree`].
+    pub existing_worktree: Option<&'a Path>,
     pub now: jiff::Timestamp,
 }
 

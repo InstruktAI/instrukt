@@ -1994,7 +1994,6 @@ fn start(
                 key: c.semantic_key.clone(),
                 brief: format!("{}\n{input}", assignment(admitted, c, &procedure)?),
                 worktree: None,
-                existing_worktree: None,
                 launch_modes: None, native_launch: None, profiles: instrukt_runner::runtime::Profiles(Some(admitted.shared_agents())),
             };
             let source = opening_source.ok_or_else(|| {
@@ -2042,6 +2041,7 @@ fn start(
         invocation,
         project: None,
         request: &request,
+        existing_worktree: None,
         now,
     });
     delivery.check_source(adapter, state, c)?;
