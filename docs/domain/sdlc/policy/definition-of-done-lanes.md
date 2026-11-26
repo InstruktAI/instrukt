@@ -606,6 +606,16 @@ snippet-body rules — and three checks do:
   acts that role excludes is this check's finding, unless it is that policy's
   counter for an act the reader is already invited to take.
 
+**Behavior-correction check.** When the change corrects what agents did (its
+commit body names the occurrence, `general/policy/documentation-discipline`),
+the reviewer follows every text the acting agent reads at that moment — the
+snippets its load path reaches, the help and prompts of the command it runs,
+the briefs and runtime values it receives — and confirms that path now leads to
+the corrected behavior. A statement still steering the old behavior, including
+one the diff left beside its new text, is **Important** unless the change names
+it as code carried by the todo that delivers it. Checking the diff against its
+own description does not satisfy this check.
+
 **Procedure composition check.** When a changed procedure carries root
 frontmatter, or its subscriptions or Required reads changed, the reviewer reads
 the frontmatter of every other procedure in the corpus, pending ones included,

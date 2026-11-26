@@ -78,7 +78,7 @@ Apply these configured action values to the identified assignment and session.
 
 ### Ad hoc work and workspace placement
 
-- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A repository todo uses a single `<slug>/work` worktree and branch for both pending documentation and implementation; pending markers are folded by the integrator at delivery and the worktree and branch are cleaned up after promotion. No agent other than the integrator commits on main.
+- **Where repository work is authored is `general/policy/commits`.** A todo's orchestrator works in the todo's worktree, created when it starts; ad hoc work, pending documentation written ahead for a todo included, uses a short-lived one-off worktree whose exact head is reviewed before the integrator merges it through the normal gate, and is removed after. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 
@@ -92,32 +92,38 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 ### Decide before creating
 
-- **Documentation evidence precedes lifecycle entry.** Pending contracts
-  that preparation consumes are authored, committed under their intended todo
-  slug, and independently reviewed with required changes resolved before
-  entry. Associate the commits with `instrukt repo commit --todo <slug>` under
-  `general/policy/commits`. Review evidence binds the committed revision;
-  the author's declaration is not an independent review.
+- **Pending contracts are written before the plan.** Who writes them is
+  `general/policy/documentation-discipline` (Functionality is doc-driven): the
+  creating session when it holds context a handoff would lose, otherwise the
+  claimant at preparation entry, in the todo's worktree. A creating session
+  writes them as pending carriers naming the todo, in a one-off worktree under
+  `general/policy/commits`, commits with `instrukt repo commit --todo <slug>`,
+  has the head independently reviewed and merged by the integrator, and
+  removes the worktree; it files the todo held, its reason naming that
+  branch's merge onto main. The todo's worktree exists only once its
+  orchestrator starts work. Review evidence binds the committed revision; the
+  author's declaration is not an independent review.
 - **Documentation impact remains agent judgment.** The agent identifies the
   required pending contracts or records an explicit `doc_impact_none` basis.
   Neither workflow derivation nor a creation command grades prose or infers
-  semantic documentation impact. Iceboxed forming work acquires its required
-  evidence before entering the lifecycle.
+  semantic documentation impact.
 
-- **A todo enters the lifecycle valid; the icebox parks ideas at any stage.** A
-  todo is valid when its intended outcome and every known contract that Prepare
-  will consume have converged, and no pending authoring, review, or commit is
-  still expected to change them. Creating a todo without `--icebox` enters it
-  into the lifecycle, so it is valid at creation. An idea still forming is
-  created with `--icebox` and made valid before it is unfrozen; unfreezing
-  enters it into the lifecycle.
-- **Place a filing by what it waits on.** Valid work waiting on another todo
-  is created with `--after <slugs>`, and leaves the wait on its own when they
-  deliver. Valid work waiting on a concrete condition outside the project's
-  todos is created with `--hold --reason <text>`, the reason naming that
-  condition under the hold rule above, so it is held from its first revision.
-  `--icebox` is for work that has not converged, never for a dependency or for
-  converged work waiting on a merge or release, and never combined with a hold.
+- **A todo enters the lifecycle once its outcome has converged; the icebox
+  parks only outcomes that have not.** Creating a todo without `--icebox`
+  enters it into the lifecycle. An idea whose outcome is still forming is
+  created with `--icebox` and unfrozen once it converges. The state of its
+  contracts never decides this: contracts still to be written or reviewed are
+  preparation work (above), not a forming outcome.
+- **Place a filing by what it waits on.** Converged work waiting on another
+  todo is created with `--after <slugs>`, and leaves the wait on its own when
+  they deliver. Converged work waiting on a concrete condition outside the
+  project's todos — the merge of a branch carrying its written-ahead
+  contracts included — is created with `--hold --reason <text>`, the reason
+  naming that condition under the hold rule above, so it is held from its
+  first revision.
+  `--icebox` is for work whose outcome has not converged, never for a
+  dependency, for converged work waiting on a merge or release, or for
+  contracts still to be written, and never combined with a hold.
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -287,7 +293,8 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   stamped creation record and the current `input`, establish the owning
   project, repeat the bounded creation check, apply the governing creation and
   process-authority contracts, and confirm that functionality work carries its
-  required pending documentation, written by whoever holds the awareness
+  required pending documentation, written by whoever holds the awareness —
+  the claimant writes it now when the creating session did not
   (`general/policy/documentation-discipline`). The record establishes the
   filing actor, originating session, observed human involvement and input
   version; it does not prove which sources or queries the creator consulted.
@@ -604,8 +611,13 @@ for one waits on someone to remember it. A hold is the only record that keeps
 converged work in the lifecycle, paused, with the condition it waits on visible
 to everyone reading the work. The icebox takes work out of the lifecycle and
 records no condition, so converged work parked there drops out of the fleet's
-attention and is found again only by chance. Holding the work as it is created
-leaves no moment in which the runner can pick it up unheld. A hold whose
+attention and is found again only by chance. Contracts still to be written are
+work, not a forming outcome. Parked in the icebox, the todo waits on nobody;
+held on the merge of the branch that carries them, it waits visibly on a named
+condition; unheld, its claimant writes them. Pending carriers on main need no
+open worktree: the todo's worktree is created when its orchestrator starts, so
+written-ahead work leaves no checkout waiting for a worker. Holding the work as
+it is created leaves no moment in which the runner can pick it up unheld. A hold whose
 evidence has arrived pauses work that is free to move; the coordinator is the
 one standing reader of every todo's hold, and releasing on the evidence the
 hold itself names applies the condition as recorded rather than judging it, so
