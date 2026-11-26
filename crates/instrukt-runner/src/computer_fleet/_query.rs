@@ -40,8 +40,8 @@ enum Wait {
     Outlasting,
 }
 
-/// Merged history search: its keys are the ones history always used, and
-/// its wait runs as it always did.
+/// Merged history search: on the `instrukt:history` keys, waiting on a
+/// pooled connection.
 pub(crate) const HISTORY: Kind = Kind {
     prefix: "instrukt:history",
     wait: Wait::Pooled,

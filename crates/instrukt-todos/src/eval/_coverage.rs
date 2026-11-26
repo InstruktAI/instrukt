@@ -38,8 +38,7 @@ pub struct Asked<'a> {
     pub now: Timestamp,
 }
 
-/// What stops a report covering only this computer from being made, as
-/// today's single-computer report refuses.
+/// What stops a report covering only this computer from being made.
 #[derive(Debug, thiserror::Error)]
 pub enum Refused {
     #[error("cannot read which projects this home publishes")]
@@ -81,8 +80,8 @@ pub fn covering(asked: &Asked<'_>) -> Result<Report, Refused> {
             }
         });
     let fleet = match fleet {
-        // No cluster connection configured: today's report, never touching
-        // Redis.
+        // No cluster connection configured: the report covering only this
+        // computer, never touching Redis.
         Ok(None) if !named => return single(asked, Vec::new()),
         Ok(None) => None,
         Ok(Some(fleet)) => Some(fleet),
@@ -229,8 +228,9 @@ fn only_this(reason: &str) -> String {
     format!("{reason}, so this report covers only this computer.")
 }
 
-/// The report covering only this computer: today's report, read and
-/// windowed as it always was, with `limitations` of its coverage added.
+/// The report covering only this computer: each project's windows in time
+/// order, as [`report`] makes them, with `limitations` of its coverage
+/// added.
 fn single(asked: &Asked<'_>, limitations: Vec<String>) -> Result<Report, Refused> {
     let reading = read(asked.home, asked.work, Some(asked.current.clone()));
     reading.published.map_err(Refused::Publication)?;
