@@ -7,7 +7,7 @@ use instrukt_core::config::RedisEndpoint;
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use redis::{ConnectionAddr, FromRedisValue, IntoConnectionInfo};
 
-use super::TransportError;
+use super::{RedisFailure, TransportError};
 use crate::state::{self, RunnerState, StateError};
 
 pub(crate) struct Endpoint {
@@ -180,8 +180,14 @@ impl Endpoint {
     }
 
     fn redis_error(&self, error: redis::RedisError) -> TransportError {
+        let class = if error.is_io_error() || error.is_connection_refusal() {
+            RedisFailure::Connection
+        } else {
+            RedisFailure::Reply
+        };
         TransportError::Redis {
             source_id: self.identity.clone(),
+            class,
             kind: format!(
                 "{}{}",
                 error.category(),

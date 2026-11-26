@@ -63,7 +63,38 @@ pub enum TransportError {
     )]
     Url { scope: &'static str },
     #[error("Redis source {source_id} failed ({kind})")]
-    Redis { source_id: String, kind: String },
+    Redis {
+        source_id: String,
+        kind: String,
+        class: RedisFailure,
+    },
+}
+
+/// Which side a Redis failure came from: the store could not be reached or
+/// its connection failed, or the store answered with an error (or with an
+/// answer that could not be used).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedisFailure {
+    /// A connection or I/O failure: the store was not reached, or stopped
+    /// answering.
+    Connection,
+    /// The store answered, refusing the operation or with an answer that
+    /// could not be read.
+    Reply,
+}
+
+impl TransportError {
+    /// Whether this is a Redis failure of the connection class: the store
+    /// was not reached or its connection failed.
+    pub fn is_connection_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::Redis {
+                class: RedisFailure::Connection,
+                ..
+            }
+        )
+    }
 }
 
 #[derive(Debug, Clone)]
