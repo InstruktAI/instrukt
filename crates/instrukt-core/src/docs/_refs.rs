@@ -138,6 +138,36 @@ pub(super) fn links(lines: &[_text::Line<'_>]) -> Vec<ReferenceLink> {
     out
 }
 
+/// The ids the `See Also` entries of `lines` open with.
+pub(super) fn see_also_ids(lines: &[_text::Line<'_>]) -> Vec<SnippetId> {
+    let headings = _text::headings(lines);
+    let Some(start) = headings
+        .iter()
+        .position(|h| h.level == 2 && _text::normalize_title(&h.title) == "see also")
+    else {
+        return Vec::new();
+    };
+    let from = headings[start].line + 1;
+    let to = headings
+        .iter()
+        .skip(start + 1)
+        .find(|h| h.level <= 2)
+        .map_or(lines.len(), |h| h.line);
+    lines[from..to]
+        .iter()
+        .filter(|line| !line.fenced)
+        .filter_map(|line| {
+            let text = _text::without_comments(line.text);
+            let item = ["- ", "* ", "+ "]
+                .iter()
+                .find_map(|bullet| text.trim().strip_prefix(bullet))
+                .map(str::to_owned)?;
+            let first = item.split_whitespace().next()?.trim_matches('`');
+            SnippetId::parse(first).ok()
+        })
+        .collect()
+}
+
 /// Whether `token` names a snippet file by its path: an `@` reference, or
 /// a path to a Markdown file below a position or the home's published
 /// tree.

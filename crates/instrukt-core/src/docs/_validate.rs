@@ -501,7 +501,7 @@ fn check_references(
     for token in path_tokens(&lines, &link_lines) {
         push(out, path, FindingCode::ReferenceByPath, Some(token));
     }
-    for id in see_also_ids(&lines) {
+    for id in super::_refs::see_also_ids(&lines) {
         if !corpus.resolves(&RefTarget::Snippet(id.clone())) {
             push(
                 out,
@@ -652,36 +652,6 @@ fn path_tokens(lines: &[_text::Line<'_>], link_lines: &BTreeSet<usize>) -> Vec<S
         }
     }
     out
-}
-
-/// The ids the `See Also` entries of `lines` open with.
-fn see_also_ids(lines: &[_text::Line<'_>]) -> Vec<SnippetId> {
-    let headings = _text::headings(lines);
-    let Some(start) = headings
-        .iter()
-        .position(|h| h.level == 2 && _text::normalize_title(&h.title) == "see also")
-    else {
-        return Vec::new();
-    };
-    let from = headings[start].line + 1;
-    let to = headings
-        .iter()
-        .skip(start + 1)
-        .find(|h| h.level <= 2)
-        .map_or(lines.len(), |h| h.line);
-    lines[from..to]
-        .iter()
-        .filter(|line| !line.fenced)
-        .filter_map(|line| {
-            let text = _text::without_comments(line.text);
-            let item = ["- ", "* ", "+ "]
-                .iter()
-                .find_map(|bullet| text.trim().strip_prefix(bullet))
-                .map(str::to_owned)?;
-            let first = item.split_whitespace().next()?.trim_matches('`');
-            SnippetId::parse(first).ok()
-        })
-        .collect()
 }
 
 fn check_target(
