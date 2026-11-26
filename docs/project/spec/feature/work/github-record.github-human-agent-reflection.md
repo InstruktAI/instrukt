@@ -230,10 +230,11 @@ their secret-safe cause and never select a human fallback.
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
 reflection; no separate writer process runs. Every runner tick flushes
 pending reflection under that lock, held across GitHub requests. A command
-that writes the record never waits on that lock: it returns once its local
-write is committed, flushing only when the lock is free. While another
-process holds it, the command reports its reflection as pending, and the
-process that next holds the lock reflects what the command left. The
+that writes the record and finds the lock free flushes pending reflection
+under it before it returns. A command that finds the lock held by another
+process never waits on it: it returns as soon as its local write is
+committed, reports its reflection as pending, and leaves what it did not
+reflect to the next flush that acquires the lock. The
 separate writer lock guards only local
 state-database write transactions and is released before each network wait. Reflection
 takes it briefly for each local commit of what it learned. Lock order is always
@@ -339,7 +340,7 @@ version is followed by the artifact's next version as usual.
   And the refusal is reported with the reason GitHub gave for it
   But when another process on their computer is reflecting
   Then the command returns as soon as the progress is recorded locally
-  And the progress is reflected once that reflection is done
+  And its reflection remains pending until the next reflection on their computer reflects it
 ```
 
 ### UC-GR2: Inspect a delivery's evidence on GitHub
