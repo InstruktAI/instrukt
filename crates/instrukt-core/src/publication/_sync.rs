@@ -1042,7 +1042,7 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
 fn global_file_text(cli: &str, rendering: &str, copy: Option<&Path>) -> String {
     let opening = match copy {
         Some(copy) => format!(
-            "{GENERATED_LINE}\nThis file holds compressed sections. The same instructions in full prose stand in `{}`, which no agent runtime loads; read any snippet this file names in full with `instrukt docs get <id>`.\n\n{LEGEND}\n\n",
+            "{GENERATED_LINE}\nFull prose of this file: `{}`, which no agent runtime loads; any snippet it names: `instrukt docs get <id>`.\n\n{LEGEND}\n\n",
             copy.display()
         ),
         None => format!("{GENERATED_LINE}\n"),
