@@ -165,6 +165,11 @@ enum Shape {
     CompanyName,
     Domain,
     Bool,
+    /// `github.org`: a [`Shape::Str`] with that key's contract.
+    OwningOrganisation,
+    /// `company_repository`: a [`Shape::Bool`], off by default, with that
+    /// key's contract.
+    CompanyRepository,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,
     Apps,
@@ -223,9 +228,7 @@ fn schema() -> Node {
                 ("api_url", Leaf(GlobalOnly, Shape::Str)),
                 ("apps", Leaf(GlobalOnly, Shape::Apps)),
                 ("project_app", Leaf(GlobalOnly, Shape::Str)),
-                // The GitHub organisation that owns this computer's company
-                // repositories (`company-homes`, Generation).
-                ("org", Leaf(GlobalOnly, Shape::Str)),
+                ("org", Leaf(GlobalOnly, Shape::OwningOrganisation)),
             ]),
         ),
         (
@@ -279,9 +282,10 @@ fn schema() -> Node {
             "review",
             map(vec![("automatic", Leaf(ProjectOnly, Shape::Bool))]),
         ),
-        // Declares the repository a company's: its root renders as a company
-        // home (`project/instrukt/spec/feature/configuration/company-homes`).
-        ("company_repository", Leaf(ProjectOnly, Shape::Bool)),
+        (
+            "company_repository",
+            Leaf(ProjectOnly, Shape::CompanyRepository),
+        ),
         (
             super::_regenerable::REGENERABLE_KEY,
             Leaf(ProjectOnly, Shape::Regenerable),
@@ -557,7 +561,7 @@ fn check_shape(
             None => out.push(invalid("expected a project slug string")),
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
-        Shape::Bool => check_field(Field::Bool, value, path, out),
+        Shape::Bool | Shape::CompanyRepository => check_field(Field::Bool, value, path, out),
         Shape::Apps => {
             if let Err(error) = crate::github::inventory(value) {
                 out.push(invalid(&error.to_string()));
@@ -573,7 +577,7 @@ fn check_shape(
                 "expected `false` or a GitHub project `<owner>/<number>`",
             )),
         },
-        Shape::Str => check_field(Field::Str, value, path, out),
+        Shape::Str | Shape::OwningOrganisation => check_field(Field::Str, value, path, out),
         Shape::OnOff => {
             if !matches!(value.as_str(), Some("on" | "off")) {
                 out.push(invalid("expected `on` or `off`"));
@@ -1146,6 +1150,19 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         ),
         Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
         Shape::Bool => json!({ "type": "boolean" }),
+        Shape::OwningOrganisation => described(
+            json!({ "type": "string" }),
+            "The login of the GitHub organisation that owns the company home repositories \
+             this computer adds; adding a company is refused without one \
+             (project/instrukt/spec/feature/configuration/company-homes, Generation).",
+        ),
+        Shape::CompanyRepository => described(
+            json!({ "type": "boolean", "default": false }),
+            "On, declares the repository a company's: its documentation is the company's \
+             knowledge, read and rendered as a company's \
+             (project/instrukt/spec/feature/configuration/company-homes, The home). Off, it \
+             is a project like any other.",
+        ),
         Shape::Apps => json!({"type":"object", "additionalProperties":{"type":"object"}}),
         Shape::Board => json!({
             "anyOf": [{ "const": false }, { "type": "string", "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$" }],

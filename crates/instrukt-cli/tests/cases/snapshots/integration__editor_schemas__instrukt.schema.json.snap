@@ -290,7 +290,9 @@ expression: "String::from_utf8(bytes).unwrap()"
       "additionalProperties": false
     },
     "company_repository": {
-      "type": "boolean"
+      "type": "boolean",
+      "default": false,
+      "description": "On, declares the repository a company's: its documentation is the company's knowledge, read and rendered as a company's (project/instrukt/spec/feature/configuration/company-homes, The home). Off, it is a project like any other."
     },
     "regenerable": {
       "type": "array",
