@@ -13,10 +13,7 @@ format:
 	cargo fmt --all
 
 lint:
-	shellcheck -x scripts/*.sh scripts/dev-instrukt scripts/instrukt-for-checks .githooks/*
-	cargo fmt --all -- --check
-	cargo clippy --workspace --all-targets --locked -- -D warnings
-	scripts/check-ratchet.py
+	scripts/lint.sh
 
 # Lower the size and suppression baseline to the tree; it never raises an entry.
 ratchet:
