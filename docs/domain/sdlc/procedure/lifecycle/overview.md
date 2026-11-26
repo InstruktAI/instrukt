@@ -154,10 +154,10 @@ decision as state; record a decision given in your own conversation with
 (`--prd-approved`) you are its live orchestrator: take the claim back with
 `instrukt todo work <slug>` from `<slug>/work` (or keep it while you still hold
 it) and continue at once; do not wait for the runner. A `kind: task` has no
-`<slug>/work`: after `--task-approved`, leave its claim released, because the
-runner dispatches `task-runner` on schedule only to an unclaimed task. Runner
-wake-up of an orchestrator serves a decision that arrives elsewhere, such as on
-GitHub, while your conversation is idle.
+`<slug>/work`: after `--task-approved`, leave its claim released for the
+scheduled `task-runner` dispatch. Runner wake-up of an orchestrator serves a
+decision that arrives elsewhere, such as on GitHub, while your conversation is
+idle.
 <!-- /planned:in-thread-orchestrator-self-resume -->
 
 ## Preconditions

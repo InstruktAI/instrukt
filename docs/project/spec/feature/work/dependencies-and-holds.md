@@ -78,6 +78,21 @@ starting any session. `claim.held` exposes that claim. Session identities are
 retained only in per-todo, per-role bindings. A dispatch hold pauses automatic
 pickup without establishing or transferring the claim.
 
+<!-- planned:in-thread-orchestrator-self-resume -->
+A todo's recorded orchestrator is its latest driver binding for the
+orchestrator role that has not failed. That binding's own native session
+re-enters through `instrukt todo work <slug>` without `--placement-evidence`
+when it calls on the same computer, under the selected runtime the binding
+recorded, from the binding's worktree on its branch: the same binding is
+reopened with its key, attempt, title and worktree, and that session holds the
+todo's claim. A claim on this computer that no session holds yet passes to that
+session, and the todo is then no longer offered for automatic pickup. Any other
+caller — another session, a caller with no native session, an orchestrator a
+later binding superseded, or one outside the binding's worktree or branch —
+still supplies placement evidence, and a claim held by another session or
+computer refuses entry, leaving the record unchanged.
+<!-- /planned:in-thread-orchestrator-self-resume -->
+
 `instrukt todo update <slug> --hold --reason <reason>` sets a hold with its
 source, causal reason, time and recording session. A missing or blank reason
 is refused. An automatic hold records the cause that produced it, such as a
@@ -133,6 +148,37 @@ belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
   But when filing the work under that todo is refused
   Then the documentation still belongs to the original todo
 ```
+
+<!-- planned:in-thread-orchestrator-self-resume -->
+### UC-DH4: A developer's orchestrator continues in its own conversation after they approve there
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim to wait for their approval
+  When the developer approves in that orchestrator's conversation
+  And the orchestrator picks the todo up again from its worktree without placement evidence
+  Then the orchestrator holds the todo's claim under its same recorded assignment and worktree
+  And the todo is no longer offered for automatic pickup
+```
+
+### UC-DH5: A resuming orchestrator takes over the runner's pending claim on its todo
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim
+  And the runner on the same computer claimed the todo but has not given it to a conversation
+  When the orchestrator picks the todo up again from its worktree without placement evidence
+  Then the orchestrator holds the todo's claim under its same recorded assignment
+  And the todo is no longer offered for automatic pickup
+```
+
+### UC-DH6: Only the recorded orchestrator resumes without placement evidence
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim
+  When another conversation picks the todo up from that worktree without placement evidence
+  Then the pickup is refused
+  And the todo stays unclaimed with its recorded assignment unchanged
+```
+<!-- /planned:in-thread-orchestrator-self-resume -->
 
 ## Known caveats
 
