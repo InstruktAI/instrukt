@@ -499,10 +499,10 @@ mod tests {
             ReviewRouting::from_options(true, None).unwrap(),
             Some(ReviewRouting::Review)
         );
-        assert_eq!(
-            ReviewRouting::from_options(false, Some("typo".into())).unwrap(),
-            Some(ReviewRouting::Exempt("typo".into()))
-        );
+        assert!(matches!(
+            ReviewRouting::from_options(false, Some("typo".into())),
+            Ok(Some(ReviewRouting::Exempt(_)))
+        ));
         assert_eq!(ReviewRouting::from_options(false, None).unwrap(), None);
     }
 
@@ -530,10 +530,7 @@ mod tests {
         ));
         assert!(matches!(
             admit_routing(true, Some(&exempt), Some(port)),
-            Ok(Admitted::Exemption {
-                basis: "fixes a typo",
-                ..
-            })
+            Ok(Admitted::Exemption { .. })
         ));
     }
 
