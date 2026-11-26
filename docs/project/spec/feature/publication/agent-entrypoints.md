@@ -60,11 +60,13 @@ section, in order:
    closure: its transitive required reads, each before the snippet that
    requires it. The traversal order is kept: each snippet sits under the
    `# <Domain>` heading of the domain it belongs to, so an `sdlc` snippet
-   that `general`'s `expanded` selects sits under `# Sdlc`, not `# General`,
+   that a project snippet requires sits under `# Sdlc`, not `# Project`,
    and when the traversal moves to a snippet of another domain a heading for
    that domain opens there — a domain's heading appears again when the
-   traversal returns to it (`general/A`, then `sdlc/B`, then `general/C`
-   renders `# General`, `# Sdlc`, `# General`). Order is never changed to
+   traversal returns to it (`project/A`, then `sdlc/B`, then `project/C`
+   renders `# Project`, `# Sdlc`, `# Project`). `general`'s index names only
+   `general` snippets, so a global file's always-on section stays under
+   `# General`. Order is never changed to
    group a domain's snippets together. Every heading of a rendered
    snippet is demoted one level, except inside fenced code; an H6 stays H6.
 3. **Listed.** One listing line per id in `listed`, leading to
@@ -405,13 +407,13 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   resolve. `@config` directives resolve against the publishing project's
   effective configuration. A global file that keeps a reference left for an
   agent program to resolve is written as rendered, and the sync reports a
-  finding naming the file and the reference and goes on: `general`'s
-  `expanded` can bring in a snippet another project published, which this
-  sync does not validate again, and one such snippet stops no other file
+  finding naming the file and the reference and goes on: a domain's
+  `description` line comes from what another project published, which this
+  sync does not validate again, and one such line stops no other file
   (`general/policy/agent-artifact-governance`: a global file with such a
   reference is written as rendered and named, and the sync goes on;
   `general/principle/trust-and-guardrails`: the next sync rebuilds the file
-  once the snippet is corrected, so a refusal would guard nothing).
+  once the source is corrected, so a refusal would guard nothing).
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
@@ -587,7 +589,6 @@ Then each configured agent runtime with an established native loader receives th
 And each of those files carries the line that names it as generated
 And every configured instance without an established loader or home is named with its non-delivery reason
 And the text the other tool wrote is gone
-And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
 And the always-on doctrine's own triggered procedure and subscribed procedure appear in the global file
 And the on-demand domain's triggered procedures and subscribed procedures are absent from the global file

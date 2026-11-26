@@ -29,7 +29,41 @@ fn stderr(env: &TestEnv, assert: &Assert) -> String {
 const CARE: &str = "- acme/principle/care";
 const RULES: &str = "- acme/policy/rules";
 const TERMS: &str = "- acme/concept/terms";
-const BETA: &str = "- beta";
+const GENERAL: &str = "- general";
+
+/// Project `platform`, committed and published: it owns `general`, whose
+/// index expands one spec that `acme`'s procedures read by domain name.
+fn publish_general(env: &TestEnv) {
+    let platform = project(
+        env,
+        "platform",
+        &[
+            (
+                "docs/general/spec/ground.md",
+                snippet(
+                    "spec",
+                    "Ground",
+                    "What every domain stands on.",
+                    "",
+                    &[],
+                    "### Detail\n\nThe ground.\n",
+                ),
+            ),
+            (
+                "docs/general/index.yaml",
+                "expanded: [general/spec/ground]\n".to_owned(),
+            ),
+        ],
+    );
+    sync(env, &platform);
+}
+
+/// Project `demo` with `files` committed, on a computer where `general` is
+/// published.
+fn demo_project(env: &TestEnv, files: &[(&str, String)]) -> Repo {
+    publish_general(env);
+    project(env, "demo", files)
+}
 
 /// What project `demo` documents: three domains (`acme` and `beta` with an
 /// index, `gamma` without), a third-party doc and two local snippets.
@@ -70,7 +104,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "Work",
                 "How the work is done.",
                 "activation_trigger: When work arrives.\n",
-                &[RULES, BETA],
+                &[RULES, GENERAL],
                 "Work.\n",
             ),
         ),
@@ -81,7 +115,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
                 "Start",
                 "Starts a session.",
                 "role: starter\n",
-                &[RULES, TERMS, BETA],
+                &[RULES, TERMS, GENERAL],
                 "Start.\n",
             ),
         ),
@@ -145,7 +179,7 @@ fn demo_files() -> Vec<(&'static str, String)> {
 
 /// Project `demo`, committed and published.
 fn published_demo(env: &TestEnv) -> Repo {
-    let demo = project(env, "demo", &demo_files());
+    let demo = demo_project(env, &demo_files());
     sync(env, &demo);
     demo
 }
@@ -375,9 +409,9 @@ fn an_agent_asking_for_what_is_not_there_is_told_so() {
 }
 
 /// Procedures with root frontmatter whose closures must refuse: one
-/// requires a pending snippet, one requires what another project stops
-/// publishing ([`ABSENT`]); and an overview requiring a pending snippet,
-/// whose closure leaves it out.
+/// requires a pending snippet, one of the project requires what another
+/// project stops publishing ([`ABSENT`]); and an overview requiring a
+/// pending snippet, whose closure leaves it out.
 fn refused_files() -> Vec<(&'static str, String)> {
     vec![
         (
@@ -392,7 +426,7 @@ fn refused_files() -> Vec<(&'static str, String)> {
             ),
         ),
         (
-            "docs/domain/acme/procedure/broken.md",
+            "docs/project/procedure/broken.md",
             snippet(
                 "procedure",
                 "Broken",
@@ -438,7 +472,7 @@ fn published_closures(env: &TestEnv) -> Repo {
     let absent = env.instrukt_home().join(ABSENT);
     std::fs::create_dir_all(absent.parent().unwrap()).unwrap();
     std::fs::write(&absent, "published elsewhere\n").unwrap();
-    let demo = project(env, "demo", &files);
+    let demo = demo_project(env, &files);
     sync(env, &demo);
     std::fs::remove_file(&absent).unwrap();
     demo
@@ -460,9 +494,9 @@ fn an_agent_starts_a_procedure_with_everything_it_requires_in_one_read() {
     let env = TestEnv::new();
     let demo = published_closures(&env);
 
-    // `start` requires `rules`, `terms` and domain `beta`; both snippets
-    // require `care`, which the closure holds once, and `beta` brings its
-    // expanded `thing`.
+    // `start` requires `rules`, `terms` and domain `general`; both snippets
+    // require `care`, which the closure holds once, and `general` brings
+    // its expanded `ground`.
     let closure = env
         .run(
             demo.path(),
@@ -490,7 +524,7 @@ fn a_closure_whose_required_read_cannot_be_read_is_refused_naming_it() {
     let demo = published_closures(&env);
     insta::assert_snapshot!(
         "closure-refused-unreadable",
-        refused_closure(&env, &demo, "acme/procedure/broken")
+        refused_closure(&env, &demo, "project/demo/procedure/broken")
     );
 }
 
@@ -548,7 +582,7 @@ fn an_agent_reads_a_domain_with_what_it_shows_in_full_and_what_it_lists() {
     let demo = published_demo(&env);
 
     // `acme` expands `work`, which requires `rules` (requiring `care`) and
-    // domain `beta`; it lists `terms` and has the triggered `greet`.
+    // domain `general`; it lists `terms` and has the triggered `greet`.
     let read = env
         .run(demo.path(), ["docs", "get", "--domain", "acme"])
         .success();
@@ -583,7 +617,7 @@ fn an_agent_reading_a_reserved_name_as_a_domain_is_told_the_valid_ones() {
 #[test]
 fn an_agent_finds_where_a_domain_is_authored() {
     let env = TestEnv::new();
-    let demo = project(&env, "demo", &demo_files());
+    let demo = demo_project(&env, &demo_files());
     demo.git([
         "remote",
         "add",
@@ -839,7 +873,7 @@ fn published_linked_demo(env: &TestEnv) -> Repo {
         "docs/project/index.yaml",
         "expanded: [project/demo/spec/feature/x]\n".to_owned(),
     ));
-    let demo = project(env, "demo", &files);
+    let demo = demo_project(env, &files);
     sync(env, &demo);
     demo
 }
