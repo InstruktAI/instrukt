@@ -230,12 +230,13 @@ state database migrates to hold it. In each adopted repository run
 hook manager) so the `pre-commit` section exists.
 
 A commit made without the hook, from a web editor or a bot, keeps an older
-project layer. `instrukt config validate` reports it, exiting non-zero; to catch
-it, add that command to the repository's own CI, run inside the checkout with a
-throwaway machine layer that makes the project's configuration valid, written
-from outside the checkout (`scripts/check-committed-config.sh` is instrukt's
-own). A repository whose project layer still names an older schema needs one
-commit through the hook, or `instrukt config init`, before that check passes.
+project layer. `instrukt config validate` judges it as converted in memory and
+notes its pending conversion on stderr without failing; the next commit through
+the hook, or `instrukt config init`, converts the file. To catch a project
+layer that is invalid, names a newer schema or names none, add that command to
+the repository's own CI, run inside the checkout with a throwaway machine layer
+that makes the project's configuration valid, written from outside the checkout
+(`scripts/check-committed-config.sh` is instrukt's own).
 
 ### Dependency-update CI observation
 

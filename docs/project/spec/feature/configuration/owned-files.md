@@ -60,8 +60,12 @@ into the commit being made, and the `instrukt config` writing verbs a developer
 runs convert it in their checkout. Every other path, checkout rendering, the hooks
 that run after a commit, publication, installation convergence and ticks among
 them, converts it in memory and leaves the file as committed.
-`instrukt config validate` reports a committed project layer older than the
-binary's schema as a finding, so a commit that bypassed the hook is caught in CI.
+`instrukt config validate` judges a committed project layer older than the
+binary's project schema as converted in memory and reports its pending
+conversion as a notice, never a finding, so a release that knows a newer
+project schema validates a repository that has not converted yet
+(`sdlc/policy/backward-compatibility-hygiene`: a shape read across a
+multi-version fleet moves once its slowest reader has caught up).
 Every write to a configuration layer, a conversion or an
 `instrukt config` writing verb, keeps the document's text outside the top-level
 keys it changes, comments and formatting included. A conversion

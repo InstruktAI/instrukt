@@ -1201,7 +1201,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
     // The home's document was written by an older instrukt, and it orders
     // its sessions' profiles.
     let document = company.join("instrukt.yaml");
-    let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    let older = instrukt_core::config::COMPANY_SCHEMA_VERSION - 1;
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     std::fs::write(
         &document,
@@ -1251,7 +1251,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         serde_yaml_ng::from_slice(&std::fs::read(&document).unwrap()).unwrap();
     assert_eq!(
         stored["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+        Some(instrukt_core::config::COMPANY_SCHEMA_VERSION)
     );
     // Each agent's assignment, as instrukt resolves it for that session,
     // names the home it works in; only the company agent's names a company.
