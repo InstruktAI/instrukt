@@ -12,6 +12,7 @@ github:
   api_url: https://api.github.com
 runner:
   autostart: false
+  archive_finished_after: 'off'
   runtime: t3
 runtimes:
   t3:
