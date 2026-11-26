@@ -25,6 +25,7 @@ listed:
   - general/spec/snippet-authoring-schema
   - general/spec/third-party-docs
   - general/concept/failure-modes
+  - general/concept/application-placement
   - general/design/peer-discussion
   - general/policy/grounding
   - general/policy/orchestrator-jurisdiction
