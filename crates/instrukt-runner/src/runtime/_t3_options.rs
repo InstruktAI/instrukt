@@ -182,6 +182,11 @@ mod tests {
             json!({"instanceId":"claudeAgent","model":"claude-opus-5-5","options":[
                 {"id":"effort","value":"high"},{"id":"fastMode","value":true}]})
         );
+    }
+
+    // Kills: a launch sending an options list for a selection that has none.
+    #[test]
+    fn a_launch_without_effort_or_settings_sends_no_options() {
         assert_eq!(
             model_selection(&opus(None, json!({}))),
             json!({"instanceId":"claudeAgent","model":"claude-opus-5-5"})
@@ -206,16 +211,16 @@ mod tests {
         assert_eq!(problems.len(), 3, "{problems:?}");
     }
 
-    // Kills: refusing options the model takes, or a model T3 reports no descriptors for.
+    // Kills: refusing an effort and setting the model's descriptors offer.
     #[test]
-    fn a_launch_is_admitted_with_options_the_model_takes_or_cannot_check() {
-        assert!(
-            admit(
-                &provider(),
-                &opus(Some(Effort::High), json!({"fastMode": true}))
-            )
-            .is_ok()
-        );
+    fn a_launch_is_admitted_with_options_the_model_takes() {
+        let selection = opus(Some(Effort::High), json!({"fastMode": true}));
+        assert!(admit(&provider(), &selection).is_ok());
+    }
+
+    // Kills: refusing options for a model T3 reports no option descriptors for.
+    #[test]
+    fn a_launch_is_admitted_unchecked_for_a_model_without_descriptors() {
         let mut custom = opus(Some(Effort::Ultra), json!({}));
         custom.model = "claude-custom".into();
         assert!(admit(&provider(), &custom).is_ok());
