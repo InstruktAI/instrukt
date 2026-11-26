@@ -38,13 +38,13 @@ own and is no layer.
 company's repository, `company-<name>` in the owning organisation, whose
 documentation is the company's knowledge. It is a project like any other in
 every other respect.
-
 <!-- planned:company-home-integration -->
 **Company identity**
 : The company a company repository belongs to, declared in its committed
 project layer: the key its `project` carries after `company-`, and the name
 people write the company by, `company_name`.
 <!-- /planned:company-home-integration -->
+
 
 **Owning organisation**
 : The GitHub organisation the global key `github.org` names, which owns every
@@ -152,8 +152,9 @@ Adding a company extends this boundary
   home's settings document to `company.yaml`.
 <!-- planned:company-home-integration -->
 - **Owns** (company identity) — the company identity a company repository's
-  project layer declares, its keys' grammar, its findings and the operation
-  that reads it from a project-layer document, which publication takes.
+  project layer declares, its keys' grammar, its finding with the admission it
+  withholds, and the operation that reads it from a project-layer document,
+  which publication takes.
 <!-- /planned:company-home-integration -->
 - **Does not own** — creating the repository, composing its first commit,
   checking it out and installing its hook sections (repository,
@@ -259,19 +260,22 @@ JSON.
   value is a finding naming the key.
 <!-- planned:company-home-integration -->
 - **The company identity:** a company repository's project layer declares
-  which company it is. The key is its `project` without the `company-` prefix,
-  the inverse of the repository name generation gives
-  (`company-<name>`); the name people write the company by is
-  `company_name`, one line of text that is not blank. `company_name` is a
-  project-only key and is valid only beside `company_repository: true`. A
-  company repository whose `project` does not have the form `company-<key>`
-  with a key of a company key's grammar, or whose layer holds no valid
-  `company_name`, has no company identity: that is a finding naming the key
-  and its repair, an `instrukt config patch` of the project layer. The
+  which company it is. The key is its `project` without the `company-`
+  prefix, the inverse of the repository name generation gives
+  (`company-<name>`); the name people write the company by is `company_name`,
+  one line of text that is not blank. `company_name` is project-only and valid
+  only beside `company_repository: true`. A company repository whose
+  `project` does not have the form `company-<key>` with a key of a company
+  key's grammar, or whose layer holds no valid `company_name`, has no company
+  identity. That is a finding naming the key and its repair, an `instrukt
+  config patch` of the project layer; it is reported by `instrukt config
+  validate`, a patch that would leave it is refused, and it withholds the
+  company home's automatic-review admission (Automatic review enablement,
+  `project/instrukt/spec/feature/configuration/layered-configuration`), so no
+  proposal, review or candidate of the home runs without an identity. The
   identity is read from the committed document, so a clone and a candidate
-  read the same identity as the home; it is the only source a company plugin
-  rendering takes the key and the name from
-  (`project/instrukt/spec/domain/publication`).
+  read what the home reads, and it is the only source of the key and the name
+  a company plugin rendering takes (`project/instrukt/spec/domain/publication`).
 <!-- /planned:company-home-integration -->
 
 ### Domain events emitted

@@ -14,15 +14,16 @@ posted back. It keeps that state in the conversation tables of the state
 database. It does not own the company home and its settings (configuration), the
 running of agent sessions and the relay of finished turns (runner), or the
 state database's file and migrations (work).
-
 <!-- planned:company-home-integration -->
 It also records each knowledge proposal: a commit a conversation session
-makes in its company's repository, with the speaker of the turn it was made
-in. From those records it answers whether every commit of a head was asked
-for by an administrator of the company, so an administrator's knowledge
-change is carried to review and integration with no person moving it, while
-anyone else's waits for a person.
+makes in its company's repository in a turn whose speaker the connector
+recorded as an administrator of the company. From those records and the
+repository it answers whether a head is an admitted proposal, so an
+administrator's change to the company's knowledge is carried to review and
+integration with no person moving it, while every other change waits for a
+person.
 <!-- /planned:company-home-integration -->
+
 
 ## Canonical fields
 
@@ -75,36 +76,46 @@ anyone else's waits for a person.
 - **Identifier:** Company and declared connector name.
 - **Lifecycle:** Declared in the company home under `connectors.<name>`; hosted
   while `instrukt run` runs; ends when the declaration is removed.
-
 <!-- planned:company-home-integration -->
 #### Knowledge proposal
 
 - **Root entity:** One commit a company's conversation session made in that
-  company's repository.
+  company's repository, in a turn whose speaker the connector recorded as an
+  administrator of the company.
 - **Contains:** The commit; the branch it was made on; the connector, the
-  conversation and the session; the speaker of the turn it was made in, by
-  the provider identity and the name the connector supplied; whether the
-  connector recorded that speaker as an administrator of the company with the
-  addressed message that opened the turn; and when it was recorded.
-- **Invariants:** A proposal is recorded only by instrukt, while the commit is
-  made, from the speaker of the session's turn in progress, through the same
-  speaker lookup every speaker decision of this context uses (the
-  administrator check of a company agent's own MCP configuration among them).
-  No commit message, procedure text or anything the agent writes makes a
-  commit a proposal or makes its speaker an administrator. A commit made
-  outside a turn with a speaker, made where instrukt's hook section did not
-  run, or whose speaker cannot be established is no proposal. A head is an
-  admitted proposal only when every commit it adds to the company's canonical
-  branch is a proposal whose speaker was an administrator: one commit that is
-  not leaves the whole head waiting for a person.
+  conversation and the session; the speaker, by the provider identity and the
+  name the connector supplied, and whether the turn was in a direct message;
+  when it was recorded. An unestablished commit holds the same facts but the
+  speaker, and the cause the speaker could not be established.
+- **Invariants:**
+  - A proposal is recorded only by instrukt, while the commit is made, from
+    the speaker of the session's turn in progress, through the speaker lookup
+    every speaker decision of this context uses. No commit message, procedure
+    text or anything the agent writes makes a commit a proposal.
+  - An administrator is admitted in a direct message and in a channel alike.
+  - A commit made in a turn whose speaker is no administrator, or with no
+    speaker (a session bound to no conversation of the company, or a turn
+    whose opening input carries no member envelope), is not recorded and is
+    no proposal.
+  - A commit whose speaker cannot be established, because the runtime or the
+    state database does not answer within the commit's wait, is recorded as
+    unestablished with its cause. An unestablished commit is no proposal, and
+    the runner reports it to the operator while it stands on a branch.
+  - A head is an admitted proposal only when every commit it adds to the
+    company's canonical branch is a proposal, and everything it adds changes
+    only the company's knowledge: regular files under `docs/` other than the
+    compressed units (`project/instrukt/spec/feature/configuration/company-homes`,
+    The home, Company knowledge) and the root `AGENTS.md`. One commit or one
+    path outside that leaves the whole head waiting for a person.
 - **Identifier:** Company and commit.
 - **Lifecycle:** Recorded when a company's conversation session commits in its
-  company's repository, by the repository's `post-commit` hook section through
+  company's repository, by the repository's `post-commit` hook run through
   this context's recording operation
-  (`project/instrukt/spec/domain/repository`). Retired at a later recording in
+  (`project/instrukt/spec/domain/repository`). Retired by a later recording in
   that repository once its commit is contained in the canonical branch or no
-  ref of the repository holds it.
+  remote-tracking branch holds it.
 <!-- /planned:company-home-integration -->
+
 
 ## Ubiquitous language
 
@@ -130,18 +141,19 @@ anyone else's waits for a person.
 **Speaker**
 : The company member whose addressed message started a conversation session's
   current turn.
-
 <!-- planned:company-home-integration -->
 **Knowledge proposal**
 : A commit a company's conversation session made in its company's
-  repository, recorded with the speaker of the turn it was made in.
+  repository in a turn whose speaker the connector recorded as an
+  administrator of the company.
 
 **Admitted proposal**
 : A head every commit of which, added to the company's canonical branch, is a
-  knowledge proposal whose speaker the connector recorded as an administrator
-  of the company. Only an admitted proposal is carried to review and
-  integration with no person moving it.
+  knowledge proposal, and which changes nothing but the company's knowledge.
+  Only an admitted proposal is carried to review and integration with no
+  person moving it.
 <!-- /planned:company-home-integration -->
+
 
 ## Ownership boundary
 
@@ -200,37 +212,35 @@ anyone else's waits for a person.
 <!-- planned:company-home-integration -->
 Knowledge proposals extend this boundary:
 
-- **Owns:** which commits are knowledge proposals and their record; the rule
-  that admits a proposal, administrators only, as the connector recorded the
-  speaker; the answer, for a range of commits, whether every one is a
-  proposal of an administrator; and which recorded proposals stand on a
-  branch not yet integrated.
-- **Does not own:** the hook section that runs at a commit and when it runs
-  (repository); whether a head is reviewed, its verdict and the review
-  evidence (runner and work); opening a proposal's pull request and handing an
-  approved one to the integrator (runner, through work's GitHub boundary,
-  `project/instrukt/spec/feature/runner/pull-request-review`); composing,
-  rendering and promoting the candidate (workflow and the integrator).
+- **Owns:** which commits are knowledge proposals and their record, the
+  unestablished commits included; the admission rule, administrators only and
+  the company's knowledge only, and its answer for a head.
+- **Does not own:** what the company's knowledge is (configuration,
+  `project/instrukt/spec/feature/configuration/company-homes`); the hook run
+  at a commit (repository); reporting to the operator, opening a proposal's
+  pull request and handing an approved one to the integrator (runner); the
+  review and its evidence (runner and work); the candidate (workflow and its
+  integrator).
 - **Published contracts:**
-  - The proposal recording operation, which the `post-commit` section invokes
-    through an interface core declares and the CLI wires. It records nothing
-    for a session bound to no conversation of the company whose repository it
-    commits in, and refuses nothing: an unrecorded commit is no proposal.
-  - The proposal lookups the runner takes, wired by the CLI: the recorded
-    proposals of a company that stand on a branch, with that branch; and, for
-    the commits a head adds to the canonical branch, whether every one is a
-    proposal whose speaker was an administrator.
-- **State:** the company's proposal record, one state file in the home's
-  local state, `.instrukt/knowledge-proposals.yaml`, kept out of the
-  repository by the home's ignore lines.
+  - The proposal recording operation, which the `post-commit` hook run
+    invokes through an interface core declares and the CLI wires. It never
+    refuses or fails the commit.
+  - The proposal lookups, declared by runner, implemented by this context and
+    wired by the CLI, as the conversation assignment lookup is: the heads of
+    branches whose commits include a recorded proposal, with their branches;
+    whether a head is an admitted proposal; and the unestablished commits
+    standing on a branch, with their causes.
+- **State:**
 
-  | Nature | Owner | Loss cost | Medium and isolation | Scope and lifecycle |
-  | --- | --- | --- | --- | --- |
-  | Authoritative: who asked for each commit, learned only while the turn is in progress and never recoverable afterwards. | This context; written only by its recording operation. | Lost intent, failing closed: an administrator's pending proposal is no longer admitted and waits for a person, as a non-administrator's does. | A state file: it holds the proposals of branches not yet integrated, is read whole or by commit and is never queried across. Written whole beside the previous version and renamed over it, under `.instrukt/knowledge-proposals.lock`, by recordings that take turns; readers take no lock. No background writer and no wait of a caller but the commit being made shares that lock. | The company's home: it moves with the home, its container's exported state included. Bounded by the proposals not yet integrated; each recording first retires the entries its repository no longer needs. |
+  | Store | Nature | Owner | Loss cost | Medium and write isolation | Scope, bound and retirement |
+  | --- | --- | --- | --- | --- | --- |
+  | `.instrukt/knowledge-proposals.db` in the company's home, kept out of the repository by the home's ignore lines | Authoritative: who asked for each commit, learned only while the turn is in progress. | This context; written only by its recording operation. | Lost intent, failing closed: an administrator's pending proposal is no longer admitted and waits for a person. | A database of its own: several recording processes write it at once, one per committing conversation session, and it is read by commit and by branch. Its file is its write-isolation unit; its only writers are recordings a commit waits on, no background writer shares it, and the runner reads it without writing. | The company's home, moving with it, its container's exported state included. Bounded by the administrator-asked commits on branches the remote still holds that the canonical branch does not contain; each recording retires the entries outside that bound. A store of an older shape is migrated, never discarded; an unreadable one is reported and left as it is, since nothing rebuilds it. |
+
 - **Allowed dependencies:** runner supplies the session's turn in progress, as
   for the speaker lookup; the repository's own git answers containment and
   refs.
 <!-- /planned:company-home-integration -->
+
 ## Event subjects and origins
 
 The company context emits no events.
@@ -264,11 +274,11 @@ The company context has no governing design or decision record of its own.
   writer lock and migrations.
 <!-- planned:company-home-integration -->
 - **Repository** — customer / supplier: this context supplies the proposal
-  recording operation that repository's `post-commit` hook section invokes.
-- **Runner** (knowledge proposals) — customer / supplier: this context
-  supplies the proposals standing on a branch and whether a head is an
-  admitted proposal; the runner opens the proposal's pull request and hands
-  an approved admitted proposal to the integrator.
+  recording operation the `post-commit` hook run invokes.
+- **Runner** (knowledge proposals) — customer / supplier: runner declares the
+  proposal lookups and this context implements them; the runner opens the
+  proposal's pull request, reports unestablished commits and hands an
+  approved admitted proposal to the integrator.
 <!-- /planned:company-home-integration -->
 - **Channel providers** — anti-corruption layer: each connector translates its
   provider's messages into conversation turns and answers back, at the

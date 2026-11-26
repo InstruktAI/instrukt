@@ -55,18 +55,18 @@ workflow stores it nowhere. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
 request.
-
 <!-- planned:company-home-integration -->
 A rendering of the repository's agent material is reproduced by asking
-publication to render the parent commit's tree and comparing the result with
-the commit's tree. What that material holds — in a company home, its
-`AGENTS.md` and the company's skill with its catalog entry — and how it is
-rendered are publication's; workflow compares trees and judges no content.
-The repositories whose rendering commits coverage recognises are named by the
-integration gate's rule
+publication's one rendering operation to render the parent commit's tree and
+comparing the result with the commit's tree. What that material holds, and
+how it is rendered, are publication's
+(`project/instrukt/spec/domain/publication`); workflow compares trees and
+judges no content. Which repositories' rendering commits coverage recognises
+is stated by the integration gate's rule
 (`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
 a candidate).
 <!-- /planned:company-home-integration -->
+
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -119,7 +119,7 @@ there, never by reading through delivered work.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
 <!-- planned:company-home-integration -->
 - **Runner → workflow (knowledge proposals):** runner routes `runner.proposal_approved` to a company home's standing `integrator`, naming the exact approved head to compose.
-- **Publication → workflow (review coverage):** publication supplies the rendering of a tree's agent material, from which coverage reproduces a rendering commit.
+- **Publication → workflow (review coverage):** publication supplies its one operation rendering a tree's agent material, from which coverage reproduces a rendering commit.
 <!-- /planned:company-home-integration -->
 
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
