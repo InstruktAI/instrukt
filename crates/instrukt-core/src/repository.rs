@@ -28,7 +28,7 @@ pub use _adoption::{
     GENERATED_FILE, InitPart, InitReport, KEPT_INSTRUCTIONS, KeptInstructions, NotWritten,
     PROJECT_DOCS, PartOutcome, init,
 };
-pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
+pub use _commit::{CommitRequest, OWNED_TRAILERS, ReviewRouting, commit};
 pub use _company::{
     CompanyOrigin, CompanyPorts, CompanyReport, CompanyRequest, CompanySync, adopt_company,
 };

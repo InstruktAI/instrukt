@@ -7,7 +7,8 @@
 //! means the module is off, and the core context behaves as the spec says
 //! for that case.
 //!
-//! Implementors: [`TodoExistence`] — work (`instrukt_todos::work`);
+//! Implementors: [`TodoExistence`] and [`CommitExemption`] — work
+//! (`instrukt_todos::work`);
 //! [`FlavorRoles`] — workflow (`instrukt_todos::workflow`); [`FlavorSchema`]
 //! — workflow's `WorkflowSchema`, always wired; [`GraphGeneration`] —
 //! blueprint (`instrukt_blueprint`); [`ConfiguredAgentRuntimes`] — the
@@ -50,6 +51,21 @@ pub struct InterfaceError {
 /// for `Todo:` / `Planned-Todo:` trailers.
 pub trait TodoExistence: Send + Sync {
     fn todo_exists(&self, project: &ProjectSlug, slug: &TodoSlug) -> Result<bool, InterfaceError>;
+}
+
+/// Records a commit's exemption from independent review through work's
+/// admission of review evidence (`project/instrukt/spec/feature/work/github-apps`,
+/// Admission of review evidence), for the project the caller stands in. Used
+/// by repository for an author's no-review routing choice once the commit
+/// exists (`project/instrukt/spec/feature/repository/attributed-commit`,
+/// Review routing).
+pub trait CommitExemption: Send + Sync {
+    fn exempt(
+        &self,
+        commit: &CommitSha,
+        basis: &str,
+        caller: Option<&crate::ids::SessionRef>,
+    ) -> Result<(), InterfaceError>;
 }
 
 /// The roles of the selected workflow flavor (workflow, through the `todos`
@@ -219,6 +235,7 @@ pub struct CoreWiring {
     pub github_actors: Option<Arc<dyn GitHubActors>>,
     pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
+    pub commit_exemption: Option<Arc<dyn CommitExemption>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
@@ -232,6 +249,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("github_actors", &self.github_actors.is_some())
             .field("session_role", &self.session_role.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
+            .field("commit_exemption", &self.commit_exemption.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())

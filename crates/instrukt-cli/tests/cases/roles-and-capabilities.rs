@@ -744,6 +744,7 @@ fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
         .args([
             "repo",
             "commit",
+            "--review",
             "--todo",
             "guidance",
             "--message",
