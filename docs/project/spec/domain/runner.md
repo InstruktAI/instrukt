@@ -119,6 +119,16 @@ Native agent-operation prose is supplied by configuration and rendered through `
   on it. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
 
+<!-- planned:author-recorded-review-routing -->
+**Author ask**
+: The runner's notice to the authoring session of a commit that holds the
+  active integration candidate uncovered, asking it to decide whether the
+  commit owes review; sent once per commit and session through the session's
+  input delivery. It is no review request
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+  candidate's authors).
+<!-- /planned:author-recorded-review-routing -->
+
 
 ## Ownership boundary
 
@@ -475,6 +485,15 @@ in data.
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 
+<!-- planned:author-recorded-review-routing -->
+`runner.candidate_held` is an occurrence with the integration branch,
+`repository_ref:<project>/origin/integrate`, as its subject.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.candidate_held` | On a project that opted in to automatic review, workflow finds the active integration candidate held and at least one of its uncovered commits has an author of ours who was asked to decide | Project, candidate commit, and each uncovered commit with the session it names and whether that session was asked or no author of ours can decide for it | Project, candidate commit: a candidate is reported held once | Workflow's subscribed integrator, told which candidate waits on whose decisions; the event authorizes nothing by itself (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held candidate's authors) |
+<!-- /planned:author-recorded-review-routing -->
+
 Fleet attention's conditions are occurrences with a todo subject in their
 project origin; which facts count, and from what point, is
 `project/instrukt/spec/feature/runner/fleet-attention`'s.
@@ -615,6 +634,7 @@ Fleet attention adds these crossings
 | work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 
+<!-- planned-change:author-recorded-review-routing -->
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
@@ -626,6 +646,23 @@ session it reached and pinned base, with the input that opened the turn a
 session has in progress when it offers a revision, and with a named session's
 conversation
 (`project/instrukt/spec/domain/context-map`).
+<!-- change:author-recorded-review-routing -->
+For automatic review the runner asks its suppliers and derives none of their
+answers: work says whether a pull request is a todo's, whether a commit carries
+a verdict and whether both identities are ready, and workflow says whether the
+active candidate's content is covered and, for a held candidate, which
+uncovered commits wait on which session's decision and whether the candidate
+owes its own review. Through work's command contract the
+runner records or withdraws a derived approval and has outstanding verdicts published,
+handing over the eligible pull requests it observed at each head. It supplies
+work with a commit's review requests, each with its number, standing, the
+session it reached and pinned base, with the input that opened the turn a
+session has in progress when it offers a revision, and with a named session's
+conversation; it supplies workflow with whether the selected runtime holds a
+named session. For a held candidate it sends each author ask through its input
+delivery and tells the integrator with `runner.candidate_held`
+(`project/instrukt/spec/domain/context-map`).
+<!-- /planned-change:author-recorded-review-routing -->
 
 
 For a requested review the runner asks work whether the head's verdict stands

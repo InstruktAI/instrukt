@@ -238,6 +238,75 @@ workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests take
 the standings and dispositions above and repeat as above.
 
+<!-- planned:author-recorded-review-routing -->
+### Asking a held candidate's authors
+
+Workflow finds the active candidate held when a commit it adds is not covered,
+and decides which of its uncovered commits have an author of ours who can
+decide (`project/instrukt/spec/feature/workflow/integration-gate`, Review
+coverage of a candidate). The runner supplies one fact to that decision and
+carries out what follows it.
+
+| Named session | The runner's answer, from one bounded read of the selected runtime per distinct session and derivation (`project/instrukt/spec/feature/runner/session-continuity`, Adapter primitives) |
+| --- | --- |
+| Held | The selected runtime reports the session in any state other than gone, busy or waiting on a person included. |
+| Not held | The session is named for another runtime than the selected one, or the selected runtime reports it gone: unknown to it, archived or deleted. |
+| Cannot say | The runtime cannot be reached or its answer is an observation error. |
+
+While the runtime cannot say for a named session, the runner asks no author,
+tells the integrator nothing and asks for no review of the candidate on that
+account; the next tick derives again, and the outage is reported to the
+operator through `instrukt events status`
+(`project/instrukt/policy/checks-and-guards`).
+
+Each uncovered commit's session that workflow names to be asked is sent one
+ask, a runner-authored `[Instrukt Notification]`
+(`project/instrukt/spec/feature/runner/conversation-links`) delivered through
+the session's input delivery, the route approval attention uses
+(`project/instrukt/spec/feature/runner/session-continuity`, Approval
+attention), under the delivery rules of
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. The runner
+renders it in one fixed wording from the project, the candidate, the commit
+and its pinned base, and it names `general/policy/commits` and the two ways to
+decide: `instrukt review exempt --commit <commit> --basis <basis>`, or asking
+for the independent review of a head that contains the commit
+(`project/instrukt/spec/feature/runner/requested-review`). It carries no text
+any agent wrote.
+
+An ask's identity is made of the project, the commit and the session. It is
+recorded in the state database's input delivery, with its rendered content,
+before anything reaches the runtime
+(`project/instrukt/spec/feature/work/state-database`), so a later derivation
+that finds the same commit uncovered finds the ask and sends nothing more,
+whichever candidate holds the commit then. A session asked for several commits
+receives one ask per commit. An ask whose session the runtime reports gone
+before it is delivered is closed undeliverable under delivery's rule; the next
+derivation finds that the commit has no author of ours who can decide.
+
+| Ask record | Value |
+| --- | --- |
+| Nature | External bookkeeping: a delivery mark of which commit's author was asked, through which input. |
+| Owner | The runner; written only by the tick's review pass, in the transaction that queues the input. |
+| Loss cost | A repeated external effect: one more ask per lost record. |
+| Medium | The state database's input delivery, beside every other input the runner sends to a session; the ask is its input, so recording one never leaves the other behind. |
+| Write isolation | The state database's writer lock, held by the tick for that one transaction per newly asked commit and session, never while it reads the runtime or GitHub. |
+| Scope | One computer: the sessions asked are its runtime's. A computer that takes over serving the project (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes) holds none of these records and asks afresh. |
+| Lifecycle | Kept while the commit needs it; retired on a runner wake-up once the canonical branch contains the commit, no branch of the project's repository reaches it any more, or a derivation finds it covered. |
+
+The integrator is told once per candidate with the fact
+`runner.candidate_held` (`project/instrukt/spec/domain/runner`): the project,
+the candidate, and each uncovered commit with the session it names and whether
+that session was asked or no author of ours can decide for it. Its occurrence
+identity is the project and the candidate, so the event log appends it once,
+however often the candidate is found held and whichever of its commits are
+still uncovered. It is emitted only while an ask is outstanding for the
+candidate, never for a candidate whose uncovered commits no author of ours can
+decide, which owes its review instead.
+
+A held candidate is owed no review, so its queued requests end (One review per
+commit).
+<!-- /planned:author-recorded-review-routing -->
+
 ### Enablement
 
 The capability is enabled per project with the project-layer setting

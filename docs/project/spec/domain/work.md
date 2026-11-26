@@ -159,9 +159,18 @@ Work also owns review evidence for exact commits that no todo's record
 carries: head verdicts, exemptions and derived approvals, their admission,
 which of them is current for a commit, their publication as the reviewer
 bot's pull-request review and review status, and their transfer to another
+<!-- planned-change:author-recorded-review-routing -->
 computer. `instrukt review record`, `exempt`, `show`, `export` and `import`
 are their published contract
 (`project/instrukt/spec/feature/work/github-apps`). Which commits are owed a
+<!-- change:author-recorded-review-routing -->
+computer. `instrukt review record`, `exempt`, `show`, `export` and `import`
+are their published contract
+(`project/instrukt/spec/feature/work/github-apps`); the exemption an author
+chooses when committing reaches the same admission from `instrukt repo commit`,
+through the core-declared interface the CLI wires
+(`project/instrukt/spec/domain/repository`). Which commits are owed a
+<!-- /planned-change:author-recorded-review-routing -->
 review and which review requests exist is the runner's decision, whether a
 candidate's content is covered is workflow's, and how a head is reviewed is its
 review procedure's.

@@ -78,6 +78,7 @@ commands.
 
 ## Ownership boundary
 
+<!-- planned-change:author-recorded-review-routing -->
 - **Owns** — repository adoption and its claims report; the copy of the
   published `sdlc` `schema.yaml` into a new project; instrukt's section in
   each hook file, its placement,
@@ -86,15 +87,37 @@ commands.
   and what each hook run starts; composition of attributed commits: author,
   trailers, refusal of caller-written trailers, canonical-branch commit refusal
   and the paths committed.
+<!-- change:author-recorded-review-routing -->
+- **Owns** — repository adoption and its claims report; the copy of the
+  published `sdlc` `schema.yaml` into a new project; instrukt's section in
+  each hook file, its placement,
+  idempotence and removal; the hook status report, including each section's
+  last run outcome and refused syncs; which hooks instrukt uses
+  and what each hook run starts; composition of attributed commits: author,
+  trailers, refusal of caller-written trailers, canonical-branch commit refusal,
+  the paths committed, and the review-routing choice the commit command takes
+  from the author and hands, when it is a no-review choice, to work as the
+  commit's exemption.
+<!-- /planned-change:author-recorded-review-routing -->
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
   `project/instrukt/spec/feature/publication/editor-schemas`); graph
   generation for a
   remote-main revision (blueprint, `project/instrukt/spec/domain/blueprint`);
+<!-- planned-change:author-recorded-review-routing -->
   the project layer's schema, the runtime choice and the agents' git authors
   (configuration, `project/instrukt/spec/domain/configuration`); a work
   item's existence (work, `project/instrukt/spec/domain/work`); the
+<!-- change:author-recorded-review-routing -->
+  the project layer's schema, the runtime choice and the agents' git authors
+  (configuration, `project/instrukt/spec/domain/configuration`); a work
+  item's existence (work, `project/instrukt/spec/domain/work`); the admission
+  and keeping of the exemption a no-review choice records, and what the
+  integration gate makes of it (work,
+  `project/instrukt/spec/feature/work/github-apps`; workflow,
+  `project/instrukt/spec/feature/workflow/integration-gate`); the
+<!-- /planned-change:author-recorded-review-routing -->
   project's lint, test and other hooks and actions (the project). Recorded
   assignment scope and grants are supplied by the shared admission interface;
   verified App/bot author facts come through the GitHub boundary's interface
@@ -108,8 +131,15 @@ commands.
   agents' git authors, module switches, as customer); publication (the ownership record the claims report reads, the
   published `sdlc` `schema.yaml` init copies, and the editor-schema
   operation init invokes, as customer); publication and
+<!-- planned-change:author-recorded-review-routing -->
   blueprint (started by hook runs, as customer); work (todo existence through
   the core-declared interface wired by the CLI only when todos is enabled).
+<!-- change:author-recorded-review-routing -->
+  blueprint (started by hook runs, as customer); work (todo existence through
+  the core-declared interface wired by the CLI only when todos is enabled, and
+  recording a commit's exemption through a core-declared interface the CLI
+  wires in an adopted project).
+<!-- /planned-change:author-recorded-review-routing -->
 - **Implementation roots** — `crates/instrukt-core/` (repository);
   `crates/instrukt-cli/` (command surface).
 
@@ -170,11 +200,23 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 
 - **Root:** the commit.
 - **Contains:** the caller's message, the author, the trailers, the paths.
+<!-- planned-change:author-recorded-review-routing -->
 - **Invariants:**
   - The caller's message holds no line with a trailer key instrukt owns.
   - A `Session:` trailer and an agent author appear only when the
     environment resolves them; never a guess.
   - `Human-Involved:` is always present and records the caller's declaration.
+<!-- change:author-recorded-review-routing -->
+- **Invariants:**
+  - The caller's message holds no line with a trailer key instrukt owns.
+  - A `Session:` trailer and an agent author appear only when the
+    environment resolves them; never a guess.
+  - `Human-Involved:` is always present and records the caller's declaration.
+  - In an adopted project every commit is made with its author's review-routing
+    choice, review or no review with a basis; without one nothing is committed.
+    A no-review choice is recorded as the commit's exemption, through work, once
+    the commit exists; the routing choice is never a trailer.
+<!-- /planned-change:author-recorded-review-routing -->
 - **Identifier:** the commit SHA.
 - **Lifecycle:** created once; git owns it from then on.
 

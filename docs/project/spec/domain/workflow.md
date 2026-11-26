@@ -34,7 +34,12 @@ commit. Intelligence owns all activity routing in clear prose
 - **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
 
+<!-- planned-change:author-recorded-review-routing -->
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- change:author-recorded-review-routing -->
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch, whichever parent brought it in, is part of an independently approved head, a merge or documentation fold reproduced mechanically, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+- **Held candidate:** an active candidate with a commit that is not covered while at least one such commit has an author of ours who can decide; it waits for those decisions and owes no review of its own (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned-change:author-recorded-review-routing -->
 
 - **Worktree standing:** whether a todo's worktree on a computer is delivered, idle or under way, derived from the todo's record and the repository.
 
@@ -43,6 +48,7 @@ commit. Intelligence owns all activity routing in clear prose
 - **Owns:** flavor manifest schema (`workflow/workflow.yaml`), pure factual ledger derivation (`TodoLedger`), repository observations (worktree cleanliness, heads, grounding drift), the exact-SHA handoff check (independent review approval and admitting verification disposition), which session may record which verification disposition and which may follow another for a commit (`project/instrukt/spec/feature/workflow/delivery-cycle`), and runner `WorkflowAssignments` dispatch selection.
 - **Does not own:** activity micro-routing (owned by prose procedures), work-record storage/reflection (owned by `work`), or session/process execution (owned by `runner`).
 
+<!-- planned-change:author-recorded-review-routing -->
 Workflow also derives the active candidate's review coverage on request, from
 the repository, the independent approvals todo records bind to exact commits,
 work's answer on each other commit's current review evidence and the runner's
@@ -51,6 +57,19 @@ workflow stores it nowhere. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
 request.
+<!-- change:author-recorded-review-routing -->
+Workflow also derives the active candidate's review coverage on request, from
+the repository, the independent approvals todo records bind to exact commits,
+work's answer on each other commit's current review evidence, the runner's
+red observation of the canonical head and, for each uncovered commit's named
+authoring session, the runner's answer whether the selected runtime holds it.
+It is a derived fact and workflow stores it nowhere. Its rule, and what
+follows an uncovered commit, belong to
+`project/instrukt/spec/feature/workflow/integration-gate`; the approval it
+earns is work's record, and the author asks, the integrator's notice and the
+candidate review it otherwise calls for are the runner's to carry out
+(`project/instrukt/spec/feature/runner/pull-request-review`).
+<!-- /planned-change:author-recorded-review-routing -->
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -102,7 +121,11 @@ there, never by reading through delivered work.
 - **Runner → workflow:** runner calls `WorkflowAssignments::assignment` on each tick, tracks progress via the factual progress fingerprint, and routes `workflow.finalized` and `runner.ci_completed` to the standing `integrator`.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
 
+<!-- planned-change:author-recorded-review-routing -->
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
+<!-- change:author-recorded-review-routing -->
+- **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage and, for a held candidate, which uncovered commits wait on which session's decision; the runner supplies the canonical head's CI result as it observed it and whether the selected runtime holds a named session.
+<!-- /planned-change:author-recorded-review-routing -->
 - **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.
 
 - **Workflow → runner (worktree standing):** workflow supplies each todo worktree's standing on the computer, and what a delivered todo still owes of its worktree and work branch; the runner reclaims by it and derives none of it.

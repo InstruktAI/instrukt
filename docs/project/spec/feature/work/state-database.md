@@ -792,6 +792,19 @@ absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
 
+<!-- planned:author-recorded-review-routing -->
+**Author asks** are `runtime_inputs` rows the runner's review pass writes to a
+held candidate's authoring sessions
+(`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+candidate's authors). The input identity is made of the project, the commit and
+the session; the pass queues the input with its rendered content in one
+transaction and sends nothing before it commits. The identity is kept, and
+suppresses a second ask, until the canonical branch contains the commit, no
+branch of the project's repository reaches it any more, or a coverage
+derivation finds it covered; the runner retires it on a wake-up after that.
+These rows are local runtime delivery bookkeeping, not review evidence.
+<!-- /planned:author-recorded-review-routing -->
+
 **`conversation_links`** — runner-owned links between two runtime-scoped native
 threads, with active/closed state, member references and the opening positions.
 An active member belongs to at most one link. Closure updates the whole link;
