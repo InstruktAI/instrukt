@@ -110,6 +110,36 @@ fn published_demo(env: &TestEnv) -> Repo {
     demo
 }
 
+/// Records the approved change `build-it` in `demo` through the real CLI,
+/// with the T3 runtime fake and the GitHub fake at the network line. It adds
+/// no worktree and records no delivery. The returned fakes stay alive for the
+/// test's duration.
+fn recorded_build_it(env: &TestEnv, demo: &Repo) -> (t3::FakeT3, common::github::FakeGitHub) {
+    let runtime = t3::FakeT3::create(env);
+    let github = common::github::FakeGitHub::start();
+    github.add_repo("acme/demo");
+    github.configure(env);
+    let file = env.instrukt_home().join("instrukt.yaml");
+    let mut global = std::fs::read_to_string(&file).unwrap();
+    global.push_str("runner: {runtime: t3}\n");
+    std::fs::write(file, global).unwrap();
+    demo.write("instrukt.yaml","schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo}\nworkflow: {domain: acme}\n");
+    env.instrukt(demo.path())
+        .env("GITHUB_TOKEN", "test-token")
+        .args([
+            "todo",
+            "create",
+            "build-it",
+            "Prepare the new contract.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .assert()
+        .success();
+    (runtime, github)
+}
+
 // spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD1
 #[test]
 fn a_reader_of_the_current_contract_is_told_pending_changes_exist_and_who_owns_them() {
@@ -141,28 +171,7 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
     let env = TestEnv::new();
     let demo = published_demo(&env);
 
-    let runtime = t3::FakeT3::create(&env);
-    let github = common::github::FakeGitHub::start();
-    github.add_repo("acme/demo");
-    github.configure(&env);
-    let file = env.instrukt_home().join("instrukt.yaml");
-    let mut global = std::fs::read_to_string(&file).unwrap();
-    global.push_str("runner: {runtime: t3}\n");
-    std::fs::write(file, global).unwrap();
-    demo.write("instrukt.yaml","schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo}\nworkflow: {domain: acme}\n");
-    env.instrukt(demo.path())
-        .env("GITHUB_TOKEN", "test-token")
-        .args([
-            "todo",
-            "create",
-            "build-it",
-            "Prepare the new contract.",
-            "--kind",
-            "change",
-            "--approved",
-        ])
-        .assert()
-        .success();
+    let (runtime, github) = recorded_build_it(&env, &demo);
     let worktree = env.path("build-it-prepare");
     demo.git([
         "worktree",
@@ -207,17 +216,24 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
         )
         .success();
     insta::assert_snapshot!("other-todos-snippet-withheld", stdout(&env, &not_mine));
+    assert!(runtime.calls().is_empty());
+}
 
-    // Once its worktree is gone, a todo whose delivery is unconfirmed has no
-    // lens to read: the read is refused instead of falling back to the main
-    // checkout.
-    demo.git(["worktree", "remove", worktree.to_str().unwrap()]);
-    let unresolved = env
+// spec: project/instrukt/spec/feature/docs/pending-documentation UC-PD3
+#[test]
+fn a_lens_of_an_undelivered_todo_without_a_worktree_is_refused() {
+    let env = TestEnv::new();
+    let demo = published_demo(&env);
+    let (_runtime, _github) = recorded_build_it(&env, &demo);
+
+    let refused = env
         .run(
             demo.path(),
-            ["docs", "get", "--target", "build-it", "acme/spec/fresh"],
+            ["docs", "get", "--target", "build-it", "acme/spec/live"],
         )
         .failure();
-    insta::assert_snapshot!("unresolved-workspace-refused", stderr(&env, &unresolved));
-    assert!(runtime.calls().is_empty());
+    insta::assert_snapshot!("unresolved-workspace-refused", stderr(&env, &refused));
+    // The live snippet's current text in the main checkout is not shown in
+    // the lens's place.
+    assert_eq!(stdout(&env, &refused), "");
 }
