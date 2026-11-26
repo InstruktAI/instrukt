@@ -86,4 +86,6 @@ not this system: its errors are relayed to the person it belongs to.
 
 ## See Also
 
+- [sdlc/concept/defect-evidence](../../domain/sdlc/concept/defect-evidence.md)
+- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
 - [general/procedure/company-assistance](company-assistance.md)

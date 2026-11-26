@@ -12,6 +12,7 @@ interruptible: false
 ## Required reads
 
 - [general/procedure/event-handling/overview](event-handling/overview.md)
+- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
 
 ## Goal
 
@@ -36,13 +37,12 @@ reported.
    which consumed surfaces changed and what adaptation, if any, the project
    needs. For a fork reconciliation, identify the local modifications the work
    must preserve.
-3. Before filing or amending work, establish that it is admitted, evidenced
-   and no duplicate of existing work, as the project's work-filing route
-   requires (`sdlc/policy/todo-creation-discipline`). Reconcile repeated
-   events with existing work. Record the observed revision, affected contracts
-   and bounded outcome in the appropriate artifact. File warranted work
-   through that route; an assessment requiring no change records that
-   disposition in the report.
+3. Apply admission, evidence and duplicate checks before filing or amending
+   work (`sdlc/policy/todo-creation-discipline`). Reconcile repeated events
+   with existing work. Record the observed revision, affected contracts and
+   bounded outcome in the appropriate artifact. File warranted work through
+   that policy's admitted route; an assessment requiring no change records
+   that disposition in the report.
 4. Route admitted work through its owning project's normal preparation,
    build, independent review and integration path. Carry any fork-preservation
    requirements into that work. Report the assessment, disposition, routed
