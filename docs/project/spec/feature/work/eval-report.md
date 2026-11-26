@@ -97,27 +97,35 @@ separate logging service.
 ### Computers in a report
 
 A report that names no other computer is this computer's alone: it reads as
-described above and needs no cluster Redis.
+described above, with its windows in time order and a restored eval set a
+window of its own, and needs no cluster Redis.
 
 Requests and answers travel through the runner's bounded fleet query
 (`project/instrukt/spec/domain/runner`), which decides which named computers
 answer. A computer answers from its own work record and publication state,
 applying the requested range, whether or not history is switched on there.
-Its answer holds, per project, only outcome measures with their eval sets and
-models, their first and last stamp times, the commits that computer records
-setting each eval set, and the limitations it found. No stamp,
-artifact, findings report or conversation leaves the computer, and no
-computer but the requesting one writes a report.
+For each project it counts its outcomes per eval set and model across all of
+its stamps under that eval set, counting each todo, review and findings report
+once per eval set, and its answer holds only those measures, the earliest and
+latest stamp time under each eval set, the commits that computer records
+setting each eval set, and the limitations it found. No stamp, artifact,
+findings report or conversation leaves the computer, and no computer but the
+requesting one writes a report.
 
-Each contributing computer forms its windows from its own stamps and its own
-recorded eval-set changes, as this spec describes. The report shows no
-process change, restoration or commit setting an eval set that no
-contributing computer recorded, keeps process-document changes
-distinguishable from changes in the model used, and counts no todo, review or
-finding twice;
-a todo's record is held on one computer only
-(`project/instrukt/spec/feature/work/state-database`). A report naming no
-other computer shows exactly this computer's windows.
+A report that names another computer pools by eval set, whether or not any
+named computer answers. Within each project it shows one window per eval set,
+holding the outcomes of every answering computer, this one included: the
+window spans the earliest to the latest stamp under that eval set across
+those computers, its measures add per model and in the human row, and it
+names the commits those computers record setting that eval set. A todo's
+record is held on one computer only
+(`project/instrukt/spec/feature/work/state-database`); no todo, review or
+findings report is counted twice. Stamps that copied no eval fingerprint form
+one window per project, with the limitation that their process-document set is
+unknown. The windows are listed by earliest stamp, and the report names no
+process change and no restoration between them; a restored eval set's periods
+form its one window. Model and version remain rows within each window, so a
+model change stays distinguishable from a process-document change.
 
 Every named computer appears in the report, either among the computers whose
 answer it holds or as a limitation of the report with its reason, whatever
@@ -145,9 +153,9 @@ report is written from the answers it has.
 ```gherkin
   Given a developer records work on several of their computers
   When they request an evaluation report that includes those computers
-  Then they receive one report holding the outcomes every answering computer recorded, project by project
+  Then they receive one report giving each project one figure per process-document set, pooled from every answering computer
   And the report names the computers whose outcomes it holds
-  And it shows only the process changes those computers recorded
+  And can distinguish process-document sets from the models used
   But when an included computer does not answer
   Then the report is still written from the computers that answered
   And it names the computer that did not answer as a limitation of the comparison
