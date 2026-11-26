@@ -50,7 +50,7 @@ impl Listing {
     /// The listing line of the headed form, carrying no command:
     /// `- <id>: <description>`, or for a triggered procedure
     /// `- <id>: <description> — when: <trigger>`. Its heading names the
-    /// command ([`LISTED_HEADING`], [`TRIGGERED_HEADING`]).
+    /// command.
     pub fn headed_line(&self) -> String {
         match self.trigger_text() {
             Some(trigger) => format!(
@@ -70,16 +70,6 @@ impl Listing {
             .filter(|t| !t.is_empty())
     }
 }
-
-/// The heading over a run of listed snippets in the headed form: it names
-/// the command each line's snippet is read with.
-pub const LISTED_HEADING: &str = "## Listed — read each with `instrukt docs get <id>`";
-
-/// The heading over a run of triggered procedures in the headed form: it
-/// names the command each line's procedure is read with, its closure
-/// included.
-pub const TRIGGERED_HEADING: &str =
-    "## Triggered procedures — read each with `instrukt docs get <id> --closure`";
 
 /// How a rendering's listing lines lead to their command
 /// (`project/instrukt/spec/feature/docs/progressive-retrieval`).
@@ -217,8 +207,9 @@ impl Selection {
 
     /// The rendered section of [`Selection::render`] with its listing lines
     /// in the headed form: the listed snippets without a trigger under
-    /// [`LISTED_HEADING`], then every triggered procedure — one `listed`
-    /// names included — under [`TRIGGERED_HEADING`], each line without its
+    /// one heading naming `instrukt docs get <id>`, then every triggered
+    /// procedure — one `listed` names included — under one naming
+    /// `instrukt docs get <id> --closure`, each line without its
     /// command.
     pub fn render_headed(&self) -> String {
         self.render_as(ListingForm::Headed)
@@ -285,7 +276,13 @@ impl Selection {
                 if !self.references.is_empty() {
                     tail.push(self.references.join("\n"));
                 }
-                for (title, run) in [(LISTED_HEADING, plain), (TRIGGERED_HEADING, triggered)] {
+                for (title, run) in [
+                    ("## Listed — read each with `instrukt docs get <id>`", plain),
+                    (
+                        "## Triggered procedures — read each with `instrukt docs get <id> --closure`",
+                        triggered,
+                    ),
+                ] {
                     if !run.is_empty() {
                         let lines: Vec<String> = run.iter().map(|l| l.headed_line()).collect();
                         tail.push(format!("{title}\n\n{}", lines.join("\n")));
