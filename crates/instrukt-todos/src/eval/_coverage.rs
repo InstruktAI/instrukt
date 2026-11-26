@@ -20,7 +20,7 @@ use instrukt_runner::computer_fleet::{
 };
 use jiff::Timestamp;
 
-use super::_answer::{ANSWER_FORMAT, Request, Wording, answer, decode};
+use super::_answer::{ANSWER_FORMAT, Request, Wording, answer_known, decode};
 use super::_pool::{Part, Pooling, pool, under};
 use super::_read::read;
 use super::{Inputs, ProjectInput, Report, minute, outside_range, report};
@@ -148,14 +148,13 @@ pub fn covering(asked: &Asked<'_>) -> Result<Report, Refused> {
         format: ANSWER_FORMAT,
         since: asked.since,
     };
-    let request_value = serde_json::to_value(&request).unwrap_or(serde_json::Value::Null);
     // This computer's part is read while the others are awaited; the
     // deadline runs from the ask's start.
     let (own_part, observed) = std::thread::scope(|scope| {
         let own_part = covered.contains(&own).then(|| {
             scope.spawn(|| {
                 let reading = read(asked.home, asked.work, Some(asked.current.clone()));
-                answer(&request_value, &reading, Wording::Local)
+                answer_known(&request, &reading, Wording::Local)
             })
         });
         let observed: BTreeMap<MachineId, Outcome> = match fleet.as_ref().filter(|_| reachable) {

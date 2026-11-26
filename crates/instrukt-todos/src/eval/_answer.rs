@@ -79,19 +79,24 @@ pub enum Wording {
     Public,
 }
 
-/// What a computer answers to `request` from what it read.
+/// What a computer answers to the request `request` as it arrived, from
+/// what it read: a request of a format this computer does not know is
+/// answered in the known format with that limitation.
 pub fn answer(request: &Value, reading: &Reading, wording: Wording) -> Answer {
-    let mut words = Words { wording };
-    let request = serde_json::from_value::<Request>(request.clone())
-        .ok()
-        .filter(|request| request.format == ANSWER_FORMAT);
-    let Some(request) = request else {
-        return Answer {
+    match serde_json::from_value::<Request>(request.clone()) {
+        Ok(request) if request.format == ANSWER_FORMAT => answer_known(&request, reading, wording),
+        _ => Answer {
             format: ANSWER_FORMAT,
-            limitations: vec![words.computer(&Limitation::UnknownRequestFormat)],
+            limitations: vec![Words { wording }.computer(&Limitation::UnknownRequestFormat)],
             projects: Vec::new(),
-        };
-    };
+        },
+    }
+}
+
+/// What a computer answers to `request`, of the known format, from what it
+/// read.
+pub fn answer_known(request: &Request, reading: &Reading, wording: Wording) -> Answer {
+    let mut words = Words { wording };
     let mut limitations = Vec::new();
     if let Err(error) = &reading.published {
         limitations.push(words.computer(&Limitation::PublicationUnreadable {
@@ -299,18 +304,10 @@ impl EvaluationAnswering {
 }
 
 impl EvaluationAnswers for EvaluationAnswering {
-    fn answer(&self, request: Value) -> Value {
+    fn answer(&self, request: Value) -> Result<Value, serde_json::Error> {
         let work = Work::new(self.home.clone(), self.env.clone(), self.clock.clone());
         let reading = read(&self.home, &work, None);
-        let answered = answer(&request, &reading, Wording::Public);
-        serde_json::to_value(&answered).unwrap_or_else(|error| {
-            tracing::error!(event = "eval_answer_unencodable", %error);
-            serde_json::json!({
-                "format": ANSWER_FORMAT,
-                "limitations": [Limitation::UnknownRequestFormat.public()],
-                "projects": [],
-            })
-        })
+        serde_json::to_value(answer(&request, &reading, Wording::Public))
     }
 }
 

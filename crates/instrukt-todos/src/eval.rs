@@ -32,7 +32,7 @@ use crate::work::TodoRecord;
 
 pub use _answer::{
     ANSWER_FORMAT, Answer, EvaluationAnswering, ModelAnswer, ProjectAnswer, Request, SetAnswer,
-    Unreadable, Wording, answer, decode,
+    Unreadable, Wording, answer, answer_known, decode,
 };
 pub use _coverage::{Asked, Refused, covering};
 pub use _pool::{Part, Pooling, pool};

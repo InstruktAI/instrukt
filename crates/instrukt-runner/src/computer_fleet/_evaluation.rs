@@ -50,7 +50,7 @@ struct Membership {
 
 impl Answering for Evaluating {
     fn answer(&self, payload: Map<String, Value>) -> Result<String, serde_json::Error> {
-        serde_json::to_string(&self.answers.answer(Value::Object(payload)))
+        serde_json::to_string(&self.answers.answer(Value::Object(payload))?)
     }
 
     fn tend(&mut self, endpoint: &Endpoint) -> Result<(), TransportError> {

@@ -906,10 +906,11 @@ impl std::fmt::Debug for WorkPorts {
 /// Work's answer to another computer's evaluation request
 /// (`project/instrukt/spec/feature/work/eval-report`, "Computers in a
 /// report"): the request payload in, the answer out, both opaque to the
-/// runner, which returns the answer unread. It always yields an answer: what
-/// this computer cannot read becomes a limitation in it.
+/// runner, which returns the answer unread. What this computer cannot read
+/// becomes a limitation in the answer; only an answer that cannot be encoded
+/// fails, and its request is left unanswered.
 pub trait EvaluationAnswers: Send + Sync {
-    fn answer(&self, request: serde_json::Value) -> serde_json::Value;
+    fn answer(&self, request: serde_json::Value) -> Result<serde_json::Value, serde_json::Error>;
 }
 
 /// What the CLI wired into the runner for this invocation. The
