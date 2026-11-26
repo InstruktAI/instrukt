@@ -29,8 +29,8 @@ pub(crate) trait Answering: Send + 'static {
     }
     /// The answer to a request, as it travels.
     fn answer(&self, payload: Map<String, Value>) -> Result<String, serde_json::Error>;
-    /// Work beside answering, from the poll loop at least once a second; a
-    /// failure takes the responder's transport-failure path.
+    /// Work beside answering, run from the poll loop on each poll; a failure
+    /// takes the responder's transport-failure path.
     fn tend(&mut self, _endpoint: &Endpoint) -> Result<(), TransportError> {
         Ok(())
     }
@@ -42,7 +42,7 @@ pub(crate) struct ResponderSpec {
     pub kind: Kind,
     /// Its name in `runner_workers`, and its thread's name.
     pub worker: &'static str,
-    /// Whether it publishes a readiness key, for 5 seconds, on each poll.
+    /// Whether it publishes the kind's short-lived readiness key on each poll.
     pub ready: bool,
 }
 
@@ -202,7 +202,7 @@ impl Responder {
     }
 }
 
-/// One poll: the kind's other work, readiness, then up to one second for a
+/// One poll: the kind's other work, readiness, then a short wait for a
 /// request, answered when it comes.
 fn poll(
     kind: Kind,

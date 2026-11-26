@@ -59,7 +59,7 @@ impl Kind {
         format!("{}:requests:{computer}", self.prefix)
     }
 
-    /// A reply place of this kind: the kind's prefix and 32 hex digits.
+    /// The reply place of this kind named by `id`, under the kind's prefix.
     fn reply(self, id: &str) -> String {
         format!("{}:reply:{id}", self.prefix)
     }
