@@ -679,6 +679,11 @@ repositories that installation selects. Whether a login is an organisation or
 a personal account is read from what GitHub shows of it publicly and needs no
 credential. Adding a company whose repository exists uses no credential of
 the project identity: nothing on GitHub is changed.
+
+Making the company's GitHub administrator an administrator of the repository
+adds them with administrator permission. GitHub adds a member of the owning
+organisation at once; anyone else receives an invitation from GitHub, and
+holds administrator access once they accept it.
 <!-- /planned:company-home-generation -->
 
 ## Use cases

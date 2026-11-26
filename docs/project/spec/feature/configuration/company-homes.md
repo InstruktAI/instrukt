@@ -340,12 +340,6 @@ And nothing of the repository on GitHub is changed
 - A home folder that exists is never adopted: a home made by hand, or one that
   is not a checkout, stays as it is.
 <!-- /planned-change:company-home-generation -->
-<!-- planned:company-home-generation -->
-- A company's GitHub administrator who is not a member of the owning
-  organisation is invited to the repository by GitHub, and holds
-  administrator access once they accept the invitation; a member holds it at
-  once.
-<!-- /planned:company-home-generation -->
 - Company homes on one computer are separate folders of one operating-system
   user. What keeps a session working for one company from reading another
   company's home is that company's container

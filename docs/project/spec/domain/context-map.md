@@ -133,6 +133,7 @@ repository's company home adoption carries it out.
 | work GitHub boundary → repository | Customer / Supplier | Creating the company's private repository in the owning organisation, making its GitHub administrator an administrator and setting its default branch, through an interface core declares and the CLI wires |
 | configuration → repository | Customer / Supplier | The generation decision for a company's key, the skeleton's project layer and ignore lines, and the operation that writes the home's settings document |
 | publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
+| publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
 <!-- /planned:company-home-generation -->
 
 Workflow and runner coordinate integration without making the workflow engine

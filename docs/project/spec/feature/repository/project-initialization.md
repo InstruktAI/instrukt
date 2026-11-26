@@ -113,6 +113,7 @@ who may run it is
 | `--company <key>` | The company's key, under the grammar of a project slug. With it, the working directory is not read. |
 | `--name <name>` | The name people write the company by. Needed only when the company's repository is created; without it, a creation is refused naming the flag, and nothing is created. |
 | `--admin <login>` | The company's GitHub administrator, a GitHub personal account. Needed only when the company's repository is created, under the same refusal. |
+| `--human-involved <true\|false>` | Whether a human was involved, declared for the root commit of a created repository as `instrukt repo commit` declares it; `false` when omitted (`general/policy/human-involvement-recording`). |
 
 - It reports whether the repository was created or checked out by contract,
   the repository, the home, and each part of the home it made ready. Where the
@@ -121,7 +122,9 @@ who may run it is
 - It reports what keeps automatic review from the home on this computer, as
   configuration validation names it, without failing.
 - A command interrupted while creating the repository is completed by running
-  it again with the same key.
+  it again with the same key: the organisation, the repository, the name and
+  the administrator come from the creation it recorded, and flags given again
+  are not used.
 - `--company` excludes `--slug`; `--name` and `--admin` need `--company`.
 <!-- /planned:company-home-generation -->
 

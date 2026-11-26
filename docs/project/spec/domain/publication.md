@@ -31,12 +31,24 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 <!-- planned:company-home-generation -->
 A company repository (`project/instrukt/spec/domain/configuration`) is a
 project like any other to publication, except that its documentation is the
-company's knowledge: its sync publishes no position, writes nothing under
-`~/.instrukt/docs/` and no entry into the global index, and records the
-checkout and its published commit as every project's sync does. Publication
-decides from a repository's root whether it is a company's, for every
-rendering, for the company's skill, for docs validation's question and for
-sync.
+company's knowledge. Its sync reads none of that knowledge as
+documentation: it runs no snippet validation, stages no position, no
+`docs/project/` and no `docs/third-party/`, writes nothing under
+`~/.instrukt/docs/` and contributes nothing to the global index, whatever
+folders the company's documents sit in. It writes the editor schemas and the
+eval fingerprint and records the checkout and its published commit, as every
+project's sync does. Publication decides from a repository's root whether it
+is a company's, for every rendering, for the company's skill, for docs
+validation's question and for sync.
+
+The company's skill follows Claude's catalog format as its vendor states it
+(`project/instrukt/spec/feature/publication/company-plugin`, See Also): the catalog entry's source is the repository's root, so the entry
+is the plugin's manifest and no other manifest is written; it lists the
+company's skill by its folder, so only that skill loads with the plugin and
+several entries share one root; and its version is the one a client compares,
+because no manifest beside it carries another. Whatever stands at the
+repository's root in a place that format reads other components from is part
+of the plugin as Claude loads it.
 <!-- /planned:company-home-generation -->
 
 ## Ubiquitous language

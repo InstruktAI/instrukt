@@ -362,12 +362,6 @@ And no file is changed
   and so does not follow the manifest's.
 <!-- change:company-home-generation -->
 <!-- /planned-change:company-home-generation -->
-<!-- planned:company-home-generation -->
-- The repository's root is the plugin's root, so whatever stands there in a
-  place Claude's plugin format reads components from, other than skills, is
-  part of the plugin as Claude loads it (See Also); the entry names the
-  company's skill, so no other skill folder loads with it.
-<!-- /planned:company-home-generation -->
 
 ## See Also
 

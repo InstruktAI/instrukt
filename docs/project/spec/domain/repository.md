@@ -99,8 +99,13 @@ there and has publication sync the home.
 : The working trees under `~/.instrukt/state/company-generation/<key>/` in
   which a company's new repository is composed before it exists on GitHub,
   holding the skeleton's root commit, and in which the home's clone is made
-  ready before it moves into place. It is the record of an adoption under
-  way.
+  ready before it moves into place.
+
+**Creation intent**
+: `intent.yaml` beside the staging checkout: the owning organisation, the
+  repository, the company's name and its GitHub administrator of a creation
+  under way, written before anything on GitHub is asked. It is the record that
+  a creation is this computer's and how to complete it.
 
 **Root commit**
 : The first commit of a company's new repository, holding the company
@@ -147,8 +152,8 @@ there and has publication sync the home.
 <!-- planned:company-home-generation -->
 Company home adoption extends this boundary:
 
-- **Owns** — the sequence of a company home adoption; the staging checkout,
-  its resumption and its removal; composition of the root commit; the clone
+- **Owns** — the sequence of a company home adoption; the creation intent
+  and the staging checkout, their resumption and their removal; composition of the root commit; the clone
   of the company's repository as the home; the hook sections in the home; the
   generation lock under which adoptions take turns on a computer.
 - **Does not own** — whether the home is created, checked out or refused,
@@ -234,8 +239,8 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 
 - **Root:** the company's home on this computer, and, while the adoption is
   under way, its staging checkout.
-- **Contains:** the staging checkout with the root commit; the home's
-  checkout; its hook sections.
+- **Contains:** the creation intent; the staging checkout with the root
+  commit; the home's checkout; its hook sections.
 - **Invariants:**
   - The home folder comes into being only as a clone of the company's
     repository, in one step: the clone is made beside the staging checkout,
@@ -249,23 +254,37 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     computer's own credentials, as the clone that follows reads it: a
     repository the computer reaches is checked out by contract, and one it
     cannot reach is created when configuration's decision says so.
+  - A creation starts with its intent: before the root commit is composed
+    and before anything on GitHub is asked, the adoption writes the creation
+    intent, `~/.instrukt/state/company-generation/<key>/intent.yaml`, whole and
+    atomically. It names the owning organisation, the repository, the company's
+    name and its GitHub administrator, and it is what every later step of that
+    creation reads them from, a resumed one included.
   - The root commit is composed in the staging checkout, holding the skeleton
-    configuration and publication supply, before the repository is created:
-    the staging checkout is the durable record of a creation under way.
-  - An adoption that finds a staging checkout for the company resumes it
-    before it reads anything else. It creates the repository when it is
-    still absent and pushes the root commit without force. A push that the repository accepts, or that finds the
-    commit already there, completes the creation: the administrator is made,
-    the default branch is set and the home is cloned. A push the repository
-    refuses because it holds other history makes it a repository by contract:
-    the staging checkout is removed and the home is cloned, with nothing
-    changed on GitHub.
-  - A creation that GitHub refuses because the repository exists makes it a
-    repository by contract in the same way.
-  - The root commit is attributed as every attributed commit is: author,
-    `Session:` and `Human-Involved:`. It is the one commit instrukt composes
-    on a default branch, because it creates that branch; from then on the
-    branch has one writer, the integrator.
+    configuration and publication supply, before the repository is created.
+  - An adoption that finds a creation intent for the company resumes it
+    before it reads anything else, with the organisation, repository and
+    administrator the intent names. It asks GitHub to create the repository and
+    takes a refusal because the repository exists as no answer yet; it then
+    pushes the root commit without force. A push that the repository accepts,
+    or that finds the commit already there, completes the creation: the default
+    branch is set, the administrator is made and the home is cloned. A push the
+    repository refuses because it holds other history makes it a repository by
+    contract: the staging checkout is removed and the home is cloned, with
+    nothing more changed on GitHub.
+  - Without a creation intent, a creation GitHub refuses because the
+    repository exists makes it a repository by contract before the root
+    commit is pushed: the staging checkout is removed and the home is cloned,
+    with nothing changed on GitHub.
+  - The root commit is attributed as every attributed commit is: its author
+    and `Session:` from the acting agent where they resolve, and
+    `Human-Involved:` as the caller of `instrukt init --company` declares it
+    with `--human-involved`, `false` when it declares nothing
+    (`general/policy/human-involvement-recording`). Nothing about the caller's
+    identity sets that value, and a resumed creation keeps the root commit it
+    finds, trailer included. It is the one commit instrukt composes on a
+    default branch, because it creates that branch; from then on the branch
+    has one writer, the integrator.
   - Adoptions take turns: one company home adoption runs on a computer at a
     time, holding `~/.instrukt/state/company-generation.lock` for its run.
   - The home is ready when the adoption ends: its settings document names the
@@ -274,8 +293,9 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     is reported, and the home stays.
 - **Identifier:** the company's key.
 - **Lifecycle:** started by `instrukt init --company <key>`; the staging
-  checkout is removed once the home is in place; complete when the home is
-  ready. The home is configuration's company home from then on.
+  checkout, its creation intent among it, is removed once the home is in
+  place; complete when the home is ready. The home is configuration's
+  company home from then on.
 <!-- /planned:company-home-generation -->
 
 #### Attributed commit (aggregate)
