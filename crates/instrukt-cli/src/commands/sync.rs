@@ -159,6 +159,9 @@ fn global_lines(
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
             ),
+            SyncFinding::FingerprintUnitDegraded { finding } => format!(
+                "notice: {finding}; the eval fingerprint counts it as no unit until it is fixed"
+            ),
             SyncFinding::UnitInProse { finding } => format!(
                 "notice: {finding}; the global files hold its source in prose until the unit is fixed"
             ),

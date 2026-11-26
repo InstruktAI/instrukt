@@ -196,6 +196,9 @@ pub enum SyncFinding {
     /// A unit the global files hold its source's prose in place of, for its
     /// finding.
     UnitInProse { finding: super::UnitFinding },
+    /// A published unit of an always-on source the eval fingerprint counts
+    /// as none, for its finding.
+    FingerprintUnitDegraded { finding: super::UnitFinding },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -536,7 +539,16 @@ fn publish(
         write(home, project, commit, request.now, &prepared, &mut tx)
     });
     match written {
-        Ok((global_files, links)) => {
+        Ok(Written {
+            global_files,
+            links,
+            degraded,
+        }) => {
+            report.findings.extend(
+                degraded
+                    .into_iter()
+                    .map(|finding| SyncFinding::FingerprintUnitDegraded { finding }),
+            );
             let changed = tx.changed()
                 || report
                     .editor
@@ -841,6 +853,14 @@ fn global_files(
     Ok(plan)
 }
 
+/// What the writes of a publishing sync did: the global files and links it
+/// wrote, and each published unit the eval fingerprint counted as none.
+struct Written {
+    global_files: Vec<GlobalDestination>,
+    links: Vec<EnsuredLink>,
+    degraded: Vec<super::UnitFinding>,
+}
+
 /// The writes of a publishing sync, all through `tx`.
 fn write(
     home: &Home,
@@ -849,7 +869,7 @@ fn write(
     now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
-) -> Result<(Vec<GlobalDestination>, Vec<EnsuredLink>), PublicationError> {
+) -> Result<Written, PublicationError> {
     let root = home.root();
     let in_home = |path: &Path| own_destination(root, &relative_to(root, path)?);
     let staging = crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(STAGING_PREFIX), root)
@@ -967,7 +987,8 @@ fn write(
         });
     }
 
-    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
+    let (fingerprint, degraded) =
+        _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
     for (path, bytes) in _fingerprint::records(home, &fingerprint, now)? {
         tx.write(&in_home(&path)?, &bytes)?;
     }
@@ -988,7 +1009,11 @@ fn write(
         &in_home(&record_path(home, &project.slug))?,
         text.as_bytes(),
     )?;
-    Ok((global_files, links))
+    Ok(Written {
+        global_files,
+        links,
+        degraded,
+    })
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when
