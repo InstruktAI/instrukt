@@ -122,10 +122,10 @@ file and says so. Antigravity's file moves from
 `~/.gemini/antigravity-cli/AGENTS.md` to `~/.gemini/AGENTS.md`, which
 Antigravity reads without a settings key; the old file and the key instrukt
 set in `~/.gemini/antigravity-cli/settings.json` stay until you delete them. Each file is written whole by every sync
-that publishes it, over whatever the destination holds, a file TeleClaude or
-you wrote included: move instructions you want to keep into documentation
-before the first sync of this release that publishes. instrukt removes no
-global file: the file of a runtime no enabled instance uses any more,
+that publishes it, over whatever the destination holds, a file you or
+another program wrote included: move instructions you want to keep into
+documentation before the first sync of this release that publishes. instrukt
+removes no global file: the file of a runtime no enabled instance uses any more,
 DeepSeek's among them unless the runtime reports it, stays until you delete
 it. The record of written files an earlier release kept under
 `~/.instrukt/state/publication/outputs/` is deleted by the first sync that
@@ -230,12 +230,13 @@ state database migrates to hold it. In each adopted repository run
 hook manager) so the `pre-commit` section exists.
 
 A commit made without the hook, from a web editor or a bot, keeps an older
-project layer. `instrukt config validate` reports it, exiting non-zero; to catch
-it, add that command to the repository's own CI, run inside the checkout with a
-throwaway machine layer that makes the project's configuration valid, written
-from outside the checkout (`scripts/check-committed-config.sh` is instrukt's
-own). A repository whose project layer still names an older schema needs one
-commit through the hook, or `instrukt config init`, before that check passes.
+project layer. `instrukt config validate` judges it as converted in memory and
+notes its pending conversion on stderr without failing; the next commit through
+the hook, or `instrukt config init`, converts the file. To catch a project
+layer that is invalid, names a newer schema or names none, add that command to
+the repository's own CI, run inside the checkout with a throwaway machine layer
+that makes the project's configuration valid, written from outside the checkout
+(`scripts/check-committed-config.sh` is instrukt's own).
 
 ### Dependency-update CI observation
 
@@ -266,7 +267,7 @@ configured” above).
 Existing installations using `GITHUB_TOKEN`, `GH_TOKEN` or `gh auth token`
 need App setup before remote work reflection and CI observation:
 
-1. Reuse existing TeleClaude project/author/reviewer Apps when available, or
+1. Reuse existing project, author and reviewer Apps when available, or
    create three distinct Apps and install them for each intended repository.
    Keep the observed App ids, slugs and stable bot id/node-id/login tuples.
 2. Grant the project's record App issues write and contents/pull-requests read;
@@ -396,6 +397,24 @@ being sent again. Sessions started earlier keep the opening they started with.
 The agents file converts by itself: its `roles.conversation` entry becomes
 `roles.company-agent` with its settings kept. A file holding both entries is
 refused, and left as it is, until one of them is removed.
+
+### The project coordinator stands and is woken by fleet attention
+
+The project's coordinator is now `sdlc-coordinator`, a standing role woken by
+`runner.attention.*` events, and agents can raise a condition about their
+project's active todos with `instrukt events raise`.
+
+The agents file converts by itself: its `roles.coordinator` entry becomes
+`roles.sdlc-coordinator` with its settings kept. A file holding both entries
+is refused, and left as it is, until one of them is removed.
+
+The shipped `technical-coordinator` role now selects at `tier: strong`. A kept
+agents file that sets its own tier for that role keeps it.
+
+The shipped `orchestrate` bundle grants `attention-raise` at `own`. A kept
+agents file that defines its own `orchestrate` bundle replaces the shipped one
+whole; add `{action: attention-raise, scope: own}` to it so orchestrating
+roles can raise.
 
 ### Protected secrets and owned files
 
@@ -595,8 +614,8 @@ conversation's tools ran and returned, the files it changed, its reasoning
 traces, its runs or its subagents; that text is no longer found by
 `instrukt history search`, and `instrukt history show` of a runtime
 conversation prints its `thread` and `messages` without the `runs`,
-`subagents` and `turnItems` collections. Conversations imported from
-TeleClaude keep their document and are found by the same text as before.
+`subagents` and `turnItems` collections. Conversations an earlier import
+retained keep their document and are found by the same text as before.
 
 The first history operation after upgrading, on each computer, converts
 `state/history.db` in place and then rewrites it to free the space the
@@ -605,10 +624,10 @@ each step takes a while. While the conversion runs, every history command
 fails once its wait for the lock times out. Once the conversion has
 committed, and provided this computer had already finished moving its earlier
 history out of `state/instrukt.db`, `history show` and the search's own read
-work again while the rewrite continues; `history extract` and
-`history import-teleclaude` still time out, and `history search` returns what
-is retained and reports its catch-up as failed. If that earlier move had not
-finished, every history command, `history show` and `history search`
+work again while the rewrite continues; `history extract` still times out,
+and `history search` returns what is retained and reports its catch-up as
+failed. If that earlier move had not finished, every history command,
+`history show` and `history search`
 included, keeps waiting for the lock and can time out until the rewrite and
 the move complete. The runner retries its extraction throughout. What the
 store held of tool records, runs and subagents is dropped by the conversion

@@ -12,6 +12,7 @@ instrukt-connector.workspace = true
 jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
 tungstenite.workspace = true

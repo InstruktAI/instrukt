@@ -127,7 +127,7 @@ changed action and bundle references under
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 GitHub setup follows `project/instrukt/spec/feature/work/github-apps`: reuse the
-existing three TeleClaude Apps where installed, otherwise guide their creation
+three Apps an installation already has, otherwise guide their creation
 and installation, verify the actual App/bot identities and repository/board
 permissions, and record machine-global public profiles plus per-role App
 references in the existing `roles` map. Write App keys only through

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&stderr(&dirty), &commits, &[])"
+---
+instrukt: the worktree [TMP]/demo-feature is not clean; it holds uncommitted changes: ?? scratch.txt; commit or remove the change, then ask again

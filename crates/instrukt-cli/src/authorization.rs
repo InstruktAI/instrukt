@@ -4,7 +4,7 @@ use clap::{ArgMatches, Command};
 use instrukt_core::{
     capabilities::{Action, Assignment, Capabilities, RoleClass, Scope},
     config::{Agents, Configuration},
-    ids::ProjectSlug,
+    ids::{ProjectSlug, SessionRef},
 };
 
 #[derive(Debug)]
@@ -16,12 +16,22 @@ impl std::fmt::Display for PermissionRefused {
 }
 impl std::error::Error for PermissionRefused {}
 
-pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
+/// A recorded assignment with its role's grants.
+pub type Recorded = (Assignment, Capabilities);
+
+pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<Recorded>> {
+    Ok(caller_identity(ctx)?.1)
+}
+
+/// The caller's session as the configured runtime recognizes it, whether or
+/// not an assignment is recorded for it, with its recorded assignment and
+/// that role's grants.
+pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<Recorded>)> {
     let inspection = ctx.home.for_inspection();
     let config = Configuration::load_global(&inspection)?;
     let env = wiring::environment(ctx)?;
     let Some(session) = config.caller(&env)? else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let assignment = instrukt_runner::assignments::resolve(
         &ctx.home,
@@ -29,12 +39,13 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
         instrukt_todos::work::recorded_assignment,
         instrukt_company::conversations::conversation_assignment,
     )?;
-    assignment
+    let recorded = assignment
         .map(|assignment| {
             let grants = Agents::load(&ctx.home)?.capabilities(assignment.role.as_str())?;
-            Ok((assignment, grants))
+            Ok::<_, anyhow::Error>((assignment, grants))
         })
-        .transpose()
+        .transpose()?;
+    Ok((Some(session), recorded))
 }
 
 pub fn action(path: &[&str]) -> Option<Action> {
@@ -61,8 +72,9 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
-        ["history", "import-teleclaude" | "extract"] => HistoryRead,
+        ["history", "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
+        ["events", "raise"] => AttentionRaise,
         ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,
         ["agents", "status"] => AgentsWrite,
@@ -71,7 +83,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["secrets", "set" | "generate"] => SecretsWrite,
         ["hooks", "status"] => RepositoryRead,
         ["hooks", "install" | "remove"] | ["init"] | ["dev-seed"] => RepositoryWrite,
-        ["repo", "commit" | "reclaim"] => CodeCommit,
+        ["repo", "commit" | "reclaim"] | ["hooks", "run"] => CodeCommit,
         ["sync"] => Publication,
         ["specs", "coverage" | "reserve" | "trace"] => CodeCheck,
         [
@@ -80,6 +92,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
         ["review", "record" | "exempt"] => Stamp,
+        ["review", "start"] => AssignmentWrite,
         ["review", "show"] => ArtifactRead,
         ["review", "export" | "import"] => InstallationWrite,
         [
@@ -89,11 +102,9 @@ pub fn action(path: &[&str]) -> Option<Action> {
         | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
         ["ticks", "status"] => InstallationRead,
         ["install"] => InstallationWrite,
-        ["run"]
-        | ["tick"]
-        | ["hooks", "run" | "worker"]
-        | ["blueprint", "worker"]
-        | ["webhooks", ..] => RunnerExecute,
+        ["run"] | ["tick"] | ["hooks", "worker"] | ["blueprint", "worker"] | ["webhooks", ..] => {
+            RunnerExecute
+        }
         _ => return None,
     })
 }
@@ -311,7 +322,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     use Action::*;
     let owned = match action {
         // Review evidence addresses the project the caller stands in.
-        ArtifactRead | Stamp if path.first() == Some(&"review") => in_project,
+        ArtifactRead | Stamp | AssignmentWrite if path.first() == Some(&"review") => in_project,
         ArtifactRead | ArtifactWrite | Stamp | AssignmentWrite | Integration
         | TodoOrchestration => own_todo,
         TodoRead | TodoWrite => {
@@ -333,6 +344,9 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         Publication => in_project,
         SessionObserve | ConversationLink => true,
         CompanyReply => assignment.company.is_some(),
+        // A raise belongs to the project the assignment works in; the
+        // command itself refuses every other project.
+        AttentionRaise => assignment.project.is_some(),
         // `own` reaches the servers of the assignment's own company, which
         // are all that company's sessions see; a machine-wide server that
         // carries a login is a machine-wide object no assignment owns.

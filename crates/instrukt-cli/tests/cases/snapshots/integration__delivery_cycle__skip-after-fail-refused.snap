@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "stderr(&crew, &skip)"
+---
+instrukt: a verifier recorded fail for commit <commit 1>, which a tier_0_skip does not wave through; what clears it is a new candidate commit, or a new verifier attempt on this commit

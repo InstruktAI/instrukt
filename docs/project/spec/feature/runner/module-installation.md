@@ -535,8 +535,9 @@ And a second instrukt home on the computer installs under its own names without 
   health never proves agent hook delivery, revival or business completion.
 - Package/privilege and unsupported service-manager prerequisites can block
   convergence; successful parts are reported separately and reruns reuse them.
-- No release-pointer, daemon lifecycle, fleet update or legacy Redis config
-  migration is imported from TeleClaude.
+- There is no release-pointer, fleet update or legacy Redis config migration,
+  and no daemon lifecycle beyond the owned units this contract installs and
+  withdraws.
 - Installation and `install --check` judge this computer's own settings
   only: computers that disagree on the ingress or the reacting computer each
   pass, and what follows is the owner's caveat

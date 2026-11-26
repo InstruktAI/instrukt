@@ -27,7 +27,7 @@ Commands:
   eval       Evaluation reports from the work record
   review     Independent review evidence of exact commits, and moving it between computers
   events     Discover producer-declared event types and their schemas
-  history    Extract, import and search retained conversations across computers
+  history    Extract and search retained conversations across computers
   webhooks   Internal signed loopback webhook receiver (installation is separate)
   run        Run the runner until stopped
   tick       One runner wake-up, as the OS scheduler invokes it
@@ -50,4 +50,5 @@ todo-orchestration:any, assignment-write:any, integration:any, session-observe:a
 history-read:any, standing-bind:any, conversation-link:any, agents-read:any, agents-write:any,
 config-read:any, config-write:any, secrets-write:any, repository-read:any, repository-write:any,
 code-commit:any, publication:any, code-check:any, eval-read:any, events-read:any,
-installation-read:any, installation-write:any, runner-execute:any, mcp-access:any, company-reply:any
+installation-read:any, installation-write:any, runner-execute:any, mcp-access:any,
+company-reply:any, attention-raise:any

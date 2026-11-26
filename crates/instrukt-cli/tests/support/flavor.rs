@@ -39,6 +39,7 @@ roles:
   - fixer
   - finalizer
   - build-reviewer
+  - verifier
 ";
 
 /// The project, its fake GitHub and the machine's fake runtime.
@@ -115,7 +116,7 @@ impl Tracked {
                 "schema_version: {schema}\nproject: demo\nboard: acme/1\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
                  github: {{repository: {REPOSITORY}}}\n",
-                schema = instrukt_core::config::CURRENT_SCHEMA_VERSION
+                schema = instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         );
         repo.write("docs/domain/acme/workflow/workflow.yaml", WORKFLOW);
@@ -127,6 +128,7 @@ impl Tracked {
             ("build", "builder", true),
             ("finalize", "finalizer", true),
             ("review-build", "build-reviewer", true),
+            ("verify", "verifier", true),
         ] {
             let (path, text) = procedure(name, role, parameters);
             repo.write(&path, &text);

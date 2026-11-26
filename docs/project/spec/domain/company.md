@@ -35,10 +35,11 @@ state database's file and migrations (work).
   conversations of `(company, connector)` serially, tagging each incoming turn
   with its conversation identity, place context, thread and speaker. Each
   addressed message is one turn. A message activates no subscribed procedure
-  and emits no event. Under `reply_mode: turn_output`, only the answer to an
-  addressed message is posted; under `reply_mode: explicit`, raw turn output is
-  suppressed and only explicit replies queued through `instrukt company reply`
-  are posted.
+  and emits no event. Under `reply_mode: turn_output`, turn output is posted only as
+  the answer to an addressed message, and an explicit reply queued through
+  `instrukt company reply` is posted from any turn; under
+  `reply_mode: explicit`, raw turn output is suppressed and only explicit
+  replies are posted. No reply starts a conversation.
 - **Identifier:** Company, connector name and conversation identity (or shared
   company binding).
 - **Lifecycle:** The first addressed message from an admitted sender starts the
@@ -131,9 +132,9 @@ state database's file and migrations (work).
 <!-- /planned-change:company-home-generation -->
   - The explicit reply queueing operation (`instrukt company reply`), which
     verifies an active company conversation binding, checks that the target
-    conversation is admitted on that `(company, connector)`, scrubs credentials,
-    and writes ordered pieces into `conversation_answers` for connector
-    delivery.
+    conversation is admitted on that `(company, connector)`, and writes the
+    reply exactly as the agent wrote it, in ordered pieces, into
+    `conversation_answers` for connector delivery.
   - The speaker lookup: a function of this context that the CLI calls for
     `instrukt mcp` and hands to MCP access.
   Other contexts obtain conversation facts only through these; none reads the
@@ -188,4 +189,4 @@ The company context has no governing design or decision record of its own.
 
 ## Known caveats
 
-- Slack is the one connector. Other channels and help desks stay in TeleClaude.
+- Slack is the one connector. Other channels and help desks are outside instrukt.

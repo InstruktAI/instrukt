@@ -158,15 +158,18 @@ installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
 adapter verb templates.
 
+
 | Feature | Needs |
 | --- | --- |
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
-| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration/import. |
+| History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
+| Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
+
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -199,14 +202,17 @@ generations. Each generation has a fixed native command key and thread ID,
 derived from its execution scope, runtime endpoint/home, object key and generation.
 Retries retain both IDs, the native project ID and the entire captured request.
 
+
 | Assignment | Semantic key |
 | --- | --- |
 | Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-home>[:subject:<encoded-subject>][:generation:<n>]` |
 | Runner-owned todo orchestrator | `instrukt:todo:<encoded-project>/<todo-id>:<encoded-role>:<attempt>` |
 | Native child assignment | The same role-attempt semantic key is supplied to native delegation and retained by work; it is not an adapter-discovery key. |
 | Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
+| Requested reviewer | `instrukt:review:<encoded-project>:<head>`, the full id of the head commit asked for |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
+
 
 For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
@@ -243,15 +249,19 @@ second launcher. Elapsed time never changes the generation.
 
 ### Human-facing thread titles
 
+
 Every start captures a readable label without an object-key suffix. Todo roles
 use `<role> · <todo-slug>`, standing procedures use their name and optional typed
-subject, tasks use `task · <task-slug>`, and runs use `run · <procedure-name>`.
+subject, tasks use `task · <task-slug>`, requested reviewers use
+`review · <branch> @ <first 12 characters of the head>`, and runs use
+`run · <procedure-name>`.
 Company owns conversation title formatting from optional connector display facts:
 `<Company> · #<channel> · "<first words>"`, `<Company> · DM with <name>`, or
 `<Company> · Slack thread` without enrichment. The preview uses the first eight
 whitespace-separated words, capped at 80 Unicode characters with an ellipsis
 when shortened. Titles are presentation only, frozen with each launch request.
 Existing native titles are never rewritten by startup or migration.
+
 
 ### Keyed dispatch and recovery
 
@@ -465,9 +475,10 @@ instruction prose is a separate configuration surface.
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
-wakes a new turn and un-settles it; automation never settles or archives a standing agent
-(`project/instrukt/spec/feature/runner/procedure-standing-agent`), and a human settling one
-is never evidence of absence or permission for a second keyed start. Archived or explicitly
+wakes a new turn and un-settles it; runner automation never settles or archives a standing agent
+(`project/instrukt/spec/feature/runner/procedure-standing-agent`), and settling one (whether
+by a human or by the standing procedure itself when dormant) is never evidence of absence or
+permission for a second keyed start. Archived or explicitly
 unknown threads report `gone`, a released or terminal assignment receives no successor, and
 archived transcripts remain extractable (`project/instrukt/spec/feature/runner/history`).
 Agent-invoked settling and terminal retirement instructions are governed by
@@ -477,7 +488,7 @@ exposes.
 
 ### One worktree per todo team
 
-Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
+Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `verifier`, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
 Retry or wake uses the retained native assignment and its worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
 
 Only the integrator writes main. Pending documentation authored in `<slug>/work` is folded into current contracts at work delivery, and after confirmed delivery the runner has the clean `<slug>/work` worktree released and `<slug>/work` deleted locally and on `origin`, on each computer that holds them (`project/instrukt/spec/feature/runner/worktree-reclamation`). Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. The release goes through git's own worktree commands: the published `t3 thread` CLI has no operation that removes a worktree, and a delivered todo's thread keeps naming the path it was attached to. Ad hoc authoring uses its own one-off worktree, reviewed before integration.

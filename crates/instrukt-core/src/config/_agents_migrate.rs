@@ -1,13 +1,14 @@
 //! Older agents files are converted at the owned-file boundary only: a
 //! version-one file's retired effort fields, then a version-two file's
-//! `conversation` role, which version three names `company-agent`.
+//! `conversation` role, which version three names `company-agent`, then a
+//! version-three file's `coordinator` role, which version four names
+//! `sdlc-coordinator`.
+use super::_agents::{COMPANY_AGENT_ROLE, RETIRED_COORDINATOR_ROLE, SDLC_COORDINATOR_ROLE};
 use super::ConfigError;
 use serde_yaml_ng::Value;
 
 /// The role name a version-two file gives conversation sessions.
-const RETIRED_ROLE: &str = "conversation";
-/// The name version three gives that role.
-const RENAMED_ROLE: &str = "company-agent";
+const RETIRED_CONVERSATION_ROLE: &str = "conversation";
 
 /// A file converted to the current version, with the version it had.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,15 +34,18 @@ pub(super) fn current(bytes: &[u8]) -> Result<Option<Converted>, ConfigError> {
     }
     let retired = retire_session_recover(&mut value) | migrate_orchestrator_roles(&mut value);
     let from = match found {
-        Some(from @ (1 | 2)) => from,
-        Some(3) if retired => 3,
+        Some(from @ (1..=3)) => from,
+        Some(4) if retired => 4,
         _ => return Ok(None),
     };
     if from == 1 {
         efforts(&mut value)?;
     }
     if from < 3 {
-        rename_role(&mut value)?;
+        rename_role(&mut value, RETIRED_CONVERSATION_ROLE, COMPANY_AGENT_ROLE)?;
+    }
+    if from < 4 {
+        rename_role(&mut value, RETIRED_COORDINATOR_ROLE, SDLC_COORDINATOR_ROLE)?;
     }
     value["schema_version"] = super::_agents::VERSION.into();
     let text = super::render_yaml(&value).map_err(|e| invalid(e.to_string()))?;
@@ -168,26 +172,32 @@ fn efforts(value: &mut Value) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Version two to three: `roles.conversation` becomes `roles.company-agent`
-/// in its place, every field as it was. A file holding both is refused.
-fn rename_role(value: &mut Value) -> Result<(), ConfigError> {
+/// `roles.<retired>` becomes `roles.<renamed>` in its place, every field as
+/// it was: `conversation` to `company-agent` from version two, `coordinator`
+/// to `sdlc-coordinator` from version three. A file holding both names is
+/// refused.
+fn rename_role(
+    value: &mut Value,
+    retired: &'static str,
+    renamed: &'static str,
+) -> Result<(), ConfigError> {
     let Some(roles) = value.get_mut("roles").and_then(Value::as_mapping_mut) else {
         return Ok(());
     };
-    if !roles.contains_key(RETIRED_ROLE) {
+    if !roles.contains_key(retired) {
         return Ok(());
     }
-    if roles.contains_key(RENAMED_ROLE) {
+    if roles.contains_key(renamed) {
         return Err(ConfigError::AgentsRoleConflict {
-            retired: RETIRED_ROLE,
-            current: RENAMED_ROLE,
+            retired,
+            current: renamed,
         });
     }
     *roles = std::mem::take(roles)
         .into_iter()
         .map(|(key, entry)| {
-            if key.as_str() == Some(RETIRED_ROLE) {
-                (Value::from(RENAMED_ROLE), entry)
+            if key.as_str() == Some(retired) {
+                (Value::from(renamed), entry)
             } else {
                 (key, entry)
             }
@@ -231,7 +241,7 @@ mod tests {
         "  company-agent: {class: standing, can: [read], order: [codex], tier: light}\n";
     /// What both older files convert to: the role renamed in its place,
     /// every field as it was, efforts in their current spelling.
-    const CONVERTED: &str = "# yaml-language-server: $schema=agents.schema.json\nschema_version: 3\ndefault:\n  class: agent\n  can:\n  - all\n  order:\n  - claude\n  tier: standard\nroles:\n  builder:\n    class: focused\n    can:\n    - read\n    order:\n    - claude\n  company-agent:\n    class: standing\n    can:\n    - read\n    - tools\n    order:\n    - claude\n    tier: strong\n  reviewer:\n    class: focused\n    can:\n    - read\n    order:\n    - codex\nprofiles:\n  claude:\n    instance: claudeAgent\n    kind: claude\n    light:\n    - model: haiku\n      effort: high\n    standard:\n    - model: sonnet\n      effort: high\n    strong:\n    - model: opus\n      effort: high\n    premium:\n    - model: opus\n      effort: high\n  codex:\n    instance: codex\n    kind: codex\n    light:\n    - model: luna\n      effort: high\n    standard:\n    - model: sol\n      effort: high\n    strong:\n    - model: sol\n      effort: high\n    premium:\n    - model: astra\n      effort: high\n";
+    const CONVERTED: &str = "# yaml-language-server: $schema=agents.schema.json\nschema_version: 4\ndefault:\n  class: agent\n  can:\n  - all\n  order:\n  - claude\n  tier: standard\nroles:\n  builder:\n    class: focused\n    can:\n    - read\n    order:\n    - claude\n  company-agent:\n    class: standing\n    can:\n    - read\n    - tools\n    order:\n    - claude\n    tier: strong\n  reviewer:\n    class: focused\n    can:\n    - read\n    order:\n    - codex\nprofiles:\n  claude:\n    instance: claudeAgent\n    kind: claude\n    light:\n    - model: haiku\n      effort: high\n    standard:\n    - model: sonnet\n      effort: high\n    strong:\n    - model: opus\n      effort: high\n    premium:\n    - model: opus\n      effort: high\n  codex:\n    instance: codex\n    kind: codex\n    light:\n    - model: luna\n      effort: high\n    standard:\n    - model: sol\n      effort: high\n    strong:\n    - model: sol\n      effort: high\n    premium:\n    - model: astra\n      effort: high\n";
 
     #[test]
     fn a_version_two_file_names_its_conversation_role_company_agent() {
@@ -263,7 +273,7 @@ mod tests {
     }
 
     #[test]
-    fn a_version_one_file_reaches_version_three_through_both_steps() {
+    fn a_version_one_file_reaches_the_current_version_through_every_step() {
         let roles = format!("{BEFORE_AND_AFTER}{CONVERSATION}{AFTER}");
         let converted = current(file(1, &roles, "reasoningEffort").as_bytes()).unwrap();
         assert_eq!(
@@ -278,7 +288,7 @@ mod tests {
     #[test]
     fn a_current_file_needs_no_conversion() {
         let roles = format!("{BEFORE_AND_AFTER}{COMPANY_AGENT}{AFTER}");
-        assert_eq!(current(file(3, &roles, "effort").as_bytes()).unwrap(), None);
+        assert_eq!(current(file(4, &roles, "effort").as_bytes()).unwrap(), None);
     }
 
     #[test]
@@ -286,7 +296,7 @@ mod tests {
         let roles = format!(
             "{BEFORE_AND_AFTER}  prepare-orchestrator: {{class: agent, can: [read], order: [claude], tier: standard}}\n  work-orchestrator: {{class: agent, can: [read], order: [codex], tier: premium}}\n{AFTER}"
         );
-        let converted = current(file(3, &roles, "effort").as_bytes())
+        let converted = current(file(4, &roles, "effort").as_bytes())
             .unwrap()
             .expect("split orchestrators should trigger migration");
         let parsed: Value = serde_yaml_ng::from_slice(&converted.bytes).unwrap();
@@ -305,12 +315,96 @@ mod tests {
         let roles = format!(
             "{BEFORE_AND_AFTER}  prepare-orchestrator: {{class: agent, can: [read], order: [claude], tier: strong}}\n{AFTER}"
         );
-        let converted = current(file(3, &roles, "effort").as_bytes())
+        let converted = current(file(4, &roles, "effort").as_bytes())
             .unwrap()
             .expect("prepare-orchestrator should migrate");
         let parsed: Value = serde_yaml_ng::from_slice(&converted.bytes).unwrap();
         let map = parsed["roles"].as_mapping().unwrap();
         assert!(!map.contains_key("prepare-orchestrator"));
         assert_eq!(map["todo-orchestrator"]["tier"].as_str(), Some("strong"));
+    }
+
+    /// The `coordinator` role entry as version three spells it, with
+    /// settings of its own.
+    const COORDINATOR: &str =
+        "  coordinator: {class: standing, can: [read, record], order: [codex], tier: light}\n";
+
+    /// `text` as YAML, with the order of its role names.
+    fn read(text: &[u8]) -> (Value, Vec<String>) {
+        let value: Value = serde_yaml_ng::from_slice(text).unwrap();
+        let roles = value["roles"]
+            .as_mapping()
+            .unwrap()
+            .keys()
+            .map(|key| key.as_str().unwrap().to_owned())
+            .collect();
+        (value, roles)
+    }
+
+    /// What converting `roles` must yield: the same file at the current
+    /// version with `renamed` in place of each retired name.
+    fn expected(roles: &str, renamed: &[(&str, &str)]) -> (Value, Vec<String>) {
+        let roles = renamed.iter().fold(roles.to_owned(), |roles, (from, to)| {
+            roles.replace(&format!("  {from}:"), &format!("  {to}:"))
+        });
+        read(file(4, &roles, "effort").as_bytes())
+    }
+
+    #[test]
+    fn a_version_three_file_names_its_coordinator_role_sdlc_coordinator() {
+        let roles = format!("{BEFORE_AND_AFTER}{COORDINATOR}{AFTER}");
+        let converted = current(file(3, &roles, "effort").as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(converted.from, 3);
+        assert_eq!(
+            read(&converted.bytes),
+            expected(&roles, &[("coordinator", "sdlc-coordinator")])
+        );
+    }
+
+    #[test]
+    fn a_version_three_file_holding_both_coordinator_entries_is_refused_and_not_converted() {
+        let roles = format!(
+            "{BEFORE_AND_AFTER}{COORDINATOR}  sdlc-coordinator: {{class: standing, can: [read], order: [claude], tier: strong}}\n{AFTER}"
+        );
+        let refused = current(file(3, &roles, "effort").as_bytes());
+        assert!(
+            matches!(
+                refused,
+                Err(ConfigError::AgentsRoleConflict {
+                    retired: "coordinator",
+                    current: "sdlc-coordinator"
+                })
+            ),
+            "{refused:?}"
+        );
+    }
+
+    #[test]
+    fn a_version_two_file_takes_both_role_renames() {
+        let roles = format!("{BEFORE_AND_AFTER}{CONVERSATION}{COORDINATOR}{AFTER}");
+        let converted = current(file(2, &roles, "effort").as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            read(&converted.bytes),
+            expected(
+                &roles,
+                &[
+                    ("conversation", "company-agent"),
+                    ("coordinator", "sdlc-coordinator")
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn a_version_three_file_naming_neither_coordinator_role_takes_only_the_version() {
+        let roles = format!("{BEFORE_AND_AFTER}{COMPANY_AGENT}{AFTER}");
+        let converted = current(file(3, &roles, "effort").as_bytes())
+            .unwrap()
+            .unwrap();
+        assert_eq!(read(&converted.bytes), expected(&roles, &[]));
     }
 }

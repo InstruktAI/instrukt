@@ -195,7 +195,7 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     ),
     (
         "finish_thread",
-        "Dormantly settle a conversation so it stays wakeable in place with full context.",
+        "Dormantly settle an addressed conversation, or this agent's own, so it stays wakeable in place with full context; external agents and runner automation never settle a standing agent, which may self-settle when parked dormant.",
     ),
     (
         "retire_thread",

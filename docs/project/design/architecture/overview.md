@@ -135,9 +135,8 @@ deleting the home is not a lossless reset.
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
 | `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
-| `state/delivered-release.lock` | the per-computer lock work holds while it releases a delivered todo's worktree and work branch; taken without waiting and by no command (`project/instrukt/spec/feature/work/todos`) | taken again by the next release |
-| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, each source's extraction position and each TeleClaude import's progress; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
-| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, one import batch, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
+| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
+| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
@@ -171,6 +170,15 @@ deleting the home is not a lossless reset.
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 <!-- /planned-change:company-home-generation -->
+
+
+`state/requested-review.db` holds the requested reviews
+`instrukt review start` admitted, and `state/requested-review.lock` is its
+write-isolation unit, taken only by that command
+(`project/instrukt/spec/feature/runner/requested-review`, Requested review
+records). Nothing re-creates the store: it is the only record of each
+requested reviewer's assignment and must be preserved.
+
 
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
@@ -429,9 +437,21 @@ sent through `runner.notify`.
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
-only-at-entry delivery waits for observed idleness. Standing T3 threads remain
-unsettled under automation; a human-settled thread stays reachable and wakes
-on its next message.
+only-at-entry delivery waits for observed idleness. Runner automation never
+settles a standing T3 thread. A standing procedure may self-settle when parked
+dormant (`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by itself or by a human, stays reachable and wakes on its next
+activation or message.
+
+Fleet attention composes three owners without a watcher. Work calls the
+runner's fleet-attention contract with the facts of each change it makes to a
+todo's status, hold or attempts, inside that change's own transaction; the
+runner decides which facts are conditions and appends them, together with the
+conditions it observes in executions and an agent's raise through
+`instrukt events raise`. The project's subscribed coordinator answers them, and
+the end of an attention episode wakes it once so it can rest
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 
 ### Conversation links
 

@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use std::ffi::OsStr;
 
 use assert_cmd::assert::Assert;
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 
 use crate::common::github::FakeGitHub;
 use crate::common::{Repo, TestEnv};
@@ -134,7 +134,7 @@ fn machine(github: &FakeGitHub, session_env: Option<&str>) -> (TestEnv, Repo) {
     let api_url = github.url();
     let mut env = TestEnv::new();
     let mut global =
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}\ngithub:\n  api_url: {api_url}\n");
     let _ = session_env;
     global.push_str("runner: {runtime: t3}\n");
     let path = env.instrukt_home().join("instrukt.yaml");
@@ -146,7 +146,7 @@ fn machine(github: &FakeGitHub, session_env: Option<&str>) -> (TestEnv, Repo) {
     repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
+                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\n"
             ),
         );
     repo.write("README.md", "# demo\n");

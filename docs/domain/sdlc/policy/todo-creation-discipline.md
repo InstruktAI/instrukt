@@ -24,7 +24,7 @@ Apply these configured action values to the identified assignment and session.
 
 <!-- @config: runtime.inspect_thread -->
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
 ### Progress, hold, or retire
 
@@ -54,13 +54,18 @@ Apply these configured action values to the identified assignment and session.
   owed keeps its owner and gates. Withdrawing a human-owned outcome follows
   `general/policy/human-contract`; lack of a technical path does not confer
   that authority on the agent.
-- **Retire terminal orchestrator threads after recording terminal state.** Once
-  a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
-  recorded orchestrator thread(s) (`todo-orchestrator`, plus any legacy
-  phase-orchestrator bindings) through the configured `runtime.retire_thread`
-  action. Complete all record writes and handoffs first when self-retiring, converge idempotently on already-retired
-  threads, preserve unfinished human or worker obligations, never gate
-  retirement on unrelated resource cleanup, and never retire standing agents.
+- **Finish resting and terminal orchestrator threads after handoff or terminal
+  state.** Once an orchestrator hands a todo off to `integrate`
+  (`--finalize-ready` and `--unclaim`), or once a todo reaches a terminal state
+  (`delivered` or `withdrawn`), finish its recorded orchestrator thread(s)
+  (`todo-orchestrator`, plus any legacy phase-orchestrator bindings) through
+  the configured `runtime.finish_thread` action so they stay quiet, readable,
+  and wakeable in place (if kicked back or resumed) rather than archived.
+  Complete all record writes and handoffs first when self-finishing, converge
+  idempotently on already-finished threads (distinguishing an already-finished
+  thread from a failed observation), preserve unfinished human or worker
+  obligations, never gate finishing on unrelated resource cleanup, and never
+  finish standing agents.
 - **Reassess a hold when its basis changes.** Resume when its condition is
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
@@ -357,8 +362,8 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     the claim, make the todo tell the truth by either holding it with the log
     entry above or amending `input` to carry the reconciliation. Only then run `instrukt todo update <slug> --unclaim` and confirm
     its outcome, then record the settled assignments and handoff. Apart from
-    terminal orchestrator retirement, the runtime owns session ending and
-    cleanup. A bare release is forbidden: it
+    finishing completed todo orchestrator threads, the runtime owns session
+    ending and cleanup. A bare release is forbidden: it
     returns the suspect premise to the runner with less context and recreates
     the same preparation waste.
   - **Retract.** For work that is truly invalid — including doc-only work,
@@ -372,12 +377,10 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
     resources. The withdrawing agent removes that slug's pending markers in a doc commit;
     nothing removes them automatically. Record unresolved cleanup rather than
     claiming it complete, and record the lane's handoff. Once removal, handoff,
-    and all record writes are confirmed, retire the withdrawn todo's recorded
-    phase orchestrator thread(s) through the configured `runtime.retire_thread`
-    action under the retirement rule above (converging idempotently on replay,
-    preserving unfinished human or worker obligations, never gating retirement
-    on unrelated resource cleanup, and never retiring standing agents). Apart
-    from terminal orchestrator retirement, session ending and cleanup belong to
+    and all record writes are confirmed, finish the withdrawn todo's recorded
+    orchestrator thread(s) through the configured `runtime.finish_thread`
+    action under the terminal-finishing rule above. Apart from finishing
+    completed todo orchestrator threads, session ending and cleanup belong to
     the runtime.
 
 - **External hold is the unreachable-claimant fallback.** Only a proven delivery
@@ -385,7 +388,9 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   never silence or impatience — permits the observer to set `hold` with the
   grounded reason. That hold is only a brake against future dispatch while
   session recovery resolves the claimant; it neither stops the current agent nor
-  proves that agent stopped. Route claimant recovery as a separate act.
+  proves that agent stopped. Route claimant recovery as a separate act. The
+  project's coordinator pausing work for a settlement is a separate case,
+  governed by **Coordinator pauses and retirements** below.
 - **The flagger does not select or negotiate the exit.** Except for the
   unreachable-claimant dispatch brake above, after the complete
   flag, it may send at most one source-grounded, address-only follow-up when a
@@ -418,15 +423,59 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   confirmed, record the claimant and worker handoffs, then run
   `instrukt todo remove <slug>` and inspect its outcome. The withdrawing agent
   removes the slug's pending markers in a doc commit; nothing does so
-  automatically. Once removal and all record writes are confirmed, retire the
-  withdrawn todo's recorded phase orchestrator thread(s) through the configured
-  `runtime.retire_thread` action under the retirement rule above.
+  automatically. Once removal and all record writes are confirmed, finish the
+  withdrawn todo's recorded orchestrator thread(s) through the configured
+  `runtime.finish_thread` action under the finishing rule above.
 
 - **Only an agent-originated filing is the filer's to withdraw.** A filing that
-  carries a human's request in their own words is withdrawn only by that human:
-  abandoning an intended outcome is theirs (`general/policy/human-contract`). A
-  human's acknowledgement of the agent's proposal to file does not make the
-  filing theirs.
+  carries a human's request in their own words is withdrawn only by that human,
+  or on a settlement returned through an origin under **Coordinator pauses and
+  retirements** below: abandoning an intended outcome is theirs
+  (`general/policy/human-contract`). A human's acknowledgement of the agent's
+  proposal to file does not make the filing theirs.
+
+### Coordinator pauses and retirements
+
+The project's standing coordinator (`sdlc/procedure/lifecycle/coordinate`)
+acts on todos it does not hold, within these bounds alone.
+
+- **A pause waits for a named settlement.** When work it returned to an origin
+  (`general/principle/origin-routing`) must not advance until that origin
+  answers, the coordinator sets `hold` on the affected todo with a reason that
+  names what releases it, and tells the live claimant, which stops building on
+  the challenged premise at its next safe point. The coordinator releases the
+  hold when the settlement is applied. It pauses only the work the settlement
+  concerns and never parks work without its release.
+- **A redundant agent filing is retired by the coordinator.** A todo that
+  agents filed and that duplicates another carries no person's request. The
+  coordinator writes into the surviving todo's `log` what the redundant filing
+  carried that the survivor lacks, with its source, and then withdraws it on
+  the path below.
+- **A settlement is the origin's record.** A settlement counts when an
+  origin of any todo the return concerns — the session that todo's creation
+  record names — writes the agreed outcome into that todo's `log`. The
+  coordinator reads the version's recorded writer and compares it with the
+  creation record; a message tells it only where to look. Where the platform
+  operator is the origin, because no creating session was reachable, the
+  operator's answer in the coordinator's own thread is the settlement. An
+  outcome from any other session is no settlement.
+- **A settlement is applied as recorded.** The coordinator resumes, changes or
+  withdraws each todo the settlement names, one todo or several, including one
+  that carries a person's request: the origin is where the people concerned
+  decided it. A todo it retires outright, such as one whose requester adopts
+  an existing solution, leaves no survivor. Every other affected origin
+  receives a closure notice from which its person can still steer.
+- **Withdrawal settles running work first.** The coordinator has the live
+  claimant settle its running work and release its claim, and confirms the
+  release; a claimant that cannot answer has its unreachability established as
+  above. Only then does it run `instrukt todo remove <slug>` and inspect the
+  outcome, and once removal and all record writes are confirmed, finish the
+  withdrawn todo's recorded orchestrator thread(s) through the configured
+  `runtime.finish_thread` action under the terminal-finishing rule above. The
+  withdrawn todo's pending markers live in its own `<slug>/work` branch and
+  leave with it; a marker naming it in another live todo's branch is removed by
+  that todo's claimant, to which the coordinator points it.
+
 
 ### Read authorship from the creation record
 
@@ -512,11 +561,29 @@ A failed candidate stays with the standing integrator, which owns the
 verification and recovery decision. The work record preserves its evidence;
 neither a check result nor an automated filing supplies a diagnosis.
 
+Work that converges across separately commissioned todos is visible to no
+claimant; only the project's coordinator sees it. A pause it cannot place
+would let a todo keep building what its origin may yet retire, and a
+settlement only each claimant could apply would leave superseded work behind.
+The coordinator's acts stay bounded to what fleet attention needs: a pause
+names its release, the claimant still stops its own work, and withdrawal still
+settles running work before release and removal, so a claim never outlives
+the work it covers. A person's filing is withdrawn on a settlement because the
+people concerned decided it through an origin; the closure notice and the
+work record's recovery window keep that decision correctable by every other
+person it affected. Only the origin's own record can show it decided:
+messages between agent threads carry no authenticated sender, while the work
+record names the session that wrote each version. A duplicate that agents
+filed is the coordinator's to retire because no claimant sees the other
+filing and no person's intent rests on it; folding its evidence into the
+survivor keeps what it found.
+
 ## Scope
 
 All todo creation and preparation, every kind, every human or agent creator,
-every observer that flags a live claimant, and every filer that withdraws its
-own filing under this policy.
+every observer that flags a live claimant, every filer that withdraws its own
+filing, and the project's coordinator when it pauses or retires work under
+this policy.
 
 ## Enforcement
 
@@ -537,6 +604,9 @@ own filing under this policy.
   filing that carries a human's request, violates this policy.
 - Parking a flagged todo with `instrukt todo update <slug> --hold --reason <text>` without
   the associated todo-log explanation is incomplete reconciliation.
+- Reviewers apply **Coordinator pauses and retirements** to the coordinator's
+  holds, log writes and withdrawals as the work record shows them. A
+  coordinator acting within it is not a flagger.
 
 ## Exceptions
 

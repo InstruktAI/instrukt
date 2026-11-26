@@ -25,9 +25,18 @@ worker sessions and recovery, and keep ownership clear until a grounded handoff.
   mapping in `~/.instrukt/agents.yaml` (with any per-task agent/tier override
   taking precedence first); shipped `strong` and `standard` choices are
   configurable heuristics, not procedure-level model or tier defaults. Pass
-  coordinates only in a delegated commit-review assignment — never carry the
-  classification into the brief; the reviewer determines depth from the diff
-  (`sdlc/procedure/lifecycle/work/review-commits`).
+  coordinates and optional widening source pointers only in every delegated
+  review assignment (`prd-reviewer`, `architecture-reviewer`, `plan-reviewer`,
+  `build-reviewer`, and `commit-reviewer`) — never carry classifications,
+  narrative summaries, or asserted constraints into a review brief
+  (`sdlc/procedure/lifecycle/review`). For todo reviews, those coordinates are
+  the slug, review phase, target (`artifact@digest`, or exact candidate `head`
+  and `base` for builds), report artifact, on re-review or recovery the prior
+  findings digest and any missing obligation, and optional widening pointers
+  (including `log` when carrying an orchestrator challenge); commit-review
+  coordinates live in `sdlc/procedure/lifecycle/work/review-commits`. Producer
+  briefs (such as `builder` or `planner`) remain free to carry orchestration
+  direction.
 
 Intelligence maintains the preference order for performance and then cost;
 availability is the first selection condition. The parent or orchestrator uses
@@ -49,8 +58,10 @@ current reviewed target. The orchestrator verifies the report's substance:
    lane or preparation-review section is present with substantive analysis.
 2. When the review reports zero Important-or-higher findings, verify the
    required `Why No Issues` evidence is specific to the target.
-3. If either check fails, reject the review and re-dispatch with its required
-   scope and the reviewer role's configured selection.
+3. If either check fails, reject the review and re-dispatch with the reviewer
+   role's configured selection, passing only coordinates naming the prior
+   report digest and the missing sections or lanes
+   (`sdlc/procedure/lifecycle/review`).
 
 This is a document-quality check, not a second code or artifact review. Digest
 binding proves which report exists; the orchestrator verifies that the reviewer
@@ -129,19 +140,18 @@ claim. A refused release remains unresolved.
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
 conversation needs the child, record the contribution and handoff. Close
-discussion through the configured runtime discussion instruction. Keep active,
-held, and between-phase orchestrators wakeable (using dormant settling only);
-once a todo reaches a terminal state (`delivered` or `withdrawn`), retire its
-recorded orchestrator threads (`todo-orchestrator`, plus any legacy
-phase-orchestrator bindings) through the configured terminal retirement
-instruction, completing all record writes first when self-retiring, converging
-idempotently on replay, never gating retirement on unrelated resource cleanup,
-and never retiring standing agents:
+discussion through the configured runtime discussion instruction. When handing
+off a finalized todo to `integrate` (`--finalize-ready` and `--unclaim`) or
+once a todo reaches a terminal state (`delivered` or `withdrawn`), finish its
+recorded orchestrator threads through the configured thread-finishing
+instruction under `sdlc/policy/todo-creation-discipline` (finished resting
+orchestrators remain wakeable in place):
 
-<!-- @config: runtime.retire_thread -->
+<!-- @config: runtime.finish_thread -->
 
-Apart from terminal orchestrator retirement, session ending and cleanup belong
-to the runtime. Preserve any unresolved cleanup with its responsible owner.
+Apart from finishing completed todo orchestrator threads, session ending and
+cleanup belong to the runtime. Preserve any unresolved cleanup with its
+responsible owner.
 
 ### Container Slug Handling
 
@@ -205,7 +215,19 @@ child endings to this parent; this parent owns the recovery decision.
    question and apply the existing mandate. A recorded approval or request-changes
    decision reaches the live claim-holding orchestrator as direct attention;
    re-derive the obligation from the updated record.
-4. An unattended failure is an anomaly. The runner decides notification;
+4. Raise what no session of this todo can settle, instead of waiting on it or
+   asking it in a thread no person reads: a worker's question this
+   orchestrator cannot answer, work of another live todo that converges,
+   overlaps or conflicts with this one, a solution existing outside the
+   project that already provides what this todo builds, or a decision owned by
+   a person who is not reached in this todo's threads, its approval gates
+   aside. Run
+   `instrukt events raise <todo>... --obligation <text>` for the active todos
+   it concerns, naming the obligation at stake and no conversation content.
+   The project's coordinator returns it to the work's origin
+   (`general/principle/origin-routing`); keep working what the condition does
+   not touch, and follow the coordinator's pause when one arrives.
+5. An unattended failure is an anomaly. The runner decides notification;
    only a reference to the anomaly session or dispatch hold may be delivered.
 
 ### Agent Degradation Handling (Orchestrator-Owned)
@@ -222,8 +244,9 @@ provider-status mutation, restart or quota timer. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
 When evidence establishes rejection before any session was created, retry
 through the native runtime's supported availability selection. An ambiguous start
-retains its identity and pending work for reconciliation; apart from terminal
-orchestrator retirement, session ending and cleanup belong to the runtime. If
+retains its identity and pending work for reconciliation; apart from finishing
+completed todo orchestrator threads, session ending and cleanup belong to the
+runtime. If
 recovery cannot complete, preserve the pending step and report the anomaly.
 
 ### Review Threshold Handling (Orchestrator-Owned)
@@ -282,8 +305,8 @@ tier blocks the verdict — there is no fourth tier and no deferral path.
 
 Confirm `claim.held` is false after `instrukt todo update <slug> --unclaim`,
 then record the handoff and any remaining obligations. Preserve conversations
-needed for later rounds or human input; apart from terminal orchestrator
-retirement, the runtime owns session ending and cleanup.
+needed for later rounds or human input; apart from finishing completed todo
+orchestrator threads, the runtime owns session ending and cleanup.
 
 ## Outputs
 

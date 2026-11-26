@@ -21,7 +21,7 @@ use common::github::{CannedResponse, FakeGitHub};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 use serde_json::Value;
 use support::{Project, REPOSITORY, redact};
 
@@ -449,7 +449,7 @@ fn todos_on_from_the_machine_for_code_hosted_elsewhere_refuse_and_validation_say
     std::fs::create_dir_all(global.parent().unwrap()).unwrap();
     std::fs::write(
         &global,
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nmodules:\n  todos: true\n"),
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nmodules:\n  todos: true\n"),
     )
     .unwrap();
     let repo = hosted_elsewhere(&env);
@@ -469,7 +469,7 @@ fn hosted_elsewhere(env: &TestEnv) -> common::Repo {
     let repo = env.git_repo("demo");
     repo.write(
         "instrukt.yaml",
-        &format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\n"),
+        &format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\n"),
     );
     repo.commit("the developer's project");
     repo.git([
@@ -1525,11 +1525,45 @@ fn older_remote_schema_converts_without_losing_retained_evidence() {
         "log",
         "continued after conversion",
     ]);
-    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 3);
+    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 4);
     insta::assert_snapshot!(
         "converted-schema-evidence",
         project.ok(["artifacts", "read", "schema-change", "input"])
     );
+
+    // A schema 3 record's retained stamps and bindings (golden fixture)
+    // convert to schema 4 unchanged.
+    let golden: Value =
+        serde_json::from_str(include_str!("../fixtures/record-v3-evidence.json")).unwrap();
+    let mut seeded = Value::Null;
+    seed_revision(&project.github, |record| {
+        record["schema"] = 3.into();
+        record["sequence"] = golden["sequence"].clone();
+        record["stamps"] = golden["stamps"].clone();
+        record["bindings"] = golden["bindings"].clone();
+        seeded = record.clone();
+    });
+    project.ok([
+        "artifacts",
+        "write",
+        "schema-change",
+        "log",
+        "continued after the schema 3 conversion",
+    ]);
+    let converted = &latest_envelope(&project.github)["record"];
+    assert_eq!(converted["schema"], 4);
+    assert_eq!(converted["stamps"], golden["stamps"]);
+    assert_eq!(converted["bindings"], golden["bindings"]);
+    let input = |record: &Value| {
+        record["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["name"] == "input")
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(input(converted), input(&seeded));
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR5

@@ -50,8 +50,14 @@ domain state, and `general/policy/human-contract` to the scope of the work.
    prescribed outputs and advance its progress only when those criteria are
    satisfied. A conclusion that no further work is due follows the same checks.
 5. Continue with the remaining supplied events, preserving unfinished work
-   through the procedure's own recovery contract. When the supplied work is
-   accounted for, follow the procedure's turn and session lifecycle.
+   through the procedure's own recovery contract. When all supplied events are
+   accounted for and no pending work, active watch or candidate, or unfinished
+   human obligation remains, finish this standing thread through the configured
+   `runtime.finish_thread` action so it rests dormant and wakeable in place
+   until the next subscribed event arrives; leave it active while any
+   obligation or human question remains:
+
+   <!-- @config: runtime.finish_thread -->
 
 ## Outputs
 

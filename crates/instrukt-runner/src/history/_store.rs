@@ -7,10 +7,7 @@ use super::{_db, HistoryError, Match, RetainedMessage};
 use crate::runtime::conversations::Role;
 use instrukt_core::{
     home::Home,
-    state_db::{
-        StoreDb,
-        rusqlite::{self, Connection, OptionalExtension, Transaction, params},
-    },
+    state_db::rusqlite::{self, Connection, OptionalExtension, Transaction, params},
 };
 use serde_json::Value;
 
@@ -68,47 +65,6 @@ impl From<jiff::Timestamp> for StoredTime {
     fn from(time: jiff::Timestamp) -> Self {
         Self(time.strftime("%Y-%m-%dT%H:%M:%S.%9fZ").to_string())
     }
-}
-
-/// Where the TeleClaude import of a source stands.
-pub(super) enum Import {
-    /// The import completed; its stored position is never read.
-    Complete,
-    /// The import continues after this mirror id; absent before a first
-    /// batch commits.
-    After(Option<i64>),
-}
-
-pub(super) fn position(db: &StoreDb, source: &str) -> Result<Import, HistoryError> {
-    let stored: Option<(bool, Option<i64>)> = db
-        .conn()
-        .query_row(
-            "SELECT imported,CASE WHEN imported THEN NULL ELSE position END FROM history_sources WHERE source=?1",
-            [source],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .optional()?;
-    Ok(match stored {
-        Some((true, _)) => Import::Complete,
-        Some((false, cursor)) => Import::After(cursor),
-        None => Import::After(None),
-    })
-}
-
-/// Commits one import batch's conversations with the source's position and
-/// completion, in one transaction.
-pub(super) fn load(
-    db: &mut StoreDb,
-    source: &str,
-    position: Option<i64>,
-    imported: bool,
-    conversations: &[Conversation],
-) -> Result<(), HistoryError> {
-    db.write(|tx| -> Result<_,HistoryError> {
-        for c in conversations { write_conversation(tx,source,None,c)?; }
-        tx.execute("INSERT INTO history_sources(source,position,imported) VALUES(?1,?2,?3) ON CONFLICT(source) DO UPDATE SET position=excluded.position,imported=excluded.imported",params![source,position,imported])?;
-        Ok(())
-    })
 }
 
 pub(super) fn search(home: &Home, query: &str, limit: usize) -> Result<Vec<Match>, HistoryError> {

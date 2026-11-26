@@ -6,7 +6,7 @@
 ### What
 
 Instrukt is a modular Rust CLI for context engineering: documentation instructs
-agents through progressive retrieval and publication. It replaces TeleClaude.
+agents through progressive retrieval and publication.
 
 ### Why
 

@@ -37,6 +37,12 @@ runner owns dispatch, and the configured runtime owns conversations.
 : The first non-author recipient's recorded check that an intent version
   faithfully reflects its originating conversation.
 
+**Verification disposition**
+: A stamp recording what is established about a candidate commit's live
+  behavior — pass, fail, blocked, Tier 0 skip or hotfix deferral — bound to
+  that commit and its `verification-findings` report; workflow owns who may
+  record it and what handoff requires of it.
+
 **Prerequisite**
 : Another project todo whose evidence or delivery gates a dependent's pickup.
 
@@ -124,7 +130,8 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Published contracts:** the `instrukt todo` record and artifact surfaces,
   `instrukt todo update <slug> --unclaim` for releasing the execution claim,
   `instrukt todo deliver <slug> --commit <sha>`, `instrukt todo stamp <slug> --build-started`,
-  `--finalize-ready`, verdict stamps and `--prd-approved` / `--task-approved`
+  `--finalize-ready`, verdict stamps, verification disposition stamps
+  (`--verification`) and `--prd-approved` / `--task-approved`
   with `--by human|peer [--session <runtime:id>]`; evidence read capabilities for workflow, and
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
@@ -132,7 +139,8 @@ runner owns dispatch, and the configured runtime owns conversations.
   published eval provenance; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub supplies the required reflected store; the runner supplies the event-log
-  append the finalize-ready stamp uses. Standing-agent event delivery
+  append the finalize-ready stamp uses, and the fleet-attention contract its
+  status, hold and attempt changes call. Standing-agent event delivery
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
@@ -258,6 +266,15 @@ The work finalize-ready stamp appends workflow’s `workflow.finalized`
 through the runner’s event-log interface. This atomic work mutation retains
 the reviewed head; workflow owns the lifecycle vocabulary.
 
+Every change work makes on this computer to a todo's status, hold or attempts
+calls the runner's fleet-attention contract inside its own transaction, with
+the facts of that change: the todo, its hold before and after, whether it left
+active work, a failed attempt with that role's earlier failed attempts, and
+whether the project still has an active todo that is unheld and not a
+structural holder. Which of those facts are conditions, and their events, are
+the runner's (`project/instrukt/spec/feature/runner/fleet-attention`). A record
+adopted from GitHub is another computer's change and makes no call.
+
 ### Domain events consumed
 
 Work consumes no events in the first build. GitHub changes reconcile into
@@ -267,7 +284,8 @@ local records and workflow results enter as evidence-bound mutations.
 
 Work owns no event vocabulary. Its finalize-ready stamp appends workflow's
 `workflow.finalized`, concerning the todo in its project origin
-(`project/instrukt/spec/domain/workflow`).
+(`project/instrukt/spec/domain/workflow`); the fleet-attention events its
+record changes lead to are the runner's (`project/instrukt/spec/domain/runner`).
 
 ## Use cases
 
@@ -310,8 +328,12 @@ owning design snippet or decision record is declared.
   stamps and automatic holds, purges expired retained records, and updates
   per-role session bindings through work’s command contract.
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
-  `workflow.finalized` through the runner's event-log interface, in the
-  stamp's own transaction.
+  `workflow.finalized` through the runner's event-log interface, and every
+  change to a todo's status, hold or attempts calls the runner's
+  fleet-attention contract, each in its record change's own transaction.
+- **Work → runner (fleet attention)** — customer-supplier. The runner reads a
+  project's active todos with their status and holds when it admits a raise and
+  when one of its own observations opens an attention episode.
 - **Work → runner (state database)** — customer-supplier. The runner's
   operational tables live in work's state database, under its writer lock and
   migrations; the runner owns their meaning and is their only writer. The
@@ -336,6 +358,17 @@ owning design snippet or decision record is declared.
   opened the turn a session has in progress when it offers a revision, and a
   named session's conversation; work consults them when it admits a head
   verdict.
+
+
+- **Work → runner (requested review)** — customer-supplier. Work answers
+  whether a commit's head verdict stands here, with the session that recorded
+  its current version, or was handed off, with the export that handed it off,
+  and which pinned base it admits the commit's verdict against; the runner
+  consults this when it admits a requested review
+  (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
+  requested reviewer's verdict under its own rules.
+
+
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
   evidence is current for a commit and whether a candidate's derived
   approval is one GitHub does not show yet;

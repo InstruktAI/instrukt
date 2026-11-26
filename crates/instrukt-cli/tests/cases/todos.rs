@@ -347,7 +347,7 @@ fn a_report_without_approval_shows_the_questions_and_files_nothing() {
     let older = std::fs::read_to_string(&layer).unwrap().replacen(
         &format!(
             "schema_version: {}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
         "schema_version: 5",
         1,
@@ -452,7 +452,7 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
     let older = current.replacen(
         &format!(
             "schema_version: {}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
         "schema_version: 5",
         1,

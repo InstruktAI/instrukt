@@ -7,9 +7,10 @@ use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
-    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, GitHubReach, HoldCause, Pickup,
-    PickupCandidate, ProjectRef, Reflection, ReflectionReport, RetentionPurge, SessionBinding,
-    SessionBindings, TaskFirings, TaskOutcome, TaskTiming, TodoKind, WorkInterfaceError,
+    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, FleetRecord, GitHubReach, HoldCause,
+    Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionReport, RetentionPurge,
+    SessionBinding, SessionBindings, TaskFirings, TaskOutcome, TaskTiming, TodoKind,
+    WorkInterfaceError,
 };
 use jiff::Timestamp;
 
@@ -1073,6 +1074,27 @@ impl TaskFirings for Work {
         })?;
         s.flush()?;
         Ok(())
+    }
+}
+
+impl FleetRecord for Work {
+    fn runnable_remains(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+    ) -> Result<bool, WorkInterfaceError> {
+        let path = std::path::PathBuf::from(tx.path().unwrap_or_default());
+        Ok(_store::runnable_remains(tx, &path, project)?)
+    }
+
+    fn active_todo(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+        todo: &TodoSlug,
+    ) -> Result<bool, WorkInterfaceError> {
+        let path = std::path::PathBuf::from(tx.path().unwrap_or_default());
+        Ok(_store::active_todo(tx, &path, project, todo)?)
     }
 }
 

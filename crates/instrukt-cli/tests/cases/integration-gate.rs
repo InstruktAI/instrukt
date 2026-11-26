@@ -128,6 +128,27 @@ fn finalized(ci: bool) -> Tracked {
         ])
         .assert()
         .success();
+    // The claim-holding orchestrator judges the refactor Tier 0.
+    project.todo([
+        "artifacts",
+        "write",
+        "tidy-imports",
+        "verification-findings",
+        "Tier 0: import order only.",
+    ]);
+    project
+        .env
+        .instrukt(path)
+        .env("T3CODE_THREAD_ID", "lead")
+        .args([
+            "todo",
+            "stamp",
+            "tidy-imports",
+            "--verification",
+            "tier_0_skip",
+        ])
+        .assert()
+        .success();
     project
         .env
         .instrukt(path)

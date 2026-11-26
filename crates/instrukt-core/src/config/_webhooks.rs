@@ -326,19 +326,64 @@ impl WebhookSource {
     }
 }
 
-pub(super) fn editor_schema() -> serde_json::Value {
+/// The editor schema of `layer`'s `webhooks`, a project layer's or a company
+/// home's: the two differ only in the home a source's endpoint and its
+/// signing references belong to.
+pub(super) fn editor_schema(layer: super::LayerKind) -> serde_json::Value {
+    use super::_schema::secret_reference;
     use serde_json::json;
-    let reference = json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    let endpoint = match layer {
+        super::LayerKind::Company => "/hooks/inbound/company/<name>/<domain>",
+        super::LayerKind::Global | super::LayerKind::Project => {
+            "/hooks/inbound/project/<slug>/<domain>"
+        }
+    };
     let source = json!({
         "type": "object", "additionalProperties": false, "required": ["secret"],
+        "description": "One event source, under its event domain: how its deliveries are \
+            verified and where each one's event name comes from.",
         "properties": {
-            "secret": reference, "previous_secret": reference,
-            "verify": {"enum": ["native", "github", "hmac-sha256"], "default": "native"},
-            "header": {"type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
-            "state": {"type":"array","items":{"type":"string","pattern":"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}},
-            "subject_from": {"type":"string","minLength":1},
-            "name_from": {"type": "string", "minLength": 1},
-            "name": {"type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"}
+            "secret": secret_reference(
+                "The signing secret every delivery is verified against",
+                layer,
+            ),
+            "previous_secret": secret_reference(
+                "The signing secret being rotated out, which verifies too until it is removed",
+                layer,
+            ),
+            "verify": {
+                "enum": ["native", "github", "hmac-sha256"], "default": "native",
+                "description": "The verification scheme: `native` (`X-Hook-Signature`), `github` \
+                    (`X-Hub-Signature-256` and GitHub's normalizer) or `hmac-sha256` (the \
+                    declared `header`); never an unsigned fallback.",
+            },
+            "header": {
+                "type": "string", "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$",
+                "description": "The HTTP header carrying the signature; required with \
+                    `verify: hmac-sha256` and refused with the other schemes.",
+            },
+            "state": {
+                "type":"array",
+                "items":{"type":"string","pattern":"^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"},
+                "description": "Event names, without the domain, that are external state \
+                    rather than occurrences; requires `subject_from`.",
+            },
+            "subject_from": {
+                "type":"string","minLength":1,
+                "description": "The dotted payload field whose nonempty string or number \
+                    qualifies the source's subject for its state names.",
+            },
+            "name_from": {
+                "type": "string", "minLength": 1,
+                "description": "The top-level JSON field whose string value names each \
+                    delivery's event, normalized to the event-name grammar; exclusive with \
+                    `name` and with `verify: github`.",
+            },
+            "name": {
+                "type": "string", "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
+                "description": "A fixed event name for every delivery; exclusive with \
+                    `name_from` and with `verify: github`.",
+            }
         },
         "allOf": [
             {"if":{"required":["state"],"properties":{"state":{"minItems":1}}},"then":{"required":["subject_from"]}},
@@ -349,7 +394,16 @@ pub(super) fn editor_schema() -> serde_json::Value {
              "then": {"required": ["header"]}, "else": {"not": {"required": ["header"]}}}
         ]
     });
-    json!({"type": "object", "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"}, "additionalProperties": source})
+    json!({
+        "type": "object",
+        "description": format!(
+            "Inbound event sources, keyed by event domain (`[a-z][a-z0-9_]*`); each declared \
+             domain is served at `{endpoint}`, and a delivery's event type is \
+             `<domain>.<name>`."
+        ),
+        "propertyNames": {"pattern": "^[a-z][a-z0-9_]*$"},
+        "additionalProperties": source,
+    })
 }
 
 pub(super) fn redact(value: &mut Value) {

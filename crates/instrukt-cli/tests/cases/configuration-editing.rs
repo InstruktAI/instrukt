@@ -1,6 +1,6 @@
 //! `project/instrukt/spec/feature/configuration/configuration-editing`:
 //! `instrukt config init|get|patch` — revision checks, whole-document
-//! validation and atomic writes.
+//! validation and atomic writes — and `instrukt config schema`.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -12,7 +12,7 @@ use std::path::Path;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 use serde_yaml_ng::Value;
 
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
@@ -206,10 +206,7 @@ fn a_machine_without_configuration_is_initialized_without_a_project_identity() {
         &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
     )
     .unwrap();
-    assert_eq!(
-        global["schema_version"],
-        Value::from(CURRENT_SCHEMA_VERSION)
-    );
+    assert_eq!(global["schema_version"], Value::from(GLOBAL_SCHEMA_VERSION));
     assert!(
         global.get("project").is_none(),
         "a machine needs no project identity"
@@ -241,7 +238,7 @@ fn a_project_without_configuration_is_named_after_its_folder() {
     env.run(repo.path(), ["config", "init"]).success();
     assert_eq!(
         repo.read("instrukt.yaml"),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: my-project-v2\n")
+        format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: my-project-v2\n")
     );
     env.run(repo.path(), ["config", "validate"]).success();
 }
@@ -265,7 +262,7 @@ fn a_linked_worktree_is_named_after_the_primary_worktree() {
     env.run(&linked, ["config", "init"]).success();
     assert_eq!(
         std::fs::read_to_string(linked.join("instrukt.yaml")).unwrap(),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: primary-checkout\n")
+        format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: primary-checkout\n")
     );
 }
 
@@ -285,7 +282,7 @@ fn existing_configuration_at_the_current_schema_is_kept() {
     let env = TestEnv::new();
     let repo = env.git_repo("demo");
     let layer = format!(
-        "# my notes\nschema_version: {CURRENT_SCHEMA_VERSION}\nproject: chosen\nboard: acme/7\n"
+        "# my notes\nschema_version: {PROJECT_SCHEMA_VERSION}\nproject: chosen\nboard: acme/7\n"
     );
     repo.write("instrukt.yaml", &layer);
     env.run(repo.path(), ["config", "init"]).success();
@@ -299,7 +296,7 @@ fn existing_configuration_of_a_newer_schema_is_refused() {
     let repo = env.git_repo("newer");
     let layer = format!(
         "schema_version: {}\nproject: newer\n",
-        CURRENT_SCHEMA_VERSION + 1
+        PROJECT_SCHEMA_VERSION + 1
     );
     repo.write("instrukt.yaml", &layer);
     let refused = env.run(repo.path(), ["config", "init"]).failure();
@@ -393,4 +390,157 @@ fn switching_on_event_responses_asks_for_the_event_transport_first() {
     let refused = global_patch("redis: null").failure();
     insta::assert_snapshot!("transport-removed-under-events", stderr(&env, &refused));
     assert_eq!(std::fs::read_to_string(&machine).unwrap(), before);
+}
+
+fn stdout(assert: &Assert) -> String {
+    String::from_utf8(assert.get_output().stdout.clone()).unwrap()
+}
+
+/// The Slack app manifest `project/instrukt/spec/feature/company/slack-connector`
+/// gives in full (`### The Slack app`).
+const SPECIFIED_SLACK_MANIFEST: &str = r#"display_information:
+  name: agent
+  description: The company's agent. Tag it in a channel or message it directly.
+features:
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: agent
+    always_online: true
+oauth_config:
+  scopes:
+    bot:
+      - app_mentions:read
+      - chat:write
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:history
+      - im:read
+      - users:read
+      - users:read.email
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_mention
+      - message.im
+  interactivity:
+    is_enabled: false
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false
+"#;
+
+// spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE4
+#[test]
+fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() {
+    let env = TestEnv::new();
+    let here = env.path("");
+    let schema = |path: &[&str]| {
+        let mut args = vec!["config", "schema", "--company", "acme"];
+        args.extend_from_slice(path);
+        env.run(&here, args)
+    };
+
+    // The help of the configuration command names the verb.
+    insta::assert_snapshot!(
+        "config-help",
+        stdout(&env.run(&here, ["config", "-h"]).success())
+    );
+
+    // Every key of a company home, its connector kinds' setup and its
+    // services' fields, with no company home on the computer.
+    let whole = stdout(&schema(&[]).success());
+    insta::assert_snapshot!("company-home-schema", whole);
+    assert!(
+        !env.instrukt_home().join("companies/acme").exists(),
+        "asking reads no home and creates none"
+    );
+
+    // A path shows that key and what lies under it.
+    insta::assert_snapshot!(
+        "company-connectors-schema",
+        stdout(&schema(&["connectors"]).success())
+    );
+    insta::assert_snapshot!(
+        "company-slack-connector-schema",
+        stdout(&schema(&["connectors.slack"]).success())
+    );
+
+    // The JSON Schema carries the same setup, the specification's manifest in
+    // full, and the token fields a Slack entry requires.
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json", "connectors.slack"]).success())).unwrap();
+    let setup = json["description"].as_str().unwrap();
+    let (_, manifest) = setup.split_once("\nManifest:\n").unwrap();
+    assert_eq!(
+        serde_yaml_ng::from_str::<Value>(manifest).unwrap(),
+        serde_yaml_ng::from_str::<Value>(SPECIFIED_SLACK_MANIFEST).unwrap()
+    );
+    assert_eq!(
+        json["required"],
+        serde_json::json!(["app_token", "bot_token"])
+    );
+    let whole_json: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json"]).success())).unwrap();
+    assert_eq!(
+        whole_json["properties"]["connectors"]["properties"]["slack"],
+        json
+    );
+    // And a member entry as validation reads it.
+    let members: serde_json::Value =
+        serde_json::from_str(&stdout(&schema(&["--json", "members"]).success())).unwrap();
+    assert_eq!(whole_json["properties"]["members"], members);
+    let entry = &members["additionalProperties"];
+    assert_eq!(entry["required"], serde_json::json!(["email"]));
+    assert_eq!(entry["additionalProperties"], serde_json::json!(false));
+
+    // What it shows is what validation admits: a Slack entry with exactly the
+    // fields shown is accepted, and one the entry cannot take is refused.
+    env.run(&here, ["config", "init", "--company", "acme"])
+        .success();
+    let company_patch = |yaml: &str| {
+        let revision = stdout(
+            &env.run(&here, ["config", "get", "--company", "acme", "--revision"])
+                .success(),
+        );
+        env.run(
+            &here,
+            [
+                "config",
+                "patch",
+                "--company",
+                "acme",
+                "--revision",
+                revision.trim(),
+                "--yaml",
+                yaml,
+            ],
+        )
+    };
+    // The token fields' values are written as the schema says they are.
+    for name in ["SLACK_APP_TOKEN", "SLACK_BOT_TOKEN"] {
+        env.instrukt(&here)
+            .args(["secrets", "set", name, "--company", "acme"])
+            .write_stdin("token")
+            .assert()
+            .success();
+    }
+    company_patch(
+        "connectors: {slack: {app_token: '${SLACK_APP_TOKEN}', bot_token: '${SLACK_BOT_TOKEN}', context_messages: 10}}",
+    )
+    .success();
+    let refused =
+        company_patch("connectors: {slack: {signing_secret: '${SLACK_SIGNING}'}}").failure();
+    insta::assert_snapshot!(
+        "company-undeclarable-connector-field",
+        stderr(&env, &refused)
+    );
+
+    // A key a company home cannot declare names the keys it can declare there.
+    let unknown = schema(&["board"]).failure();
+    insta::assert_snapshot!("company-schema-undeclarable-key", stderr(&env, &unknown));
 }

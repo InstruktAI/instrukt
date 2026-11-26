@@ -39,7 +39,6 @@ listed:
   - sdlc/procedure/deepening-discovery
   - sdlc/procedure/eval-report
   - sdlc/procedure/greenfield-intake
-  - sdlc/procedure/lifecycle/coordinate
   - sdlc/procedure/lifecycle/fix-review-findings
   - sdlc/procedure/lifecycle/prepare/architecture
   - sdlc/procedure/lifecycle/prepare/diagnose

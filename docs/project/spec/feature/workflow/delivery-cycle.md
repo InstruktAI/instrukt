@@ -12,7 +12,7 @@ description: Unified delivery cycle enforced by three hard integrity invariants 
 A repository todo runs end-to-end under the unified `todo-orchestrator` in one
 `<slug>/work` worktree. Code enforces three hard integrity invariants and
 exposes a facts-only ledger; prose procedures own when to diagnose, plan,
-build, review, fix, process deferrals, and finalize.
+build, review, verify, fix, process deferrals, and finalize.
 
 ## Canonical fields
 
@@ -22,29 +22,89 @@ build, review, fix, process deferrals, and finalize.
    attempt may be open on `<slug>/work` at a time. Attempt reservation
    (`instrukt todo attempt`) requires a clean worktree on the recorded branch;
    completion stamps (`--role-complete`, `--build-complete`, review verdicts,
-   `--deferrals-processed`) release the attempt atomically.
-2. **Independent exact-SHA review gate:** `--verdict approve --phase build_review`
+   verification dispositions, `--deferrals-processed`) release the attempt
+   atomically.
+2. **Independent exact-SHA handoff gate:** `--verdict approve --phase build_review`
    requires an independent reviewer session distinct from the orchestrator and
    all writer roles (`builder`, `fixer`, `setup`, `finalizer`, `intaker`,
    `architect`, `planner`). `--finalize-ready` (callable by a retained completed
    `finalizer` or directly by the claim-holding `todo-orchestrator`) requires
    no open workspace attempt, a clean worktree matching local and published
-   `origin/<slug>/work` HEAD, and a current independent `build_review` `approve`
+   `origin/<slug>/work` HEAD, a current independent `build_review` `approve`
    stamp bound to that **exact commit SHA** and current `review-findings`
-   digest. `--finalize-ready` appends `workflow.finalized` atomically.
+   digest, and a current verification disposition for that exact commit that
+   admits handoff (Live verification disposition below). `--finalize-ready`
+   appends `workflow.finalized` atomically.
 3. **Human-owned approval gates:** configured `approvals.prd` is enforced on
    `builder`, `fixer`, and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact.
+
+### Live verification disposition
+
+The verification disposition is the second half of the handoff gate.
+`--finalize-ready` requires that the current disposition
+(`project/instrukt/spec/feature/workflow/artifact-currency`) names the exact
+candidate commit and is a pass, a Tier 0 skip or a hotfix deferral. A
+candidate whose current disposition is fail or blocked, or that carries none
+for its commit, is refused readiness, and the refusal names the disposition
+owed. What each disposition binds is work's
+(`project/instrukt/spec/feature/work/stamps`).
+
+Caller admission is closed for all five dispositions:
+
+| Disposition | Admitted from |
+| --- | --- |
+| pass, fail, blocked | A bound `verifier` attempt whose session is independent: distinct from the orchestrator and from every writer role, as a build-review approval's reviewer is (`general/principle/verification-independence`). |
+| Tier 0 skip | That independent bound `verifier`, or the claim-holding `todo-orchestrator`. |
+| hotfix deferral | The claim-holding `todo-orchestrator` alone. |
+
+From any other session — a writer role, a `verifier` that is not independent,
+a session that does not hold the claim, or an unbound session — a disposition
+is refused and nothing is recorded. The refusal names its door: a pass, fail
+or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip
+or hotfix deferral from the claim-holding orchestrator.
+
+A `verifier` attempt records one disposition, and recording it releases the
+attempt. Its exact replay reports the retained outcome; a different
+disposition from the released attempt is refused, naming a new `verifier`
+attempt as the door. The orchestrator records a Tier 0 skip or a hotfix
+deferral with no verifier attempt, as a record-only write at the clean head of
+the shared worktree, and only while no workspace attempt is open on
+`<slug>/work`. While one is open the write is refused, naming the door: that
+attempt's release, or its recorded failure (`general/principle/trust-and-guardrails`,
+interference).
+
+What a `verifier` recorded for a commit limits what the orchestrator may
+record for that commit. While the latest disposition a `verifier` recorded for
+it is fail, the orchestrator's Tier 0 skip or hotfix deferral is refused, and
+the refusal names what clears it: a new candidate commit, or a new `verifier`
+attempt on that commit. While it is blocked, the orchestrator's Tier 0 skip is
+refused, and the refusal names what clears it: a new candidate commit, a new
+`verifier` attempt on that commit, or, under the hotfix exception of
+`sdlc/policy/live-verification`, a hotfix deferral naming its tracked
+follow-up. That deferral is admitted after a verifier's blocked and admits the
+commit to readiness. Because only an independent `verifier` records fail or
+blocked, a blocked that lifts a fail on the same commit comes only from a new
+independent `verifier` attempt.
+
+Whether a candidate warrants a skip, a deferral or a live run is the
+orchestrator's judgment under `sdlc/policy/live-verification`; code admits the
+record and judges no diff (`general/principle/intelligence-boundaries`).
+
+`verifier` is a shared-worktree role under the attempt lock. Its attempt is
+reserved, bound and released like every other role's, and it works in
+`<slug>/work` at the candidate head, with no worktree or branch of its own.
 
 ### Fast-track and reversible routing
 
 Code imposes no mandatory `implementation-plan`, `setup`, `--build-started`,
 `quality-checklist`, or separate `finalizer` gate on bounded bugs or localized
 changes. The orchestrator may dispatch `builder` directly in `<slug>/work`,
-follow with independent `build-reviewer`, push the exact reviewed HEAD, stamp
-`--finalize-ready`, and unclaim to hand off to `integrate`. If unexpected blast
-radius surfaces mid-build, the orchestrator routes to planning or doc updates in
-prose without skip-flag proliferation.
+follow with independent `build-reviewer` and the verification disposition the
+candidate owes, push the exact reviewed HEAD, stamp `--finalize-ready`, and
+unclaim to hand off to `integrate`. If unexpected blast radius surfaces
+mid-build, the orchestrator routes to planning or doc updates in prose without
+skip-flag proliferation.
 
 ### Single workspace, cleanup & in-flight legacy migration
 
@@ -172,8 +232,28 @@ Given a developer has a bounded change or bug in its single todo worktree
 When the unified todo-orchestrator dispatches a builder directly without an implementation plan, setup, or quality checklist
 Then concurrent workspace attempts are refused by the interference lock
 And finalization is refused until an independent reviewer approves the exact published commit SHA
-When the independent reviewer approves that exact commit SHA
+When the independent reviewer approves that exact commit SHA and its verification disposition admits handoff
 Then the claim-holding orchestrator can record finalize readiness directly for integration
+```
+
+### UC-DC10: Hand off a candidate whose live behavior is accounted for
+
+```gherkin
+Given a developer's candidate is independently approved at its exact commit
+When no verification disposition is current for that commit
+Then finalize readiness is refused
+When an independent verifier records a pass for that exact commit and its findings
+Then readiness can be recorded for that candidate
+But a pass recorded by the orchestrator or a writer of the change is refused
+```
+
+### UC-DC11: A failed candidate is not waved through
+
+```gherkin
+Given an independent verifier recorded a fail for a developer's candidate commit
+When the orchestrator records a Tier 0 skip or a hotfix deferral for that commit
+Then the record is refused and names a new candidate commit or a new verifier attempt as what clears it
+And finalize readiness for that commit stays refused
 ```
 
 ## Known caveats

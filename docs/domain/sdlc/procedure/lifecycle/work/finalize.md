@@ -29,14 +29,16 @@ directly without dispatching a `finalizer`.)
   for a retained worktree that predates a delivered verification stack) are
   independently reviewed and live-verification reclassified after completion
   and release.
-- Before recording `--finalize-ready` (Step 5),
-  `instrukt todo artifacts read {slug} verification-findings` exists for the
-  exact candidate HEAD with `PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED` (with
-  tracked follow-up todo under `sdlc/policy/live-verification` Exceptions), and
-  for a real-occurrence `bug` (`sdlc/concept/defect-evidence`)
+- Before recording `--finalize-ready` (Step 5), the exact candidate HEAD
+  carries a current verification disposition that admits handoff — `pass`,
+  `tier_0_skip`, or `hotfix_deferred` with its tracked follow-up todo under
+  `sdlc/policy/live-verification` Exceptions — bound to the current
+  `verification-findings`, as the ledger's handoff gate in
+  `instrukt todo show {slug}` reports; and for a real-occurrence `bug`
+  (`sdlc/concept/defect-evidence`)
   `instrukt todo artifacts read {slug} escape-assessment` is recorded — except
-  an emergency hotfix carrying `HOTFIX_DEFERRED`, whose tracked follow-up todo
-  delivers post-hotfix `escape-assessment`.
+  an emergency hotfix carrying a `hotfix_deferred` disposition, whose tracked
+  follow-up todo delivers post-hotfix `escape-assessment`.
 - When `quality-checklist` is present, its build and review sections are complete.
 - Deferrals are resolved and their processing is recorded.
 
@@ -57,10 +59,11 @@ directly without dispatching a `finalizer`.)
    independently reviewed and live-verification reclassified (Step 4b of
    `sdlc/procedure/lifecycle/overview`) at the current shared head after
    release.
-5. After your parent confirms current independent approval, current exact-SHA
-   `verification-findings` (`PASS`, `TIER_0_SKIP`, or `HOTFIX_DEFERRED` under
-   `sdlc/policy/live-verification` Exceptions), and no outstanding workspace
-   role, recheck matching candidate identities and record
+5. After your parent confirms current independent approval, a current
+   exact-SHA verification disposition that admits handoff (`pass`,
+   `tier_0_skip`, or `hotfix_deferred` under `sdlc/policy/live-verification`
+   Exceptions), and no outstanding workspace role, recheck matching candidate
+   identities and record
    `instrukt todo stamp {slug} --finalize-ready` against the retained binding.
    This record-only write commits readiness and `workflow.finalized` together
    for the exact project/todo/SHA. Further workspace changes need a new attempt.

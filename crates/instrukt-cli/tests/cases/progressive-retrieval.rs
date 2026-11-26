@@ -685,7 +685,7 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     demo.commit("chore: project configuration");
@@ -695,7 +695,7 @@ fn each_agent_reads_the_value_of_the_project_it_stands_in() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: other\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
 

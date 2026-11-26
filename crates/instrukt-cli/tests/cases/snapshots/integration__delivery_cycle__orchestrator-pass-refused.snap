@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "stderr(&crew, &orchestrator)"
+---
+instrukt: the orchestrator records a Tier 0 skip or a hotfix deferral, never a pass: a pass, fail or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip or hotfix deferral from the claim-holding orchestrator
