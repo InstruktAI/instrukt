@@ -104,10 +104,30 @@ fn failed(what: &str, answer: &Answer) -> CompanyRepositoryError {
     CompanyRepositoryError::Failed(format!("GitHub refused {what} ({}{said})", answer.status))
 }
 
+/// The changes this boundary makes to a company's repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mutation {
+    Create,
+    GrantAdmin,
+    SetDefaultBranch,
+}
+
+impl Mutation {
+    /// The mutation as its diagnostic record names it.
+    fn label(self) -> &'static str {
+        match self {
+            Self::Create => "create",
+            Self::GrantAdmin => "grant_admin",
+            Self::SetDefaultBranch => "set_default_branch",
+        }
+    }
+}
+
 /// The record of one company-repository mutation GitHub answered: which
 /// operation, on which repository, with which status. Nothing of the
 /// request, the credential or the administrator is recorded.
-fn mutated(operation: &str, org: &str, repo: &str, status: u16, succeeded: bool) {
+fn mutated(mutation: Mutation, org: &str, repo: &str, status: u16, succeeded: bool) {
+    let operation = mutation.label();
     if succeeded {
         tracing::info!(
             event = "company_repository_mutated",
@@ -188,7 +208,7 @@ impl CompanyRepositories for GitHubAccess {
                 422 if already_exists(&answer.body) => Ok(Creation::AlreadyExists),
                 _ => Err(failed(&what, &answer)),
             };
-            mutated("create", org, repo, answer.status, outcome.is_ok());
+            mutated(Mutation::Create, org, repo, answer.status, outcome.is_ok());
             outcome
         })
     }
@@ -216,7 +236,13 @@ impl CompanyRepositories for GitHubAccess {
                 201 | 204 => Ok(()),
                 _ => Err(failed(&what, &answer)),
             };
-            mutated("grant_admin", org, repo, answer.status, outcome.is_ok());
+            mutated(
+                Mutation::GrantAdmin,
+                org,
+                repo,
+                answer.status,
+                outcome.is_ok(),
+            );
             outcome
         })
     }
@@ -244,7 +270,7 @@ impl CompanyRepositories for GitHubAccess {
                 _ => Err(failed(&what, &answer)),
             };
             mutated(
-                "set_default_branch",
+                Mutation::SetDefaultBranch,
                 org,
                 repo,
                 answer.status,

@@ -35,6 +35,11 @@ const GENERATION_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
 /// The default branch of a company's repository.
 const MAIN: &str = "main";
 
+/// What a company's home that is in place but unpublished needs: its
+/// recovery, as adoption's diagnostics state it.
+const NOT_PUBLISHED: &str =
+    "the company's home is in place and not published; `instrukt sync` in it publishes it";
+
 /// The skeleton's knowledge index: it selects nothing yet.
 const EMPTY_INDEX: &str = "expanded: []\nlisted: []\n";
 
@@ -260,7 +265,7 @@ pub fn adopt_company(
                     event = "company_home_publication_refused",
                     company = %key,
                     reason = %refusal,
-                    "the company's home is in place and not published; `instrukt sync` in it publishes it"
+                    "{}", NOT_PUBLISHED
                 );
                 CompanySync::NotPublished(refusal.to_string())
             }
@@ -270,7 +275,7 @@ pub fn adopt_company(
                 event = "company_home_publication_failed",
                 company = %key,
                 error = %error,
-                "the company's home is in place and not published; `instrukt sync` in it publishes it"
+                "{}", NOT_PUBLISHED
             );
             CompanySync::NotPublished(error.to_string())
         }

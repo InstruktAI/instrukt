@@ -368,7 +368,7 @@ fn stderr(assert: &assert_cmd::assert::Assert) -> String {
 }
 
 /// `text` with the test's own temporary folder, as written and as resolved,
-/// replaced by `[TMP]`.
+/// replaced by one placeholder, so a snapshot holds no machine path.
 fn scrubbed(env: &TestEnv, text: &str) -> String {
     let base = env.path("");
     let base = base.to_str().unwrap().trim_end_matches('/');
@@ -377,7 +377,7 @@ fn scrubbed(env: &TestEnv, text: &str) -> String {
         .replace(base, "[TMP]")
 }
 
-/// Every value in `value`, at any depth, as text.
+/// Every string in `value`, at any depth; other scalars are left out.
 fn values(value: &serde_yaml_ng::Value, out: &mut Vec<String>) {
     match value {
         serde_yaml_ng::Value::Mapping(map) => map.values().for_each(|v| values(v, out)),

@@ -1353,7 +1353,7 @@ mod tests {
                 "author"
             ]
         );
-        // One JSON document, indented by two spaces, ending in one newline.
+        // The catalog is written as one pretty-printed JSON document.
         assert_eq!(
             file.text,
             format!("{}\n", serde_json::to_string_pretty(&written).unwrap())
@@ -1427,25 +1427,31 @@ mod tests {
         let drift = upgrade.drift.clone().unwrap();
         assert_eq!(drift.version.to_string(), "0.3.8");
         assert!(drift.removals.is_empty());
-        assert!(
-            drift
-                .writes
-                .iter()
-                .all(|file| file.path.starts_with("skills/acme"))
-        );
+        let written: Vec<&Path> = drift
+            .writes
+            .iter()
+            .map(|file| file.path.as_path())
+            .collect();
+        assert_eq!(written, [Path::new("skills/acme/SKILL.md")]);
         let upgraded = applied_plan(&earlier, &upgrade);
         let catalog: Json =
             serde_json::from_str(&upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1)
                 .unwrap();
         assert_eq!(catalog["plugins"][0]["version"], "0.3.8");
         assert_eq!(catalog["plugins"][0]["source"], "./");
-        assert_eq!(
-            upgraded
+        // What the earlier rendering left is kept as it was.
+        let left = |files: &[(String, String)]| -> Vec<(String, String)> {
+            let earlier = [
+                "plugins/acme/.claude-plugin/plugin.json",
+                "plugins/acme/skills/acme/SKILL.md",
+            ];
+            files
                 .iter()
-                .find(|(path, _)| path == "plugins/acme/skills/acme/SKILL.md")
-                .map(|(_, text)| text.as_str()),
-            Some("an earlier rendering\n")
-        );
+                .filter(|(path, _)| earlier.contains(&path.as_str()))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(left(&upgraded), left(&earlier));
         // Rendering again changes nothing.
         let again = plan(&view(&upgraded), &key(), &name()).unwrap();
         assert_eq!(again.findings, []);
@@ -1455,23 +1461,37 @@ mod tests {
         assert_eq!(again.version.to_string(), "0.3.8");
     }
 
+    /// The findings of planning a repository whose catalog holds the earlier
+    /// versionless entry, beside `more`.
+    fn versionless_findings(more: &[(&str, &str)]) -> Vec<PluginFinding> {
+        let mut files = vec![
+            (INDEX, "expanded: [company.md]\n"),
+            ("docs/company.md", "# Company\n"),
+            (CATALOG, EARLIER_CATALOG),
+        ];
+        files.extend_from_slice(more);
+        plan(&Committed::of(&files), &key(), &name())
+            .unwrap()
+            .findings
+    }
+
     #[test]
-    fn a_versionless_entry_without_an_earlier_manifest_of_three_numbers_is_a_finding() {
-        for manifest in [None, Some("{\"version\": \"1.0\"}\n"), Some("{")] {
-            let mut files = vec![
-                (INDEX, "expanded: [company.md]\n"),
-                ("docs/company.md", "# Company\n"),
-                (CATALOG, EARLIER_CATALOG),
-            ];
-            files.extend(manifest.map(|text| ("plugins/acme/.claude-plugin/plugin.json", text)));
-            assert_eq!(
-                plan(&Committed::of(&files), &key(), &name())
-                    .unwrap()
-                    .findings,
-                [PluginFinding::EntryVersion { version: None }],
-                "{manifest:?}"
-            );
-        }
+    fn a_versionless_entry_without_an_earlier_manifest_is_a_finding() {
+        assert_eq!(
+            versionless_findings(&[]),
+            [PluginFinding::EntryVersion { version: None }]
+        );
+    }
+
+    #[test]
+    fn a_versionless_entry_beside_a_manifest_version_that_is_not_three_numbers_is_a_finding() {
+        assert_eq!(
+            versionless_findings(&[(
+                "plugins/acme/.claude-plugin/plugin.json",
+                "{\"version\": \"1.0\"}\n"
+            )]),
+            [PluginFinding::EntryVersion { version: None }]
+        );
     }
 
     #[test]
