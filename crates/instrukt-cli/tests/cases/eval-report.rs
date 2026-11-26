@@ -16,6 +16,7 @@
 
 use crate::common;
 use crate::fixtures::documented;
+use crate::fixtures::history as fleet;
 use crate::fixtures::runtime;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
@@ -342,7 +343,6 @@ fn by_computer(page: &str, computers: &[(&str, &Evaluated)]) -> String {
 // spec: project/instrukt/spec/feature/work/eval-report UC-ER2
 #[test]
 fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offline_one() {
-    use crate::fixtures::history as fleet;
     let (a_id, b_id, c_id, d_id) = (
         "aaaaaaaaaaaaaaaa",
         "bbbbbbbbbbbbbbbb",

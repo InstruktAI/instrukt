@@ -313,16 +313,22 @@ impl EvaluationAnswers for EvaluationAnswering {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::eval::_read::{ProjectRead, Stored, Why};
+    use super::{ANSWER_FORMAT, Answer, Wording, answer, decode};
+    use crate::eval::_read::{Limitation, ProjectRead, Reading, Stored, Why};
+    use crate::eval::Tally;
+    use crate::evidence::StampRecord;
     use crate::evidence::{
         Actor, ContentDigest, ModelIdentity, ModelProvenance, PreparationReview, ReviewVerdict,
         StampFact,
     };
     use crate::work::TodoId;
+    use crate::work::TodoRecord;
+    use instrukt_core::ids::{CommitSha, ProjectSlug};
     use instrukt_core::ids::{SessionRef, TodoSlug};
     use instrukt_core::publication::EvalFingerprint;
     use instrukt_runner::interfaces::{CatchUp, TodoKind};
+    use jiff::Timestamp;
+    use serde_json::Value;
     use serde_json::json;
 
     fn at(seconds: i64) -> Timestamp {

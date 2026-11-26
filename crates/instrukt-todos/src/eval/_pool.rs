@@ -206,7 +206,11 @@ fn window(fingerprint: Option<String>, gathered: Gathered) -> Option<Window> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Answer, CommitSha, MachineId, Model, ModelRow, ORDER_UNKNOWN, Part, Pooling, ProjectSlug,
+        Report, ReportComputer, SETTING_UNKNOWN, SetAnswer, Tally, Timestamp, UNFINGERPRINTED,
+        pool, under, unknown_model,
+    };
     use crate::eval::_answer::{ANSWER_FORMAT, ModelAnswer, ProjectAnswer};
 
     fn at(seconds: i64) -> Timestamp {
