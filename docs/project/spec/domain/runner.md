@@ -553,7 +553,7 @@ The fleet membership record is durable state (`sdlc/policy/state-storage`):
 | --- | --- |
 | Nature | Authoritative: the only record of which computers have been fleet members and when each was last seen. |
 | Owner | The runner; each computer's runner writes its own entry and no other. |
-| Loss cost | Each running member writes its entry again at its next wake, within a minute. A member that is not running is missing from reports covering the whole computer fleet until it runs again. No evaluation data, stated intent or external effect is lost. |
+| Loss cost | A member running `instrukt run` writes its entry again within a minute; a member that only ticks writes it again at its next tick, whenever its scheduling runs it. A member that is not running is missing from reports covering the whole computer fleet until it runs again. No evaluation data, stated intent or external effect is lost. |
 | Medium | One hash in cluster Redis, the only store the computer fleet shares, one field per member; each write sets one field in one command. |
 | Write isolation | Writers set separate fields and wait on no one; the record shares the cluster store with requests and answers but no key. |
 | Scope | The cluster. |
