@@ -2,8 +2,8 @@
 source: crates/instrukt-cli/tests/cases/snippet-validation.rs
 expression: run.out
 ---
+docs/domain/acme/concept/across.md: reference-local-from-published: project/demo/design/shape: acme references only acme and general
 docs/domain/acme/concept/across.md: reference-direction-invalid: ops/principle/far: acme references only acme and general
-docs/domain/acme/concept/across.md: reference-direction-invalid: project/demo/design/shape: acme references only acme and general
 docs/general/concept/down.md: reference-direction-invalid: acme: general references only general
 docs/general/concept/down.md: reference-direction-invalid: ops/principle/far: general references only general
 docs/project/concept/elsewhere.md: reference-direction-invalid: project/other/design/shape: project references only its own project, general and domains

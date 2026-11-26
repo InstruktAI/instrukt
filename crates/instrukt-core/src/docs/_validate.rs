@@ -662,7 +662,8 @@ fn path_tokens(lines: &[_text::Line<'_>], link_lines: &BTreeSet<usize>) -> Vec<S
 
 /// A direction finding when `raw`, standing in `from`, names `target`
 /// against the upward direction; its value is the reference, then what
-/// `from` may reference.
+/// `from` may reference. A published snippet naming local material keeps
+/// the code that condition has always had.
 fn direction_finding(
     corpus: &Corpus,
     path: &Path,
@@ -670,13 +671,19 @@ fn direction_finding(
     raw: &str,
     target: &RefTarget,
 ) -> Option<Finding> {
-    (!super::_refs::runs_upward(from, target, corpus.project())).then(|| {
-        Finding::new(
-            path,
-            FindingCode::ReferenceDirection,
-            Some(format!("{raw}: {}", super::_refs::upward_from(from))),
-        )
-    })
+    if super::_refs::runs_upward(from, target, corpus.project()) {
+        return None;
+    }
+    let code = if *from != Position::Project && target.is_local() {
+        FindingCode::ReferenceLocalFromPublished
+    } else {
+        FindingCode::ReferenceDirection
+    };
+    Some(Finding::new(
+        path,
+        code,
+        Some(format!("{raw}: {}", super::_refs::upward_from(from))),
+    ))
 }
 
 /// A reference standing in `from`: its form, its direction, then whether
