@@ -255,33 +255,50 @@ impl Fleet {
 #[cfg(test)]
 mod tests {
     use super::{EVALUATION, Envelope, HISTORY};
-    use serde::Serialize;
+    use serde::{Deserialize, Serialize};
 
     #[derive(Serialize)]
     struct HistoryPayload {
-        query: &'static str,
+        query: String,
         limit: usize,
+    }
+
+    /// A history request as builds before the fleet query read it: these
+    /// four fields and no others.
+    #[derive(Debug, PartialEq, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct OlderBuildsQuery {
+        reply: String,
+        query: String,
+        limit: usize,
+        expires: i64,
     }
 
     #[test]
     fn a_history_request_is_the_json_older_builds_read() {
-        let request = serde_json::to_value(Envelope {
-            reply: "instrukt:history:reply:0123456789abcdef0123456789abcdef".into(),
+        let (reply, query, limit, expires) = (
+            HISTORY.reply("0123456789abcdef0123456789abcdef"),
+            "sentinel query".to_owned(),
+            20,
+            1_900_000_120,
+        );
+        let request = serde_json::to_string(&Envelope {
+            reply: reply.clone(),
             payload: HistoryPayload {
-                query: "jewels",
-                limit: 20,
+                query: query.clone(),
+                limit,
             },
-            expires: 1_900_000_120,
+            expires,
         })
         .unwrap();
         assert_eq!(
-            request,
-            serde_json::json!({
-                "reply": "instrukt:history:reply:0123456789abcdef0123456789abcdef",
-                "query": "jewels",
-                "limit": 20,
-                "expires": 1_900_000_120,
-            })
+            serde_json::from_str::<OlderBuildsQuery>(&request).unwrap(),
+            OlderBuildsQuery {
+                reply,
+                query,
+                limit,
+                expires,
+            }
         );
     }
 
