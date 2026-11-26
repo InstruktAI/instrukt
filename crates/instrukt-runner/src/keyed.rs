@@ -380,7 +380,22 @@ fn start_with_work(
         && input.native_launch.is_some()
     {
         let thread = adapter.read_state(session)?;
-        if thread.presence != Presence::Present && adapter.accepted_start(input)? {
+        // A created thread that is gone, or idle in a runtime project other
+        // than its checkout's own, is succeeded: launching the retained
+        // request again would only replay its project. A misplaced thread
+        // that is not idle keeps the start pending until it is.
+        let succeed = if thread.presence == Presence::Present {
+            match adapter.verify_thread_project(&input.checkout, &thread, Some(&input.key)) {
+                Ok(()) => false,
+                Err(SessionsError::ThreadMisplaced { idle: true, .. }) => {
+                    adapter.accepted_start(input)?
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            adapter.accepted_start(input)?
+        };
+        if succeed {
             return succeed_claimed(
                 assignment.invocation,
                 adapter,
