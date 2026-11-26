@@ -227,6 +227,12 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
             .map(|approval| approval.head))
     }
 
+    fn sessions(&self, commit: &CommitSha) -> Result<Vec<String>, String> {
+        super::project(self.project.slug.clone(), &self.project.root)
+            .sessions_of(commit)
+            .map_err(|e| e.to_string())
+    }
+
     fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String> {
         let state = RunnerState::new(&self.work.home);
         if !instrukt_runner::review::observed_red(&state, &self.project.slug, head)
@@ -284,10 +290,13 @@ pub(super) fn candidate_finding(
     let reader = CoverageReader { work, project };
     match crate::workflow::coverage(&project.root, candidate, &canonical, &reader) {
         crate::workflow::Coverage::CannotAnswer(cause) => Ok(CandidateFinding::CannotAnswer(cause)),
-        crate::workflow::Coverage::Uncovered(commit) => {
-            if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none()) {
+        crate::workflow::Coverage::Uncovered(found) => {
+            if let Some(approval) = recorded.as_ref().filter(|a| a.withdrawn.is_none())
+                && let Some(first) = found.first()
+            {
+                let commit = &first.commit;
                 let mut db = _published::open(&work.home)?;
-                db.write(|tx| _published::withdraw(tx, &project.slug, approval, &commit, now))?;
+                db.write(|tx| _published::withdraw(tx, &project.slug, approval, commit, now))?;
                 tracing::info!(event = "review_derived_approval_withdrawn", project = %project.slug, candidate = %candidate, uncovered = %commit);
             }
             Ok(CandidateFinding::Owed)

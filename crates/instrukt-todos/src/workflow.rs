@@ -18,7 +18,9 @@ mod _standing;
 #[cfg(test)]
 pub(crate) mod _testing;
 
-pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, coverage};
+pub use _coverage::{
+    Approved, Coverage, CoverageEvidence, CoveringItem, CoveringKind, UncoveredCommit, coverage,
+};
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
 pub use _observe::ObservationError;

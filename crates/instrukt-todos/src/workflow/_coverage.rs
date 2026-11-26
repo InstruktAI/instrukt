@@ -1,10 +1,11 @@
 //! Review coverage of an integration candidate
 //! (`project/instrukt/spec/feature/workflow/integration-gate`, Review
 //! coverage of a candidate): derived on request and stored nowhere. Each
-//! first-parent commit the candidate adds to the canonical branch is
-//! covered by one row, decided by comparing identifiers and trees; no
-//! content is judged.
+//! commit the candidate adds to the canonical branch, whichever parent
+//! brought it in, is covered by one row, decided by comparing identifiers
+//! and trees; no content is judged.
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use instrukt_core::git;
@@ -17,10 +18,8 @@ use super::_observe::{MergeReproduction, reproduce_merge};
 pub enum CoveringKind {
     /// A head approved in a todo's record or by work's head verdict.
     ApprovedHead,
-    /// A merge of an approved head, reproduced from its parents.
-    MergeOfApprovedHead,
-    /// A merge of the canonical branch, reproduced from its parents.
-    MergeOfCanonical,
+    /// A merge git reproduces from its parents.
+    ReproducedMerge,
     /// One delivery's documentation fold, reproduced from its parent.
     DocumentationFold,
     /// A revert of the failing delivery, reproduced.
@@ -33,8 +32,7 @@ impl CoveringKind {
     pub fn as_str(self) -> &'static str {
         match self {
             CoveringKind::ApprovedHead => "approved_head",
-            CoveringKind::MergeOfApprovedHead => "merge_of_approved_head",
-            CoveringKind::MergeOfCanonical => "merge_of_canonical",
+            CoveringKind::ReproducedMerge => "reproduced_merge",
             CoveringKind::DocumentationFold => "documentation_fold",
             CoveringKind::Revert => "revert",
             CoveringKind::Exempted => "exempted",
@@ -51,13 +49,21 @@ pub struct CoveringItem {
     pub reference: String,
 }
 
+/// A commit no row covers, with the authoring sessions its `Session:`
+/// trailers name, as work reads them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UncoveredCommit {
+    pub commit: CommitSha,
+    pub sessions: Vec<String>,
+}
+
 /// What a derivation found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Coverage {
     /// Every commit is covered, by these items.
     Covered(Vec<CoveringItem>),
-    /// This commit is covered by no row.
-    Uncovered(CommitSha),
+    /// These commits are covered by no row, in the order the walk met them.
+    Uncovered(Vec<UncoveredCommit>),
     /// The repository cannot answer.
     CannotAnswer(String),
 }
@@ -83,14 +89,16 @@ pub trait CoverageEvidence {
     /// where the runner observed `head` red and work holds evidence of it as
     /// a candidate.
     fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String>;
+    /// The authoring sessions `commit`'s `Session:` trailers name.
+    fn sessions(&self, commit: &CommitSha) -> Result<Vec<String>, String>;
 }
 
 fn unanswered(error: impl std::fmt::Display) -> Coverage {
     Coverage::CannotAnswer(error.to_string())
 }
 
-/// Whether every first-parent commit `candidate` adds to `canonical` (a
-/// revision of the repository at `root`) is covered.
+/// Whether every commit `candidate` adds to `canonical` (a revision of
+/// the repository at `root`) is covered.
 pub fn coverage(
     root: &Path,
     candidate: &CommitSha,
@@ -112,77 +120,62 @@ fn derive(
     let based = git::run_output(root, ["merge-base", candidate.as_str(), canonical])
         .map_err(|e| e.to_string())?;
     if !based.status.success() {
-        return Ok(Coverage::Uncovered(candidate.clone()));
+        return Ok(Coverage::Uncovered(vec![uncovered(candidate, evidence)?]));
     }
     let based = sha(String::from_utf8_lossy(&based.stdout).trim())?;
-    let range = format!("{based}..{candidate}");
-    let listing = git::run(
+    // Exactly the commits the candidate contains and the canonical branch
+    // does not, also under criss-cross history; descendants come before
+    // their ancestors, so an approved head is met before what it contains.
+    let listing = added(
         root,
-        ["rev-list", "--first-parent", "--parents", range.as_str()],
-    )
-    .map_err(|e| e.to_string())?;
+        candidate.as_str(),
+        canonical,
+        &["--parents", "--topo-order"],
+    )?;
+    let mut approved_part: HashSet<String> = HashSet::new();
     let mut items = Vec::new();
+    let mut found = Vec::new();
     for line in listing.lines() {
         let ids: Vec<&str> = line.split_whitespace().collect();
-        let commit = sha(ids[0])?;
+        let Some(first_id) = ids.first() else {
+            continue;
+        };
+        if approved_part.contains(*first_id) {
+            continue;
+        }
+        let commit = sha(first_id)?;
         if let Some(approved) = evidence.approved(&commit)? {
             items.push(item(
                 &commit,
                 CoveringKind::ApprovedHead,
                 approved.reference,
             ));
-            return Ok(Coverage::Covered(items));
+            approved_part.extend(
+                added(root, commit.as_str(), canonical, &[])?
+                    .lines()
+                    .map(|id| id.trim().to_owned()),
+            );
+            continue;
         }
         if let [_, first, second] = ids.as_slice() {
-            let second = sha(second)?;
-            let reproduced = || -> Result<Option<bool>, String> {
-                match reproduce_merge(root, commit.as_str(), first, second.as_str())
-                    .map_err(|e| e.to_string())?
-                {
-                    MergeReproduction::Reproduced => Ok(Some(true)),
-                    MergeReproduction::Differs | MergeReproduction::Conflicted => Ok(Some(false)),
-                    MergeReproduction::Undetermined => Ok(None),
+            match reproduce_merge(root, commit.as_str(), first, second)
+                .map_err(|e| e.to_string())?
+            {
+                MergeReproduction::Reproduced => {
+                    items.push(item(
+                        &commit,
+                        CoveringKind::ReproducedMerge,
+                        format!("reproduced from {first} and {second}"),
+                    ));
+                    continue;
                 }
-            };
-            if let Some(approved) = evidence.approved(&second)? {
-                match reproduced()? {
-                    Some(true) => {
-                        items.push(item(
-                            &second,
-                            CoveringKind::ApprovedHead,
-                            approved.reference,
-                        ));
-                        items.push(item(
-                            &commit,
-                            CoveringKind::MergeOfApprovedHead,
-                            format!("reproduced from {first} and {second}"),
-                        ));
-                        continue;
-                    }
-                    None => {
-                        return Ok(unanswered(format!(
-                            "git could not reproduce merge {commit}"
-                        )));
-                    }
-                    Some(false) => {}
+                MergeReproduction::Undetermined => {
+                    return Ok(unanswered(format!(
+                        "git could not reproduce merge {commit}"
+                    )));
                 }
-            } else if contains(root, second.as_str(), canonical)? {
-                match reproduced()? {
-                    Some(true) => {
-                        items.push(item(
-                            &commit,
-                            CoveringKind::MergeOfCanonical,
-                            format!("reproduced from {first} and {second}"),
-                        ));
-                        continue;
-                    }
-                    None => {
-                        return Ok(unanswered(format!(
-                            "git could not reproduce merge {commit}"
-                        )));
-                    }
-                    Some(false) => {}
-                }
+                // A resolution is its maker's to decide.
+                MergeReproduction::Differs | MergeReproduction::Conflicted => {}
             }
         }
         if let Some(reference) = evidence.exempted(&commit)? {
@@ -200,9 +193,32 @@ fn derive(
                 continue;
             }
         }
-        return Ok(Coverage::Uncovered(commit));
+        found.push(uncovered(&commit, evidence)?);
     }
-    Ok(Coverage::Covered(items))
+    Ok(if found.is_empty() {
+        Coverage::Covered(items)
+    } else {
+        Coverage::Uncovered(found)
+    })
+}
+
+/// The commits `head` contains and `canonical` does not, one line each,
+/// with `options` given to `git rev-list`.
+fn added(root: &Path, head: &str, canonical: &str, options: &[&str]) -> Result<String, String> {
+    let mut args = vec!["rev-list"];
+    args.extend(options);
+    args.extend([head, "--not", canonical]);
+    git::run(root, args).map_err(|e| e.to_string())
+}
+
+fn uncovered(
+    commit: &CommitSha,
+    evidence: &dyn CoverageEvidence,
+) -> Result<UncoveredCommit, String> {
+    Ok(UncoveredCommit {
+        commit: commit.clone(),
+        sessions: evidence.sessions(commit)?,
+    })
 }
 
 fn item(commit: &CommitSha, kind: CoveringKind, reference: String) -> CoveringItem {
@@ -429,6 +445,7 @@ mod tests {
         exempted: BTreeMap<String, String>,
         deliveries: BTreeMap<String, CommitSha>,
         red: BTreeMap<String, CommitSha>,
+        sessions: BTreeMap<String, Vec<String>>,
     }
 
     impl CoverageEvidence for Evidence {
@@ -449,6 +466,23 @@ mod tests {
         }
         fn red_promotion(&self, head: &CommitSha) -> Result<Option<CommitSha>, String> {
             Ok(self.red.get(head.as_str()).cloned())
+        }
+        fn sessions(&self, commit: &CommitSha) -> Result<Vec<String>, String> {
+            Ok(self
+                .sessions
+                .get(commit.as_str())
+                .cloned()
+                .unwrap_or_default())
+        }
+    }
+
+    fn uncovered(coverage: &Coverage) -> Vec<(CommitSha, Vec<String>)> {
+        match coverage {
+            Coverage::Uncovered(found) => found
+                .iter()
+                .map(|u| (u.commit.clone(), u.sessions.clone()))
+                .collect(),
+            other => panic!("not uncovered: {other:?}"),
         }
     }
 
@@ -490,10 +524,7 @@ mod tests {
         };
         assert_eq!(
             kinds(&coverage(repo.path(), &candidate, "main", &evidence)),
-            [
-                CoveringKind::ApprovedHead,
-                CoveringKind::MergeOfApprovedHead
-            ]
+            [CoveringKind::ReproducedMerge, CoveringKind::ApprovedHead]
         );
     }
 
@@ -513,7 +544,7 @@ mod tests {
         };
         assert_eq!(
             kinds(&coverage(repo.path(), &candidate, "main", &evidence)),
-            [CoveringKind::MergeOfCanonical, CoveringKind::ApprovedHead]
+            [CoveringKind::ReproducedMerge, CoveringKind::ApprovedHead]
         );
     }
 
@@ -665,8 +696,8 @@ mod tests {
         repo.git(&["commit", "-qam", "docs: fold shipped\n\nTodo: shipped"]);
         let fold = repo.head();
         assert_eq!(
-            coverage(repo.path(), &fold, "main", &shipped(&delivery)),
-            Coverage::Uncovered(fold)
+            uncovered(&coverage(repo.path(), &fold, "main", &shipped(&delivery))),
+            [(fold, Vec::new())]
         );
     }
 
@@ -695,7 +726,138 @@ mod tests {
         let stray = repo.commit("a.txt", "a", "change a");
         assert_eq!(
             coverage(repo.path(), &stray, "main", &Evidence::default()),
-            Coverage::Uncovered(stray)
+            Coverage::Uncovered(vec![UncoveredCommit {
+                commit: stray,
+                sessions: Vec::new(),
+            }])
+        );
+    }
+
+    #[test]
+    fn an_exempted_one_off_commit_behind_the_integrators_merge_is_covered() {
+        let repo = Repo::new();
+        repo.git(&["checkout", "-qb", "ad-hoc"]);
+        let exempted = repo.commit("a.txt", "a", "chore: bump");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let approved = repo.commit("b.txt", "b", "feat: reviewed work");
+        repo.git(&["merge", "-q", "--no-ff", "-m", "merge ad-hoc", "ad-hoc"]);
+        let candidate = repo.head();
+        let evidence = Evidence {
+            approved: BTreeMap::from([(approved.to_string(), "verdict".into())]),
+            exempted: BTreeMap::from([(exempted.to_string(), "trivial".into())]),
+            ..Evidence::default()
+        };
+        let mut found = kinds(&coverage(repo.path(), &candidate, "main", &evidence));
+        found.sort_by_key(|kind| kind.as_str());
+        assert_eq!(
+            found,
+            [
+                CoveringKind::ApprovedHead,
+                CoveringKind::Exempted,
+                CoveringKind::ReproducedMerge
+            ]
+        );
+    }
+
+    #[test]
+    fn a_conflict_resolution_merge_is_uncovered_with_its_sessions() {
+        let repo = Repo::new();
+        repo.git(&["checkout", "-qb", "work"]);
+        let ours = repo.commit("a.txt", "work", "change a on work");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let theirs = repo.commit("a.txt", "integrate", "change a on integrate");
+        assert!(
+            git::run(
+                repo.path(),
+                ["merge", "-q", "--no-ff", "-m", "merge work", "work"]
+            )
+            .is_err()
+        );
+        std::fs::write(repo.path().join("a.txt"), "resolved").unwrap();
+        repo.git(&["add", "a.txt"]);
+        repo.git(&["commit", "-qm", "merge work, resolved"]);
+        let resolution = repo.head();
+        let evidence = Evidence {
+            exempted: BTreeMap::from([
+                (ours.to_string(), "trivial".into()),
+                (theirs.to_string(), "trivial".into()),
+            ]),
+            sessions: BTreeMap::from([(resolution.to_string(), vec!["t3:integrator".into()])]),
+            ..Evidence::default()
+        };
+        assert_eq!(
+            uncovered(&coverage(repo.path(), &resolution, "main", &evidence)),
+            [(resolution, vec!["t3:integrator".to_owned()])]
+        );
+    }
+
+    #[test]
+    fn an_approved_head_covers_what_it_contains_on_every_parent() {
+        let repo = Repo::new();
+        repo.git(&["checkout", "-qb", "side"]);
+        repo.commit("s.txt", "s", "side work");
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&["checkout", "-qb", "work"]);
+        repo.commit("a.txt", "a", "change a");
+        repo.git(&["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+        let head = repo.commit("b.txt", "b", "change b");
+        let evidence = Evidence {
+            approved: BTreeMap::from([(head.to_string(), "verdict".into())]),
+            ..Evidence::default()
+        };
+        assert_eq!(
+            kinds(&coverage(repo.path(), &head, "main", &evidence)),
+            [CoveringKind::ApprovedHead]
+        );
+    }
+
+    #[test]
+    fn an_octopus_merge_is_not_reproduced() {
+        let repo = Repo::new();
+        let mut exempted = BTreeMap::new();
+        for branch in ["one", "two"] {
+            repo.git(&["checkout", "-q", "main"]);
+            repo.git(&["checkout", "-qb", branch]);
+            let commit = repo.commit(&format!("{branch}.txt"), branch, branch);
+            exempted.insert(commit.to_string(), "trivial".to_owned());
+        }
+        repo.git(&["checkout", "-q", "main"]);
+        repo.git(&["checkout", "-qb", "integrate"]);
+        repo.git(&["merge", "-q", "--no-ff", "-m", "octopus", "one", "two"]);
+        let octopus = repo.head();
+        let evidence = Evidence {
+            exempted,
+            ..Evidence::default()
+        };
+        assert_eq!(
+            uncovered(&coverage(repo.path(), &octopus, "main", &evidence)),
+            [(octopus, Vec::new())]
+        );
+    }
+
+    #[test]
+    fn every_uncovered_commit_is_returned() {
+        let repo = Repo::new();
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let first = repo.commit("a.txt", "a", "change a");
+        let exempted = repo.commit("b.txt", "b", "chore: bump");
+        let last = repo.commit("c.txt", "c", "change c");
+        let evidence = Evidence {
+            exempted: BTreeMap::from([(exempted.to_string(), "trivial".into())]),
+            sessions: BTreeMap::from([
+                (first.to_string(), vec!["t3:a".into()]),
+                (last.to_string(), vec!["t3:b".into(), "t3:c".into()]),
+            ]),
+            ..Evidence::default()
+        };
+        assert_eq!(
+            uncovered(&coverage(repo.path(), &last, "main", &evidence)),
+            [
+                (last, vec!["t3:b".to_owned(), "t3:c".to_owned()]),
+                (first, vec!["t3:a".to_owned()])
+            ]
         );
     }
 }
