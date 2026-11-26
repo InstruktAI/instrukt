@@ -35,9 +35,8 @@ grouped by project, with the current project first. Each project's record is
 read from this computer's work record; the report reads nothing from GitHub.
 The report takes no options beyond `--since` and `--out`.
 <!-- change:fleet-eval-aggregation -->
-One report covers every project of the home it is asked from known to the
-publication state of each contributing computer, grouped by project, with the
-current project first; no report holds another home's projects. A
+One report covers every project known to the publication state of each
+contributing computer, grouped by project, with the current project first. A
 project recorded on several computers under the same project slug is one
 project in the report. Each computer's part of a project's record is read
 from that computer's own work record; the report reads nothing from GitHub,
@@ -148,11 +147,15 @@ whatever made its answer missing or unusable, a named computer included when
 no cluster connection is configured here or the cluster store cannot be
 reached: one the fleet query reports as
 not answering carries the reason the fleet query gives, together with when the
-membership record last saw it where the record holds it, and one whose answer
-this computer cannot read
+membership record last saw it where the record holds it and could be read at
+report time; a named computer carries the reason that the fleet could not be
+reached when the record cannot be read; and one whose answer this computer
+cannot read
 is named as answering in a form it cannot read. Each
-limitation a computer reports appears under that computer's identity, and the
-report is written from the answers it has.
+limitation a computer reports appears under that computer's identity. A
+report covering the fleet waits long enough for every live member to answer at
+its own cadence, about a minute when a member running only the scheduled tick
+is covered, and is written from the answers it has.
 <!-- /planned:fleet-eval-aggregation -->
 
 ## Use cases
