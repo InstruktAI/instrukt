@@ -64,15 +64,6 @@ meaning and the writes of the conversation tables.
   Network waits and reaction execution run outside that section, so a blocked
   consumer holds no unrelated local write hostage. SQLite's own locking is not
   the serialization contract.
-
-<!-- planned:fix-runner-snapshot-read-corrupts-state-db -->
-
-- A thread holds the writer lock. A write on another thread of the same
-  process waits for that hold as a write of another process does; only a write
-  nested in one its own thread already holds shares the hold.
-
-<!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
-
 - The state directory is resolved to its canonical location once, and the database,
   its sidecars and every lock — writer, reflection, withdrawal, runner,
   runtime-dispatch, history and conversation locks — derive from it, so a home or a state directory reached
@@ -159,8 +150,9 @@ adapter; an actor as JSON text, one of
 - A process that has opened the database through SQLite, such as the runner,
   reads it through SQLite from then on, also where a status or documentation
   read takes the in-memory image elsewhere. Copying the file from outside
-  SQLite would release the locks that process holds on it, and another process
-  could then remove the write-ahead log and shared-memory file beneath it.
+  SQLite would release the locks that process holds on it while its SQLite
+  connections still count on them, and the write-ahead log and shared-memory
+  file could then be removed beneath connections still using them.
 
 <!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
 
@@ -1252,10 +1244,10 @@ And the reflected change and the concurrent local change both reach GitHub intac
 
 ```gherkin
 Given an instrukt process holds the state database open, as the runner does
-And that process also reads the database for inspection, as the runner's workers do
-When another instrukt command writes the database and exits
-Then the write-ahead log and shared-memory file stay in place for the process still holding the database
-And that process goes on reading and writing the database, seeing the other command's write
+When that process reads the database for inspection, as the runner's workers do
+Then another process still finds that process's lock on the database file in place
+And another instrukt command can write the database and exit
+And the holding process goes on reading and writing the database, seeing that command's write
 And the database passes its integrity check
 ```
 
