@@ -120,6 +120,7 @@ queue does not select, merge or discard candidates on its behalf.
 
 ### Review coverage of a candidate
 
+<!-- planned-change:author-recorded-review-routing -->
 On a project that opted in to automatic review, each tick that observes an
 active candidate with no verdict of its own and no review request selected
 or handed over derives whether the content the candidate adds to the canonical branch is
@@ -134,7 +135,25 @@ review-currency derivation of
 `project/instrukt/spec/feature/workflow/artifact-currency` to the candidate: it
 follows the candidate's first-parent commits back to the canonical branch, and
 each of them must be one of these.
+<!-- change:author-recorded-review-routing -->
+On a project that opted in to automatic review, each tick that observes an
+active candidate with no head verdict of its own and no review request selected
+or handed over derives whether the content the candidate adds to the canonical branch is
+covered, and derives it again on each tick until the canonical branch contains
+the candidate. A derived approval is derived again before anything of it is
+published; once GitHub shows it as the candidate's review status, only the
+finding that a covering head's current verdict is needs work withdraws it. A verdict the candidate commit already holds, as when it was reviewed
+as a pull request's head, is its verdict here as well when work recorded it
+as covering the canonical branch
+(`project/instrukt/spec/feature/work/github-apps`, Admission of review
+evidence, Range). Coverage applies the
+review-currency derivation of
+`project/instrukt/spec/feature/workflow/artifact-currency` to the candidate: it
+follows the candidate's first-parent commits back to the canonical branch, and
+each of them must be one of these.
+<!-- /planned-change:author-recorded-review-routing -->
 
+<!-- planned-change:author-recorded-review-routing -->
 | Commit on the candidate's first-parent line | Covered when | Evidence |
 | --- | --- | --- |
 | An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
@@ -143,6 +162,17 @@ each of them must be one of these.
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
 | A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+<!-- change:author-recorded-review-routing -->
+| Commit on the candidate's first-parent line | Covered when | Evidence |
+| --- | --- | --- |
+| An approved head | It is exactly a head that holds a current independent approval of everything it adds to the canonical branch. It covers every commit it contains. | An independent approval bound to that exact commit in a todo's record: a finalized commit's build-review approval (`project/instrukt/spec/feature/workflow/delivery-cycle`), or the approval of a reviewed preparation head with its report, which the record keeps readable (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). For any other head, work's current evidence for that commit is an approving head verdict that covers the canonical branch (`project/instrukt/spec/feature/work/github-apps`). |
+| A merge of an approved head | Its second parent is exactly such a head, and its tree is what git's own merge of its two parents produces. A commit that an approved head merely contains, and a head that contains an approved commit, are not approved heads. | The head's approval as above; the merge reproduced from its parents. |
+| A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
+| A merge of decided work | Its second parent is neither an approved head nor contained in the canonical branch, its tree is what git's own merge of its two parents produces, and every commit its second parent brings in that the canonical branch does not contain is covered by a row of this table, judged as if it stood on the first-parent line. | The merge reproduced from its parents; each brought-in commit's own evidence. |
+| A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
+| A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
+| A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+<!-- /planned-change:author-recorded-review-routing -->
 
 Approval of a head that is not a todo's is work's answer on that commit's
 current evidence and nothing else
@@ -160,9 +190,10 @@ replaced, is not an approved head.
 
 <!-- planned:author-recorded-review-routing -->
 A verdict that requests changes holds back what it judged. While a head's
-current verdict is needs work, an exemption covers no commit that head
-contains; such a commit is covered only by another approved head that contains
-it, such as one that addresses the findings.
+current verdict is needs work, no row covers that head, a commit it contains,
+or a commit whose merge brings it in, an exemption of any of them included;
+they are covered only by another approved head that contains that head, such
+as one that addresses the findings.
 <!-- /planned:author-recorded-review-routing -->
 
 The commits a red head's promotion added are the first-parent commits after
@@ -184,7 +215,7 @@ this way.
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
 | A commit is not covered because a head that covered it now has a current verdict of needs work | The candidate is held. A derived approval recorded earlier is withdrawn through work, also once GitHub shows it, and the candidate's result is a failure (Candidate and verification). Nothing is asked: the verdict's findings are its head's author's to address. |
-| Any other commit is not covered | The candidate is held: it owes that commit's coverage, not a review of its own. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The commit's authoring session is asked to decide for it: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). Each tick derives the candidate again, and the decision on record covers the commit. Where the commit names no authoring session, or names one that was archived or deleted, the runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| Any other commit is not covered | The candidate is held: it owes that commit's coverage, not a review of its own. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The commit's authoring session is asked to decide for it: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator learns that the candidate is held, for which commit and whose decision, so it can take that member out of a batch. Each tick derives the candidate again, and the decision on record covers the commit. Where the commit names no authoring session, names one that does not resolve, or names one that was archived or deleted, the runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 <!-- /planned-change:author-recorded-review-routing -->
 

@@ -119,14 +119,11 @@ All Committizen types are allowed.
   The author records a no-review decision with the commit it concerns: when
   committing through `instrukt repo commit` it declares that the commit owes
   no review and on what basis, and that declaration is kept as the commit's
-  exemption. A commit that a reviewed head will contain needs no declaration of
-  its own, because that head's approval covers it; a todo's work head is always
-  build-reviewed. The integration gate reads these records instead of asking
-  for reviews of its own: an approved head and an exemption are the author's
-  decision on record, and a commit that carries neither goes back to its author
-  to decide.
+  exemption. The integration gate reads these records: an approved head and an
+  exemption are the author's decision on record.
   This author-decided routing is listed in the general baseline (loaded on demand or through procedure required reads);
-  it adds no checkpoint gate.
+  it adds no gate before or at commit time. A commit that reaches integration
+  carrying no decision is held there for its author.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -178,8 +175,7 @@ that invite the author to imitate platform output (`general/principle/priming`).
   forgotten case pass. Declaring the decision in the commit act the author
   performs anyway leaves no separate step to forget, keeps the author's
   judgment on record for audit, and leaves the gate only the commits that carry
-  no decision at all, which it returns to their author instead of judging them
-  itself (`general/principle/trust-and-guardrails`).
+  no decision at all (`general/principle/trust-and-guardrails`).
 <!-- /planned:author-recorded-review-routing -->
 - Carrying directive-change intent and finding dispositions in commit bodies
   (or a named disposition file on an unchanged head) keeps review input
