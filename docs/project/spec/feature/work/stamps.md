@@ -126,7 +126,7 @@ worker-ending or approval notice.
 | `--intent-checked` | Current input version, originating conversation and checking session. |
 | `--kickback --reason <text>` | Current input, invalidated plan and review evidence; sets `<r>.cleared_by_substantive_drift` for preparation reviews invalidated by the kickback. |
 | `--task-firing-started` | Particular due occurrence and start; the runner's last-fired accounting. |
-| `--build-complete` | Bound builder/fixer attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
+| `--build-complete` | Bound builder attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
 | `--role-complete` | Bound setup/finalizer or preparation doc-writer attempt, required outputs and clean committed branch head. Records `role_complete` and releases the attempt atomically without build completion or finalization event. |
 | `--verification pass\|fail\|blocked\|tier_0_skip\|hotfix_deferred [--follow-up <slug>]` | Exact candidate commit at the clean shared head and complete `verification-findings` digest; a hotfix deferral also its follow-up todo. From a bound `verifier` attempt it releases the attempt atomically; from the claim-holding orchestrator it is record-only. |
 
@@ -142,7 +142,7 @@ and approved plan digest before implementation. Reconciliation preserves that ba
 
 Completion resolves the caller's bound outstanding attempt and verifies the
 shared worktree is clean on the todo branch at the exact stamped head.
-`--build-complete` releases builder/fixer attempts; `--role-complete` releases
+`--build-complete` releases builder attempts; `--role-complete` releases
 setup/finalizer attempts. Stamp, release, new todo revision and pending reflection
 commit in one transaction. Exact replay reports the retained outcome without a
 second release. Missing or stale evidence keeps the attempt outstanding. These
