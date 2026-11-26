@@ -102,8 +102,8 @@ asked for.
 | Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`). |
 | Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the requested reviewer the ask reaches has no turn in progress (Reaching the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
-| Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, reports whether the session has a turn in progress, and reports which run an input entered and whether that run has ended (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
-| Delivery | When the caller resolves to a session, a runner wake-up serves this computer: the shared minute wake-up is registered, or the operator schedules it, as `instrukt ticks status` reports (`launchd`, `systemd`, `cron` or `operator`), or the owned runner service runs `instrukt run` (`project/instrukt/spec/feature/runner/module-installation`). A caller that resolves to no session is owed no notice and needs none. | What `instrukt ticks status` reports instead, and its door: `instrukt install` for a missing or broken registration; for no demand, enabling the todos or events module of a project on this computer and then `instrukt install`, because only those modules demand the wake-up (`project/instrukt/spec/feature/runner/module-installation`). |
+| Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
+| Delivery | When the caller resolves to a session, a runner wake-up serves this computer: the shared minute wake-up is registered, or the operator schedules it, as `instrukt ticks status` reports (`launchd`, `systemd`, `cron` or `operator`), or the owned runner service runs `instrukt run` (`project/instrukt/spec/feature/runner/module-installation`). A caller that resolves to no session is owed no notice and needs none. | What `instrukt ticks status` reports instead, and its door: `instrukt install` for a missing or broken registration; for no demand, enabling the todos or events module of a project on this computer and then `instrukt install` (`project/instrukt/spec/feature/runner/module-installation`). |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
 A refused ask starts no reviewer, sends nothing and records nothing.
@@ -199,8 +199,9 @@ and from then on only that request's reviewer records its verdict.
 An admitted ask returns within its own wait, once the runtime accepted the
 start or the wake. The reply names the head, the pinned base, the kind of ask,
 the requested reviewer's session and start key, whether this ask started it or
-woke it, for a re-review the earlier head and whether the ask reached its
-reviewer of record or why it did not, the report destination, and where the
+woke it, for a re-review the earlier head, whether the prior report's digest
+or its path identified it, and whether the ask reached its reviewer of record
+or why it did not, the report destination, and where the
 outcome arrives: in the report destination, in `instrukt review show <head>`
 once the reviewer records its verdict, and at the session that asked
 (Returning the outcome). It names that session, or states that the caller
@@ -221,46 +222,40 @@ delivers it.
 ### Returning the outcome
 
 The ask records the session that asked, when the caller resolves to one
-(`project/instrukt/spec/feature/runner/session-continuity`).
-A caller that resolves to none is answered by the report destination and
+(`project/instrukt/spec/feature/runner/session-continuity`). A caller that
+resolves to none is answered by the report destination and
 `instrukt review show <head>` alone, and nothing refuses it for that
 (`general/concept/lineage-vs-authorship`).
 
-The runner sends the session that asked one notice per ask, as a
-runner-authored entry of its input delivery to that session
-(`project/instrukt/spec/feature/runner/procedure-event-delivery`). The notice
-is whichever of these becomes owed first:
-
-| Notice | Owed when | Carries |
-| --- | --- | --- |
-| Verdict | A version of the head's verdict is current here that was recorded at or after the ask was admitted. | The head, the pinned base, the verdict, the version's report digest, the reviewing session, the report destination and `instrukt review show <head>`. |
-| Turn stopped | The turn the ask opened has ended, and no version of the head's verdict was recorded at or after the ask was admitted. | The head, the requested reviewer, how its turn ended, the head's current verdict here if one stands, and the door: the same ask again, which reaches the reviewer anew. |
-
-Once an ask's notice is retained the ask owes nothing more. A later version of
-the head's verdict follows from a later ask, a dispute, and is that ask's
-notice. Neither notice carries a report's text or anything of a conversation.
-
-The turn the ask opened is the run entered by the message that carried its
-rendering: the opening message of the start, or the message of the wake, each
-identified by the command identity instrukt fixed for it before it reached the
-runtime (`project/instrukt/spec/feature/runner/session-continuity`). It has
-ended when the runtime reports that run finished or failed, or the thread
-archived or deleted. A turn waiting for input has not ended. A message the
-runtime does not show yet, or a state it cannot report, is observed again and
-is never taken as an ending.
+Every version of a head's verdict recorded on this computer is sent, as a
+verdict notice, to every session recorded as asking for that head that has not
+yet been sent that version. It is a runner-authored entry of the runner's input
+delivery to that session
+(`project/instrukt/spec/feature/runner/procedure-event-delivery`), and carries
+the head, the pinned base, the verdict, the version's report digest, the
+reviewing session, the report destination of that session's ask and
+`instrukt review show <head>`. It carries no report text and nothing of a
+conversation. Only a recorded version makes a notice owed. Nothing is inferred
+from the reviewer's turns, so a reviewer that records nothing sends nothing.
 
 A notice is retained before it reaches the runtime, under an identity made of
-the project, the head, the ask's number and the moment it was admitted.
+the project, the head, the version's report digest and the session, so one
+session is sent one version once, however many of its asks name the head.
 `instrukt review record`, once its evidence write has closed, attempts the
-verdict notices it made owed without waiting for the machine's dispatch gate,
-as a work command attempts approval attention
+notices of the version it recorded without waiting for the machine's dispatch
+gate, as a work command attempts approval attention
 (`project/instrukt/spec/feature/runner/session-continuity`). Every runner
-wake-up looks only at the asks that still owe a notice: it delivers what is
-owed and observes their turns, and only a wake-up observes a stopped turn. When
-the session that asked was archived or deleted, its notice is retained as
-undeliverable with that cause and is never sent. `instrukt events status` lists
-undeliverable notices and each ask that still owes one, with when it was
-admitted. An ask that is history owes no notice.
+wake-up takes the versions work recorded since the runner's position in them,
+retains the notices those versions owe, delivers what is retained and not yet
+delivered, and moves the position forward in the same transaction
+(`project/instrukt/spec/feature/work/github-apps`).
+
+When the session a notice goes to is archived or deleted, or succeeded by
+another generation, before the notice was delivered, whether before or after
+it was retained, the notice is closed as undeliverable with that cause and is
+never sent again. `instrukt events status` lists undeliverable notices and each
+ask whose session has been sent no version of its head since the ask was
+admitted, with when it was admitted.
 
 ### Verdict
 
@@ -295,13 +290,13 @@ The runner keeps each admitted ask in a store of its own.
 | Holds | Per project and head: each admitted ask with its kind, its coordinates, its rendering and that rendering's SHA-256 digest, the session that asked or that none resolved, for a re-review the earlier head it was traced to, the start key of the requested reviewer it reaches, which is another head's when it reaches an earlier head's reviewer of record, whether a start or a wake delivers it, a wake's command identity, the generation it reached, and when it was admitted and accepted. |
 | Nature | Authoritative: the requested reviewer's assignment, from which its role, project and placement resolve from the latest ask under its start key (`project/instrukt/spec/feature/configuration/roles-and-capabilities`), and the only record of which session asked. |
 | Owner | The runner; written only by `instrukt review start`. |
-| Loss cost | The requested reviewer resolves no assignment and records no verdict, and its verdict and a stopped turn no longer reach the session that asked: lost intent. |
+| Loss cost | The requested reviewer resolves no assignment and records no verdict, and its verdict no longer reaches the session that asked: lost intent. |
 | Medium | A SQLite database of its own with its own migrations: the asks grow with every head asked for, are read by head, by start key and by report destination, and a head's asks change together. |
 | Write isolation | Its own lock, taken only by `instrukt review start` and held for each of that command's transactions, never while the command waits on the runtime or takes the state database's writer lock. No background writer takes it, and no write to this store takes the writer lock (`sdlc/policy/state-storage`). Readers, the requested reviewer's assignment resolution and runner wake-ups among them, take no lock and never migrate it; only `instrukt review start` brings it to its current version. |
 | Recording | The ask, with the session that asked and a wake's command identity, is recorded before its start or wake reaches the runtime, and its acceptance and generation once the runtime accepted it. The start key joins it to the runner's runtime binding, which the keyed start records in the state database as every keyed start does. |
-| Notices | Retained as the runner's input deliveries to the session that asked, in the state database (`project/instrukt/spec/feature/work/state-database`), by `instrukt review record`'s attempt and by runner wake-ups. This store records nothing of them: which notice is owed is derived from its asks, work's answer for the head and the deliveries already retained. |
+| Notices | Retained as the runner's input deliveries to the session that asked, in the state database (`project/instrukt/spec/feature/work/state-database`), by `instrukt review record`'s attempt and by runner wake-ups, with the runner's position in work's recorded versions beside them. This store records nothing of them: which notice is owed follows from a recorded version, the asks of its head and the deliveries already retained. |
 | Scope | One computer: the requested reviewer runs on this computer's runtime. Moving review evidence between computers moves no ask (`project/instrukt/spec/feature/work/github-apps`). |
-| Lifecycle | A head's asks are current while the canonical branch does not contain the head and a branch of the project still reaches it, and history otherwise. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`), inside `instrukt review start`. |
+| Lifecycle | A head's asks are current while the canonical branch does not contain the head, and history once it does, as the head's review evidence is. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`), inside `instrukt review start`. |
 
 ## Use cases
 
@@ -343,8 +338,7 @@ Then no second reviewer is started and the agent is told which review is in flig
 Given a developer's agent asked for the independent review of a head
 When the reviewer records its verdict
 Then the agent receives the verdict, with where its report is, without checking for it
-But when the reviewer's turn ends without recording a verdict
-Then the agent is told the turn ended without one and that asking again reaches the reviewer anew
+And when the reviewer later records a revised verdict for that head, the agent receives that one too
 ```
 
 ## Known caveats
@@ -370,8 +364,12 @@ Then the agent is told the turn ended without one and that asking again reaches 
   Once thread retention has archived it
   (`project/instrukt/spec/feature/runner/thread-retention`), a fresh reviewer
   reviews the revised head from a cold start.
-- A requested reviewer waiting for input has not ended its turn, so the session
-  that asked is not told about the wait.
+- A requested reviewer that ends without recording a verdict sends nothing. Its
+  ask stays listed in `instrukt events status` as having been sent no version,
+  and the same ask again reaches the reviewer anew.
+- A dispute the reviewer upholds records no new version, so its asker is sent
+  nothing new. The verdict it disputed stands, and its asker already holds it
+  and its report.
 - A notice reaches the session that asked as an instrukt delivery, which opens
   that session's next turn when it is idle and waits behind its turn in
   progress otherwise

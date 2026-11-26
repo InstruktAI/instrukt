@@ -183,20 +183,6 @@ adapter verb templates.
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
 
-<!-- planned:commit-rereview-reuses-reviewer -->
-
-Requested review also needs the run a message entered, read by the message's
-identity: the opening message of a keyed start and the message of a
-`dispatch_send` each carry the command identity instrukt fixed for it, and the
-runtime reports which run that message entered and whether the run has ended.
-With it the runner tells the session that asked when the requested reviewer's
-turn stops without a verdict
-(`project/instrukt/spec/feature/runner/requested-review`). A keyed wake of a
-requested reviewer is a `dispatch_send` under the command identity Keyed wake
-derives.
-
-<!-- /planned:commit-rereview-reuses-reviewer -->
-
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -340,11 +326,10 @@ with a turn in progress. Each answer names the session and why, and the caller
 decides what follows.
 
 A reviewer wake is addressed by a reviewed head. The runner asks work for the
-head's reviewer of record, the session that recorded the current version of
-its verdict (`project/instrukt/spec/feature/work/github-apps`), and keyed-wakes
-that session with coordinates only. A head with no reviewer of record has no
-reviewer to wake. The requested-review caller wakes only a reviewer of record
-under a requested-reviewer key
+head's reviewer of record (`project/instrukt/spec/feature/work/github-apps`)
+and keyed-wakes that session with coordinates only. A head with no reviewer of
+record has no reviewer to wake. The requested-review caller wakes only a
+reviewer of record under a requested-reviewer key
 (`project/instrukt/spec/feature/runner/requested-review`).
 
 <!-- /planned:commit-rereview-reuses-reviewer -->
