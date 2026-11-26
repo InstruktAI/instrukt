@@ -2,9 +2,11 @@
 source_sha256: 13334fd8f27af0595d59fc5e36408e59a1d3e68caddcad1cce254bd88c283e74
 model: claude-opus-5-5
 ---
-- MUST run `instrukt --help` and read own role's commands first; an action help lacks returns to the dispatcher.
-- entering a domain -> read `instrukt docs get --domain <domain>` once in full; code/test work enters `sdlc` plus `sdlc/policy/<language>/core` and `/testing`; structural decisions read `sdlc/principle/design-fundamentals`.
-- discovery = filtered `instrukt docs` index -> `instrukt docs get <id>` -> its unloaded required reads, or `--closure`.
-- a listing line leads to its command, on the line or in its heading.
-- compressed section = its source's rules: a case they do not name, wording or reasons -> read `instrukt docs get <id>` first; the source is the authority.
-- third-party: `instrukt docs index --third-party` before web search. Domain work without its domain loaded = process miss.
+- MUST run `instrukt --help`, read own commands first; return unoffered actions to dispatcher -- it reassigns.
+- MUST read `instrukt docs get --domain <domain>` fully on entering domain unless loaded this session; code/test work enters `sdlc` plus `sdlc/policy/<language>/core` and `sdlc/policy/<language>/testing` where the language has them; structural decisions read `sdlc/principle/design-fundamentals` first -- mandatory contract.
+- domain rendering = `expanded` + closure, `listed` lines, triggered procedures; always-needed domain named bare in `## Required reads`.
+- MUST discover via filtered `instrukt docs` when context could alter decisions: index -> `instrukt docs get <id>` -> `# Required reads (not loaded)`, or `--closure` -- unfiltered floods.
+- listing line = leads to command on line or heading: triggered -> `--closure`; listed -> `instrukt docs get <id>`.
+- MUST apply compressed sections as written; unnamed case, wording, reasons -> `instrukt docs get <id>` first -- source rules.
+- MUST try `instrukt docs index --third-party` before web search or Context7 -- curated first.
+- unloaded domain work = process miss; load first.
