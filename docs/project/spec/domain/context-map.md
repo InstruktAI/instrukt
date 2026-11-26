@@ -141,6 +141,7 @@ their answers pool.
 | --- | --- | --- |
 | runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
 | work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
+| publication → work | Customer / Supplier | The projects a home publishes and their checkout paths, read by the evaluation report on the asking computer and on each answering one |
 <!-- /planned:fleet-eval-aggregation -->
 
 A requested review (`project/instrukt/spec/feature/runner/requested-review`)

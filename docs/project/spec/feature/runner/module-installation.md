@@ -247,8 +247,11 @@ this computer's entry on the fleet membership record and reading the record,
 and the evaluation kind's request/reply (lists, transactions and expiry). A
 computer whose only runner is the minute `instrukt tick` is checked like one
 that runs `instrukt run`. The proof is `ACL DRYRUN` on the production key
-forms, as for history. A denial is an unmet finding with its door: grant the
-fleet query's permissions to the cluster Redis user, then `instrukt install`.
+forms, as for history. When the cluster store is instrukt's own Redis, the ACL
+installation writes for it grants these permissions, so convergence meets them.
+For an operator-supplied cluster store a denial is an unmet finding with its
+door: grant the fleet query's permissions to the cluster Redis user, then
+`instrukt install`.
 A computer without a cluster connection is not checked: it keeps no
 membership entry and answers no fleet request. A module filter checks these
 permissions when it covers one of those demands.

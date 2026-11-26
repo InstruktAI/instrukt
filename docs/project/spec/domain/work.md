@@ -154,7 +154,8 @@ runner owns dispatch, and the configured runtime owns conversations.
   is optional and is not the work record.
 <!-- change:fleet-eval-aggregation -->
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
-  published eval provenance; workflow and runner record evidence through
+  published eval provenance, and the projects a home publishes with their
+  checkout paths, which the evaluation report reads; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub is the required surface reflection writes to and people's controls
   are read from, and holds no copy of the record; the project's git remote
@@ -350,6 +351,10 @@ owning design snippet or decision record is declared.
   the state database only to move earlier history out of it, through work's
   open, its migrations and its space reclamation.
 <!-- planned:fleet-eval-aggregation -->
+- **Publication → work (evaluation report)** — customer-supplier. The
+  evaluation report reads the projects this home publishes and their checkout
+  paths from publication state, on the asking computer and on each answering
+  one.
 - **Runner → work (fleet evaluation)** — customer-supplier. The evaluation
   report on the asking computer reads the fleet membership record and sends
   its request to the computers it covers through the runner's fleet query,
