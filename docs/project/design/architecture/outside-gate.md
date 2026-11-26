@@ -66,7 +66,9 @@ none:
   moment; pauses double from the first to the longest and start again from the
   first after a success;
 - **service rules**: what counts as temporarily unavailable for this service
-  beyond the protocol's standard, applied before the standard rules.
+  beyond the protocol's standard, applied before the standard rules. A service
+  rule decides whether an answer is temporary, its reason and its extent; a
+  moment the answer names still sets the next try.
 
 ### Operations
 
@@ -105,7 +107,9 @@ transport failure the part's service rules left unjudged:
 | name not resolved, connection not opened | unreachable | the scope |
 | timeout or broken connection after sending | timed out / unreachable | the scope |
 
-`Retry-After` (RFC 9110) is read in both forms: a number of seconds, counted
+`Retry-After` (RFC 9110) is read on every answer judged temporarily
+unavailable, whether a service rule or the table judged it, in both forms: a
+number of seconds, counted
 from the moment the answer was received and rounded up to whole seconds, or an
 HTTP-date in any of the three formats RFC 9110 requires a recipient to accept.
 An unreadable value is treated as absent. A moment too far to represent is
@@ -122,10 +126,13 @@ taken as the farthest representable one.
   per try. The report names the service, the key or scope, the reason and the
   moment of the next try, and never a credential, a request body or an answer
   body.
-- **Waits run on a monotonic clock.** Pauses and wait ends are measured on a
-  monotonic time source the gate's host supplies; moments shown to the operator
-  and handed to parts are read from the host's clock. A frozen or adjusted
-  wall clock never stops a wait from ending.
+- **A named moment holds on the host's clock; a pause runs on a monotonic
+  clock.** A wait's moment is fixed when the wait starts, on the clock of the
+  gate's host: the clock at the answer's receipt plus the delay the service
+  named, the date it named, or the clock at the failure plus the pause. A wait
+  the service named lasts until the host's clock reaches its moment. A backoff
+  pause is measured on a monotonic source the host supplies, so a frozen or
+  adjusted host clock never holds a pause open.
 - **Bookkeeping holds nothing shared.** The gate holds its own state only to
   read or record one key, never across a try or a pause.
 - **The host makes the gate.** The host of the parts makes the gate and hands
