@@ -8,3 +8,4 @@ model: claude-opus-5-5
 - MUST re-anchor after interruption, context switch, uncertainty -- drift.
 - MUST scan prior art when a pokeable surface (flag, config, code path) tempts trial-and-error; ground substrate before mechanism, build only gap -- reinvention feels like progress.
 - NEVER claim impossible, fork or own infrastructure without vendor docs + reference implementation + production architecture -- local trial proves nothing.
+- PREFER checking when unsure -- weight decides depth.
