@@ -547,7 +547,6 @@ fn dispatch(dir: &Path, _home: &Path, payload: &Value) -> Value {
     }
 }
 
-/// How many snapshot reads were held so far.
 /// The threads archived through `thread.archive`, in order.
 pub fn archived(env: &TestEnv) -> Vec<String> {
     std::fs::read_to_string(env.path("t3-readiness").join("archive-commands"))
@@ -557,6 +556,7 @@ pub fn archived(env: &TestEnv) -> Vec<String> {
         .collect()
 }
 
+/// How many snapshot reads were held so far.
 pub fn held_reads(env: &TestEnv) -> usize {
     std::fs::read_dir(env.path("t3-readiness/held-reads")).map_or(0, Iterator::count)
 }
