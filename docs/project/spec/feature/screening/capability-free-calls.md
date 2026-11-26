@@ -17,12 +17,16 @@ put text written outside the project in front of a model without giving that
 text any capability.
 
 The endpoint is the operator's choice, made in configuration: a local server
-such as LM Studio, or a cloud provider's endpoint. The endpoint must run only
-what the request asks: a model that invokes tools of its own accord, such as a
-search model that searches before it answers, is not a supported endpoint for
-these calls. Its API key, when it needs one, is a protected instrukt secret
-(`project/instrukt/spec/feature/configuration/owned-files`), never a value in a
-configuration document; agent runtimes keep their model-provider keys in T3.
+such as LM Studio, or a cloud provider's endpoint. The capability-free
+guarantee holds for a plain model, one with no built-in search or browsing
+that runs nothing beyond what the request asks. instrukt does not check which
+model is configured: the configuration's description and the setup
+documentation say what to bring, and a model that searches on its own is
+outside the guarantee. Its API key, when it needs one, is a protected instrukt
+secret (`project/instrukt/spec/feature/configuration/owned-files`), never a
+value in a configuration document. Where agent runtimes keep their
+model-provider keys belongs to
+`project/instrukt/spec/feature/configuration/agent-selection`.
 
 The call carries no knowledge of where its prompt came from or what its answer
 is for. Untrusted-text screening
@@ -61,9 +65,10 @@ An endpoint that reports or shows that it cannot serve the request now is
 unavailable, not a refusal: it cannot be reached, does not answer in time,
 limits the rate, has exhausted its quota or spend limit, is overloaded, answers
 with a server error, rejects the configured key or does not know the configured
-model. The call waits and instrukt, not the caller, tries it again; the
-operator can see that it waits and why, and the caller receives the eventual
-outcome without asking again (`project/instrukt/policy/checks-and-guards`).
+model. The call waits and instrukt, not the caller, tries it again, and the
+operator can see that it waits and why
+(`project/instrukt/policy/checks-and-guards`). The caller receives the
+eventual outcome without asking again.
 
 ## Use cases
 
