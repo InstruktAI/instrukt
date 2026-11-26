@@ -363,7 +363,7 @@ impl Configuration {
                 ),
             });
         };
-        let value = super::_layer::current_view(
+        let value = super::_layer::inspected(
             home,
             &Layer::Project(checkout.into()),
             &path,

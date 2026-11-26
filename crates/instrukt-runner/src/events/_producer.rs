@@ -92,7 +92,14 @@ impl Event {
             Self::MainFailing { project, .. } => {
                 EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main"))?
             }
-            Self::WorkflowFinalized { todo, .. } => {
+            Self::WorkflowFinalized { todo, .. }
+            | Self::AttentionExecutionStalled { todo, .. }
+            | Self::AttentionInputWaiting { todo, .. }
+            | Self::AttentionHoldPlaced { todo, .. }
+            | Self::AttentionHoldReleased { todo, .. }
+            | Self::AttentionAttemptsFailing { todo, .. }
+            | Self::AttentionFleetQuiet { todo, .. }
+            | Self::AttentionRaised { todo, .. } => {
                 EventRef::new(ReferenceKind::Todo, todo.as_str())?
             }
             Self::ReviewNeeded {
@@ -113,6 +120,13 @@ impl Event {
             EventHome::Project(self.project().clone()),
             data,
         );
+        if let Self::AttentionRaised { related, .. } = self {
+            for todo in related {
+                producer
+                    .related
+                    .push(EventRef::new(ReferenceKind::Todo, todo.as_str())?);
+            }
+        }
         producer.id = Some(self.occurrence_id());
         producer.emit(context, || self.occurrence_id())
     }

@@ -46,6 +46,8 @@ pub struct CreateRequest {
     pub catch_up: Option<CatchUp>,
     pub agent: Option<AgentPreference>,
     pub human_involved: Option<bool>,
+    /// A manual dispatch hold committed with the todo, for this reason.
+    pub hold: Option<String>,
 }
 
 /// `instrukt todo update`: every given change, applied together.
@@ -187,8 +189,18 @@ impl Work {
                 "a schedule, catch-up policy and agent preference belong to a task; this todo is not one",
             ));
         }
+        if request.icebox && request.hold.is_some() {
+            return Err(WorkError::refused(
+                "a held todo is converged work waiting in the lifecycle, and the icebox parks work that has not converged; file it with one of them",
+            ));
+        }
         ensure_slug_free(&mut s, &request.slug, None)?;
         let actor = s.actor()?;
+        let hold = request
+            .hold
+            .as_deref()
+            .map(|reason| manual_hold(reason, &actor, s.now))
+            .transpose()?;
         let after = resolve_refs(&mut s, &request.after)?;
         if request.after.contains(&request.slug) {
             return Err(WorkError::refused("a todo cannot depend on itself"));
@@ -243,7 +255,7 @@ impl Work {
             stamps: Vec::new(),
             claim: None,
             bindings: Vec::new(),
-            hold: None,
+            hold,
             hold_history: Vec::new(),
             label_actions: Vec::new(),
             after,
@@ -802,11 +814,9 @@ impl Work {
         let session = s.caller_session()?;
         let completion =
             super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
-        if let Some((binding, _)) = completion
-            && !matches!(
-                request,
-                StampRequest::DriftReviewed { .. } | StampRequest::VerificationDisposition { .. }
-            )
+        if let Some(binding) = completion
+            && super::_attempts::completion(request)
+                .is_some_and(|c| c.repeat == super::_attempts::Repeat::Retained)
             && record.bindings[binding].attempt.released_at.is_some()
             && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
             && let Some(stamp) = record
@@ -985,7 +995,7 @@ impl Work {
             current_drift_replay(&record, &stamp.fact, &stamp.actor).cloned()
         };
         if let Some(prior) = replay_prior {
-            if let Some((binding, _)) = completion
+            if let Some(binding) = completion
                 && record.bindings[binding].attempt.released_at.is_none()
             {
                 let now = s.now;
@@ -1047,7 +1057,7 @@ impl Work {
             }
             let mut stamp = stamp;
             stamp.sequence = record.next_sequence();
-            if let Some((binding, _)) = completion {
+            if let Some(binding) = completion {
                 let b = &mut record.bindings[binding];
                 if b.attempt.released_at.is_none() {
                     b.attempt.completion_sequence = Some(stamp.sequence);
@@ -1381,6 +1391,24 @@ impl Work {
     }
 }
 
+/// The manual dispatch hold `actor` places at `at` for `reason`, as both
+/// `instrukt todo create --hold` and `instrukt todo update --hold` record it;
+/// a reason that is blank once trimmed is refused.
+fn manual_hold(reason: &str, actor: &Actor, at: jiff::Timestamp) -> Result<HoldRecord, WorkError> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(WorkError::refused(
+            "a hold records why the work must wait; the reason is blank",
+        ));
+    }
+    Ok(HoldRecord {
+        source: HoldSource::Manual,
+        reason: reason.to_owned(),
+        by: actor.clone(),
+        at,
+    })
+}
+
 /// The record change `instrukt todo update` asks for; returns its
 /// warnings.
 fn apply_update(
@@ -1465,12 +1493,7 @@ fn apply_update(
         });
     }
     if let Some(reason) = &request.hold {
-        let reason = reason.trim();
-        if reason.is_empty() {
-            return Err(WorkError::refused(
-                "a hold records why the work must wait; the reason is blank",
-            ));
-        }
+        let hold = manual_hold(reason, actor, now)?;
         if record.status == TodoStatus::StructuralHolder {
             return Err(WorkError::refused(format!(
                 "`{}` is a structural holder; each child carries its own hold",
@@ -1483,12 +1506,7 @@ fn apply_update(
                 record.slug, record.slug
             )));
         }
-        record.hold = Some(HoldRecord {
-            source: HoldSource::Manual,
-            reason: reason.to_owned(),
-            by: actor.clone(),
-            at: now,
-        });
+        record.hold = Some(hold);
     }
     if request.unclaim {
         let caller = s.caller_session()?;
@@ -2068,7 +2086,7 @@ fn admit_disposition(
     record: &TodoRecord,
     caller: Option<&SessionRef>,
     cwd: &Path,
-    completion: Option<(usize, bool)>,
+    completion: Option<usize>,
     disposition: VerificationDisposition,
 ) -> Result<(instrukt_core::ids::RoleName, Option<usize>), WorkError> {
     const NEITHER: &str = "a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator";
@@ -2077,7 +2095,7 @@ fn admit_disposition(
         WorkError::refused(format!("{NEITHER}; no agent session is active: {DOORS}"))
     })?;
     let (binding, driver) = match completion {
-        Some((binding, _)) => (binding, None),
+        Some(binding) => (binding, None),
         None => {
             let driver = super::_attempts::live_driver(record, caller).ok_or_else(|| {
                 WorkError::refused(format!(

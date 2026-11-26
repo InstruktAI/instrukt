@@ -15,7 +15,8 @@ use instrukt_core::{
 use instrukt_runner::{
     process,
     runtime::{
-        ArchiveOutcome, InputState, RuntimeAdapter, T3,
+        ArchiveOutcome, ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart,
+        T3,
         conversations::{Role, SourceWake},
     },
     sessions::SessionState,
@@ -939,6 +940,59 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     )
 }
 
+/// Project registration and resolution: a root without a project is
+/// reported, ensured once and then reused, `t3 project add` refuses a root
+/// that has one, and a launch for a checkout whose only containing project
+/// is rooted at an ancestor registers the checkout and resolves to it.
+/// `project` is a registered project's root.
+pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
+    let adapter = T3::default();
+    let added = root.join("added-root");
+    fs::create_dir_all(&added)?;
+    let before = adapter.execution_root(&added, ExecutionRootMode::Check)?;
+    let ensured = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    let duplicate = cli(&["project", "add", added.to_str().unwrap()], None);
+    let reused = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    ensure!(
+        ensured.project_id.is_some() && ensured.project_id == reused.project_id,
+        "the ensured project is not the one the snapshot lists afterwards"
+    );
+    let nested = project.join("nested-checkout");
+    fs::create_dir_all(&nested)?;
+    let request = RuntimeStart {
+        launch_modes: None,
+        native_launch: Some(NativeLaunch {
+            command_id: "contract-ancestor-launch".into(),
+            thread_id: "contract-ancestor-thread".into(),
+            project_id: String::new(),
+            existing_worktree: None,
+        }),
+        preferences: Vec::new(),
+        selection: None,
+        selection_evidence: None,
+        checkout: nested.clone(),
+        key: "instrukt:contract:ancestor".into(),
+        title: "Ancestor-only contract launch".into(),
+        brief: "Never started.".into(),
+        worktree: None,
+        profiles: Default::default(),
+    };
+    // Mode resolution needs a provider selection the contract does not
+    // make; the project is resolved before it, so a refusal after
+    // registration still shows where the launch would start.
+    let _ = adapter.resolve_launch(&request, None);
+    let registered = adapter.execution_root(&nested, ExecutionRootMode::Check)?;
+    let ancestor = adapter.execution_root(project, ExecutionRootMode::Check)?;
+    Ok(json!({
+        "check_before_add": {"present": before.project_id.is_some(), "created": before.created},
+        "ensure": {"present": ensured.project_id.is_some(), "created": ensured.created},
+        "duplicate_add_refused": duplicate.is_err(),
+        "ensure_again": {"present": reused.project_id.is_some(), "created": reused.created},
+        "ancestor_only_launch_registers_the_checkout": registered.project_id.is_some()
+            && registered.project_id != ancestor.project_id,
+    }))
+}
+
 pub fn real(root: &Path) -> Result<()> {
     grammar()?;
     let _server = Server::start(root)?;
@@ -976,6 +1030,7 @@ pub fn real(root: &Path) -> Result<()> {
     }
     let project = find_project()?.context("registered temporary project")?;
     let native_launch = native_launch_contract(root, &project)?;
+    let projects = project_boundary(root, &root.join("project"))?;
     let id = "contract-thread";
     rpc(
         &token.secret,
@@ -1133,7 +1188,7 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects})
             .to_string(),
     )?;
     Ok(())

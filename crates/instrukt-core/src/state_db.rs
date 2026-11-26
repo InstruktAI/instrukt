@@ -228,24 +228,29 @@ impl Store {
     /// Opens the store for reading without its lock; `None` when no file
     /// (or no schema) exists yet, which is empty state. With `snapshot`, an
     /// existing file is read without opening it on disk or creating
-    /// sidecars, and older state is brought forward in memory only;
-    /// otherwise older state is [`Read::Behind`]. A newer store is refused.
+    /// sidecars, and older state is brought forward in memory only — unless
+    /// this process has opened the file through SQLite, which then reads it
+    /// live and permits queries only. A live read finds older state
+    /// [`Read::Behind`]. A newer store is refused.
     pub fn read(&self, snapshot: bool) -> Result<Option<Read>, StoreError> {
         let path = &self.file;
         refuse_database_links(self.name, path)?;
         if !path.exists() {
             return Ok(None);
         }
-        let mut conn = if snapshot {
+        let copied = if snapshot {
             _snapshot::read(self.name, path)?
         } else {
-            crate::fsx::open_database(
-                path,
-                OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            )
-            .map_err(StoreError::sqlite(self.name, path))?
+            None
         };
-        configure(&conn, self.name, path)?;
+        let image = copied.is_some();
+        let mut conn = match copied {
+            Some(conn) => {
+                configure(&conn, self.name, path)?;
+                conn
+            }
+            None => open_live(self.name, path)?,
+        };
         let found = stored_version(&conn, self.name, path)?;
         let known = self.version();
         if found == 0 {
@@ -259,15 +264,30 @@ impl Store {
                 known,
             });
         }
-        if snapshot {
+        if image {
             migrate_store(&mut conn, self, Image::Memory)?;
-            conn.pragma_update(None, "query_only", true)
-                .map_err(StoreError::sqlite(self.name, path))?;
         } else if found < known {
             return Ok(Some(Read::Behind));
         }
+        if snapshot {
+            conn.pragma_update(None, "query_only", true)
+                .map_err(StoreError::sqlite(self.name, path))?;
+        }
         Ok(Some(Read::Current(conn)))
     }
+}
+
+/// A live connection to the store at `path`, without its lock. It is
+/// opened for writing, as every holder of the file opens it, so that the
+/// open never reads the file outside SQLite to admit it at the fence.
+fn open_live(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
+    let conn = crate::fsx::open_database(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(StoreError::sqlite(store, path))?;
+    configure(&conn, store, path)?;
+    Ok(conn)
 }
 
 /// The per-computer writer lock. Re-entrant within one process: a write
@@ -610,14 +630,19 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
     Ok(migrate_store(conn, &store, Image::Memory)?)
 }
 
-/// Inspect an existing SQLite store without opening a disk connection or
-/// creating sidecars. The in-memory connection permits queries only.
+/// Inspect an existing SQLite store; the connection permits queries only.
+/// A process that has not opened the file through SQLite reads an in-memory
+/// image, without opening a disk connection or creating sidecars; one that
+/// has reads the file live.
 pub fn inspect_file(path: &Path) -> Result<Option<Connection>, StateDbError> {
     refuse_database_links(STATE_DATABASE, path)?;
     if !path.exists() {
         return Ok(None);
     }
-    let conn = _snapshot::read(STATE_DATABASE, path)?;
+    let conn = match _snapshot::read(STATE_DATABASE, path)? {
+        Some(conn) => conn,
+        None => open_live(STATE_DATABASE, path)?,
+    };
     conn.pragma_update(None, "query_only", true)
         .map_err(StateDbError::sqlite(path))?;
     Ok(Some(conn))

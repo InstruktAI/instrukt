@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::fixtures::workflow::Crew;
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::PROJECT_SCHEMA_VERSION;
 
 const BUILD: &str = "crew/procedure/build";
 
@@ -19,7 +19,7 @@ fn declaring() -> Crew {
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {}\nworkflow:\n  domain: crew\nregenerable:\n  - build/out\n  - out\n  - gen\n  - vendored\n  - latest\n",
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {}\nworkflow:\n  domain: crew\nregenerable:\n  - build/out\n  - out\n  - gen\n  - vendored\n  - latest\n",
             crate::fixtures::work::REPOSITORY
         ),
     );

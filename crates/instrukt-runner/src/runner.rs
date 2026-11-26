@@ -798,7 +798,8 @@ fn wake(
         if let Err(error) = crate::_attention::approvals(invocation, adapter.as_ref(), now) {
             tracing::warn!(event="approval_attention_failed",error=%error);
         }
-        if let Err(error) = crate::inputs::pump_all(invocation, adapter.as_ref(), now) {
+        let work = cx.wiring.work.as_ref().map(|work| work.bindings.as_ref());
+        if let Err(error) = crate::inputs::pump_all(invocation, adapter.as_ref(), work, now) {
             tracing::warn!(event="pending_input_failed",error=%error);
         }
         if let Err(error) = crate::_attention::settle_approvals(state) {

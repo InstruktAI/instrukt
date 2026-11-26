@@ -74,8 +74,8 @@ pub use _root::{RootDocument, classify_root};
 pub use _runtime::WorkflowCapability;
 pub use _runtime::{Env, NativeCapabilities, Runtime};
 pub use _schema::{
-    CURRENT_SCHEMA_VERSION, LayerKind, SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema,
-    layer_json_schema,
+    COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION,
+    SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema, layer_json_schema,
 };
 pub use _thread_retention::withholds_thread_retention;
 pub use _validate::{
@@ -90,8 +90,8 @@ use crate::home::Home;
 use crate::ids::ProjectSlug;
 
 pub use _secrets::{
-    SecretSource, generate_secret, generate_secret_in, readable_secret_values, resolve_secret,
-    resolve_secret_from, set_secret, set_secret_in,
+    SecretSource, generate_secret, generate_secret_in, resolve_secret, resolve_secret_from,
+    set_secret, set_secret_in,
 };
 
 /// The project slug the repository rooted at `repo_root` declares in its

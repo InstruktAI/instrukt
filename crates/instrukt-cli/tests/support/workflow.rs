@@ -13,7 +13,7 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 
 use crate::common::{Repo, TestEnv};
 use crate::fixtures::runtime::FakeRuntime;
@@ -81,7 +81,7 @@ impl Flavor {
         let repo = env.git_repo("flows");
         repo.write(
             "instrukt.yaml",
-            &format!("schema_version: {CURRENT_SCHEMA_VERSION}\nproject: flows\n"),
+            &format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: flows\n"),
         )
         .write("docs/domain/crew/workflow/workflow.yaml", WORKFLOW);
         for (name, role) in PROCEDURES {
@@ -116,7 +116,7 @@ impl Crew {
         let mut project = Project::new();
         let runtime = FakeRuntime::new(&project.env, "agent", false);
         let global = format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off'}}\n",
+            "schema_version: {GLOBAL_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off'}}\n",
             project.github.url()
         );
         std::fs::write(project.env.instrukt_home().join("instrukt.yaml"), global).unwrap();
@@ -125,7 +125,7 @@ impl Crew {
         project.repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\n"
+                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nboard: acme/1\nmodules:\n  todos: true\ngithub:\n  repository: {REPOSITORY}\nworkflow:\n  domain: crew\n"
             ),
         );
         project.repo.commit("select the crew workflow");

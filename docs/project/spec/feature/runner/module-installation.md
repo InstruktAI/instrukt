@@ -58,6 +58,34 @@ finding, never an implicit enablement. Empty `webhooks: {}` creates no endpoint
 or receiver demand. `runner.autostart: false` leaves the enabled module's demand
 intact: deliberate todo pickup still has reflection and timing responsibilities.
 
+### Runtime projects of execution roots
+
+A session starts in its execution root only where the selected runtime holds a
+project rooted exactly at that root
+(`project/instrukt/spec/feature/runner/session-continuity`, `execution_root`).
+Every execution root whose sessions start on this computer demands one, under
+one rule whatever the root is:
+
+| Sessions start in | Module whose dependency set holds the runtime project |
+| --- | --- |
+| A company home with a declared connector | `conversations` |
+| A company home where this computer activates standing procedures: events on, and not a computer that only receives | `events` |
+| An adopted project's registered checkout with todos effective | `todos` |
+| An adopted project's registered checkout with events effective, where this computer activates its procedures | `events` |
+
+- `instrukt install` reuses each demanded root's runtime project and creates a
+  missing one, once per canonical root however many rows demand it.
+  `install --check` reports a missing one as unmet, naming the root and the
+  door `instrukt install`, and creates nothing. An unreachable runtime leaves
+  the resource unmet with its cause, and the next `install` completes it.
+- A runtime project is never withdrawn, whatever the demand: the sessions it
+  holds stay with it.
+- Unfiltered installation and its check cover every row; a module filter
+  converges or checks only the rows of its module.
+- Installing ahead is not a precondition for work: a launch that finds its root
+  without a runtime project adds it itself
+  (`project/instrukt/spec/feature/runner/session-continuity`).
+
 ### Installation and inspection commands
 
 | Command | Result |

@@ -400,9 +400,21 @@ done (`project/instrukt/spec/feature/runner/thread-retention`).
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
-only-at-entry delivery waits for observed idleness. Standing T3 threads remain
-unsettled under automation; a human-settled thread stays reachable and wakes
-on its next message.
+only-at-entry delivery waits for observed idleness. Runner automation never
+settles a standing T3 thread. A standing procedure may self-settle when parked
+dormant (`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by itself or by a human, stays reachable and wakes on its next
+activation or message.
+
+Fleet attention composes three owners without a watcher. Work calls the
+runner's fleet-attention contract with the facts of each change it makes to a
+todo's status, hold or attempts, inside that change's own transaction; the
+runner decides which facts are conditions and appends them, together with the
+conditions it observes in executions and an agent's raise through
+`instrukt events raise`. The project's subscribed coordinator answers them, and
+the end of an attention episode wakes it once so it can rest
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 
 ### Conversation links
 
@@ -615,6 +627,17 @@ the gate adds no webhook, queue or process.
 - **Conversation stream or relay fails:** the runner retains its link, position
   and pending handover evidence and exposes the failure through
   `instrukt events status` and logs under the conversation-link contract.
+- **A checkout has no runtime project of its own:** launch adds one at exactly
+  that checkout and starts there; it never runs in a project rooted at an
+  ancestor, such as the person's home folder, where it would read that folder's
+  agent instructions. A runtime that cannot be reached or refuses the addition
+  leaves the work pending with the checkout named, retried on later passes.
+  `instrukt install` creates the runtime project of every demanded execution
+  root ahead of work. An instrukt-owned bound thread whose project is rooted
+  elsewhere is sent nothing: once idle it is rolled over to a new generation in
+  the checkout's own project and left as history; while busy it is left alone
+  and reported
+  (`project/instrukt/spec/feature/runner/session-continuity`).
 - **A deleted orchestrator left its todo branch checked out:** native keyed launch
   attaches the verified retained worktree to the new object generation. A
   settled retained orchestrator wakes in its existing shared workspace.

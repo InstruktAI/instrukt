@@ -95,7 +95,8 @@ meaning and the writes of the conversation tables.
   (`general/principle/trust-and-guardrails`, interference).
 - A change that spans several records commits in one transaction or not at
   all: a todo with its new stamp and revision, a finalize-ready stamp with
-  its `workflow.finalized` event, a dependency or group change across several
+  its `workflow.finalized` event, a todo's status, hold or attempt change
+  with the fleet-attention events it leads to, a dependency or group change across several
   todos, a delivery's outcome with its handled marks and cursor.
 - A committed transaction survives a process crash and a power loss
   (`synchronous = FULL`). An interrupted transaction leaves nothing of itself
@@ -144,6 +145,12 @@ adapter; an actor as JSON text, one of
   migrated in-memory image: they take no writer lock and leave the database
   and its sidecars as found. The todo-existence lookup reads that way for
   every caller.
+
+
+- A process that has opened the database through SQLite, such as the runner,
+  reads it through SQLite from then on, also where a status or documentation
+  read takes the in-memory image elsewhere.
+
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
@@ -593,7 +600,10 @@ withdrawal to be run again.
 
 Owned by the runner and written through its interface, in the same
 transactions as the reactions they record. Work invokes that interface for
-finalized publication and approval attention committed with their stamps.
+finalized publication and approval attention committed with their stamps, and
+calls the runner's fleet-attention contract inside every change it makes on
+this computer to a todo's status, hold or attempts
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 
 **History** — retained history is not stored in this database. It lives in the
 history store owned by `project/instrukt/spec/feature/runner/history`, which
@@ -868,6 +878,21 @@ preserving existing validator bodies and retry deadlines.
 **`watched_refs`** — the last observation of each watched ref. Key:
 `(project, remote, ref)`. Columns: `project`, `remote`, `ref`, `revision`,
 `observed_at`.
+
+**`input_waits`** — the runner's record of each claim-holding session's waits
+for input on a todo. Key: `(project, todo_id, session)`. Columns: `project`,
+`todo_id`, `session`, `wait` (the number of the latest wait, counted from one)
+and `waiting`. A newly observed wait increments `wait`; observing the session
+not waiting clears `waiting`. The row outlives the release of the execution
+claim, so a retained session that takes the todo up again continues its
+count; it is removed with the todo's other rows.
+
+**`attention_episodes`** — each project's open attention episode. Key:
+`project`. Columns: `project` and `opened_by`, the occurrence identity of the
+condition that opened it. A row exists only while the episode is open and is
+removed when its end is appended.
+
+The migration that adds both tables starts them empty.
 
 **`executions`** — the runner-owned orchestrator or task execution currently
 watched for each todo. Key: `(project, todo_id, role)`. Columns are `project`,
@@ -1226,6 +1251,19 @@ Then the local change completes without waiting for the in-flight GitHub request
 And listing the work and reading an artifact complete without waiting for that request or for a local write that is still open
 And the reflected change and the concurrent local change both reach GitHub intact, with no conflict between them
 ```
+
+
+### UC-SD6: A process that holds the database open keeps it intact while it inspects it
+
+```gherkin
+Given an instrukt process holds the state database open, as the runner does
+When that process reads the database for inspection, as the runner's workers do
+Then another process still finds that process's lock on the database file in place
+And another instrukt command can write the database and exit
+And the holding process goes on reading and writing the database, seeing that command's write
+And the database passes its integrity check
+```
+
 
 ## Known caveats
 

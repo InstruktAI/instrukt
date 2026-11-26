@@ -7,10 +7,10 @@ use instrukt_core::github;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
-    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, GitHubReach, HoldCause,
+    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, FleetRecord, GitHubReach, HoldCause,
     OpenWorkSessions, Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionReport,
-    RetentionPurge, SessionBinding, SessionBindings, TaskFirings, TaskOutcome, TaskTiming,
-    TodoKind, WorkInterfaceError,
+    RetentionPurge, SessionBinding, SessionBindings, SessionOwner, TaskFirings, TaskOutcome,
+    TaskTiming, TodoKind, WorkInterfaceError,
 };
 use jiff::Timestamp;
 
@@ -149,6 +149,24 @@ impl Claims for Work {
             };
             if !holds {
                 return Ok(ClaimOutcome::ClaimedElsewhere);
+            }
+            // This computer's unassigned claim passes to the todo's live
+            // driver session taking it up
+            // (`project/instrukt/spec/feature/work/dependencies-and-holds`),
+            // as `record_dispatch` assigns it to a started session.
+            if let Some(session) = &session
+                && claim.session.is_none()
+                && super::_attempts::live_driver(record, session).is_some()
+            {
+                s.commit("claim taken up by its orchestrator", |s| {
+                    let claim = s.items[index].record.claim.as_mut().ok_or_else(|| {
+                        WorkError::refused("the execution claim was released during pickup")
+                    })?;
+                    claim.session = Some(session.clone());
+                    Ok(())
+                })?;
+                s.flush()?;
+                return Ok(claim_outcome(s.status(index)));
             }
             if !s.items[index].reflection.pending {
                 return Ok(ClaimOutcome::AlreadyHeld);
@@ -842,6 +860,42 @@ impl SessionBindings for Work {
             .map(|b| b.binding))
     }
 
+    fn session_owner(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<SessionOwner>, WorkInterfaceError> {
+        use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+        let store = |error: String| WorkInterfaceError::Store { message: error };
+        let Some(db) = instrukt_core::state_db::StateRead::open(&self.home)
+            .map_err(|error| store(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let row = db
+            .conn()
+            .query_row(
+                "SELECT b.semantic_key,t.project,b.worktree FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 AND b.released_at IS NULL",
+                [session.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| store(error.to_string()))?;
+        row.map(|(key, project, worktree)| {
+            Ok(SessionOwner {
+                key,
+                project: ProjectSlug::parse(&project).map_err(|error| store(error.to_string()))?,
+                worktree: worktree.map(Into::into),
+            })
+        })
+        .transpose()
+    }
+
     fn check_dispatch_replacement(
         &self,
         project: &ProjectRef,
@@ -1074,6 +1128,27 @@ impl TaskFirings for Work {
         })?;
         s.flush()?;
         Ok(())
+    }
+}
+
+impl FleetRecord for Work {
+    fn runnable_remains(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+    ) -> Result<bool, WorkInterfaceError> {
+        let path = std::path::PathBuf::from(tx.path().unwrap_or_default());
+        Ok(_store::runnable_remains(tx, &path, project)?)
+    }
+
+    fn active_todo(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+        todo: &TodoSlug,
+    ) -> Result<bool, WorkInterfaceError> {
+        let path = std::path::PathBuf::from(tx.path().unwrap_or_default());
+        Ok(_store::active_todo(tx, &path, project, todo)?)
     }
 }
 

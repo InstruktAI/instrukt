@@ -9,5 +9,7 @@ expression: calls
   "auth session revoke -- 00000000-0000-4000-8000-000000000002",
   "auth session issue --scope orchestration:operate --ttl 5m --token-only --label instrukt-keyed-launch",
   "auth session revoke -- 00000000-0000-4000-8000-000000000003",
+  "auth session issue --scope orchestration:read --ttl 5m --token-only --label instrukt-project-snapshot",
+  "auth session revoke -- 00000000-0000-4000-8000-000000000004",
   "auth session revoke -- 00000000-0000-4000-8000-000000000001"
 ]

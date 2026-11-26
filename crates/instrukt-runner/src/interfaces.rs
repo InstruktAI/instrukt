@@ -17,6 +17,7 @@
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
 //! | [`OpenWorkSessions`] | `thread-retention` "Threads that are kept" | work | runner thread retention |
+//! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
 //! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
@@ -274,6 +275,14 @@ pub struct AcceptedDispatch {
     pub occurrence: Option<Timestamp>,
 }
 
+/// The work binding of a session, as work reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionOwner {
+    pub key: String,
+    pub project: ProjectSlug,
+    pub worktree: Option<std::path::PathBuf>,
+}
+
 /// Reading and writing per-todo, per-role session bindings
 /// (`session-continuity`, "Identity and reuse"). Reuse is a lookup of the
 /// binding followed by `alive`; brief similarity is not identity.
@@ -302,6 +311,13 @@ pub trait SessionBindings: Send + Sync {
         todo: &TodoSlug,
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
+
+    /// The unreleased per-role binding work holds for `session`, if any:
+    /// its key, its todo's project and the worktree it recorded.
+    fn session_owner(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<SessionOwner>, WorkInterfaceError>;
 
     /// Check that work still owns the stopped assignment before starting a replacement.
     fn check_dispatch_replacement(
@@ -559,6 +575,31 @@ pub trait AutomaticHolds: Send + Sync {
         todo: &TodoSlug,
         cause: &HoldCause,
     ) -> Result<(), WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
+// Fleet record
+// ---------------------------------------------------------------------
+
+/// What fleet attention reads of a project's active work, inside the
+/// caller's write transaction (`fleet-attention`, "Attention episodes",
+/// "Raised conditions").
+pub trait FleetRecord: Send + Sync {
+    /// Whether `project` has an active todo on this computer that is unheld
+    /// and not a structural holder.
+    fn runnable_remains(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+    ) -> Result<bool, WorkInterfaceError>;
+
+    /// Whether `todo` is active work of `project` on this computer.
+    fn active_todo(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+        todo: &TodoSlug,
+    ) -> Result<bool, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -868,6 +909,7 @@ pub struct WorkPorts {
     pub retention: Arc<dyn RetentionPurge>,
     pub reclamation: Arc<dyn WorktreeReclamation>,
     pub open_sessions: Arc<dyn OpenWorkSessions>,
+    pub fleet: Arc<dyn FleetRecord>,
 }
 
 impl std::fmt::Debug for WorkPorts {

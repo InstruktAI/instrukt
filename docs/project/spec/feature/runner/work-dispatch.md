@@ -262,6 +262,11 @@ worktree, or wakes its existing bound orchestrator; invoking the record command
 from an unrelated checkout does not place a workspace. A due task keeps its own
 task execution placement.
 
+Once the work record passes this computer's unassigned claim to a resuming
+recorded orchestrator (`project/instrukt/spec/feature/work/dependencies-and-holds`),
+the runner dispatches that todo no further, and a reservation it already made
+resolves to that retained conversation.
+
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions` and `tick` refuse only
 when both `modules.todos` and `modules.events` are off, and then name both;

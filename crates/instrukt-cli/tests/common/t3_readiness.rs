@@ -318,57 +318,82 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
     let _ = socket.close(None);
 }
 
+/// T3's project table of the test rooted at `root`: a project exists only
+/// where a fixture or an emulated `t3 project add` placed it, never because
+/// a folder under test exists (`project/instrukt/spec/feature/runner/t3-contract`).
+pub fn projects_file(root: &Path) -> PathBuf {
+    root.join("t3-state/projects.table")
+}
+
+/// The id T3's fake gives a project it adds at `root`.
+pub fn default_project_id(root: &Path) -> String {
+    let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    format!(
+        "project-{}",
+        hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
+    )
+}
+
+/// Edits the project table under the lock the fake `t3` takes too, and
+/// replaces it whole.
+fn edit_projects(root: &Path, edit: impl FnOnce(&mut Vec<Value>)) {
+    let file = projects_file(root);
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file.with_file_name("projects.lock"))
+        .unwrap();
+    rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
+    let mut projects: Vec<Value> = std::fs::read(&file)
+        .ok()
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap_or_default();
+    edit(&mut projects);
+    let temporary = file.with_extension("table.fixture");
+    std::fs::write(&temporary, serde_json::to_vec(&projects).unwrap()).unwrap();
+    std::fs::rename(temporary, file).unwrap();
+    drop(lock);
+}
+
+/// Places a live project rooted exactly at `checkout`, with `id`, replacing
+/// any project at that root.
+pub fn place_project(root: &Path, checkout: &Path, id: &str) {
+    let workspace = checkout
+        .canonicalize()
+        .unwrap_or_else(|_| checkout.to_path_buf());
+    edit_projects(root, |projects| {
+        projects.retain(|project| project["workspaceRoot"] != json!(workspace));
+        projects.push(json!({"id":id,"workspaceRoot":workspace,"deletedAt":null}));
+    });
+}
+
+/// Marks the project rooted at `checkout` deleted, as T3 keeps it.
+pub fn withdraw_project(root: &Path, checkout: &Path) {
+    let workspace = checkout
+        .canonicalize()
+        .unwrap_or_else(|_| checkout.to_path_buf());
+    edit_projects(root, |projects| {
+        for project in projects
+            .iter_mut()
+            .filter(|project| project["workspaceRoot"] == json!(workspace))
+        {
+            project["deletedAt"] = json!("2026-11-06T10:00:00Z");
+        }
+    });
+}
+
 fn projects(dir: &Path) -> Vec<Value> {
-    fn visit(dir: &Path, depth: usize, roots: &mut Vec<PathBuf>) {
-        if depth == 0 {
-            return;
-        }
-        if dir.join(".git").exists() {
-            roots.push(dir.to_path_buf());
-            return;
-        }
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            return;
-        };
-        for entry in entries.flatten() {
-            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
-                visit(&entry.path(), depth - 1, roots);
-            }
-        }
-    }
-    let mut roots = Vec::new();
-    visit(dir.parent().unwrap(), 6, &mut roots);
-    if let Ok(companies) = std::fs::read_dir(dir.parent().unwrap().join("home/.instrukt/companies"))
-    {
-        for company in companies.flatten() {
-            if company.path().is_dir() && !roots.contains(&company.path()) {
-                roots.push(company.path());
-            }
-        }
-    }
-    roots
-        .into_iter()
-        .map(|root| {
-            let id = format!(
-                "project-{}",
-                hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
-            );
-            let id = std::fs::read_to_string(
-                dir.parent()
-                    .unwrap()
-                    .join("t3-state")
-                    .join(format!("{id}.id")),
-            )
-            .unwrap_or(id);
-            json!({"id":id,"workspaceRoot":root,"deletedAt":null})
-        })
-        .collect()
+    std::fs::read(projects_file(dir.parent().unwrap()))
+        .ok()
+        .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+        .unwrap_or_default()
 }
 fn launch(dir: &Path, _home: &Path, payload: &Value, owner: u64) -> Value {
     use std::io::Write;
     let Some(project) = projects(dir)
         .into_iter()
-        .find(|p| p["id"] == payload["projectId"])
+        .find(|p| p["id"] == payload["projectId"] && p["deletedAt"].is_null())
     else {
         return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"Project not found."}}]});
     };

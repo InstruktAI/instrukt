@@ -118,6 +118,11 @@ state names and a payload field supplying the subject under inbound-webhook-endp
 integration branch for a candidate, and the commit and request number stay in
 data.
 
+The `runner.attention.*` types of
+`project/instrukt/spec/feature/runner/fleet-attention` are occurrence. Each
+names the todo it concerns as subject; a condition between todos names the
+others as related references.
+
 ### Platform lifecycle states
 
 For `instrukt` types that report lifecycle state, the last segment is one of

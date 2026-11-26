@@ -1286,6 +1286,17 @@ impl<'w> Session<'w> {
                     names.join(" → ")
                 )));
             }
+            _store::fleet_record(
+                tx,
+                path,
+                project,
+                self.work.home(),
+                self.now,
+                rows.iter().map(|(_, row)| {
+                    let before = self.bases.get(&row.record.id).map(|base| &base.record);
+                    (before, &row.record)
+                }),
+            )?;
             write_related(tx)?;
             let docs = match transfer {
                 Some((parent, child)) => {

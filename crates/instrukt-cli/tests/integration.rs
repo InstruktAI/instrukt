@@ -48,6 +48,8 @@ mod event_consumers;
 mod event_discovery;
 #[path = "cases/event-transport.rs"]
 mod event_transport;
+#[path = "cases/fleet-attention.rs"]
+mod fleet_attention;
 #[path = "cases/github-apps.rs"]
 mod github_apps;
 #[path = "cases/github-record.rs"]

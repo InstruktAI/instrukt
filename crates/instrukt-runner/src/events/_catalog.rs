@@ -46,7 +46,8 @@ macro_rules! field_type {
     })+ };
 }
 field_type!(String: String, instrukt_core::ids::ProjectSlug, instrukt_core::ids::CommitSha,
-    instrukt_core::ids::TodoSlug, super::CiResult);
+    instrukt_core::ids::TodoSlug, super::CiResult, instrukt_core::ids::SessionRef,
+    instrukt_core::ids::RoleName, instrukt_core::ids::TodoId, jiff::Timestamp, super::StalledCause, super::AttentionHoldSource);
 field_type!(Integer: i64, u64, u32, usize);
 field_type!(Number: f64);
 field_type!(Boolean: bool);

@@ -7,11 +7,15 @@
     reason = "test: a failed step fails the test"
 )]
 
+use crate::fixtures::flavor;
+use crate::fixtures::runtime;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use flavor::{Tracked, change};
+use runtime::FakeT3;
 use support::{Project, redact};
 use workflow::Crew;
 
@@ -192,6 +196,86 @@ fn a_held_todo_shows_why_it_waits_and_keeps_its_recorded_work() {
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!("held", redact(&format!("{held}---\n{shown}")));
+}
+
+/// The time a `todo show` line beginning with `prefix` ends its field
+/// with: `created: <time> by …` or `hold: … (manual, by …, <time>)`.
+fn shown_time<'a>(shown: &'a str, prefix: &str) -> &'a str {
+    let line = shown
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap();
+    match prefix {
+        "created: " => line.split(" by ").next().unwrap(),
+        _ => line.rsplit(", ").next().unwrap().trim_end_matches(')'),
+    }
+}
+
+/// Runs a filing that must be refused; returns what the developer is told:
+/// work's refusal line, or the argument error before clap's usage text.
+fn refused_creation(project: &Project, filing: &[&str]) -> String {
+    let mut args = vec![
+        "create",
+        "renderer-rollout",
+        "Render nested lists with the new renderer.",
+        "--kind",
+        "change",
+        "--approved",
+    ];
+    args.extend_from_slice(filing);
+    let refusal = project.todo(&args).failure();
+    String::from_utf8_lossy(&refusal.get_output().stderr)
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH7
+#[test]
+fn converged_work_filed_on_hold_waits_from_its_first_revision_and_a_refused_filing_records_nothing()
+{
+    let project = Project::new();
+
+    let created = project.ok([
+        "create",
+        "nested-lists",
+        "Keep the depth of nested lists when parsing Markdown.",
+        "--kind",
+        "feature",
+        "--approved",
+        "--hold",
+        "--reason",
+        "waiting for the renderer binary to roll out",
+    ]);
+    let shown = project.ok(["show", "nested-lists"]);
+    let listed = project.ok(["list"]);
+    assert_eq!(
+        shown_time(&shown, "hold: "),
+        shown_time(&shown, "created: "),
+        "the creating change placed the hold"
+    );
+
+    let refused = [
+        refused_creation(&project, &["--hold", "--reason", "   "]),
+        refused_creation(
+            &project,
+            &["--hold", "--reason", "waiting for the rollout", "--icebox"],
+        ),
+        refused_creation(&project, &["--hold"]),
+    ]
+    .join("\n---\n");
+    let active = project.ok(["list"]);
+    let iceboxed = project.ok(["list", "--iceboxed"]);
+
+    insta::assert_snapshot!(
+        "held-at-creation",
+        redact(&format!("{created}---\n{shown}---\n{listed}"))
+    );
+    insta::assert_snapshot!(
+        "held-at-creation-refused",
+        redact(&format!("{refused}\n---\n{active}---\n{iceboxed}"))
+    );
 }
 
 /// Planned documentation of `list-depth` in the project's working tree: a
@@ -435,4 +519,159 @@ fn documentation_reached_through_a_link_is_not_moved() {
 fn set_mode(path: &Path, mode: u32) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+}
+
+/// The runner starts `slug`'s orchestrator, which then releases its claim
+/// from its worktree to wait; returns its native id and worktree.
+fn released_orchestrator(p: &Tracked, fake: &FakeT3, slug: &str) -> (String, std::path::PathBuf) {
+    let native = fake.native_id("s1");
+    let worktree = fake.worktree("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "update", slug, "--unclaim"])
+        .assert()
+        .success();
+    (native, worktree)
+}
+
+// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH4
+#[test]
+fn an_orchestrator_approved_in_its_own_conversation_continues_there() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    p.todo(["artifacts", "write", "parser", "prd", "Keep parser depth."]);
+    p.todo([
+        "artifacts",
+        "write",
+        "parser",
+        "prd-review-findings",
+        "Approve current requirements.",
+    ]);
+    p.todo([
+        "stamp",
+        "parser",
+        "--verdict",
+        "approve",
+        "--phase",
+        "prd_review",
+    ]);
+    let (native, worktree) = released_orchestrator(&p, &fake, "parser");
+    let session = format!("t3:{native}");
+    // The developer approves in the orchestrator's own conversation.
+    p.todo([
+        "stamp",
+        "parser",
+        "--prd-approved",
+        "--by",
+        "human",
+        "--session",
+        &session,
+    ]);
+    let approved = fake.message_count("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "work", "parser"])
+        .assert()
+        .success();
+    p.tick();
+    // Conversations, and inputs the runner sent after the approval,
+    // checked together.
+    assert_eq!(
+        (fake.threads().len(), fake.message_count("s1") - approved),
+        (1, 0),
+        "{}",
+        fake.messages("s1")
+    );
+    // The claim is held by the orchestrator's session under its one
+    // recorded assignment and worktree.
+    insta::assert_snapshot!(
+        "approved-orchestrator-resumed",
+        support::redact(&p.todo(["show", "parser"]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH5
+#[test]
+fn a_resuming_orchestrator_takes_over_the_runners_pickup_of_its_todo() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let (native, worktree) = released_orchestrator(&p, &fake, "parser");
+    // The runner claims the todo, but its wake of the conversation stops
+    // before anything reaches it: T3 cannot report the thread's state.
+    fake.flag("show-failure", true);
+    p.tick();
+    fake.flag("show-failure", false);
+    // The runner's claim on this computer, given to no conversation yet.
+    insta::assert_snapshot!(
+        "runner-pickup-unassigned",
+        support::redact(&p.todo(["show", "parser"]))
+    );
+    let waiting = fake.message_count("s1");
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &native)
+        .args(["todo", "work", "parser"])
+        .assert()
+        .success();
+    p.tick();
+    p.tick();
+    // Conversations, and inputs the runner sent after the takeover,
+    // checked together.
+    assert_eq!(
+        (fake.threads().len(), fake.message_count("s1") - waiting),
+        (1, 0),
+        "{}",
+        fake.messages("s1")
+    );
+    // The claim is held by the orchestrator's session under its one
+    // recorded assignment.
+    insta::assert_snapshot!(
+        "runner-pickup-taken-over",
+        support::redact(&p.todo(["show", "parser"]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH6
+#[test]
+fn only_the_recorded_orchestrator_resumes_without_placement_evidence() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    p.tick();
+    let fake = FakeT3::create(&p.env);
+    let (_, worktree) = released_orchestrator(&p, &fake, "parser");
+    // Another conversation, placed in the retained todo worktree as T3
+    // records a thread started in an existing worktree.
+    let start = p
+        .env
+        .command(std::path::Path::new("t3"), p.repo.path())
+        .args([
+            "thread",
+            "start",
+            "--title",
+            "todo-orchestrator · parser",
+            "--",
+            p.repo.path().to_str().unwrap(),
+            "Developer picks the parser up.",
+        ])
+        .output()
+        .unwrap();
+    assert!(start.status.success());
+    let second = String::from_utf8(start.stdout).unwrap().trim().to_owned();
+    let branch = p.env.git(&worktree, ["branch", "--show-current"]);
+    fake.change(&second, "worktreePath", worktree.to_str().unwrap().into());
+    fake.change(&second, "branch", branch.into());
+    let before = p.todo(["show", "parser"]);
+    p.env
+        .instrukt(&worktree)
+        .env("T3CODE_THREAD_ID", &second)
+        .args(["todo", "work", "parser"])
+        .assert()
+        .failure();
+    assert_eq!(before, p.todo(["show", "parser"]));
 }

@@ -5,7 +5,7 @@ use common::TestEnv;
 use instrukt_core::config::{Agents, Tier};
 
 const CONFIG: &str = r#"
-schema_version: 3
+schema_version: 4
 default: {class: agent, can: [], order: [personal, work], tier: standard}
 roles:
   builder: {class: focused, can: [read], github_app: author, order: [work, personal], tier: strong}
@@ -158,7 +158,7 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
     computer.config(&redis, None);
     std::fs::write(
         computer.env.instrukt_home().join("agents.yaml"),
-        "schema_version: 3\nroles:\n  planner: {order: [antigravity]}\n",
+        "schema_version: 4\nroles:\n  planner: {order: [antigravity]}\n",
     )
     .unwrap();
     // Work for each role: a procedure of that role answering its own fact.
@@ -231,7 +231,7 @@ fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_wr
     let file = env.instrukt_home().join("agents.yaml");
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
     let old = CONFIG
-        .replace("schema_version: 3", "schema_version: 1")
+        .replace("schema_version: 4", "schema_version: 1")
         .replace("effort: high", "reasoningEffort: high");
     std::fs::write(&file, &old).unwrap();
     let output = env.run(env.home(), ["config", "show", "agents"]).success();

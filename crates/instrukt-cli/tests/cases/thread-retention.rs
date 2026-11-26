@@ -8,7 +8,7 @@ use crate::common::t3_readiness;
 use crate::fixtures::documented;
 use crate::fixtures::t3::FakeT3;
 use crate::fixtures::workflow::Crew;
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::GLOBAL_SCHEMA_VERSION;
 use instrukt_runner::transport::EVENT_STREAM;
 
 /// When the runner next runs its maintenance.
@@ -27,7 +27,7 @@ fn retaining() -> (Crew, RedisServer) {
     std::fs::write(
         crew.project.env.instrukt_home().join("instrukt.yaml"),
         format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off', archive_finished_after: 7d}}\nmodules: {{events: true}}\nredis:\n  cluster:\n    url: '{}'\n",
+            "schema_version: {GLOBAL_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off', archive_finished_after: 7d}}\nmodules: {{events: true}}\nredis:\n  cluster:\n    url: '{}'\n",
             crew.project.github.url(),
             redis.url
         ),

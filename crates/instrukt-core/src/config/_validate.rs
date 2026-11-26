@@ -13,7 +13,7 @@ use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read_usable};
 use super::_module::Module;
 use super::_runtime::Runtime;
-use super::_schema::{self, CURRENT_SCHEMA_VERSION, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
+use super::_schema::{self, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
 use crate::home::Home;
 
 /// The findings of `layer` as stored at `path` with content `value`.
@@ -488,9 +488,10 @@ pub fn connector_procedure_finding(
 
 /// `instrukt config validate`: the findings of `layer`. A missing layer,
 /// or one of a newer schema version, is refused rather than judged. A
-/// project layer is judged as converted in memory, and one committed at an
-/// older schema version is itself a finding: only a commit brings it
-/// current (`docs/project/spec/feature/configuration/owned-files.md`).
+/// project layer is judged as converted in memory; one committed at an
+/// older schema version is no finding, its pending conversion reported by
+/// the inspection notice, and the next commit brings it current
+/// (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
     let path = layer.path(home);
@@ -502,16 +503,6 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
-    if layer.kind() == LayerKind::Project
-        && let Some(stale) = view.schema_version.and_then(schema_version_finding)
-    {
-        findings.push(Finding {
-            document: path.clone(),
-            key: stale.key,
-            kind: stale.kind,
-            message: stale.message,
-        });
-    }
     if let Layer::Company(name) = layer {
         findings.extend(local_material(home, name)?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
@@ -619,14 +610,17 @@ pub fn validate_local(home: &Home, layer: &Layer) -> Result<Vec<Finding>, Config
     Ok(found)
 }
 
-/// The finding for a document stored at schema version `found` when that is
-/// not the one this instrukt writes.
-fn schema_version_finding(found: u64) -> Option<KeyFinding> {
-    (found != CURRENT_SCHEMA_VERSION).then(|| {
+/// The finding for a document of kind `kind` at schema version `found` when
+/// that is not the one this instrukt writes for its kind. A judged document
+/// is already converted in memory, so this refuses a patch that writes a
+/// non-current version.
+fn schema_version_finding(found: u64, kind: LayerKind) -> Option<KeyFinding> {
+    let current = kind.current_schema_version();
+    (found != current).then(|| {
         KeyFinding::new(
             "schema_version",
             FindingKind::SchemaVersionNotCurrent,
-            format!("this instrukt writes schema_version {CURRENT_SCHEMA_VERSION}"),
+            format!("this instrukt writes schema_version {current}"),
         )
     })
 }
@@ -644,7 +638,7 @@ pub(crate) fn judge(
         value
             .get("schema_version")
             .and_then(Value::as_u64)
-            .and_then(schema_version_finding),
+            .and_then(|found| schema_version_finding(found, kind)),
     );
     let effective = match kind {
         LayerKind::Global => effective_value(Some(value), None),
@@ -1017,17 +1011,19 @@ fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFindin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION};
 
-    fn current_document(settings: &str) -> Value {
+    fn current_document(kind: LayerKind, settings: &str) -> Value {
         serde_yaml_ng::from_str(&format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\n{settings}"
+            "schema_version: {}\n{settings}",
+            kind.current_schema_version()
         ))
         .unwrap()
     }
 
     #[test]
     fn retired_runtime_configuration_is_unknown() {
-        let doc = current_document("runtimes: []");
+        let doc = current_document(LayerKind::Global, "runtimes: []");
         let found = judge(&doc, LayerKind::Global, None, None);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, FindingKind::InvalidValue);
@@ -1035,6 +1031,7 @@ mod tests {
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
         let doc = current_document(
+            LayerKind::Global,
             "runner: {runtime: t3}\nmodules: {todos: true, events: true}\nredis: {cluster: {url: 'redis://127.0.0.1:6379'}}",
         );
         let found = judge(&doc, LayerKind::Global, None, None);
@@ -1044,6 +1041,7 @@ mod tests {
     fn a_declared_connector_needs_a_chosen_runtime_that_carries_conversations() {
         crate::config::_connectors::install_fixture();
         let company = current_document(
+            LayerKind::Company,
             "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
         );
         let found = |global: &Value| {
@@ -1053,12 +1051,18 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         // An unset runtime is the compiled one, which carries conversations.
-        assert!(found(&current_document("ticks: 'on'")).is_empty());
-        assert!(found(&current_document("runner: {runtime: t3}")).is_empty());
+        assert!(found(&current_document(LayerKind::Global, "ticks: 'on'")).is_empty());
+        assert!(
+            found(&current_document(
+                LayerKind::Global,
+                "runner: {runtime: t3}"
+            ))
+            .is_empty()
+        );
     }
     #[test]
     fn references_still_detect_cycles_and_missing_keys() {
-        let doc = current_document("runner: {notify: '{runner.notify}'}");
+        let doc = current_document(LayerKind::Global, "runner: {notify: '{runner.notify}'}");
         assert!(
             judge(&doc, LayerKind::Global, None, None)
                 .iter()
@@ -1069,10 +1073,11 @@ mod tests {
     #[test]
     fn named_connectors_default_kind_and_validate_settings() {
         crate::config::_connectors::install_fixture();
-        let global = current_document("runner: {runtime: t3}");
+        let global = current_document(LayerKind::Global, "runner: {runtime: t3}");
 
         // Multiple named Slack connectors with explicit kind and policy settings.
         let valid = current_document(
+            LayerKind::Company,
             r#"company: acme
 connectors:
   slack:
@@ -1112,6 +1117,7 @@ connectors:
 
         // Unknown kind, invalid admit/session_scope/reply_mode are all reported at their paths.
         let invalid = current_document(
+            LayerKind::Company,
             r#"company: acme
 connectors:
   unknown-one:
@@ -1165,7 +1171,7 @@ connectors:
         std::fs::create_dir_all(home.root()).unwrap();
         std::fs::write(
             home.global_config(),
-            format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\n"),
+            format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\n"),
         )
         .unwrap();
         let company = crate::ids::ProjectSlug::parse("acme").unwrap();
@@ -1174,7 +1180,7 @@ connectors:
         std::fs::write(
             company_dir.join(super::super::CONFIG_FILE_NAME),
             format!(
-                r#"schema_version: {CURRENT_SCHEMA_VERSION}
+                r#"schema_version: {COMPANY_SCHEMA_VERSION}
 company: acme
 connectors:
   second:

@@ -262,6 +262,15 @@ Native agent-operation prose is supplied by configuration and rendered through `
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 <!-- /planned-change:archive-finished-threads -->
 
+Fleet attention is the runner's: which facts of a project's active work are
+attention conditions, the `runner.attention.*` vocabulary, each condition's
+occurrence identity, a project's attention episode, the fleet-attention
+contract work calls inside its record transactions, and the raise through
+`instrukt events raise`
+(`project/instrukt/spec/feature/runner/fleet-attention`). Each underlying fact
+stays with its owner: work passes the facts of its own record changes, and the
+runner decides which of them are conditions and appends their events.
+
 
 The runner also owns worktree reclamation: that and when the disk todo
 worktrees hold is reclaimed on a computer, the removal of a project's declared
@@ -540,6 +549,28 @@ in data.
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 
+Fleet attention's conditions are occurrences with a todo subject in their
+project origin; which facts count, and from what point, is
+`project/instrukt/spec/feature/runner/fleet-attention`'s.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.attention.execution_stalled` | The runner records that the session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or a start for the todo found no model in the order available | Project, todo, session when one existed, the workflow state observed, and whether the session stopped, failed, was gone or never started | Project, todo, session or the start's model order, workflow state | The procedure subscribed to fleet attention in the project |
+| `runner.attention.input_waiting` | The runner observes the session holding a todo's execution claim begin a wait for input while work does not hold the todo waiting on a person | Project, todo, session, workflow state | Project, todo, session and that session's wait number on the todo | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_placed` | A change made on this computer places a dispatch hold on a todo, from any source | Project, todo, the hold's source, reason and time | Project, todo, the hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_released` | A change made on this computer removes a todo's dispatch hold, by release, replacement, group joining or label | Project, todo, the released hold's source and placement time | Project, todo, the released hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.attempts_failing` | A role's attempt on a todo fails where an earlier attempt of that role on that todo already failed | Project, todo, the todo's identity, role, attempt, failure reason | Project, todo, the todo's identity, role, attempt | The procedure subscribed to fleet attention in the project |
+| `runner.attention.fleet_quiet` | While the project's attention episode is open, its last active todo that is unheld and not a structural holder leaves active work or is held | Project, the todo whose change closed the episode | Project, the event that opened the episode | The procedure subscribed to fleet attention in the project |
+| `runner.attention.raised` | An agent raises a condition about active todos of the project it works in | Project, the todos named, the obligation at stake; the raising session as the caller reference | One identity per raise | The procedure subscribed to fleet attention in the project |
+
+The hold, repeated-failure and episode-end types are appended through the
+fleet-attention contract in the transaction of work's record change. A stopped
+execution's type is appended in the transaction that records the unrecovered
+stop, a wait's in the transaction that records the wait, and an exhausted
+start's in a transaction of its own; `runner.attention.raised` when the raise
+is admitted.
+
+
 ### Event-platform facts emitted
 
 For `instrukt.system.event.dead_lettered`, subject is the failing stream entry,
@@ -569,6 +600,10 @@ integrate candidate in their project origin. The event declarations define
 their typed subjects (`project/instrukt/spec/feature/runner/event-envelope`).
 `instrukt.system.event.dead_lettered` concerns the failing stream entry and
 has no origin, as declared in Canonical fields.
+
+The `runner.attention.*` events concern a todo in its project origin; a
+condition between todos names the others, and a raise its raising session, as
+related references.
 
 ## Use cases
 
@@ -616,6 +651,9 @@ has no origin, as declared in Canonical fields.
 - **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
+
+- **Fleet attention** — `project/instrukt/spec/feature/runner/fleet-attention`
+  — have stuck, converging or conflicting work across a project's todos attended to without watching its sessions.
 
 - **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
   — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
@@ -692,6 +730,15 @@ has no origin, as declared in Canonical fields.
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
@@ -759,8 +806,10 @@ project's todos that have not reached a terminal outcome. The runtime adapter li
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
   steering degrades ASAP attention to queued input or idle entry without a
-  validation finding. Standing T3 threads remain unsettled under automation
-  and stay reachable after human settling.
+  validation finding. Runner automation never settles a standing T3 thread; a
+  standing procedure may self-settle when parked dormant
+  (`general/procedure/event-handling/overview`), and a settled one stays
+  reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
 - A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
   one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
@@ -772,7 +821,8 @@ project's todos that have not reached a terminal outcome. The runtime adapter li
 - Event reactions activate agents under their declared roles. Script-run
   event actions and event-bound maintenance are outside scope. Path-based
   post-commit follow-ups use git hooks, including existing sync hooks.
-- A visible coordinator singleton is a standing-agent responsibility.
+- A project's fleet coordinator is the standing agent of its subscribed
+  procedure in that project, one per computer that works the project.
   Runtime lifecycle remains runtime-owned.
 
 

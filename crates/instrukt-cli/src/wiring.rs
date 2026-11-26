@@ -157,6 +157,14 @@ pub fn work_ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
     _work::ports(ctx)
 }
 
+/// What fleet attention reads of the work record, for `instrukt events
+/// raise`.
+pub fn fleet_record(
+    ctx: &Ctx,
+) -> anyhow::Result<Arc<dyn instrukt_runner::interfaces::FleetRecord>> {
+    Ok(Arc::new(_work::work(ctx)?))
+}
+
 /// Work's answers for `instrukt review start`
 /// (`project/instrukt/spec/feature/runner/requested-review`).
 pub fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::HeadVerdicts> {
