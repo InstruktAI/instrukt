@@ -75,6 +75,11 @@ Apply these configured action values to the identified assignment and session.
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
   evidence to reconcile, never a reason to preserve the state.
+- **A hold's reason is a record; it is never restated.** It records why the
+  hold was placed, and stays as written, like any record of a past decision.
+  A hold is released only when its condition is met or the work is meant to
+  move, never to place another: releasing makes the todo dispatchable at once,
+  and the runner claims it before a new hold lands.
 
 ### Ad hoc work and workspace placement
 
