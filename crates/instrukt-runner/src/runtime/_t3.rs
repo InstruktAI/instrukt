@@ -868,6 +868,9 @@ enum ThreadStatus {
     Starting,
     Resuming,
     Queued,
+    /// Not a wait for input; its translation is owned by
+    /// `project/instrukt/spec/feature/runner/session-continuity`, T3
+    /// observation translation.
     Waiting,
     WaitingForInput,
     WaitingForApproval,
@@ -890,12 +893,13 @@ impl ThreadStatus {
     }
     fn state(self) -> SessionState {
         match self {
-            Self::Running | Self::Preparing | Self::Starting | Self::Resuming | Self::Queued => {
-                SessionState::Running
-            }
-            Self::Waiting | Self::WaitingForInput | Self::WaitingForApproval => {
-                SessionState::NeedsInput
-            }
+            Self::Running
+            | Self::Preparing
+            | Self::Starting
+            | Self::Resuming
+            | Self::Queued
+            | Self::Waiting => SessionState::Running,
+            Self::WaitingForInput | Self::WaitingForApproval => SessionState::NeedsInput,
             Self::Idle | Self::Completed | Self::Stopped => SessionState::InputReady,
             Self::Failed | Self::Interrupted | Self::Cancelled | Self::RolledBack => {
                 SessionState::EndedFailed

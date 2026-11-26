@@ -323,7 +323,7 @@ fn a_busy_parents_native_result_uses_no_instrukt_waiting_slot() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS16
 #[test]
 fn native_failure_or_input_wait_never_becomes_instrukt_completion() {
-    for state in ["failed", "waiting"] {
+    for state in ["failed", "needs-input"] {
         let (crew, child) = pending_builder();
         crew.runtime.open_session("lead-1");
         crew.runtime.set_status(

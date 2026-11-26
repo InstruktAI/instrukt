@@ -1,4 +1,4 @@
-//! Docs commands: `instrukt docs validate|schema|fold|index|get|render|plugin`.
+//! Docs commands: `instrukt docs validate|schema|fold|index|get|render|plugin|units`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,7 +9,9 @@ use instrukt_core::docs::{
 };
 use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
-use instrukt_core::publication::{self, CompanyName, PlannedFile, RepositoryView};
+use instrukt_core::publication::{
+    self, CompanyName, PlannedFile, RepositoryView, UnitWork, UnitsOutcome, UnitsReport,
+};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -101,6 +103,40 @@ enum DocsCommand {
     /// finding and exits non-zero only when there is one, so a branch whose
     /// plugin is behind its documents passes.
     Plugin(PluginArgs),
+    /// Report which compressed units of the repository need writing.
+    ///
+    /// Reads the working tree alone — no home, publication, configuration,
+    /// database or network, so a fresh clone and the binary are enough — and
+    /// writes nothing. Names each source an entrypoint index inlines whose
+    /// unit under `docs/_compressed/` is stale or missing, with the source's
+    /// canonical id or company document path, its file, where its unit
+    /// belongs and the `source_sha256` a renewed unit declares; each
+    /// orphaned unit; and each finding that keeps a unit from standing in
+    /// for its source.
+    ///
+    /// Exits 0 when there is nothing to compress, 3 when it names only
+    /// stale, missing or orphaned units, and 1 when it names a finding.
+    ///
+    /// With `--target <slug>`, each source is read as that todo will deliver
+    /// it, its pending documentation in the checkout applied.
+    ///
+    /// With `--json`, prints one object: `outcome` (`nothing-to-compress`,
+    /// `work` or `findings`); `stale` and `missing`, each a list of
+    /// `{source, file, unit, source_sha256}`; `orphaned`, a list of
+    /// `{unit}`; and `findings`, a list of `{finding, path, detail}`, where
+    /// `finding` is one of `unreadable`, `link`, `reserved-folder`,
+    /// `forbidden-directive`, `configured-values` and `references`.
+    Units(UnitsArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct UnitsArgs {
+    /// Print the report as one JSON object.
+    #[arg(long)]
+    json: bool,
+    /// Read each source as this todo will deliver it.
+    #[arg(long, value_name = "SLUG")]
+    target: Option<TodoSlug>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -212,7 +248,109 @@ pub fn run(args: DocsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         DocsCommand::Get(args) => get(args, ctx),
         DocsCommand::Render(args) => render(&args, ctx),
         DocsCommand::Plugin(args) => plugin(&args, ctx),
+        DocsCommand::Units(args) => units(&args, ctx),
     }
+}
+
+/// The exit status of an inspection that names work and no finding.
+const UNITS_WORK: u8 = 3;
+
+/// Reports the state of the repository's compressed units from its working
+/// tree.
+fn units(args: &UnitsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    let report = publication::inspect_units(&root, args.target.as_ref())?;
+    if args.json {
+        ctx.out.json(&units_json(&report))?;
+    } else {
+        for line in units_lines(&report) {
+            ctx.out.line(&line)?;
+        }
+    }
+    Ok(units_exit(report.outcome()))
+}
+
+/// The exit status an inspection's outcome comes to.
+fn units_exit(outcome: UnitsOutcome) -> ExitCode {
+    match outcome {
+        UnitsOutcome::NothingToCompress => ExitCode::SUCCESS,
+        UnitsOutcome::Work => ExitCode::from(UNITS_WORK),
+        UnitsOutcome::Findings => ExitCode::FAILURE,
+    }
+}
+
+/// The inspection's text report: one line per stale, missing and orphaned
+/// unit and per finding, or the one line saying there is nothing to
+/// compress.
+fn units_lines(report: &UnitsReport) -> Vec<String> {
+    let work = |state: &str, verb: &str, work: &UnitWork| {
+        format!(
+            "{state}: {} ({}): {verb} {} declaring source_sha256 {}",
+            work.source, work.file, work.unit, work.source_sha256
+        )
+    };
+    let mut lines: Vec<String> = report
+        .stale
+        .iter()
+        .map(|item| work("stale", "renew", item))
+        .chain(report.missing.iter().map(|item| work("missing", "write", item)))
+        .chain(report.orphaned.iter().map(|unit| {
+            format!(
+                "orphaned: {unit}: its source no longer exists or no entrypoint index inlines it; remove it"
+            )
+        }))
+        .chain(
+            report
+                .findings
+                .iter()
+                .map(|finding| format!("finding: {finding}")),
+        )
+        .collect();
+    if lines.is_empty() {
+        lines.push("nothing to compress: every inlined source has a current unit".to_owned());
+    }
+    lines
+}
+
+/// The inspection's report as `--json` prints it.
+fn units_json(report: &UnitsReport) -> serde_json::Value {
+    let outcome = match report.outcome() {
+        UnitsOutcome::NothingToCompress => "nothing-to-compress",
+        UnitsOutcome::Work => "work",
+        UnitsOutcome::Findings => "findings",
+    };
+    let work = |items: &[UnitWork]| -> Vec<serde_json::Value> {
+        items
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "source": item.source,
+                    "file": item.file,
+                    "unit": item.unit,
+                    "source_sha256": item.source_sha256,
+                })
+            })
+            .collect()
+    };
+    serde_json::json!({
+        "outcome": outcome,
+        "stale": work(&report.stale),
+        "missing": work(&report.missing),
+        "orphaned": report
+            .orphaned
+            .iter()
+            .map(|unit| serde_json::json!({ "unit": unit }))
+            .collect::<Vec<_>>(),
+        "findings": report
+            .findings
+            .iter()
+            .map(|finding| serde_json::json!({
+                "finding": finding.kind.code(),
+                "path": finding.path,
+                "detail": finding.kind.detail(),
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// Renders the repository's committed entrypoints from its working tree,
@@ -480,4 +618,31 @@ fn fold(args: FoldArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = repo_root(&ctx.cwd)?;
     docs::fold(&root, &args.slug)?;
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::publication::{UnitFinding, UnitFindingKind};
+
+    #[test]
+    fn an_inspection_naming_a_finding_fails_whatever_work_it_also_names() {
+        let report = UnitsReport {
+            stale: vec![UnitWork {
+                source: "general/policy/alpha".to_owned(),
+                file: "docs/general/policy/alpha.md".to_owned(),
+                unit: "docs/_compressed/general/policy/alpha.md".to_owned(),
+                source_sha256: "0".repeat(64),
+            }],
+            findings: vec![UnitFinding {
+                path: "docs/_compressed/general/policy/beta.md".to_owned(),
+                kind: UnitFindingKind::ForbiddenDirective {
+                    directive: "@exec: true".to_owned(),
+                },
+            }],
+            ..UnitsReport::default()
+        };
+        assert_eq!(units_exit(report.outcome()), ExitCode::FAILURE);
+        insta::assert_snapshot!(units_lines(&report).join("\n"));
+    }
 }

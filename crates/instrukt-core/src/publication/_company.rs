@@ -25,6 +25,9 @@ use super::_render::{
     RenderPlan, finish,
 };
 use super::_source::{Committed, EntryIndex};
+use super::_units::{
+    Decision, Fallback, LEGEND, RepositoryUnits, Source, Unit, UnitFinding, frame,
+};
 use crate::docs::{self, CompanyDocument, CompanyFrontmatter, CompanyReference, Directive};
 use crate::ids::{DomainName, SnippetId};
 
@@ -247,6 +250,8 @@ pub enum CompanyReadProblem {
     /// It names a symbolic link, or a file in a linked folder, which is
     /// never read.
     Link,
+    /// It names a compressed unit, which is no company document.
+    Unit,
 }
 
 impl CompanyReadProblem {
@@ -268,6 +273,9 @@ impl CompanyReadProblem {
             Self::Missing => "which the home does not hold; add the document or correct the path",
             Self::Link => {
                 "a symbolic link or a file in a linked folder, which is never read; replace the link with what it points to"
+            }
+            Self::Unit => {
+                "a compressed unit under `docs/_compressed/`, which is no company document; name the document it compresses instead"
             }
         }
     }
@@ -317,16 +325,6 @@ pub(super) struct SelectedDocument {
     pub text: String,
     /// Its text as a company rendering reads it.
     pub document: CompanyDocument,
-}
-
-impl Selection {
-    /// The text of each held document without its required reads, in order.
-    pub(super) fn held_bodies(&self) -> impl Iterator<Item = &str> + '_ {
-        self.held
-            .iter()
-            .filter_map(|path| self.documents.get(path))
-            .map(|selected| selected.document.body.as_str())
-    }
 }
 
 /// Reads the company index of `tree` and the documents it selects: `None`
@@ -448,8 +446,22 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         return;
     }
     let selection = reading.selection;
+    let held = match held_texts(tree, &selection) {
+        Ok(held) => held,
+        Err(findings) => {
+            plan.findings
+                .extend(findings.into_iter().map(|finding| RenderFinding {
+                    path: path.clone(),
+                    kind: RenderFindingKind::Unit { finding },
+                }));
+            return;
+        }
+    };
     let mut blocks = vec![COMPANY_PASSAGE.to_owned()];
-    blocks.extend(selection.held_bodies().map(|body| body.trim().to_owned()));
+    if held.units {
+        blocks.push(LEGEND.to_owned());
+    }
+    blocks.extend(held.bodies);
     let lines: Vec<String> = selection
         .listed
         .iter()
@@ -464,6 +476,73 @@ pub(super) fn render(tree: &Committed, override_beside_root: bool, plan: &mut Re
         path,
         text: format!("{GENERATED_LINE}\n{text}"),
     });
+}
+
+/// What a company rendering holds of its held documents, in order.
+pub(super) struct Held {
+    /// Each held document's text: its current unit framed under its path,
+    /// or its prose without its required reads.
+    pub bodies: Vec<String>,
+    /// Whether any is held as its unit.
+    pub units: bool,
+}
+
+/// How the rendering of `selection` from `tree` holds each held document:
+/// its current unit with no finding framed under its path, its prose
+/// otherwise; the findings of its units, which leave the rendering as it
+/// is.
+pub(super) fn held_texts(
+    tree: &Committed,
+    selection: &Selection,
+) -> Result<Held, Vec<UnitFinding>> {
+    let units = held_units(tree, selection)?;
+    let bodies = selection
+        .held
+        .iter()
+        .filter_map(|path| match units.get(path) {
+            Some(unit) => {
+                let body = docs::company_document(&unit.body).body;
+                Some(frame(path, &body).trim().to_owned())
+            }
+            None => selection
+                .documents
+                .get(path)
+                .map(|selected| selected.document.body.trim().to_owned()),
+        })
+        .collect();
+    Ok(Held {
+        bodies,
+        units: !units.is_empty(),
+    })
+}
+
+/// The current unit with no finding of each held document of `selection`
+/// that has one, by the document's path; the findings of its units, which
+/// leave every rendering of the selection as it is.
+pub(super) fn held_units(
+    tree: &Committed,
+    selection: &Selection,
+) -> Result<BTreeMap<String, Unit>, Vec<UnitFinding>> {
+    let units = RepositoryUnits::of(tree);
+    let mut held = BTreeMap::new();
+    let mut findings = Vec::new();
+    for path in &selection.held {
+        let Some(selected) = selection.documents.get(path) else {
+            continue;
+        };
+        match units.decide(&Source::company(path, &selected.text)) {
+            Decision::Unit(unit) => {
+                held.insert(path.clone(), unit);
+            }
+            Decision::Prose(Fallback::Findings(found)) => findings.extend(found),
+            Decision::Prose(Fallback::Missing | Fallback::Stale(_)) => {}
+        }
+    }
+    if findings.is_empty() {
+        Ok(held)
+    } else {
+        Err(findings)
+    }
 }
 
 /// The one line naming a listed document: its path from the repository's
@@ -623,6 +702,9 @@ pub(super) fn resolve(
     if !path.starts_with(DOCS) {
         return Err(CompanyReadProblem::OutsideDocs);
     }
+    if path.starts_with(&format!("{}/", super::_units::PLACE)) {
+        return Err(CompanyReadProblem::Unit);
+    }
     if tree.is_link(&path) {
         return Err(CompanyReadProblem::Link);
     }
@@ -680,6 +762,54 @@ fn relative_to(reader: &str, read: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const COMPANY_DOC: &str =
+        "---\ndescription: Who we are.\n---\n\n# Company\n\nWe build boats.\n";
+
+    /// A company home whose index expands `expanded`, with `files`.
+    fn company_plan(expanded: &str, files: &[(&str, &str)]) -> RenderPlan {
+        let index = format!("expanded: [{expanded}]\n");
+        let mut all = vec![
+            (COMPANY_INDEX, index.as_str()),
+            ("docs/company.md", COMPANY_DOC),
+        ];
+        all.extend_from_slice(files);
+        let tree = Committed::of(&all);
+        let mut plan = RenderPlan::default();
+        render(&tree, false, &mut plan);
+        plan
+    }
+
+    #[test]
+    fn a_current_company_unit_is_held_under_its_path_after_the_passage_and_legend() {
+        let digest = super::super::_units::source_digest(docs::split_frontmatter(COMPANY_DOC).1);
+        let unit = format!("---\nsource_sha256: {digest}\nmodel: m\n---\n- we build boats\n");
+        let plan = company_plan("company.md", &[("docs/_compressed/company.md", &unit)]);
+        assert_eq!(plan.findings, []);
+        insta::assert_snapshot!(plan.writes[0].text);
+    }
+
+    #[test]
+    fn a_company_index_naming_a_unit_is_a_finding() {
+        let plan = company_plan(
+            "_compressed/company.md",
+            &[("docs/_compressed/company.md", "- we build boats\n")],
+        );
+        assert_eq!(plan.writes, []);
+        assert!(matches!(
+            plan.findings.as_slice(),
+            [RenderFinding {
+                kind: RenderFindingKind::CompanyIndex {
+                    problem: CompanyIndexProblem::Entry {
+                        problem: CompanyReadProblem::Unit,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }]
+        ));
+    }
 
     #[test]
     fn a_read_resolves_relative_to_its_reader() {

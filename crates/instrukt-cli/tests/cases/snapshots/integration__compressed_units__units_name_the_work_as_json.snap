@@ -1,0 +1,29 @@
+---
+source: crates/instrukt-cli/tests/cases/compressed-units.rs
+expression: json
+---
+{
+  "outcome": "work",
+  "stale": [
+    {
+      "source": "general/policy/alpha",
+      "file": "docs/general/policy/alpha.md",
+      "unit": "docs/_compressed/general/policy/alpha.md",
+      "source_sha256": "6c462168c8e0a72a34063b6c34925a250b2586991ac2ad81899b86c6879cee14"
+    }
+  ],
+  "missing": [
+    {
+      "source": "general/policy/beta",
+      "file": "docs/general/policy/beta.md",
+      "unit": "docs/_compressed/general/policy/beta.md",
+      "source_sha256": "9bc659a5af84a7a4a97efa98904176f2ae28eede6db7f03076d863ec28384412"
+    }
+  ],
+  "orphaned": [
+    {
+      "unit": "docs/_compressed/general/policy/gone.md"
+    }
+  ],
+  "findings": []
+}

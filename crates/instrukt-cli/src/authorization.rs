@@ -56,7 +56,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["bugs", "report"] => BugReport,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold" | "render" | "plugin"] => DocsWrite,
-        ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
+        ["docs", "index" | "get" | "schema" | "validate" | "units"] => DocsRead,
         ["todo", "list" | "show"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
         ["todo", "artifacts", "write"] => ArtifactWrite,
@@ -122,7 +122,7 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 
 /// The commands that work on the repository the caller stands in and need
 /// nothing else of the computer: `docs render [--check]`, `docs plugin
-/// [--check | --validate]`, `hooks run`, the
+/// [--check | --validate]`, `docs units`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
 /// be read still has its runs recorded and shown; whether the caller is in
@@ -130,7 +130,7 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render" | "plugin"] | ["hooks", "run" | "worker" | "status"]
+        ["docs", "render" | "plugin" | "units"] | ["hooks", "run" | "worker" | "status"]
     )
 }
 
@@ -142,13 +142,13 @@ pub fn state_inspection(matches: &ArgMatches) -> bool {
     action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
-/// The commands that write no log: `docs render [--check]` and `docs plugin
-/// [--check | --validate]`, so a check writes nothing anywhere and errors go
-/// to stderr alone.
+/// The commands that write no log: `docs render [--check]`, `docs plugin
+/// [--check | --validate]` and `docs units`, so a check writes nothing
+/// anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render" | "plugin"]
+        ["docs", "render" | "plugin" | "units"]
     )
 }
 
@@ -220,7 +220,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
         ["status"]
             | ["bugs", "suppressions" | "list"]
             | ["config", "get" | "show" | "validate" | "schema"]
-            | ["docs", "get" | "index" | "schema" | "validate"]
+            | ["docs", "get" | "index" | "schema" | "validate" | "units"]
             | ["events", "list" | "schema" | "status" | "dead-letters"]
             | ["agents", "list" | "availability"]
             | ["hooks", "status"]
