@@ -213,7 +213,7 @@ fn event_config(env: &TestEnv, local: Option<&str>, cluster: &str, ingress: Opti
     let local = local
         .map(|url| format!("  local: {{url: '{url}'}}\n"))
         .unwrap_or_default();
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 6\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -925,7 +925,7 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
             .assert()
             .success();
     }
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 6\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
     env.run(env.home(), ["install", "--check"]).failure();
     redis::cmd("ACL")
         .arg("SETUSER")
@@ -1171,7 +1171,7 @@ fi
     assert!(registration.exists());
     std::fs::write(
         another.join("instrukt.yaml"),
-        "schema_version: 6\nmodules: {history: false}\n",
+        "schema_version: 7\nmodules: {history: false}\n",
     )
     .unwrap();
     env.set_env("INSTRUKT_HOME", another.to_str().unwrap());
@@ -1510,7 +1510,7 @@ fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_
     env.set_env("PATH", "");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 6\nrunner: {runtime: t3}\n",
+        "schema_version: 7\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let github = env.with_fake_github();
@@ -2632,7 +2632,7 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     std::fs::write(
         &global,
         format!(
-            "schema_version: 6\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
+            "schema_version: 7\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
         ),
     )
     .unwrap();

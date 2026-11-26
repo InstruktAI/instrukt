@@ -11,7 +11,7 @@ use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
 /// this instrukt writes. The first is 1.
-pub const GLOBAL_SCHEMA_VERSION: u64 = 6;
+pub const GLOBAL_SCHEMA_VERSION: u64 = 7;
 
 /// The schema version of a project layer (`instrukt.yaml` at a repository
 /// root) this instrukt writes. The first is 1.
@@ -1350,18 +1350,19 @@ mod tests {
     fn the_global_schema_reads_runtime_actions_as_validation_does() {
         let schema = layer_json_schema(LayerKind::Global);
         let entry = |actions: &str| format!("schema_version: 1\nruntimes:\n  t3:\n{actions}");
-        let earlier: String = super::super::_runtime::ACTIONS
+        let every: String = super::super::_runtime::ACTIONS
             .iter()
-            .filter(|(name, _)| *name != "retire_thread")
             .map(|(name, _)| format!("    {name}: Follow the native {name}.\n"))
             .collect();
         for (doc, valid) in [
-            (entry(&earlier), true),
+            (entry(&every), true),
+            (entry("    finish_thread: Settle the thread.\n"), true),
+            (entry("    finish_thread: '  '\n"), false),
+            // The retired action is an unknown key, not an override.
             (
                 entry("    retire_thread: Archive the finished thread.\n"),
-                true,
+                false,
             ),
-            (entry("    retire_thread: '  '\n"), false),
         ] {
             assert_eq!(
                 check(&yaml(&doc), LayerKind::Global).is_empty(),
@@ -1384,15 +1385,15 @@ mod tests {
                 "\u{A0}\u{1680}\u{2000}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}",
                 false,
             ),
-            ("archive", true),
-            ("\u{85} archive\u{3000}", true),
+            ("settle", true),
+            ("\u{85} settle\u{3000}", true),
             ("\u{1F5C4}", true),
         ] {
             let mut doc = yaml("schema_version: 1\nruntimes: {t3: {}}\n");
             doc["runtimes"]["t3"]
                 .as_mapping_mut()
                 .unwrap()
-                .insert(Value::from("retire_thread"), Value::from(action));
+                .insert(Value::from("finish_thread"), Value::from(action));
             let json = serde_json::to_value(&doc).unwrap();
             assert_eq!(
                 check(&doc, LayerKind::Global).is_empty(),

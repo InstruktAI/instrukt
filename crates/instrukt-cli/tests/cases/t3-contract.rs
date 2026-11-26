@@ -110,7 +110,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         fs::create_dir_all(env.instrukt_home()).unwrap();
         fs::write(
             env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 6\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+            "schema_version: 7\nrunner: {runtime: t3}\nmodules: {history: true}\n",
         )
         .unwrap();
         manifest["operation"] = json!("real CLI, readiness, projection and input boundaries");

@@ -551,7 +551,7 @@ by a human or by the standing procedure itself when dormant) is never evidence o
 permission for a second keyed start. Archived or explicitly
 unknown threads report `gone`, a released or terminal assignment receives no successor, and
 archived transcripts remain extractable (`project/instrukt/spec/feature/runner/history`).
-Agent-invoked settling and terminal retirement instructions are governed by
+Agent-invoked settling instructions are governed by
 `project/instrukt/spec/feature/configuration/layered-configuration`. The published CLI omits
 subagent threads from project listing; this surface reports only the threads the runtime
 exposes.

@@ -145,6 +145,30 @@ fn global(mut value: Value, from: u64) -> Value {
         // machine's switch is gone, whatever its value.
         modules.remove(super::_schema::CONVERSATIONS);
     }
+    if from < 7
+        && let Some(Value::Mapping(runtimes)) = value.get_mut("runtimes")
+    {
+        // An entry or a `runtimes` map this removal empties goes with it;
+        // one that is not a mapping is left for validation to report.
+        let mut emptied = false;
+        runtimes.retain(|_, entry| {
+            let Value::Mapping(actions) = entry else {
+                return true;
+            };
+            // `retire_thread` is the runtime action global schema 6 accepted
+            // and the current catalog does not define, whatever it holds later.
+            let removed = actions.remove("retire_thread").is_some();
+            let keep = !(removed && actions.is_empty());
+            emptied |= !keep;
+            keep
+        });
+        if emptied
+            && runtimes.is_empty()
+            && let Value::Mapping(map) = &mut value
+        {
+            map.remove("runtimes");
+        }
+    }
     value
 }
 
@@ -181,5 +205,70 @@ fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::InvalidValue {
         key: "configuration migration".into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::upcycle;
+    use crate::config::{GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION};
+    use serde_yaml_ng::Value;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml_ng::from_str(text).unwrap()
+    }
+
+    /// A global schema-6 document converted to the current global schema.
+    fn global_6(text: &str) -> Value {
+        upcycle(
+            yaml(&format!("schema_version: 6\n{text}")),
+            6,
+            LayerKind::Global,
+        )
+    }
+
+    fn current_global(text: &str) -> Value {
+        yaml(&format!("schema_version: {GLOBAL_SCHEMA_VERSION}\n{text}"))
+    }
+
+    #[test]
+    fn a_global_schema_6_runtime_entry_loses_the_retired_action_and_keeps_the_rest() {
+        assert_eq!(
+            global_6(
+                "ticks: 'off'\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    finish_thread: Settle it.\n    retire_thread: Archive it.\n"
+            ),
+            current_global(
+                "ticks: 'off'\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    finish_thread: Settle it.\n"
+            ),
+        );
+    }
+
+    #[test]
+    fn a_global_schema_6_runtimes_map_the_removal_empties_goes() {
+        assert_eq!(
+            global_6("ticks: 'off'\nruntimes:\n  t3:\n    retire_thread: Archive it.\n"),
+            current_global("ticks: 'off'\n"),
+        );
+    }
+
+    #[test]
+    fn only_the_runtime_entry_the_removal_empties_goes() {
+        assert_eq!(
+            global_6(
+                "runtimes:\n  t3:\n    retire_thread: Archive it.\n  other:\n    finish_thread: Settle it.\n    retire_thread: Archive it.\n"
+            ),
+            current_global("runtimes:\n  other:\n    finish_thread: Settle it.\n"),
+        );
+    }
+
+    #[test]
+    fn a_project_schema_6_document_is_already_current() {
+        let text = format!(
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: p\nruntimes:\n  t3:\n    retire_thread: Archive it.\n"
+        );
+        assert_eq!(
+            upcycle(yaml(&text), PROJECT_SCHEMA_VERSION, LayerKind::Project),
+            yaml(&text),
+        );
     }
 }
