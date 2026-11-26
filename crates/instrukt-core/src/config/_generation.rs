@@ -171,8 +171,8 @@ pub fn write_skeleton(root: &Path, key: &ProjectSlug) -> Result<(), ConfigError>
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountKind, Generation, GenerationRefusal, GitHubOrganisation, PROJECT_SCHEMA_VERSION,
-        Path, PathBuf, ProjectSlug, company_repository, decide, skeleton_layer,
+        AccountKind, Generation, GenerationRefusal, GitHubOrganisation, Path, PathBuf, ProjectSlug,
+        company_repository, decide, skeleton_layer,
     };
 
     fn acme() -> ProjectSlug {
@@ -246,12 +246,7 @@ mod tests {
     #[test]
     fn the_skeletons_layer_is_a_company_repository_with_todos_off_and_review_on() {
         let layer = skeleton_layer(&acme()).unwrap();
-        assert_eq!(
-            serde_yaml_ng::to_string(&layer).unwrap(),
-            format!(
-                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: company-acme\ncompany_repository: true\nmodules:\n  todos: false\nreview:\n  automatic: true\n"
-            )
-        );
+        insta::assert_snapshot!("skeleton_layer", serde_yaml_ng::to_string(&layer).unwrap());
         assert!(matches!(
             super::super::classify_root(Some(serde_yaml_ng::to_string(&layer).unwrap().as_bytes())),
             super::super::RootDocument::ProjectLayer {

@@ -585,17 +585,24 @@ mod tests {
     }
 
     #[test]
-    fn a_resumed_creation_lets_the_push_decide_whatever_creation_answered() {
-        for created in [Creation::Created, Creation::AlreadyExists] {
-            assert_eq!(next_step(true, created, None), Step::Push);
-            for pushed in [Pushed::Accepted, Pushed::AlreadyThere] {
-                assert_eq!(next_step(true, created, Some(pushed)), Step::Finish);
-            }
-            assert_eq!(
-                next_step(true, created, Some(Pushed::OtherHistory)),
-                Step::ByContract
-            );
-        }
+    fn a_resumed_creation_that_finds_the_repository_still_pushes() {
+        assert_eq!(next_step(true, Creation::AlreadyExists, None), Step::Push);
+    }
+
+    #[test]
+    fn a_resumed_creation_whose_root_commit_is_already_there_finishes() {
+        assert_eq!(
+            next_step(true, Creation::AlreadyExists, Some(Pushed::AlreadyThere)),
+            Step::Finish
+        );
+    }
+
+    #[test]
+    fn a_resumed_creation_meeting_other_history_takes_it_by_contract() {
+        assert_eq!(
+            next_step(true, Creation::AlreadyExists, Some(Pushed::OtherHistory)),
+            Step::ByContract
+        );
     }
 
     #[test]

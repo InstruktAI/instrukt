@@ -66,6 +66,27 @@ fn focused_help_and_execution_use_the_recorded_binding() {
     assert_eq!(first_turn, (help.clone(), refusal.clone()));
     insta::assert_snapshot!("focused-role-help", help);
     insta::assert_snapshot!("focused-role-refusal", refusal);
+    // Adding a company is a machine-wide repository write outside the
+    // reviewer's grants: it is refused before anything is created.
+    let company = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "focused")
+        .args([
+            "init",
+            "--company",
+            "acme",
+            "--name",
+            "Acme",
+            "--admin",
+            "acme-admin",
+        ])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "focused-role-company-refusal",
+        String::from_utf8_lossy(&company.get_output().stderr)
+    );
+    assert!(!env.instrukt_home().join("companies/acme").exists());
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1

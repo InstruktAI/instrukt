@@ -1,0 +1,25 @@
+---
+source: crates/instrukt-core/src/publication/_plugin.rs
+expression: "&upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1"
+---
+{
+  "name": "acme-tools",
+  "owner": {
+    "name": "Acme"
+  },
+  "plugins": [
+    {
+      "name": "acme",
+      "source": "./",
+      "description": "The knowledge of Acme, as the company keeps it in its own repository.",
+      "strict": false,
+      "skills": [
+        "./skills/acme"
+      ],
+      "version": "0.3.8",
+      "author": {
+        "name": "Acme"
+      }
+    }
+  ]
+}

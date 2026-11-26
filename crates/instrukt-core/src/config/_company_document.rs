@@ -192,9 +192,8 @@ pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        COMPANY_DOCUMENT, COMPANY_SCHEMA_VERSION, CONFIG_FILE_NAME, CompanyDocument, ConfigError,
-        Home, PathBuf, ProjectSlug, convert, declares_company, lock_path, resolve,
-        write_company_settings,
+        COMPANY_DOCUMENT, CONFIG_FILE_NAME, CompanyDocument, ConfigError, Home, PathBuf,
+        ProjectSlug, convert, declares_company, lock_path, resolve, write_company_settings,
     };
 
     fn acme() -> ProjectSlug {
@@ -289,9 +288,10 @@ mod tests {
             legacy
         );
         assert!(!dir.join(CONFIG_FILE_NAME).exists());
-        assert_eq!(
-            std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
-            "/instrukt.yaml\n/company.yaml\n/secrets.env\n/projects/\n/.instrukt/\n"
+        // The earlier line is kept and the missing ones follow it.
+        insta::assert_snapshot!(
+            "converted_ignore_file",
+            std::fs::read_to_string(dir.join(".gitignore")).unwrap()
         );
         // Converting again finds nothing to convert.
         convert(&home, &acme()).unwrap();
@@ -372,13 +372,13 @@ mod tests {
     fn writing_settings_ignores_them_and_never_replaces_a_document() {
         let dir = tempfile::tempdir().unwrap();
         assert!(write_company_settings(dir.path(), &acme()).unwrap());
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join(COMPANY_DOCUMENT)).unwrap(),
-            format!("schema_version: {COMPANY_SCHEMA_VERSION}\ncompany: acme\n")
+        insta::assert_snapshot!(
+            "written_settings",
+            std::fs::read_to_string(dir.path().join(COMPANY_DOCUMENT)).unwrap()
         );
-        assert_eq!(
-            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
-            "/company.yaml\n/secrets.env\n/projects/\n/.instrukt/\n"
+        insta::assert_snapshot!(
+            "written_ignore_file",
+            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap()
         );
         std::fs::write(
             dir.path().join(COMPANY_DOCUMENT),

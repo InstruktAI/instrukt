@@ -145,27 +145,53 @@ mod tests {
     }
 
     #[test]
-    fn a_personal_absent_or_empty_owner_is_refused_naming_the_key_and_nothing_is_written() {
-        for (patch, kind, case) in [
-            ("github: {org: ana}", Ok(AccountKind::Personal), "personal"),
-            ("github: {org: nobody}", Ok(AccountKind::Absent), "absent"),
-            ("github: {org: ''}", Ok(AccountKind::Organisation), "empty"),
-            ("github: {org: homes}", Err("unreachable"), "unanswered"),
-        ] {
-            let (_root, home, revision) = machine(MACHINE);
-            let error = admit(&home, &revision, patch, Some(&Stub(kind))).unwrap_err();
-            let ConfigError::Invalid(Findings(findings)) = &error else {
-                panic!("{error}");
-            };
-            assert_eq!(findings.len(), 1);
-            assert_eq!(findings[0].key, GITHUB_ORG_KEY);
-            assert_eq!(findings[0].kind, FindingKind::InvalidValue);
-            insta::assert_snapshot!(format!("refused_{case}"), findings[0].message);
-            assert_eq!(
-                std::fs::read_to_string(home.global_config()).unwrap(),
-                MACHINE
-            );
-        }
+    fn a_personal_owner_is_refused_naming_the_key_and_nothing_is_written() {
+        insta::assert_snapshot!(
+            "refused_personal",
+            refused("github: {org: ana}", Ok(AccountKind::Personal))
+        );
+    }
+
+    #[test]
+    fn an_owner_no_account_has_is_refused() {
+        insta::assert_snapshot!(
+            "refused_absent",
+            refused("github: {org: nobody}", Ok(AccountKind::Absent))
+        );
+    }
+
+    #[test]
+    fn an_empty_owner_is_refused() {
+        insta::assert_snapshot!(
+            "refused_empty",
+            refused("github: {org: ''}", Ok(AccountKind::Organisation))
+        );
+    }
+
+    #[test]
+    fn an_owner_github_cannot_be_asked_about_is_refused() {
+        insta::assert_snapshot!(
+            "refused_unanswered",
+            refused("github: {org: homes}", Err("unreachable"))
+        );
+    }
+
+    /// The one finding a patch `patch` of the machine layer is refused with,
+    /// the lookup answering `kind`, checking that nothing was written.
+    fn refused(patch: &str, kind: Result<AccountKind, &'static str>) -> String {
+        let (_root, home, revision) = machine(MACHINE);
+        let error = admit(&home, &revision, patch, Some(&Stub(kind))).unwrap_err();
+        let ConfigError::Invalid(Findings(findings)) = &error else {
+            panic!("{error}");
+        };
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].key, GITHUB_ORG_KEY);
+        assert_eq!(findings[0].kind, FindingKind::InvalidValue);
+        assert_eq!(
+            std::fs::read_to_string(home.global_config()).unwrap(),
+            MACHINE
+        );
+        findings[0].message.clone()
     }
 
     #[test]

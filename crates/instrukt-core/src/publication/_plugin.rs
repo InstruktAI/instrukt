@@ -1282,11 +1282,12 @@ mod tests {
         ]);
         let plan1 = plan(&view(&first), &key(), &name()).unwrap();
         let rendered = applied_plan(&first, &plan1);
-        let entry = |files: &[(String, String)]| -> Json {
+        let version = |files: &[(String, String)]| -> PluginVersion {
             let text = &files.iter().find(|(path, _)| path == CATALOG).unwrap().1;
-            serde_json::from_str::<Json>(text).unwrap()["plugins"][1].clone()
+            let catalog: Json = serde_json::from_str(text).unwrap();
+            PluginVersion::parse(catalog["plugins"][1]["version"].as_str().unwrap()).unwrap()
         };
-        assert_eq!(entry(&rendered)["version"], "0.1.0");
+        assert_eq!(version(&rendered), PluginVersion::first());
         // Unchanged: nothing is written, the catalog included.
         let again = plan(&view(&rendered), &key(), &name()).unwrap();
         assert_eq!(again.catalog, None);
@@ -1299,7 +1300,10 @@ mod tests {
             }
         }
         let raised = plan(&view(&changed), &key(), &name()).unwrap();
-        assert_eq!(entry(&applied_plan(&changed, &raised))["version"], "0.1.1");
+        assert_eq!(
+            version(&applied_plan(&changed, &raised)),
+            PluginVersion::first().raised()
+        );
     }
 
     #[test]
@@ -1327,37 +1331,9 @@ mod tests {
         let listed = r#"{"name": "acme-tools", "plugins": [{"name": "acme", "version": "9", "category": "knowledge", "source": "./old"}, {"name": "other"}], "owner": {"name": "Acme"}}"#;
         let tree = repository(Some(listed), &[]);
         let file = catalog(&tree, "1.2.3").unwrap().unwrap().unwrap();
-        let written: Json = serde_json::from_str(&file.text).unwrap();
-        let wanted: Json = serde_json::json!({
-            "name": "acme-tools",
-            "plugins": [
-                {"name": "acme", "version": "1.2.3", "category": "knowledge", "source": "./",
-                 "strict": false, "skills": ["./skills/acme"],
-                 "description": plugin_description(&name()), "author": {"name": "Acme"}},
-                {"name": "other"}
-            ],
-            "owner": {"name": "Acme"}
-        });
-        assert_eq!(written, wanted);
-        let order: Vec<&String> = written["plugins"][0].as_object().unwrap().keys().collect();
-        assert_eq!(
-            order,
-            [
-                "name",
-                "version",
-                "category",
-                "source",
-                "strict",
-                "skills",
-                "description",
-                "author"
-            ]
-        );
-        // The catalog is written as one pretty-printed JSON document.
-        assert_eq!(
-            file.text,
-            format!("{}\n", serde_json::to_string_pretty(&written).unwrap())
-        );
+        // The entry's values, every other member in its place, and the
+        // document's form, as written.
+        insta::assert_snapshot!("entry_set_by_value", file.text);
         // Once set, the entry holds its values: the catalog is left as it is.
         let tree = repository(Some(&file.text), &[]);
         assert_eq!(catalog(&tree, "1.2.3").unwrap(), Ok(None));
@@ -1425,7 +1401,8 @@ mod tests {
         // The skill is written at the root, a step above the version the
         // earlier manifest held; its folder is left as it is.
         let drift = upgrade.drift.clone().unwrap();
-        assert_eq!(drift.version.to_string(), "0.3.8");
+        let carried = PluginVersion::parse("0.3.7").unwrap().raised();
+        assert_eq!(drift.version, carried);
         assert!(drift.removals.is_empty());
         let written: Vec<&Path> = drift
             .writes
@@ -1434,11 +1411,10 @@ mod tests {
             .collect();
         assert_eq!(written, [Path::new("skills/acme/SKILL.md")]);
         let upgraded = applied_plan(&earlier, &upgrade);
-        let catalog: Json =
-            serde_json::from_str(&upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1)
-                .unwrap();
-        assert_eq!(catalog["plugins"][0]["version"], "0.3.8");
-        assert_eq!(catalog["plugins"][0]["source"], "./");
+        insta::assert_snapshot!(
+            "upgraded_catalog",
+            &upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1
+        );
         // What the earlier rendering left is kept as it was.
         let left = |files: &[(String, String)]| -> Vec<(String, String)> {
             let earlier = [
@@ -1458,7 +1434,7 @@ mod tests {
         assert_eq!(again.catalog, None);
         let again = again.drift.unwrap();
         assert!(again.writes.is_empty() && again.removals.is_empty());
-        assert_eq!(again.version.to_string(), "0.3.8");
+        assert_eq!(again.version, carried);
     }
 
     /// The findings of planning a repository whose catalog holds the earlier
@@ -1575,12 +1551,12 @@ mod tests {
         );
         let drift = drift_of(&tree);
         assert!(drift.removals.is_empty());
-        assert!(
-            drift
-                .writes
-                .iter()
-                .all(|file| file.path.starts_with("skills/acme"))
-        );
+        let written: Vec<&Path> = drift
+            .writes
+            .iter()
+            .map(|file| file.path.as_path())
+            .collect();
+        assert_eq!(written, [Path::new("skills/acme/SKILL.md")]);
     }
 
     #[test]

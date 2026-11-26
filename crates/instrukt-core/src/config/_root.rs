@@ -130,10 +130,12 @@ mod tests {
 
     #[test]
     fn a_company_repository_that_is_no_boolean_is_unreadable() {
-        assert_eq!(
-            classify_root(Some(b"project: demo\ncompany_repository: \"yes\"\n")),
-            RootDocument::Unreadable("its `company_repository` is not a boolean".to_owned())
-        );
+        let RootDocument::Unreadable(reason) =
+            classify_root(Some(b"project: demo\ncompany_repository: \"yes\"\n"))
+        else {
+            panic!("a non-boolean company_repository must be unreadable");
+        };
+        insta::assert_snapshot!("company_repository_not_a_boolean", reason);
     }
 
     #[test]
