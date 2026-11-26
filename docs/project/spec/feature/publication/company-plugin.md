@@ -28,8 +28,7 @@ being the company's key. It conforms to Claude's plugin, skill and plugin
 catalog formats (See Also), which decide where each of its files stands.
 <!-- change:company-home-generation -->
 The company's skill is the folder `skills/<key>/` at the repository's root,
-`<key>` being the company's key, outside any vendor's folder, so a format of
-another vendor can carry the same skill without moving it. The plugin that
+`<key>` being the company's key, outside any vendor's folder. The plugin that
 carries the skill to Claude is the skill's entry in the repository's catalog,
 which is the plugin's manifest (The catalog entry); no other folder holds the
 plugin, and nothing in it is a link. The skill, the catalog and the entry

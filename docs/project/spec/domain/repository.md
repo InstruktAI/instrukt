@@ -104,7 +104,8 @@ there and has publication sync the home.
 **Creation intent**
 : `intent.yaml` beside the staging checkout: the owning organisation, the
   repository, the company's name and its GitHub administrator of a creation
-  under way, written before anything on GitHub is asked. It is the record that
+  under way, written once its prerequisites are checked and before anything
+  on GitHub is changed. It is the record that
   a creation is this computer's and how to complete it.
 
 **Root commit**
@@ -254,8 +255,9 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     computer's own credentials, as the clone that follows reads it: a
     repository the computer reaches is checked out by contract, and one it
     cannot reach is created when configuration's decision says so.
-  - A creation starts with its intent: before the root commit is composed
-    and before anything on GitHub is asked, the adoption writes the creation
+  - A creation starts with its intent: once its prerequisites are checked,
+    and before the root commit is composed or anything on GitHub is changed,
+    the adoption writes the creation
     intent, `~/.instrukt/state/company-generation/<key>/intent.yaml`, whole and
     atomically. It names the owning organisation, the repository, the company's
     name and its GitHub administrator, and it is what every later step of that
@@ -283,8 +285,8 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     (`general/policy/human-involvement-recording`). Nothing about the caller's
     identity sets that value, and a resumed creation keeps the root commit it
     finds, trailer included. It is the one commit instrukt composes on a
-    default branch, because it creates that branch; from then on the branch
-    has one writer, the integrator.
+    default branch, the commit that creates that branch; from then on the
+    branch has one writer, the integrator.
   - Adoptions take turns: one company home adoption runs on a computer at a
     time, holding `~/.instrukt/state/company-generation.lock` for its run.
   - The home is ready when the adoption ends: its settings document names the

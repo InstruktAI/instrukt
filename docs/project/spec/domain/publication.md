@@ -42,11 +42,11 @@ is a company's, for every rendering, for the company's skill, for docs
 validation's question and for sync.
 
 The company's skill follows Claude's catalog format as its vendor states it
-(`project/instrukt/spec/feature/publication/company-plugin`, See Also): the catalog entry's source is the repository's root, so the entry
+(`project/instrukt/spec/feature/publication/company-plugin`, See Also): the catalog entry's source is the repository's root, the entry
 is the plugin's manifest and no other manifest is written; it lists the
-company's skill by its folder, so only that skill loads with the plugin and
-several entries share one root; and its version is the one a client compares,
-because no manifest beside it carries another. Whatever stands at the
+company's skill by its folder, only that skill loads with the plugin and
+several entries share one root; and its version is the one a client compares.
+Whatever stands at the
 repository's root in a place that format reads other components from is part
 of the plugin as Claude loads it.
 <!-- /planned:company-home-generation -->

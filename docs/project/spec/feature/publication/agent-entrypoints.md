@@ -749,11 +749,19 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - A company home's knowledge is the documents its `docs/index.yaml` selects
   and the documents their required reads reach. Documentation positions
   inside the home are not rendered or published.
+<!-- planned-change:company-home-generation -->
 - The company index's editor schema is generated with the others, but
   nothing writes `.instrukt/schemas/` in a company home and its
   `docs/index.yaml` carries no modeline
   (`project/instrukt/spec/feature/publication/editor-schemas`): an editor
   there is pointed at the schema by hand.
+<!-- change:company-home-generation -->
+- The company index's editor schema is generated with the others and written
+  wherever they are, a company repository's `.instrukt/schemas/` among them,
+  but a company's `docs/index.yaml` carries no modeline
+  (`project/instrukt/spec/feature/publication/editor-schemas`): an editor
+  there is pointed at that schema by hand.
+<!-- /planned-change:company-home-generation -->
 - No entrypoint is rendered from an `AGENTS.master.md`. A project whose
   purpose is still in a master commits a root `AGENTS.md` without it at its
   next commit through the hook, until the purpose is a snippet its index

@@ -41,15 +41,8 @@ this procedure names none.
 
 ### Working with the human
 
-- Speak in the human's own words. Commands, settings, file names and
-  instrukt's own terms stay with you.
-- Run every command yourself and verify its result. Ask the human only for
-  what only they hold or can do: a fact about their company, a choice that is
-  theirs, a sign-in, an approval, a step inside an account of theirs.
-- Lead each such step one action at a time: the one action to take now,
-  where to take it, what you have prepared for it, and what tells them their
-  part is done. Then take the work back and verify it before the next action
-  (`general/policy/onboarding`).
+- Work with them as `general/policy/onboarding` sets out: you run and verify
+  everything, and lead each step only they can take one action at a time.
 - A secret — a token, a key, a password — never passes through the
   conversation. The human enters it in the runtime's private secret entry,
   which hands you a file; you store it with `instrukt secrets set --company
