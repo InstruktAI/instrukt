@@ -169,6 +169,7 @@ pub fn retain(
 pub fn enqueue(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     target: &SessionRef,
     entry: &Entry<'_>,
 ) -> Result<InputOutcome, SessionsError> {
@@ -178,7 +179,7 @@ pub fn enqueue(
     if matches!(current, InputOutcome::Unconfirmed | InputOutcome::SetAside) {
         return Ok(current);
     }
-    let delivery = pump(invocation, adapter, target, entry.arrived_at);
+    let delivery = pump(invocation, adapter, work, target, entry.arrived_at);
     let current = outcome(&state, target, entry.id)?;
     if matches!(current, InputOutcome::Unconfirmed | InputOutcome::SetAside) {
         return Ok(current);
@@ -215,12 +216,13 @@ pub(crate) fn outcome(
 pub(crate) fn pump(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     target: &SessionRef,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let _guard = KeyGuard::claim(invocation, adapter, &format!("input:{target}"), None, now)?;
     let state = RunnerState::new(invocation.home());
-    let result = pump_inner(&state, adapter, target, now, true);
+    let result = pump_inner(&state, adapter, work, target, now, true);
     if let Err(error) = &result {
         state.write::<_,StateError>(|tx| {tx.execute("UPDATE runtime_inputs SET failure=?3 WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![target.runtime.as_str(),target.id.as_str(),error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
     }
@@ -233,9 +235,11 @@ pub(crate) fn observe(
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let _guard = KeyGuard::claim(invocation, adapter, &format!("input:{target}"), None, now)?;
+    // An observation sends nothing, so it needs no work binding read.
     pump_inner(
         &RunnerState::new(invocation.home()),
         adapter,
+        None,
         target,
         now,
         false,
@@ -244,6 +248,7 @@ pub(crate) fn observe(
 fn pump_inner(
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     target: &SessionRef,
     now: Timestamp,
     dispatch: bool,
@@ -306,7 +311,7 @@ fn pump_inner(
             }
             // A misplaced target is reported whatever its state, before any
             // wait would hide it.
-            crate::keyed::verify_delivery_project(state, adapter, &thread, now)?;
+            crate::keyed::verify_delivery_project(state, adapter, work, &thread, now)?;
             if entry_only
                 && !matches!(
                     thread.state,
@@ -342,7 +347,7 @@ fn pump_inner(
     let deliverable = (thread.interrupted && thread.run_id.is_some())
         || state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND state='pending')",params![target.runtime.as_str(),target.id.as_str()],|r|r.get::<_,bool>(0)).map_err(state::sql(path)))?.unwrap_or(false);
     if deliverable {
-        crate::keyed::verify_delivery_project(state, adapter, &thread, now)?;
+        crate::keyed::verify_delivery_project(state, adapter, work, &thread, now)?;
     }
     if thread.state == SessionState::Unknown {
         return Err(SessionsError::Refused(
@@ -434,6 +439,7 @@ fn accept(
 pub(crate) fn pump_all(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let state = RunnerState::new(invocation.home());
@@ -441,7 +447,7 @@ pub(crate) fn pump_all(
     for session in sessions {
         let session =
             SessionRef::parse(&session).map_err(|e| SessionsError::Refused(e.to_string()))?;
-        if let Err(error) = pump(invocation, adapter, &session, now) {
+        if let Err(error) = pump(invocation, adapter, work, &session, now) {
             tracing::warn!(event="runtime_input_delivery_failed",session=%session,error=%error);
         }
     }

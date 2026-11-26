@@ -444,10 +444,11 @@ impl<'c> Sessions<'c> {
     pub fn send(
         &self,
         invocation: &keyed::RuntimeInvocation,
+        work: Option<&dyn crate::interfaces::SessionBindings>,
         session: &SessionRef,
         entry: &crate::inputs::Entry<'_>,
     ) -> Result<crate::inputs::InputOutcome, SessionsError> {
-        crate::inputs::enqueue(invocation, self.adapter()?.as_ref(), session, entry)
+        crate::inputs::enqueue(invocation, self.adapter()?.as_ref(), work, session, entry)
     }
     /// Operational listing keeps unknown activity visible and filters only supported native activity.
     pub fn list(

@@ -962,6 +962,7 @@ fn delivery_owner(
     state: &RunnerState,
     runtime: &str,
     session: &SessionRef,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
 ) -> Result<Option<DeliveryOwner>, SessionsError> {
     let session_text = session.to_string();
     let binding = state.read(|conn, path| {
@@ -1007,38 +1008,27 @@ fn delivery_owner(
             checkout: checkout.into(),
         }));
     }
-    let todo = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT b.semantic_key,t.project,b.worktree FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 AND b.released_at IS NULL",
-            [&session_text],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(state::sql(path))
-    })?;
-    let Some((key, project, worktree)) = todo.flatten() else {
+    // A todo session's binding is work's: it is read through work's port,
+    // and without one no todo binding is known here.
+    let Some(owner) = work
+        .map(|work| work.session_owner(session))
+        .transpose()
+        .map_err(|error| SessionsError::Refused(error.to_string()))?
+        .flatten()
+    else {
         return Ok(None);
     };
+    let key = owner.key;
     // The project's published checkout, else the primary worktree of the
     // session's own worktree, as session starts resolve it.
-    let checkout = instrukt_core::ids::ProjectSlug::parse(&project)
+    let checkout = instrukt_core::publication::PublishedRecord::load(state.home(), &owner.project)
         .ok()
-        .and_then(|slug| {
-            instrukt_core::publication::PublishedRecord::load(state.home(), &slug)
-                .ok()
-                .flatten()
-        })
+        .flatten()
         .map(|record| record.checkout)
         .or_else(|| {
-            worktree.and_then(|worktree| {
-                instrukt_core::repository::primary_worktree(std::path::Path::new(&worktree)).ok()
-            })
+            owner
+                .worktree
+                .and_then(|worktree| instrukt_core::repository::primary_worktree(&worktree).ok())
         });
     Ok(Some(DeliveryOwner::Todo { key, checkout }))
 }
@@ -1050,10 +1040,12 @@ fn delivery_owner(
 pub(crate) fn verify_delivery_project(
     state: &RunnerState,
     adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     thread: &Thread,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
-    let Some(owner) = delivery_owner(state, adapter.runtime().name(), &thread.session)? else {
+    let Some(owner) = delivery_owner(state, adapter.runtime().name(), &thread.session, work)?
+    else {
         return Ok(());
     };
     let (key, result) = match owner {
@@ -1309,6 +1301,7 @@ pub fn followup(
     crate::inputs::enqueue(
         assignment.invocation,
         adapter,
+        assignment.bindings,
         session,
         &crate::inputs::Entry {
             id: &id,

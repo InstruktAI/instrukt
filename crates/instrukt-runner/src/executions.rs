@@ -385,6 +385,7 @@ impl<'a> Executions<'a> {
                 }
                 Step::Recover => match sessions.send(
                     cx.invocation,
+                    Some(bindings),
                     &execution.session,
                     &crate::inputs::Entry {
                         id: &recovery_id,
