@@ -793,16 +793,20 @@ Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
 
 <!-- planned:author-recorded-review-routing -->
-**Author asks** are `runtime_inputs` rows the runner's review pass writes to a
-held candidate's authoring sessions
-(`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
-candidate's authors). The input identity is made of the project, the commit and
-the session; the pass queues the input with its rendered content in one
-transaction and sends nothing before it commits. The identity is kept, and
-suppresses a second ask, until the canonical branch contains the commit, no
-branch of the project's repository reaches it any more, or a coverage
-derivation finds it covered; the runner retires it on a wake-up after that.
-These rows are local runtime delivery bookkeeping, not review evidence.
+**`review_asks`** — the runner's record of each ask to a held candidate's
+authoring session (`project/instrukt/spec/feature/runner/pull-request-review`,
+Asking a held candidate's authors). Key: `(project, commit, session)`. Retains
+the candidate that first held the commit, the attempt number, the input id of
+the current attempt, the state (`queued`, `asked` or `undelivered`), the cause
+of an undelivered attempt, and when it was queued and when its state last
+changed. The tick's review pass writes a record with its `runtime_inputs` row
+in one transaction, takes `asked` from that input's runtime acceptance and
+`undelivered` from its ending without acceptance, and queues a further attempt
+under a new input id only from `undelivered`. A record is retired on a runner
+wake-up once the canonical branch contains its commit or no branch of the
+project's repository reaches it; in the same transaction a pending input of it
+that delivery has not selected is failed with that cause. These rows are local
+runtime delivery bookkeeping, not review evidence.
 <!-- /planned:author-recorded-review-routing -->
 
 **`conversation_links`** — runner-owned links between two runtime-scoped native

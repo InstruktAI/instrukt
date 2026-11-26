@@ -121,10 +121,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
 
 <!-- planned:author-recorded-review-routing -->
 **Author ask**
-: The runner's notice to the authoring session of a commit that holds the
-  active integration candidate uncovered, asking it to decide whether the
-  commit owes review; sent once per commit and session through the session's
-  input delivery. It is no review request
+: The runner's notice to the authoring session of an uncovered commit in the
+  active integration candidate, asking it to decide whether the commit owes
+  review; sent through the session's input delivery and recorded per commit
+  and session. It is no review request
   (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
   candidate's authors).
 <!-- /planned:author-recorded-review-routing -->
@@ -491,7 +491,7 @@ in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.candidate_held` | On a project that opted in to automatic review, workflow finds the active integration candidate held and at least one of its uncovered commits has an author of ours who was asked to decide | Project, candidate commit, and each uncovered commit with the session it names and whether that session was asked or no author of ours can decide for it | Project, candidate commit: a candidate is reported held once | Workflow's subscribed integrator, told which candidate waits on whose decisions; the event authorizes nothing by itself (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held candidate's authors) |
+| `runner.candidate_held` | On a project that opted in to automatic review, workflow finds the active integration candidate held (`project/instrukt/spec/feature/workflow/integration-gate`) and the runtime has answered for every session its uncovered commits name | Project, candidate commit, and each uncovered commit with the sessions it names and whether each was asked or no author of ours can decide for it | Project, candidate commit: a candidate is reported held once | Workflow's subscribed integrator, told which candidate waits on whose decisions; the event authorizes nothing by itself (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held candidate's authors) |
 <!-- /planned:author-recorded-review-routing -->
 
 Fleet attention's conditions are occurrences with a todo subject in their

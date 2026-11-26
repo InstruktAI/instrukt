@@ -103,7 +103,7 @@ addressing this computer's installation
 (`project/instrukt/spec/feature/work/github-apps`).
 
 <!-- planned:author-recorded-review-routing -->
-`instrukt repo commit --exempt` stays `code-commit`: the exemption it records
+`instrukt repo commit --exempt` is `code-commit`: the exemption it records
 is the commit's own, declared in the commit act by the session the commit
 names, and the evidence's admission invariants decide whether it is admitted,
 for every caller alike (`project/instrukt/spec/feature/work/github-apps`).

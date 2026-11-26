@@ -542,16 +542,14 @@ The picture below shows who decides and what follows at each stage, by kind of
 author. A trusted author is a session of ours, which decides for its own
 commits (todo, one-off worktree), or a trusted account or configured App bot
 with no session of ours behind its pull request, for which instrukt decides; an
-outside author's work is reviewed only once it is adopted. A cell marked
-_pending_ names the todo whose delivery changes it; until then the cell states
-what holds today.
+outside author's work is not reviewed.
 
 | Author kind | Who decides review | The review | A revised head | Where the verdict reaches | The human gate |
 | --- | --- | --- | --- | --- | --- |
-| Todo (a session of ours in a todo's lifecycle) | The lifecycle: every delivery is build-reviewed, and each commit carries its author's choice from the commit (`project/instrukt/spec/feature/repository/attributed-commit`) | Build review of the finalized head (`project/instrukt/spec/feature/workflow/delivery-cycle`) | The lifecycle's fix and re-review loop (`sdlc/procedure/lifecycle/fix-review-findings`) | The todo's record, reflected on its pull request (`project/instrukt/spec/feature/work/github-record`); the finalized head's approval covers it in the candidate | The approval gates the workflow configures; an owner gate on the pull request is _pending_ `github-mention-coreview` |
-| One-off worktree (a session of ours outside a todo) | Its author, per commit, when committing: it asks for a requested review of a head that contains the commit, or records the exemption with its basis | The requested reviewer on the exact head (`project/instrukt/spec/feature/runner/requested-review`) | A new head, reviewed in its own right; reaching the earlier head's reviewer is _pending_ `commit-rereview-reuses-reviewer` | Work's head verdict, which the gate reads (`project/instrukt/spec/feature/work/github-apps`); its return to the session that asked is _pending_ `commit-rereview-reuses-reviewer` | None of its own |
-| Trusted pull request no session of ours authored | instrukt: the runner asks for every eligible head (`project/instrukt/spec/feature/runner/pull-request-review`) | A standing reviewer answering `runner.review_needed` | A new push is a new head, reviewed in its own right; co-review input revising a verdict is _pending_ `github-mention-coreview` | The reviewer bot's pull-request review and commit status (`project/instrukt/spec/feature/work/github-apps`) | Branch protection requiring the review status, the repository owner's act; an owner gate is _pending_ `github-mention-coreview` |
-| Outside pull request | Nobody: it is not reviewed (`project/instrukt/spec/feature/runner/pull-request-review`, Which heads are reviewed); screening it and putting an assessment to an owner is _pending_ `outside-pr-intake` | None; an adopted one becomes a todo and is reviewed as one, _pending_ `outside-pr-intake` | None | None | The owner's adoption, _pending_ `outside-pr-intake` |
+| Todo (a session of ours in a todo's lifecycle) | The lifecycle: every delivery is build-reviewed, and each commit carries its author's choice from the commit (`project/instrukt/spec/feature/repository/attributed-commit`) | Build review of the finalized head (`project/instrukt/spec/feature/workflow/delivery-cycle`) | The lifecycle's fix and re-review loop (`sdlc/procedure/lifecycle/fix-review-findings`) | The todo's record, reflected on its pull request (`project/instrukt/spec/feature/work/github-record`); the finalized head's approval covers it in the candidate | The approval gates the workflow configures |
+| One-off worktree (a session of ours outside a todo) | Its author, per commit, when committing: it asks for a requested review of a head that contains the commit, or records the exemption with its basis | The requested reviewer on the exact head (`project/instrukt/spec/feature/runner/requested-review`) | A new head, reviewed in its own right by a further requested review | Work's head verdict, which the gate reads (`project/instrukt/spec/feature/work/github-apps`) | None of its own |
+| Trusted pull request no session of ours authored | instrukt: the runner asks for every eligible head (`project/instrukt/spec/feature/runner/pull-request-review`) | A standing reviewer answering `runner.review_needed` | A new push is a new head, reviewed in its own right | The reviewer bot's pull-request review and commit status (`project/instrukt/spec/feature/work/github-apps`) | Branch protection requiring the review status, the repository owner's act |
+| Outside pull request | Nobody: it is not reviewed (`project/instrukt/spec/feature/runner/pull-request-review`, Which heads are reviewed) | None | None | None | None |
 | Integration gate (the candidate) | The record: each commit the candidate adds is covered by its evidence or goes back to its author to decide; instrukt decides only for commits no author of ours can decide (`project/instrukt/spec/feature/workflow/integration-gate`) | A review of the exact candidate, asked only when no uncovered commit has an author of ours who can decide | A changed candidate is a new commit, derived afresh | The derived approval, or the candidate's own verdict, as its review status (`project/instrukt/spec/feature/work/github-apps`) | Branch protection's required checks and review status |
 
 Five contexts take part in the gate and each keeps its own decision; the
@@ -618,12 +616,14 @@ sequenceDiagram
   alt every commit covered
     R->>W: record the derived approval
     W->>G: review status on the candidate commit, by a tick that found it covered
-  else an uncovered commit has an author of ours who can decide
-    R-->>A: once per commit: decide — ask for review, or record why none is owed
+  else a commit is not covered: the candidate is held
     R-->>I: once per candidate: runner.candidate_held (commits and whose decisions)
-    A->>W: instrukt review exempt, or a review of a head that contains the commit
-  else no uncovered commit has an author of ours who can decide
-    R-->>V: runner.review_needed for the exact candidate
+    alt an uncovered commit has an author of ours who can decide
+      R-->>A: once per commit and session: decide — ask for review, or record why none is owed
+      A->>W: instrukt review exempt, or a review of a head that contains the commit
+    else no uncovered commit has an author of ours who can decide
+      R-->>V: runner.review_needed for the exact candidate
+    end
   end
   R-->>I: runner.ci_completed once the candidate's result is complete
 ```
@@ -711,11 +711,10 @@ the gate adds no webhook, queue or process.
 
 <!-- planned:author-recorded-review-routing -->
 A held candidate adds no store either. The ask to each uncovered commit's
-author is one of the runner's inputs to that session, recorded in the state
-database's input delivery before anything is sent and kept, under an identity
-made of the project, the commit and the session, until the commit no longer
-needs it; the integrator's notice is the event `runner.candidate_held`, which
-the event log appends once per candidate
+author is one of the runner's inputs to that session, queued in the state
+database together with the runner's record of the ask, `review_asks`, before
+anything is sent; the integrator's notice is the event `runner.candidate_held`,
+which the event log appends once per candidate
 (`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
 candidate's authors). Both are this computer's: a computer that takes over
 serving the project asks afresh, at the cost of one repeated ask per held

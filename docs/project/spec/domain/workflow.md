@@ -38,7 +38,7 @@ commit. Intelligence owns all activity routing in clear prose
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
 <!-- change:author-recorded-review-routing -->
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch, whichever parent brought it in, is part of an independently approved head, a merge or documentation fold reproduced mechanically, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
-- **Held candidate:** an active candidate with a commit that is not covered while at least one such commit has an author of ours who can decide; it waits for those decisions and owes no review of its own (`project/instrukt/spec/feature/workflow/integration-gate`).
+- **Held candidate:** an active candidate with a commit that is not covered; what follows for it is `project/instrukt/spec/feature/workflow/integration-gate`'s (Review coverage of a candidate).
 <!-- /planned-change:author-recorded-review-routing -->
 
 - **Worktree standing:** whether a todo's worktree on a computer is delivered, idle or under way, derived from the todo's record and the repository.

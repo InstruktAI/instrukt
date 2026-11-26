@@ -118,10 +118,20 @@ state names and a payload field supplying the subject under inbound-webhook-endp
 integration branch for a candidate, and the commit and request number stay in
 data.
 
+<!-- planned-change:author-recorded-review-routing -->
 The `runner.attention.*` types of
 `project/instrukt/spec/feature/runner/fleet-attention` are occurrence. Each
 names the todo it concerns as subject; a condition between todos names the
 others as related references.
+<!-- change:author-recorded-review-routing -->
+The `runner.attention.*` types of
+`project/instrukt/spec/feature/runner/fleet-attention` are occurrence. Each
+names the todo it concerns as subject; a condition between todos names the
+others as related references.
+
+`runner.candidate_held` is occurrence. Its subject names the integration
+branch, and the candidate commit stays in data.
+<!-- /planned-change:author-recorded-review-routing -->
 
 ### Platform lifecycle states
 

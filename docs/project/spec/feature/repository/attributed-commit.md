@@ -77,7 +77,7 @@ Every commit carries its author's review-routing choice, the either-or of
 
 | Option | The choice | What it records |
 | --- | --- | --- |
-| `--review` | The commit goes to the independent review of a head that contains it, asked for as before: a requested review, or a todo's build review. | Nothing. |
+| `--review` | The commit goes to the independent review of a head that contains it: a requested review, or a todo's build review. | Nothing. |
 | `--exempt <basis>` | The commit owes no independent review, for the stated basis. | The commit's exemption with that basis, through work's admission (`project/instrukt/spec/feature/work/github-apps`, Admission of review evidence). |
 
 - **In an adopted project** exactly one of them is required. Without either,

@@ -262,8 +262,15 @@ This context emits no events.
 - **blueprint** — Customer / Supplier. With blueprint enabled, hook runs hand
   a push to main or a pull advancing main to blueprint
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
+<!-- planned-change:author-recorded-review-routing -->
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+<!-- change:author-recorded-review-routing -->
+- **work** — Customer / Supplier. Recorded and planned associations are named
+  in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+  A no-review routing choice is handed to work's exemption admission once the
+  commit exists, through a core-declared interface the CLI wires.
+<!-- /planned-change:author-recorded-review-routing -->
 
 - **workflow** — Customer / Supplier. Repository supplies candidate integration
   branches and exact-commit main advancement.
