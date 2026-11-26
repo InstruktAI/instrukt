@@ -1379,6 +1379,24 @@ impl Work {
     }
 }
 
+/// The manual dispatch hold `actor` places at `at` for `reason`, as both
+/// `instrukt todo create --hold` and `instrukt todo update --hold` record it;
+/// a reason that is blank once trimmed is refused.
+fn manual_hold(reason: &str, actor: &Actor, at: jiff::Timestamp) -> Result<HoldRecord, WorkError> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(WorkError::refused(
+            "a hold records why the work must wait; the reason is blank",
+        ));
+    }
+    Ok(HoldRecord {
+        source: HoldSource::Manual,
+        reason: reason.to_owned(),
+        by: actor.clone(),
+        at,
+    })
+}
+
 /// The record change `instrukt todo update` asks for; returns its
 /// warnings.
 fn apply_update(
@@ -1463,12 +1481,7 @@ fn apply_update(
         });
     }
     if let Some(reason) = &request.hold {
-        let reason = reason.trim();
-        if reason.is_empty() {
-            return Err(WorkError::refused(
-                "a hold records why the work must wait; the reason is blank",
-            ));
-        }
+        let hold = manual_hold(reason, actor, now)?;
         if record.status == TodoStatus::StructuralHolder {
             return Err(WorkError::refused(format!(
                 "`{}` is a structural holder; each child carries its own hold",
@@ -1481,12 +1494,7 @@ fn apply_update(
                 record.slug, record.slug
             )));
         }
-        record.hold = Some(HoldRecord {
-            source: HoldSource::Manual,
-            reason: reason.to_owned(),
-            by: actor.clone(),
-            at: now,
-        });
+        record.hold = Some(hold);
     }
     if request.unclaim {
         let caller = s.caller_session()?;
