@@ -148,14 +148,18 @@ no cluster connection is configured here or the cluster store cannot be
 reached: one the fleet query reports as
 not answering carries the reason the fleet query gives, together with when the
 membership record last saw it where the record holds it and could be read at
-report time; a named computer carries the reason that the fleet could not be
-reached when the record cannot be read; and one whose answer this computer
-cannot read
+report time; and one whose answer this computer cannot read
 is named as answering in a form it cannot read. Each
-limitation a computer reports appears under that computer's identity. A
-report covering the fleet waits long enough for every live member to answer at
-its own cadence, about a minute when a member running only the scheduled tick
-is covered, and is written from the answers it has.
+limitation a computer reports appears under that computer's identity. The
+reason that the fleet could not be reached is given only when no cluster
+connection is configured here or the cluster store cannot be reached; when the
+store answers but the membership record cannot be read, the report carries
+that as a limitation of its own and each named computer carries the reason the
+fleet query gives. A report covering any other computer waits no longer than
+the fleet query's maximum deadline, 120 seconds, which lets a member on the
+default once-a-minute tick answer; a covered computer whose answer has not
+arrived by then is named as answering after the wait ends, and the report is
+written from the answers it has.
 <!-- /planned:fleet-eval-aggregation -->
 
 ## Use cases
