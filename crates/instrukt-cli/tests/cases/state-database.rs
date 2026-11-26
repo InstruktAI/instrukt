@@ -597,11 +597,16 @@ fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
         .unwrap();
     drop(writer);
     assert_eq!(todos(held.conn()), 2);
-    let integrity: String = held
+    // The integrity check reports each problem it finds as a row of its own.
+    let problems: i64 = held
         .conn()
-        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .query_row(
+            "SELECT count(*) FROM pragma_integrity_check WHERE integrity_check <> 'ok'",
+            [],
+            |row| row.get(0),
+        )
         .unwrap();
-    assert_eq!(integrity, "ok");
+    assert_eq!(problems, 0, "the database passes its integrity check");
 }
 
 /// The lock, as `<type> <pid>`, that keeps a write lock off SQLite's
