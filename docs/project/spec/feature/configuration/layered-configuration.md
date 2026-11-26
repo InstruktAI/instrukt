@@ -512,7 +512,7 @@ And the configuration is unchanged
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
 <!-- planned:archive-finished-threads -->
-| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | none set, so no thread is archived until a person sets a window; the published global schema declares the default (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
 <!-- /planned:archive-finished-threads -->
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
