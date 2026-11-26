@@ -22,10 +22,11 @@ delivered_by: [ratchet-file-size-and-suppressions]
   rises above its baseline entry, and a lint without an entry has none. The
   count covers every tracked Rust, Python and shell file, tests included:
   - Rust: each lint named in an `allow(...)` or `expect(...)` list inside an
-    attribute that starts a line, `#[...]` or `#![...]`, including one inside
-    `cfg_attr(...)` and one spanning several lines, is one suppression of that
-    lint under its name as written (`clippy::unwrap_used`, `dead_code`). A
-    `reason = "..."` entry is not a lint.
+    attribute, `#[...]` or `#![...]`, wherever it stands in code, including
+    one inside `cfg_attr(...)`, one spanning several lines and one inside a
+    line, is one suppression of that lint under its name as written
+    (`clippy::unwrap_used`, `dead_code`). Comments and string and character
+    literals are not code. A `reason = "..."` entry is not a lint.
   - Python: each code in `# noqa: <codes>` is one suppression of
     `ruff::<code>`, and each code in `# type: ignore[<codes>]` one of
     `mypy::<code>`; a bare `# noqa` or `# ruff: noqa` is one of `ruff::noqa`,

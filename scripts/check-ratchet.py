@@ -31,13 +31,25 @@ from pathlib import Path, PurePosixPath
 BASELINE = "ratchet-baseline.json"
 POLICY = "project/instrukt/policy/size-and-suppression-ratchet"
 
-# A Rust attribute that starts a line: `#[...]` or `#![...]`.
-RUST_ATTRIBUTE = re.compile(r"^[ \t]*#!?\[", re.MULTILINE)
+# What a Rust file holds besides code: line and block comments, string
+# literals (escaped and raw, byte and C strings among them) and character
+# literals. A block comment's nesting is followed by `block_comment_end`.
+RUST_NOT_CODE = re.compile(
+    r"//[^\n]*"
+    r"|(?P<block>/\*)"
+    r'|(?<!\w)[bc]?r(?P<hashes>#*)".*?"(?P=hashes)'
+    r'|"(?:\\.|[^"\\])*"'
+    r"|'(?:\\(?:u\{[0-9A-Fa-f]*\}|x[0-9A-Fa-f]{2}|.)|[^'\\\n])'",
+    re.DOTALL,
+)
+RUST_BLOCK_COMMENT_EDGE = re.compile(r"/\*|\*/")
+RUST_BRACKET = re.compile(r"[\[\]]")
+# An attribute, `#[...]` or `#![...]`, wherever it stands in code.
+RUST_ATTRIBUTE = re.compile(r"#!?\[")
 # A suppression list inside an attribute, at its start or after `(` or `,`.
 RUST_LINT_LIST = re.compile(r"(?:^|[(,])\s*(?:allow|expect)\s*\(")
 RUST_LINT = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*")
 RUST_REASON = re.compile(r"reason\s*=")
-RUST_RAW_STRING = re.compile(r'b?r(#*)"')
 
 # Ruff's rule codes after `noqa:`, separated by commas or spaces.
 NOQA_CODES = r"(?:\s*:\s*([A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*))?"
@@ -114,54 +126,39 @@ def line_count(data: bytes) -> int:
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
 
 
-def blank_rust_attribute(text: str, start: int) -> tuple[str, int] | None:
-    """The attribute from its `[` at `start`, strings and comments blanked, and where it ends.
+def block_comment_end(text: str, index: int) -> int:
+    """Where the block comment whose `/*` ends at `index` closes, its nested comments included."""
+    depth = 1
+    for edge in RUST_BLOCK_COMMENT_EDGE.finditer(text, index):
+        depth += 1 if edge.group() == "/*" else -1
+        if depth == 0:
+            return edge.end()
+    return len(text)
 
-    The text runs from the opening `[` up to, not including, the `]` that
-    balances it. None when no `]` balances it.
-    """
-    out: list[str] = []
+
+def rust_code(text: str) -> str:
+    """The file's code: comments dropped, every string and character literal emptied."""
+    pieces: list[str] = []
+    index = 0
+    while (found := RUST_NOT_CODE.search(text, index)) is not None:
+        pieces.append(text[index : found.start()])
+        if found.group("block") is not None:
+            index = block_comment_end(text, found.end())
+            pieces.append(" ")
+        else:
+            index = found.end()
+            pieces.append(" " if found.group().startswith("//") else '""')
+    pieces.append(text[index:])
+    return "".join(pieces)
+
+
+def closing_bracket(code: str, start: int) -> int | None:
+    """The index of the `]` that balances the `[` at `start`, or None when none does."""
     depth = 0
-    index = start
-    length = len(text)
-    while index < length:
-        char = text[index]
-        raw = RUST_RAW_STRING.match(text, index)
-        if raw and (index == 0 or not (text[index - 1].isalnum() or text[index - 1] == "_")):
-            closing = '"' + raw.group(1)
-            end = text.find(closing, raw.end())
-            if end < 0:
-                return None
-            out.append('""')
-            index = end + len(closing)
-            continue
-        if char == '"':
-            index += 1
-            while index < length and text[index] != '"':
-                index += 2 if text[index] == "\\" else 1
-            if index >= length:
-                return None
-            out.append('""')
-            index += 1
-            continue
-        if text.startswith("//", index):
-            newline = text.find("\n", index)
-            index = length if newline < 0 else newline
-            continue
-        if text.startswith("/*", index):
-            end = text.find("*/", index + 2)
-            if end < 0:
-                return None
-            index = end + 2
-            continue
-        if char == "[":
-            depth += 1
-        elif char == "]":
-            depth -= 1
-            if depth == 0:
-                return "".join(out), index + 1
-        out.append(char)
-        index += 1
+    for bracket in RUST_BRACKET.finditer(code, start):
+        depth += 1 if bracket.group() == "[" else -1
+        if depth == 0:
+            return bracket.start()
     return None
 
 
@@ -193,17 +190,17 @@ def lint_list(attribute: str, start: int) -> list[str]:
 
 
 def rust_suppressions(text: str) -> list[str]:
+    code = rust_code(text)
     lints: list[str] = []
     resume = 0
-    for match in RUST_ATTRIBUTE.finditer(text):
+    for match in RUST_ATTRIBUTE.finditer(code):
         if match.start() < resume:
             continue
-        blanked = blank_rust_attribute(text, match.end() - 1)
-        if blanked is None:
+        end = closing_bracket(code, match.end() - 1)
+        if end is None:
             continue
-        attribute, end = blanked
         resume = end
-        inner = attribute[1:]
+        inner = code[match.end() : end]
         for group in RUST_LINT_LIST.finditer(inner):
             lints.extend(lint_list(inner, group.end()))
     return lints

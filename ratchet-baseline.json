@@ -46,7 +46,7 @@
     "clippy::too_many_arguments": 22,
     "clippy::unwrap_used": 96,
     "clippy::zombie_processes": 2,
-    "dead_code": 37,
+    "dead_code": 39,
     "shellcheck::SC2016": 2,
     "shellcheck::SC2086": 3,
     "unused_imports": 2
