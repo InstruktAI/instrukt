@@ -149,10 +149,7 @@ adapter; an actor as JSON text, one of
 
 - A process that has opened the database through SQLite, such as the runner,
   reads it through SQLite from then on, also where a status or documentation
-  read takes the in-memory image elsewhere. Copying the file from outside
-  SQLite would release the locks that process holds on it while its SQLite
-  connections still count on them, and the write-ahead log and shared-memory
-  file could then be removed beneath connections still using them.
+  read takes the in-memory image elsewhere.
 
 <!-- /planned:fix-runner-snapshot-read-corrupts-state-db -->
 
