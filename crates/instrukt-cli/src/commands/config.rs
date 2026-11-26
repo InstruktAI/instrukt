@@ -45,7 +45,7 @@ enum ConfigCommand {
     Patch(PatchArgs),
     /// Create the layer with the current schema version and defaults, or
     /// migrate an existing older one. With --company, also append each
-    /// ignore line the home's .gitignore lacks — /instrukt.yaml,
+    /// ignore line the home's .gitignore lacks — /company.yaml,
     /// /secrets.env, /projects/ and /.instrukt/ — keeping every other line,
     /// in a new home or an existing one.
     Init(LayerArgs),
@@ -61,7 +61,7 @@ struct LayerArgs {
     /// Address the global layer (~/.instrukt/instrukt.yaml).
     #[arg(long, conflicts_with = "company")]
     global: bool,
-    /// Address this company home's document (~/.instrukt/companies/<name>/instrukt.yaml).
+    /// Address this company home's document (~/.instrukt/companies/<name>/company.yaml).
     #[arg(long)]
     company: Option<ProjectSlug>,
 }
@@ -73,7 +73,7 @@ struct SchemaArgs {
     /// Describe the global layer (`~/.instrukt/instrukt.yaml`).
     #[arg(long, conflicts_with = "company")]
     global: bool,
-    /// Describe a company home's document (`~/.instrukt/companies/<name>/instrukt.yaml`).
+    /// Describe a company home's document (`~/.instrukt/companies/<name>/company.yaml`).
     #[arg(long)]
     company: Option<ProjectSlug>,
     /// Render as JSON Schema.
@@ -163,16 +163,10 @@ fn check_company_agent_scope(
         return Ok(None);
     };
     let assignment = authorization::caller(ctx)?.map(|(assignment, _)| assignment);
-    let own_company = match assignment.and_then(|a| a.company) {
-        Some(company) => company,
-        None => {
-            if let Some(company) = company_cwd(ctx) {
-                anyhow::bail!(
-                    "config access refused: this session works in company `{company}`'s home with no recorded binding yet; retry once bound, or have the local operator run outside any session"
-                );
-            }
-            return Ok(None);
-        }
+    // Confinement reads the session's recorded assignment, never where it
+    // stands: a conversation session is recorded from its first command.
+    let Some(own_company) = assignment.and_then(|a| a.company) else {
+        return Ok(None);
     };
 
     // Establish active turn's speaker and require is_admin && is_direct.
@@ -250,13 +244,6 @@ fn check_company_agent_scope(
     }
 
     Ok(Some(own_company))
-}
-
-fn company_cwd(ctx: &Ctx) -> Option<ProjectSlug> {
-    let companies = ctx.home.companies_dir().canonicalize().ok()?;
-    let here = ctx.cwd.canonicalize().ok()?;
-    let name = here.strip_prefix(&companies).ok()?.components().next()?;
-    ProjectSlug::parse(name.as_os_str().to_str()?).ok()
 }
 
 fn layer(global: bool, company: Option<&ProjectSlug>, ctx: &Ctx) -> anyhow::Result<Layer> {
@@ -360,11 +347,12 @@ fn patch(
         }
         // Prevent a company-agent patch from introducing or rebinding any `${NAME}` secret
         // reference or secret-bearing field (`login`, `credential`, `sign_in.client`, `sign_in.identity`).
+        // The document is read where it stands, a legacy one unconverted,
+        // exactly as the patch below reads it; a document that cannot be
+        // read refuses the patch rather than being judged empty.
         let inspection = ctx.home.for_inspection();
-        let existing_doc = std::fs::read_to_string(layer.path(&inspection))
-            .ok()
-            .and_then(|raw| serde_yaml_ng::from_str::<Value>(&raw).ok());
-        let existing_mcp = existing_doc.as_ref().and_then(|doc| doc.get("mcp"));
+        let existing = config::inspect_layer(&inspection, &layer)?;
+        let existing_mcp = existing.value().and_then(|doc| doc.get("mcp"));
         if let Some(mcp_patch) = map.get(Value::String("mcp".into())) {
             enforce_admin_dm_mcp_allowlist(mcp_patch, existing_mcp, own_company)?;
         }
@@ -380,13 +368,17 @@ fn patch(
             ])))
         })?;
     }
+    // Whether `github.org` names an organisation is GitHub's to answer, so
+    // it too is asked before the lock; the revision check binds it.
+    let accounts: &dyn instrukt_core::interfaces::GitHubAccounts = ctx.github.as_ref();
+    config::admit_github_org(&ctx.home, &layer, &expected, &patch, Some(accounts))?;
     config::patch(&ctx.home, &layer, &expected, &patch)?;
     Ok(ExitCode::SUCCESS)
 }
 
 /// Work's readiness for automatic review on `repository`, as a finding at
 /// `review.automatic` of `layer` when it is unmet or GitHub cannot be asked.
-fn review_readiness_finding(
+pub(crate) fn review_readiness_finding(
     ctx: &Ctx,
     layer: &Layer,
     repository: &str,
@@ -400,7 +392,7 @@ fn review_readiness_finding(
         ),
     };
     Ok(Some(config::Finding {
-        document: layer.path(&ctx.home),
+        document: layer.located(&ctx.home),
         key: config::REVIEW_AUTOMATIC_KEY.to_owned(),
         kind: config::FindingKind::AutomaticReviewNotReady,
         message,

@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/configuration-editing.rs
 expression: "stderr(&env, &refused)"
 ---
-instrukt: refused; nothing was written: [TMP]/home/.instrukt/companies/acme/instrukt.yaml: connectors.slack.signing_secret: unknown field; slack takes app_token, bot_token and context_messages, kind, role, admit, session_scope and reply_mode
+instrukt: refused; nothing was written: [TMP]/home/.instrukt/companies/acme/company.yaml: connectors.slack.signing_secret: unknown field; slack takes app_token, bot_token and context_messages, kind, role, admit, session_scope and reply_mode

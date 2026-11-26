@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/config/_admitted.rs
+expression: "finding.message.replace(&company_dir.display().to_string(), \"[HOME]\")"
+---
+[HOME]/company.yaml and [HOME]/instrukt.yaml both hold a company's settings; keep the one that holds them and remove the other, then run instrukt again

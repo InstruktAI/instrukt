@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/config/_root.rs
+expression: reason
+---
+its `company_repository` is not a boolean

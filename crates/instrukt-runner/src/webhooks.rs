@@ -443,21 +443,17 @@ fn declaring(home: &Home, kind: HomeKind, slug: ProjectSlug) -> Result<Declaring
             })
         }
         HomeKind::Company => {
-            // A company without a home, or a folder whose document names
-            // another company, is no company: it has no endpoint.
-            let document = home.company_dir(&slug).join("instrukt.yaml");
-            match std::fs::metadata(&document) {
-                Ok(metadata) if metadata.is_file() => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(absent());
-                }
-                // Anything else is an existing home this computer cannot
-                // inspect: a failure, never absence.
-                Ok(_) | Err(_) => return Err(unreadable()),
-            }
+            // A company without a settings document, or a folder whose
+            // document names another company, is no company: it has no
+            // endpoint. Anything else configuration cannot read is an
+            // existing home this computer cannot inspect: a failure, never
+            // absence.
             let sources = match Configuration::load_company(&inspection, &slug) {
                 Ok(config) => config,
-                Err(instrukt_core::config::ConfigError::NotACompany { .. }) => {
+                Err(
+                    instrukt_core::config::ConfigError::NotACompany { .. }
+                    | instrukt_core::config::ConfigError::NoLayer { .. },
+                ) => {
                     return Err(absent());
                 }
                 Err(_) => return Err(unreadable()),

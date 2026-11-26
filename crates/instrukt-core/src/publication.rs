@@ -136,16 +136,26 @@ pub fn inspect_units(
 /// rendering decides by, with the root `instrukt.yaml` read as a view of the
 /// tree reads it.
 pub fn is_company_index(root: &Path, rel: &str) -> Result<bool, PublicationStateError> {
-    if rel != _company::COMPANY_INDEX {
-        return Ok(false);
-    }
+    Ok(rel == _company::COMPANY_INDEX && is_company_repository(root)?)
+}
+
+/// Whether the working tree whose root is `root` is a company's repository:
+/// its root `instrukt.yaml` and its `docs/index.yaml` decide it by the rule
+/// rendering decides by — a project layer declaring `company_repository`, a
+/// company's settings document, or no root document beside a
+/// `docs/index.yaml`. A company's documents are its knowledge, never
+/// snippets: docs validation, sync and `init` read none of them as such
+/// (`project/instrukt/spec/domain/publication`).
+pub fn is_company_repository(root: &Path) -> Result<bool, PublicationStateError> {
     let read = |path: &Path| {
         let path = path.to_path_buf();
         move |source| PublicationStateError::Read { path, source }
     };
     let document = _source::root_document_on_disk(root)
         .map_err(read(&root.join(crate::config::CONFIG_FILE_NAME)))?;
-    let absent = _source::entry_index_absent_on_disk(root, rel).map_err(read(&root.join(rel)))?;
+    let index = _company::COMPANY_INDEX;
+    let absent =
+        _source::entry_index_absent_on_disk(root, index).map_err(read(&root.join(index)))?;
     Ok(_render::company_home(
         &crate::config::classify_root(document.as_deref()),
         absent,
@@ -212,14 +222,17 @@ pub fn validate_plugin(
 }
 
 /// The view of the working tree whose root is `root` that the plugin of
-/// `key` is rendered from: the plugin's folder and the catalog included.
+/// `key` is rendered from: the skill's folder, the catalog and the manifest
+/// an earlier rendering left, whose version a versionless entry carries
+/// forward.
 fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, PublicationError> {
     let folder = _plugin::folder(key);
+    let earlier = _plugin::earlier_manifest(key);
     _source::Committed::working_tree_places(
         root,
         _source::Places {
             folder: &folder,
-            file: _plugin::CATALOG,
+            files: &[_plugin::CATALOG, &earlier],
         },
     )
 }
@@ -228,7 +241,8 @@ fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, Pub
 /// while it holds a finding. Each removal comes first, with each folder it
 /// leaves empty inside the plugin's folder, so a new file never meets an
 /// old file or an emptied folder on its way. Then each write follows, one file at a
-/// time: the plugin's other files, then its manifest, then the catalog.
+/// time: the skill's files, then the catalog, whose entry is the plugin's
+/// manifest.
 /// Each write is atomic and nothing passes through a symbolic link. A
 /// rendering cut short leaves exactly the removals and writes made before
 /// the cut; the next rendering compares against what the folder then
@@ -536,7 +550,7 @@ mod tests {
         let root = dir.path();
         let key = ProjectSlug::parse("acme").unwrap();
         let name = CompanyName::parse("Acme").unwrap();
-        let references = root.join("plugins/acme/skills/acme/references");
+        let references = root.join("skills/acme/references");
         write(
             root,
             ".claude-plugin/marketplace.json",

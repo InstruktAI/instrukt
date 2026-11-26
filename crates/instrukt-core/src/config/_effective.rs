@@ -572,6 +572,12 @@ impl Configuration {
         self.str_at(&["github", "project_app"])
     }
 
+    /// `github.org`: the GitHub organisation that owns the company
+    /// repositories this computer creates; `None` when it is not declared.
+    pub fn github_org(&self) -> Result<Option<&str>, ConfigError> {
+        self.str_at(&["github", "org"])
+    }
+
     /// `github.api_url` (default `https://api.github.com`).
     pub fn github_api_url(&self) -> Result<&str, ConfigError> {
         Ok(self

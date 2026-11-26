@@ -68,7 +68,7 @@ fn company_home(computer: &Computer, name: &str, document: &str) {
     let dir = computer.env.instrukt_home().join("companies").join(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("instrukt.yaml"),
+        dir.join("company.yaml"),
         format!(
             "schema_version: {}\n{document}",
             instrukt_core::config::COMPANY_SCHEMA_VERSION
@@ -90,7 +90,7 @@ fn invalid_company_home(computer: &Computer, name: &str, document: &str) {
     use std::os::unix::fs::PermissionsExt;
     let dir = computer.env.instrukt_home().join("companies").join(name);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("instrukt.yaml"), document).unwrap();
+    std::fs::write(dir.join("company.yaml"), document).unwrap();
     std::fs::write(dir.join("secrets.env"), format!("ACME_HOOK={SECRET}\n")).unwrap();
     std::fs::set_permissions(
         dir.join("secrets.env"),

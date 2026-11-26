@@ -28,6 +28,27 @@ missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
+A company repository (`project/instrukt/spec/domain/configuration`) is a
+project like any other to publication, except that its documentation is the
+company's knowledge. Its sync reads none of that knowledge as
+documentation: it runs no snippet validation, stages no position, no
+`docs/project/` and no `docs/third-party/`, writes nothing under
+`~/.instrukt/docs/` and contributes nothing to the global index, whatever
+folders the company's documents sit in. It writes the editor schemas and the
+eval fingerprint and records the checkout and its published commit, as every
+project's sync does. Publication decides from a repository's root whether it
+is a company's, for every rendering, for the company's skill, for docs
+validation's question and for sync.
+
+The company's skill follows Claude's catalog format as its vendor states it
+(`project/instrukt/spec/feature/publication/company-plugin`, See Also): the catalog entry's source is the repository's root, the entry
+is the plugin's manifest and no other manifest is written; it lists the
+company's skill by its folder, only that skill loads with the plugin and
+several entries share one root; and its version is the one a client compares.
+Whatever stands at the
+repository's root in a place that format reads other components from is part
+of the plugin as Claude loads it.
+
 Every entrypoint rendering — the global agent files, a repository's root
 `AGENTS.md` and a company plugin's skill — holds each source it holds in full
 as that source's current compressed unit, and as its prose wherever the unit
@@ -128,9 +149,11 @@ text, calls a model or judges whether a unit means what its source means.
    repository has at most one.
 
 **Company plugin**
-:  The Claude plugin a company's repository carries in `plugins/<key>/`,
-   `<key>` being the company's key: the selection the company index makes,
-   held as one skill with a manifest. It is no instruction file
+:  The Claude plugin a company's repository carries: the company's skill in
+   `skills/<key>/` at the repository's root, `<key>` being the company's key,
+   outside any vendor's folder, and the skill's entry in the plugin catalog,
+   which is the plugin's manifest. The skill holds the selection the company
+   index makes. It is no instruction file
    (`project/instrukt/spec/feature/publication/company-plugin`).
 
 **Plugin catalog**
@@ -292,14 +315,15 @@ text, calls a model or judges whether a unit means what its source means.
   commits and checkout paths under
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
   under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
-  of a repository and `instrukt docs render [--check]`; a company's plugin
-  under `plugins/<key>/` with its entry in `.claude-plugin/marketplace.json`,
+  of a repository and `instrukt docs render [--check]`; a company's skill
+  under `skills/<key>/` with its plugin's entry in
+  `.claude-plugin/marketplace.json`,
   and `instrukt docs plugin --key <key> --name <name>`, which asks for a
   rendering, with `--check` for a check and with `--validate` for a
   validation, the two flags excluding each other
   (`project/instrukt/spec/feature/publication/company-plugin`); whether a
-  repository's `docs/index.yaml` is its company index, which docs
-  validation asks before reading the file; the global
+  repository is a company's, which docs validation asks before reading
+  anything under its `docs/`; the global
   agent files; `.instrukt/schemas/` and the modeline
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
@@ -392,6 +416,8 @@ Compressed units extend each part of that boundary:
   - A sync that is refused or fails leaves the previous publication readable
     and records no commit.
   - Nothing the project published before and no longer owns remains.
+  - A company repository's published part holds no position, no claim and
+    no index entry: only its published commit and checkout path.
 - **Identifier:** the project slug from the project's `instrukt.yaml`.
 - **Lifecycle:** created by the project's first sync; replaced by each sync
   whose main differs from the published commit.
@@ -450,37 +476,44 @@ Compressed units extend each part of that boundary:
 
 #### Company plugin (aggregate)
 
-- **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
-  being the company's key.
-- **Contains:** the manifest with the plugin's version; the skill's main
-  file; one file for each other document the plugin carries, and for each
-  document the main file holds as a unit, that document's prose; the
-  plugin's entry in the repository's plugin catalog.
+- **Root:** the folder `skills/<key>/` at the root of a company's repository,
+  `<key>` being the company's key.
+- **Contains:** the skill's main file; one file for each other document the
+  skill carries, and for each document the main file holds as a unit, that
+  document's prose; the plugin's entry in the repository's plugin catalog,
+  which is the plugin's manifest and carries its version.
 - **Invariants:**
   - A function of the repository's company index, documents and units, the
-    key and the name its caller gives, the plugin the repository already
-    holds and the rendering instrukt release: nothing published on the
-    computer, no configuration layer and no environment enters it.
+    key and the name its caller gives, the version the catalog entry holds and the
+    rendering instrukt release: nothing published on the computer, no
+    configuration layer and no environment enters it.
   - It holds the selection the company index makes, as the repository's
     committed `AGENTS.md` does, and carries every document it names.
   - The version is the one thing a rendering takes from the plugin the
     repository holds. Its last number is raised by one exactly when the
-    rendering differs from that plugin; instrukt never changes the first
-    two.
-  - Changes only in the working tree, through `instrukt docs plugin`; no
-    commit, sync, checkout, start or tick writes it, and rendering a
-    repository's `AGENTS.md` writes none.
+    rendering differs from what `skills/<key>/` holds; instrukt never changes
+    the first two.
+  - Changes only in the working tree, through `instrukt docs plugin` or the
+    company skeleton's rendering; no commit, sync, checkout, start or tick
+    writes it, and rendering a repository's `AGENTS.md` writes none.
   - The folder is written whole, whatever it held, and never removed.
-    Nothing is read, written or removed through a symbolic link.
+    Nothing is read, written or removed through a symbolic link, and nothing
+    outside the folder and the catalog is read, written or removed, a
+    `plugins/<key>/` folder included.
   - Of the plugin catalog, a rendering changes the plugin's entry and
-    nothing else; it creates no catalog.
+    nothing else; where the repository holds no catalog, it creates one named
+    by the company's key, with the company as its owner.
+  - The repository holds no other manifest for the plugin, so one catalog
+    lists the skills of several plugins, each entry naming its own.
   - With a finding, no file is written or removed.
   - It has no published commit, no claim and no index entry, and belongs to
     no project's published part.
 - **Identifier:** the company's key, in its repository.
-- **Lifecycle:** rendered when a caller asks for it; committed by that
-  caller; left as it is where the repository holds no company index
+- **Lifecycle:** rendered with the company skeleton and whenever a caller
+  asks for it; committed by that caller; left as it is where the repository
+  holds no company index
   (`project/instrukt/spec/feature/publication/company-plugin`).
+
 
 #### Compressed units of a repository (aggregate)
 
@@ -574,8 +607,9 @@ This context emits no events.
   the `index.yaml` and `schema.yaml` model and validation publication renders
   and refuses by; publication supplies the home's published tree and global
   index that retrieval reads, the published commit the behind-main
-  warning compares with, and whether a repository's `docs/index.yaml` is
-  its company index, which validation leaves to publication.
+  warning compares with, and whether a repository is a company's, in which
+  validation reads nothing under `docs/` and leaves the company's knowledge
+  to publication.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.

@@ -249,7 +249,7 @@ pub fn init_company_issuer(
         &keypair.private_pem,
     )?;
 
-    // Enable `issuer:` in the company home's instrukt.yaml.
+    // Enable `issuer:` in the company home's company.yaml.
     let layer = Layer::Company(company.clone());
     let rev = config::revision(home, &layer)?;
     let patch_yaml =
