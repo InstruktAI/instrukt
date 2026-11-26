@@ -1,5 +1,9 @@
 //! Sidecar-free SQLite inspection. A stable main/WAL image is reconstructed in
 //! memory through the last checksum-valid commit, then opened by SQLite itself.
+//! Only a process that has not opened the store through SQLite copies it: in
+//! one that has, closing the copy's descriptors would release the locks its
+//! connections hold, so the store is read through SQLite there
+//! ([`crate::fsx::outside_sqlite`]).
 //! WAL framing/checksums: https://www.sqlite.org/fileformat2.html#walformat
 use super::{Connection, StoreError};
 use std::path::{Path, PathBuf};
@@ -15,7 +19,12 @@ fn bytes(store: &'static str, path: &Path) -> Result<Vec<u8>, StoreError> {
         Err(e) => Err(StoreError::invalid(store, path, e.to_string())),
     }
 }
-pub(super) fn read(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
+/// The store at `path` as an in-memory image; `None` when this process has
+/// opened it through SQLite and reads it live instead.
+pub(super) fn read(store: &'static str, path: &Path) -> Result<Option<Connection>, StoreError> {
+    crate::fsx::outside_sqlite(path, || copy(store, path)).transpose()
+}
+fn copy(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
     let wal_path = sidecar(path, "-wal");
     let journal = sidecar(path, "-journal");
     for _ in 0..8 {
