@@ -65,26 +65,7 @@ pub fn commit(
         return Err(RepositoryError::CanonicalAuthoring);
     }
     let configuration = Configuration::load(home, Some(&root))?;
-    let author = match configuration.caller(env)? {
-        Some(caller) => match wiring
-            .session_role
-            .as_ref()
-            .map(|lookup| lookup.role(&caller))
-            .transpose()?
-            .flatten()
-        {
-            Some(role) => {
-                let actors = wiring.github_actors.as_ref().ok_or_else(|| {
-                    crate::github::AppError::Setup(
-                        "verified actor capability unavailable; configure github.apps".into(),
-                    )
-                })?;
-                Some(actors.actor(role.as_str())?.author())
-            }
-            None => agent_author(&configuration, env)?,
-        },
-        None => agent_author(&configuration, env)?,
-    };
+    let author = author(&configuration, env, wiring)?;
     let session = session(&configuration, env)?;
     let todo = match &request.todo {
         Some(slug) => Some(todo_trailer(&configuration, wiring, slug)?),
@@ -122,6 +103,36 @@ pub fn commit(
         duration_ms = started.elapsed().as_millis() as u64,
     );
     Ok(sha)
+}
+
+/// The author of an attributed commit: the verified bot of the acting
+/// session's recorded role, else the acting agent's configured author;
+/// `None` when neither resolves, leaving git's own.
+fn author(
+    configuration: &Configuration,
+    env: &Env,
+    wiring: &CoreWiring,
+) -> Result<Option<String>, RepositoryError> {
+    let Some(caller) = configuration.caller(env)? else {
+        return agent_author(configuration, env);
+    };
+    match wiring
+        .session_role
+        .as_ref()
+        .map(|lookup| lookup.role(&caller))
+        .transpose()?
+        .flatten()
+    {
+        Some(role) => {
+            let actors = wiring.github_actors.as_ref().ok_or_else(|| {
+                crate::github::AppError::Setup(
+                    "verified actor capability unavailable; configure github.apps".into(),
+                )
+            })?;
+            Ok(Some(actors.actor(role.as_str())?.author()))
+        }
+        None => agent_author(configuration, env),
+    }
 }
 
 /// Commits exactly `paths`: untracked ones are made known to the index
