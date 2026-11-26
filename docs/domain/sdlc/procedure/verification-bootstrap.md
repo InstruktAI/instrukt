@@ -184,8 +184,13 @@ Following `general/procedure/doc-snippet-authoring`,
         `general/spec/snippet-authoring-schema` and
         `general/procedure/doc-snippet-authoring`; pending markers or sibling
         companions for edits to already-delivered fills), verifies with
+<!-- planned-change:author-recorded-review-routing -->
         `instrukt docs validate` and `instrukt docs render --check`, commits via
         `instrukt repo commit --todo <slug>`, and pushes the exact commit to
+<!-- change:author-recorded-review-routing -->
+        `instrukt docs validate` and `instrukt docs render --check`, commits via
+        `instrukt repo commit --todo <slug> --review`, and pushes the exact commit to
+<!-- /planned-change:author-recorded-review-routing -->
         `origin/<slug>/work` (`git push origin HEAD:refs/heads/<slug>/work`).
      3. Obtains independent commit-review `APPROVE`
         (`sdlc/procedure/lifecycle/work/review-commits`) bound to that exact

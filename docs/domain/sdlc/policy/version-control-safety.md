@@ -34,7 +34,11 @@ visibility: 'public'
 
 ## Enforcement
 
+<!-- planned-change:author-recorded-review-routing -->
 `instrukt repo commit` is the canonical commit interface (`general/policy/commits`). It composes the commit message and stages nothing; staging and every other git operation stay with the agent, and nothing blocks raw git.
+<!-- change:author-recorded-review-routing -->
+`instrukt repo commit` is the canonical commit interface (`general/policy/commits`). It composes the commit message, takes the commit's review-routing choice, and stages nothing; staging and every other git operation stay with the agent, and nothing blocks raw git.
+<!-- /planned-change:author-recorded-review-routing -->
 
 ## Exceptions
 

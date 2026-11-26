@@ -92,12 +92,22 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 ### Decide before creating
 
+<!-- planned-change:author-recorded-review-routing -->
 - **Documentation evidence precedes lifecycle entry.** Pending contracts
   that preparation consumes are authored, committed under their intended todo
   slug, and independently reviewed with required changes resolved before
   entry. Associate the commits with `instrukt repo commit --todo <slug>` under
   `general/policy/commits`. Review evidence binds the committed revision;
   the author's declaration is not an independent review.
+<!-- change:author-recorded-review-routing -->
+- **Documentation evidence precedes lifecycle entry.** Pending contracts
+  that preparation consumes are authored, committed under their intended todo
+  slug, and independently reviewed with required changes resolved before
+  entry. Associate the commits with `instrukt repo commit --todo <slug>
+  --review` under `general/policy/commits`: they owe that independent review.
+  Review evidence binds the committed revision; the author's declaration is
+  not an independent review.
+<!-- /planned-change:author-recorded-review-routing -->
 - **Documentation impact remains agent judgment.** The agent identifies the
   required pending contracts or records an explicit `doc_impact_none` basis.
   Neither workflow derivation nor a creation command grades prose or infers
