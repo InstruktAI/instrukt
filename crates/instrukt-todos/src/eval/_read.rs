@@ -56,6 +56,11 @@ pub enum Limitation {
     PublicationUnreadable { error: String },
     /// This computer's recorded eval fingerprints cannot be read.
     FingerprintsUnreadable { error: String },
+    /// `count` published commits recorded an eval fingerprint without its
+    /// time.
+    UntimedFingerprints { count: usize },
+    /// The request asked for a format this computer does not know.
+    UnknownRequestFormat,
 }
 
 const STORED_SHOWN: &str =
@@ -76,6 +81,8 @@ impl Limitation {
             Self::StoredUnreadable { .. } => "stored_record_unreadable",
             Self::PublicationUnreadable { .. } => "publication_unreadable",
             Self::FingerprintsUnreadable { .. } => "fingerprints_unreadable",
+            Self::UntimedFingerprints { .. } => "untimed_fingerprints",
+            Self::UnknownRequestFormat => "unknown_request_format",
         }
     }
 
@@ -114,6 +121,7 @@ impl Limitation {
             Self::FingerprintsUnreadable { error } => {
                 format!("The recorded eval fingerprints cannot be read: {error}.")
             }
+            Self::UntimedFingerprints { .. } | Self::UnknownRequestFormat => self.public(),
         }
     }
 
@@ -158,6 +166,10 @@ impl Limitation {
             Self::FingerprintsUnreadable { .. } => format!(
                 "This computer's recorded eval fingerprints cannot be read, so it names no commit setting an eval set.{INSPECT}"
             ),
+            Self::UntimedFingerprints { count } => untimed(*count),
+            Self::UnknownRequestFormat => {
+                "The request asked for a format this computer does not know.".into()
+            }
         }
     }
 
@@ -166,6 +178,22 @@ impl Limitation {
     pub fn log_detail(&self) -> String {
         redact_credentials(&self.local())
     }
+}
+
+/// The limitation that `count` published commits recorded an eval
+/// fingerprint without its time.
+pub(super) fn untimed(count: usize) -> String {
+    format!(
+        "{} published commit{} recorded an eval fingerprint without its time; where {} in the order of process changes is unknown, so {} not named as changing the eval set.",
+        count,
+        if count == 1 { "" } else { "s" },
+        if count == 1 {
+            "its place"
+        } else {
+            "their place"
+        },
+        if count == 1 { "it is" } else { "they are" },
+    )
 }
 
 /// `text` with the user information of every URL in it replaced by `***`,
@@ -342,6 +370,8 @@ mod tests {
             Limitation::StoredUnreadable { error: error() },
             Limitation::PublicationUnreadable { error: url_error() },
             Limitation::FingerprintsUnreadable { error: error() },
+            Limitation::UntimedFingerprints { count: 2 },
+            Limitation::UnknownRequestFormat,
         ]);
         let shown: Vec<String> = causes
             .iter()

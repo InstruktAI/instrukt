@@ -1,0 +1,48 @@
+---
+source: crates/instrukt-todos/src/eval/_answer.rs
+expression: answered
+---
+{
+  "format": 1,
+  "limitations": [],
+  "projects": [
+    {
+      "project": "demo",
+      "limitations": [],
+      "sets": [
+        {
+          "fingerprint": "A",
+          "changed_by": [
+            [
+              "flows",
+              "cccccccccccccccccccccccccccccccccccccccc"
+            ]
+          ],
+          "order_unknown": false,
+          "models": [
+            {
+              "model": {
+                "kind": "reported",
+                "model": "m1",
+                "version": "1"
+              },
+              "first": "2030-03-17T17:46:41Z",
+              "last": "2030-03-17T17:46:41Z",
+              "tally": {
+                "todos": 1,
+                "stamps": 1,
+                "approved": 0,
+                "not_approved": 1,
+                "reviews": 1,
+                "rounds": 1,
+                "findings": 1,
+                "returns": 0,
+                "human": 0
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

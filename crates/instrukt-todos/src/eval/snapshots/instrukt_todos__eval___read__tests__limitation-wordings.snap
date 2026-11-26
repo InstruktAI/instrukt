@@ -41,3 +41,9 @@ publication_unreadable
 fingerprints_unreadable
   public: This computer's recorded eval fingerprints cannot be read, so it names no commit setting an eval set. Inspect this computer's logs for the detail.
   log:    The recorded eval fingerprints cannot be read: sentinel error text.
+untimed_fingerprints
+  public: 2 published commits recorded an eval fingerprint without its time; where their place in the order of process changes is unknown, so they are not named as changing the eval set.
+  log:    2 published commits recorded an eval fingerprint without its time; where their place in the order of process changes is unknown, so they are not named as changing the eval set.
+unknown_request_format
+  public: The request asked for a format this computer does not know.
+  log:    The request asked for a format this computer does not know.

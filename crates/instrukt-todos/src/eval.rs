@@ -11,6 +11,7 @@
 //! counted as missing and named as a limitation of the comparison it
 //! affects.
 
+mod _answer;
 mod _read;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -18,6 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_core::publication::EvalFingerprint;
 use jiff::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use crate::evidence::{
     Actor, ApprovedBy, BuildVerdict, ModelProvenance, PreparationReview, ReviewVerdict, StampFact,
@@ -25,6 +27,10 @@ use crate::evidence::{
 };
 use crate::work::TodoRecord;
 
+pub use _answer::{
+    ANSWER_FORMAT, Answer, EvaluationAnswering, ModelAnswer, ProjectAnswer, Request, SetAnswer,
+    Unreadable, Wording, answer, decode,
+};
 pub use _read::{Limitation, ProjectRead, Reading, Stored, Why, read};
 
 /// One project as the report reads it.
@@ -93,7 +99,8 @@ pub struct Window {
 }
 
 /// Who produced a stamp: a model as recorded, or a human.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Model {
     Reported {
         model: String,
@@ -108,7 +115,7 @@ pub enum Model {
 }
 
 /// One row's outcomes within a window (`eval-report`, "Outcome measures").
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tally {
     /// Todos with a stamp in the window.
     pub todos: usize,
@@ -147,13 +154,7 @@ pub fn report(inputs: Inputs<'_>) -> Report {
     }
     let changes = change_points(inputs.fingerprints);
     if changes.untimed > 0 {
-        limitations.push(format!(
-            "{} published commit{} recorded an eval fingerprint without its time; where {} in the order of process changes is unknown, so {} not named as changing the eval set.",
-            changes.untimed,
-            if changes.untimed == 1 { "" } else { "s" },
-            if changes.untimed == 1 { "its place" } else { "their place" },
-            if changes.untimed == 1 { "it is" } else { "they are" },
-        ));
+        limitations.push(_read::untimed(changes.untimed));
     }
     let projects = inputs
         .projects
