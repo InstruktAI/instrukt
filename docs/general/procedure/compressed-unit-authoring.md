@@ -1,5 +1,5 @@
 ---
-description: Write or renew the compressed unit of a source an entrypoint rendering holds in full — learn offline which units are stale, missing or orphaned, compress each named source's current contract into flat, deduplicated ASCII rules in the shared notation, declare the digest it was written from, and leave every other unit untouched.
+description: Write or renew the compressed unit of a source an entrypoint rendering holds in full — learn offline which units are stale, missing or orphaned, compress each named source's contract into flat, deduplicated rules in the compressed-unit notation, declare the digest it was written from, and leave every other unit untouched.
 visibility: 'public'
 delivered_by: [compressed-global-entrypoints]
 ---
@@ -15,66 +15,64 @@ delivered_by: [compressed-global-entrypoints]
 
 Give each source that needs one a current compressed unit: a dense
 counterpart an entrypoint rendering holds in the source's place while the
-source is unchanged. The unit keeps every behavioral invariant of its source
-with a one-clause reason, in the compressed-unit notation
-(`general/spec/agent-shorthand`), so agents receive the whole selection within
-their runtime's instruction-size limit and reach the full prose by the
-source's name.
+source is unchanged, keeping every behavioral invariant of its source in the
+compressed-unit notation (`general/spec/agent-shorthand`), so agents receive
+the whole selection within their runtime's instruction-size limit and reach
+the full prose by the source's name.
 
 ## Preconditions
 
 - A checkout of the repository that holds the source, and the instrukt
   binary. No home, publication, configuration or network is needed.
-- Authority to commit there: an authoring change that alters the source, or
-  the repository's post-merge automation acting for its maintainers.
+- Authority to commit there: an authoring change that alters the source, in
+  that change's own worktree, or the repository's post-merge automation
+  acting for its maintainers.
 
 ## Steps
 
 1. **Ask what needs a unit.** Run `instrukt docs units` in the checkout
-   (`--json` for a program). Exit 0 says there is nothing to compress: stop.
-   Exit 3 names each source whose unit is stale or missing — its id or
+   (`--json` for a program). Exit 0: there is nothing to compress; stop.
+   Exit 3: it names each source whose unit is stale or missing — its id or
    company document path, its file, where its unit belongs and the digest a
-   renewed unit declares — and each orphaned unit. Exit 1 also names
+   renewed unit declares — and each orphaned unit. Exit 1: it also names
    findings; a finding on a unit is repaired by renewing that unit here.
-   Work only on what it names. A unit it does not name is current and stays
-   byte for byte as it is: renewing it spends a model call and moves the eval
-   fingerprint while its source has not changed.
+   Work only on what it names, and leave every other unit byte for byte as
+   it is.
 
-2. **Renewing for a delivery that is still pending.** When the source change
-   is pending documentation of a todo, the unit is written for the source as
-   that todo delivers it. In a throwaway clone of the todo's work branch run
-   `instrukt docs fold <slug>`, then `instrukt docs units`; write from the
-   folded source and declare the digest named there. On the work branch the
-   unit reads as stale, and the renderings hold the source in prose, until
-   the delivery folds.
+2. **For a source a todo changes, ask as the todo delivers it.** When the
+   source carries pending documentation of the todo you work for, run
+   `instrukt docs units --target <slug>` in that todo's worktree instead: it
+   reads each source with that todo's pending documentation applied and
+   names the digest a unit for the delivered source declares. Plain
+   `instrukt docs units` reads such a unit as stale, and the renderings hold
+   that source in prose, until the delivery folds.
 
-3. **Read the source's current contract, from its file.** Open the file
-   `instrukt docs units` named, not a rendering of it: a rendering resolves
-   configured values, and a unit carries every `@config` directive exactly as
-   its source writes it. Compress the body after the frontmatter, without
-   what a `planned` block adds or the replacement side of a `planned-change`
-   block, because pending material is not yet contract.
+3. **Read the source's contract from its file.** Open the file
+   `instrukt docs units` named, not a rendering of it: a unit carries every
+   `@config` directive exactly as its source writes it. Compress the body
+   after the frontmatter as the contract stands: without what a `planned`
+   block adds and with the current side of each `planned-change` block — or,
+   for step 2, with that todo's `planned` content, the replacement side of
+   its `planned-change` blocks and its companion file in place of the
+   parent. `instrukt docs get <id> --target <slug>` shows the same delivered
+   text with configured values resolved.
 
 4. **Extract the rules, then deduplicate them flat.** List every behavioral
    invariant the source states: each obligation, prohibition, permission,
-   condition, exception, scope limit, threshold, owner and order. A source
-   states many of them more than once — a rule, its implication, its
-   rationale and its enforcement are often one rule. Merge each such group
-   into one rule line carrying the reason once. Keep the result one flat
-   list in source order; keep a heading only where the source has parts a
-   reader must tell apart, such as a procedure's numbered steps. Paraphrasing
-   section by section keeps the source's repetition and stays near its
-   length; flat, deduplicated rules typically reach a sixth to a fifth of it.
+   condition, exception, scope limit, threshold, owner and order. A rule, its
+   implication, its rationale and its enforcement are often one rule stated
+   several times: merge each such group into one rule line carrying its
+   reason once. Keep one flat list in source order, with a heading only where
+   the source has parts a reader must tell apart, such as a procedure's
+   ordered steps. Flat, deduplicated rules typically reach a sixth to a fifth
+   of the source's length; a section-by-section paraphrase stays near it.
 
-5. **Write each rule in the notation.** One line per rule, its keyword
-   first, in telegraphic words, then ` -- ` and the reason in one clause
-   naming the invariant protected or the failure prevented; a fact the rules
-   rest on is a line of its own, `<term> = <meaning>`
-   (`general/spec/agent-shorthand`, Compressed-unit notation). Ids, commands, paths, code spans and `@config`
-   directives stand verbatim, in backticks as in the source. Leave out what
-   changes no behavior: reasoning beyond the one clause, examples that only
-   illustrate a rule already kept, history and See Also lists. Carry no
-   reference, required read or directive the source does not carry.
+5. **Write the unit in the notation.** Write every line as
+   `general/spec/agent-shorthand` (Compressed-unit notation) defines it, the
+   whole unit in plain ASCII. Leave out what changes no behavior: reasoning
+   beyond each rule's one-clause reason, examples that only illustrate a rule
+   already kept, history and See Also lists. Carry no reference, required read
+   or directive the source does not carry.
 
    A worked exemplar — a policy source:
 
@@ -109,33 +107,29 @@ source's name.
    - work begun without reading them = process miss, for reviewers.
    ```
 
-   The rationale became the reason of the rule it explains, and the
-   enforcement a rule of its own; nothing of the source is lost and nothing
-   is added.
+   The rationale became the reason of the rule it explains and the
+   enforcement a fact line of its own; nothing of the source is lost and
+   nothing is added.
 
 6. **Declare where it came from.** Write the unit at the place
    `instrukt docs units` named, with frontmatter of exactly two keys:
    `source_sha256`, the digest it named for the source, and `model`, the
-   identifier of the model writing the unit (`general/spec/snippet-authoring-schema`).
-   Write plain ASCII and nothing else in the frontmatter.
+   identifier of the model writing the unit
+   (`general/spec/snippet-authoring-schema`).
 
 7. **Check it against its source yourself.** Read the unit beside the source
    rule by rule: every invariant of the source has a line, and no line says
    what the source does not. instrukt checks a unit's structure and never its
-   meaning (`general/principle/intelligence-boundaries`); this reading is the
-   only check that the unit keeps its source's rules.
+   meaning (`general/principle/intelligence-boundaries`).
 
-8. **Remove each orphaned unit named** — its source no longer exists or no
-   entrypoint index inlines it — because an orphan is never rendered and
-   only misleads a reader of the folder.
+8. **Remove each orphaned unit** `instrukt docs units` named.
 
-9. **Confirm and commit.** Run `instrukt docs units` again: the sources you
-   renewed are no longer named — in the folded clone, for a pending
-   delivery — and no finding names your units. Commit the
-   units with the repository's renderings — the `pre-commit` section renders
-   a root `AGENTS.md` from the commit; where no hook runs, run
-   `instrukt docs render` first, and render a company's plugin as its
-   maintainers do.
+9. **Confirm and commit.** Run `instrukt docs units` again, with
+   `--target <slug>` for step 2: the sources you renewed are no longer named
+   and no finding names your units. Commit the units with the repository's
+   renderings — the `pre-commit` section renders a root `AGENTS.md` from the
+   commit; where no hook runs, run `instrukt docs render` first, and render a
+   company's plugin as its maintainers do.
 
 ## Outputs
 
@@ -151,12 +145,9 @@ source's name.
   `@exec` or `@include` — and run it again.
 - The digest it names moved while you worked: the source changed; start
   again from step 1.
-- A rule resists compression without losing a condition: keep the condition.
-  A longer unit is correct; a lossy one stands in for its source while
-  saying less than it.
+- A rule resists compression without losing a condition: keep the condition,
+  however long the unit grows.
 
 ## Discipline
 
 - One unit per source, and only the units `instrukt docs units` names.
-  Rewriting a current unit changes what agents receive without any change of
-  its source.

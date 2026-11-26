@@ -356,8 +356,9 @@ Compressed units extend each part of that boundary:
   current-contract lens, the `@config` grammar and the reference forms
   (docs).
 - **Published contracts** — `docs/_compressed/` and a unit's frontmatter,
-  `source_sha256` and `model`; `instrukt docs units [--json]`, which reads the
-  checkout it runs in and writes nothing, exiting 0 when there is nothing to
+  `source_sha256` and `model`; `instrukt docs units [--json] [--target <slug>]`,
+  which reads the checkout it runs in, with that todo's pending documentation
+  applied when a slug is given, and writes nothing, exiting 0 when there is nothing to
   compress, 3 when it names only stale, missing or orphaned units, and 1
   when it names a finding; the lineage facts of the global index; the
   prose and units digests beside each recorded fingerprint; the uncompressed

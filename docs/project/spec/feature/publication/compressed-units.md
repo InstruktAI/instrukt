@@ -148,6 +148,11 @@ with the binary is enough. It writes nothing.
 - When every source that needs a unit has a current one and nothing is
   orphaned or found, it says there is nothing to compress, and its outcome
   tells that apart from an outcome that names work.
+- Given a todo's slug, it reads the checkout as that todo will deliver it:
+  each source with that todo's pending documentation in the checkout
+  applied. A unit written for a source the todo changes reads as current
+  there before the delivery folds, so the todo can land with its units
+  current; read without the slug, the same unit is stale until the fold.
 
 ### Lineage
 
