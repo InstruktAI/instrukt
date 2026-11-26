@@ -259,13 +259,14 @@ primitives).
 | Named session | The runner's answer |
 | --- | --- |
 | Held | The selected runtime reports the session present, busy or waiting on a person included, and it is a thread instrukt sends input to. |
-| Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, unknown to it, archived or deleted; or it is an instrukt-owned thread whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, T3 realization of keyed dispatch). |
-| Cannot say | The runtime cannot be reached or its answer is an observation error. |
+| Not held | The value is no session reference; or it names another runtime than the selected one; or the selected runtime reports it gone, unknown to it, archived or deleted; or it is an instrukt-owned thread, of any binding kind, whose native project is not its checkout's, which instrukt sends nothing (`project/instrukt/spec/feature/runner/session-continuity`, T3 realization of keyed dispatch). |
+| Cannot say | The runtime cannot be reached or its answer is an observation error; or delivery holds an instrukt-owned thread's input until its changed or unverified native project is restored. |
 
 Nothing is asked of a session the runtime cannot say about, and no review of
 the candidate is asked for while any uncovered commit's session is unanswered;
-the next tick derives again, and the outage is reported to the operator
-through `instrukt events status` (`project/instrukt/policy/checks-and-guards`).
+the next tick derives again, and the sessions left unanswered are reported to
+the operator through `instrukt events status`
+(`project/instrukt/policy/checks-and-guards`).
 
 **Asking an author.** Each session workflow names to be asked for an uncovered
 commit is sent one ask, a runner-authored `[Instrukt Notification]`
@@ -296,9 +297,9 @@ state database's `review_asks`
 An ask whose session the runtime reports gone before it is delivered stays
 pending under delivery's rule: delivery retries it on each pass and logs every
 failed attempt, and the record stays queued. The gate meanwhile reads that
-session as not held. When the record is retired, a pending input of it that
-delivery has not selected is failed with that cause, so nothing stale is sent
-later.
+session as not held. When the record is retired, its inputs that delivery has
+not selected or that ended failed are removed, so nothing stale is sent later
+(`project/instrukt/spec/feature/work/state-database`, `review_asks`).
 
 | Ask record | Value |
 | --- | --- |

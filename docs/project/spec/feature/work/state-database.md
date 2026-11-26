@@ -695,6 +695,14 @@ observation on the operator clock and is cleared when reconciliation ends it.
 The process remembers which runtime keys it has notified during its lifetime. Each deferred transition retains its first reported time across
 retries. Completing the transition removes the row.
 
+<!-- planned:author-recorded-review-routing -->
+A `review-presence:<project>` row names the sessions the runtime could not say
+about in that project's latest held-candidate derivation
+(`project/instrukt/spec/feature/runner/pull-request-review`, Asking a held
+candidate's authors). The tick's review pass writes it and removes it on the
+first derivation that leaves no session unanswered or finds no held candidate.
+<!-- /planned:author-recorded-review-routing -->
+
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
 records or database tables. Redis and SQLite have no shared transaction.
@@ -806,12 +814,15 @@ the current attempt, the state (`queued`, `asked` or `undelivered`), the cause
 of an undelivered attempt, and when it was queued and when its state last
 changed. The tick's review pass writes a record with its `runtime_inputs` row
 in one transaction, takes `asked` from that input's runtime acceptance and
-`undelivered` from its ending without acceptance, and queues a further attempt
-under a new input id only from `undelivered`. A record is retired on a runner
-wake-up once the canonical branch contains its commit or no branch of the
-project's repository reaches it; in the same transaction a pending input of it
-that delivery has not selected is failed with that cause. These rows are local
-runtime delivery bookkeeping, not review evidence.
+`undelivered` from its ending without acceptance, an `unconfirmed` input
+without acceptance included, and queues a further attempt under a new input id
+only from `undelivered`, removing the previous attempt's failed input in the
+same transaction once its cause is on the record. A record is retired on a
+runner wake-up once the canonical branch contains its commit or no branch of
+the project's repository reaches it; in the same transaction its inputs that
+delivery has not selected or that ended failed are removed. A record thus keeps
+at most one failed input, and none once retired. These rows are local runtime
+delivery bookkeeping, not review evidence.
 <!-- /planned:author-recorded-review-routing -->
 
 **`conversation_links`** — runner-owned links between two runtime-scoped native
