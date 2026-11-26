@@ -89,7 +89,7 @@ pub(super) fn ensure(
             let conf = redis_dir.join("redis.conf");
             let acl = redis_dir.join("users.acl");
             let expected_acl = format!(
-                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type +rpush +blpop +multi +exec +select\n"
+                "user default off\nuser instrukt on #{hash} ~instrukt:* +@stream +@scripting +ping +info +command +acl|whoami +acl|dryrun +get +set +del +exists +expire +ttl +type +hset +hgetall +lpop +llen +rpush +blpop +multi +exec +select\n"
             );
             let quote = |p: &Path| {
                 format!(
@@ -609,37 +609,49 @@ pub(super) fn dead_letters(request: &Request<'_>) -> anyhow::Result<Vec<Value>> 
     Ok(result)
 }
 
+/// Proves with `ACL DRYRUN` that the cluster Redis user may run each of
+/// `commands`, failing with `denial` on the first it may not.
+fn cluster_permits(
+    request: &Request<'_>,
+    commands: &[&[&str]],
+    denial: &str,
+) -> anyhow::Result<()> {
+    let endpoint = Configuration::load_global(request.home)?.cluster_redis()?;
+    let mut connection = connect(&endpoint)?;
+    server_version(&mut connection)?;
+    let user: String = redis::cmd("ACL").arg("WHOAMI").query(&mut connection)?;
+    for args in commands {
+        let answer: String = redis::cmd("ACL")
+            .arg("DRYRUN")
+            .arg(&user)
+            .arg(*args)
+            .query(&mut connection)?;
+        anyhow::ensure!(answer == "OK", "{denial}");
+    }
+    Ok(())
+}
+
 /// History requires cluster request/reply only; event groups and local services are separate demand.
 pub(super) fn history(
     request: &Request<'_>,
     projects: &[String],
     report: &mut Report,
 ) -> anyhow::Result<()> {
-    let endpoint = Configuration::load_global(request.home)?.cluster_redis()?;
-    let mut connection = connect(&endpoint)?;
-    server_version(&mut connection)?;
-    let user: String = redis::cmd("ACL").arg("WHOAMI").query(&mut connection)?;
-    for args in [
-        vec!["RPUSH", "instrukt:history:requests:check", "check"],
-        vec!["BLPOP", "instrukt:history:requests:check", "1"],
-        vec!["RPUSH", "instrukt:history:reply:check", "check"],
-        vec!["BLPOP", "instrukt:history:reply:check", "1"],
-        vec!["EXPIRE", "instrukt:history:reply:check", "120"],
-        vec!["EXPIRE", "instrukt:history:requests:check", "120"],
-        vec!["SET", "instrukt:history:ready:check", "1", "EX", "5"],
-        vec!["MULTI"],
-        vec!["EXEC"],
-    ] {
-        let answer: String = redis::cmd("ACL")
-            .arg("DRYRUN")
-            .arg(&user)
-            .arg(args)
-            .query(&mut connection)?;
-        anyhow::ensure!(
-            answer == "OK",
-            "Redis ACL denies history request/reply; grant history transport permissions"
-        );
-    }
+    cluster_permits(
+        request,
+        &[
+            &["RPUSH", "instrukt:history:requests:check", "check"],
+            &["BLPOP", "instrukt:history:requests:check", "1"],
+            &["RPUSH", "instrukt:history:reply:check", "check"],
+            &["BLPOP", "instrukt:history:reply:check", "1"],
+            &["EXPIRE", "instrukt:history:reply:check", "120"],
+            &["EXPIRE", "instrukt:history:requests:check", "120"],
+            &["SET", "instrukt:history:ready:check", "1", "EX", "5"],
+            &["MULTI"],
+            &["EXEC"],
+        ],
+        "Redis ACL denies history request/reply; grant history transport permissions",
+    )?;
     report.resource(
         ResourceKind::Redis,
         Disposition::ExternallySupplied,
@@ -648,4 +660,29 @@ pub(super) fn history(
         "cluster Redis verified for history merged search; events not required",
     );
     Ok(())
+}
+
+/// The computer fleet's query (`project/instrukt/spec/domain/runner`):
+/// this computer's membership entry and the record's read, and the
+/// evaluation kind's request/reply. The cluster store is already reported
+/// by the check that found it, so this adds no resource.
+pub(super) fn fleet(request: &Request<'_>) -> anyhow::Result<()> {
+    cluster_permits(
+        request,
+        &[
+            &["HSET", "instrukt:fleet:members", "check", "{}"],
+            &["HGETALL", "instrukt:fleet:members"],
+            &["RPUSH", "instrukt:eval:requests:check", "check"],
+            &["BLPOP", "instrukt:eval:requests:check", "1"],
+            &["LPOP", "instrukt:eval:requests:check"],
+            &["LLEN", "instrukt:eval:requests:check"],
+            &["EXPIRE", "instrukt:eval:requests:check", "120"],
+            &["RPUSH", "instrukt:eval:reply:check", "check"],
+            &["BLPOP", "instrukt:eval:reply:check", "1"],
+            &["EXPIRE", "instrukt:eval:reply:check", "120"],
+            &["MULTI"],
+            &["EXEC"],
+        ],
+        "Redis ACL denies the fleet query; grant the fleet query's permissions to the cluster Redis user, then run `instrukt install`",
+    )
 }

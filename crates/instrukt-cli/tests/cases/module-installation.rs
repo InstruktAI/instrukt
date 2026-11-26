@@ -896,7 +896,8 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     insta::assert_json_snapshot!(report["findings"], @r#"
     [
-      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
+      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation",
+      "fleet Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
     ]
     "#);
     let after: redis::Value = redis::cmd("XINFO")
@@ -934,7 +935,15 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
         .query::<()>(&mut redis.connection())
         .unwrap();
     env.run(env.home(), ["install", "--check"]).success();
-    for denied in ["-EVALSHA", "-SCRIPT|LOAD"] {
+    // The fleet query's permissions are checked beside the events ones.
+    for denied in [
+        "-EVALSHA",
+        "-SCRIPT|LOAD",
+        "-HSET",
+        "-HGETALL",
+        "-LPOP",
+        "-LLEN",
+    ] {
         redis::cmd("ACL")
             .arg("SETUSER")
             .arg("probe-user")

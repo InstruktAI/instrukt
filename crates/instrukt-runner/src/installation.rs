@@ -297,6 +297,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     runtime_projects(request, &demand, &mut report);
     if request.conversations {
+        fleet_permissions(request, &demand, &global, &mut report);
         boot_prerequisite(request, &demand, &mut report);
         return Ok(report);
     }
@@ -356,6 +357,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("receiver", error);
         }
     }
+    fleet_permissions(request, &demand, &global, &mut report);
     if request.module.is_none()
         && let Err(error) = _services::report_unknown(request, &mut report)
     {
@@ -592,6 +594,49 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
 /// The owned service that keeps `instrukt run` running while a company
 /// home declares a connector; withdrawn when that
 /// demand ends. Its state is recorded in the report as it was found.
+/// Where a cluster connection is configured and the computer has a demand
+/// this run covers that keeps a runner or a cluster reader — history,
+/// events, an MCP server with sign-in, the minute wake-up or the runner
+/// service — the cluster user must permit the computer fleet's query
+/// (`project/instrukt/spec/feature/runner/module-installation`).
+fn fleet_permissions(
+    request: &Request<'_>,
+    demand: &Demand,
+    global: &Configuration,
+    report: &mut Report,
+) {
+    let demanded = || -> anyhow::Result<bool> {
+        if global.cluster_redis_url()?.is_none() {
+            return Ok(false);
+        }
+        let history = !demand.history.is_empty();
+        let events = !demand.events.is_empty()
+            || (global.module_enabled(Module::Events)? && global.ingress_url()?.is_some());
+        let wake_up = !demand.projects().is_empty() && global.ticks_enabled()?;
+        let service = !demand.conversations.is_empty();
+        Ok(if request.conversations {
+            service
+        } else {
+            match request.module {
+                None => history || events || wake_up || service,
+                Some(Module::History) => history,
+                Some(Module::Events) => events,
+                Some(Module::Todos) => wake_up,
+                Some(Module::Blueprint) => false,
+            }
+        })
+    };
+    match demanded() {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Err(error) = _redis::fleet(request) {
+                report.finding("fleet Redis", error);
+            }
+        }
+        Err(error) => report.finding("fleet Redis", error),
+    }
+}
+
 fn runner_service(request: &Request<'_>, demand: &Demand, report: &mut Report) {
     let desired = _services::runner(request);
     let paths = desired.files.keys().cloned().collect::<Vec<_>>();
