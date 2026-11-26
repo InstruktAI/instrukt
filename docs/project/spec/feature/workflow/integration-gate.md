@@ -361,6 +361,7 @@ And when warranted it records the bug work once, reusing matching existing work
 ```gherkin
 Given a developer's project has opted in to automatic review
 And their agent committed a change it judged to owe no review and declared why when committing
+And every other commit integrated with it has an agent of theirs that can decide for it
 When the change reaches integration
 Then it is integrated without a review being started for it
 But when a commit reaches integration with neither a review nor a declared decision

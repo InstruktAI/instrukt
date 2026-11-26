@@ -102,7 +102,10 @@ All Committizen types are allowed.
   wrong change would cost: it asks for independent review, or it records why
   none is owed as the commit's exemption. `instrukt repo commit` asks the author
   for that choice when committing; a decision taken after committing is
-  recorded with `instrukt review exempt`. Review is owed when the change carries a consequence its author cannot
+  recorded with `instrukt review exempt`. The two do not mix: once the author
+  has asked for a commit's review, it does not exempt that commit afterwards,
+  and a commit with a review verdict waits for the approval of a head that
+  contains it. Review is owed when the change carries a consequence its author cannot
   establish alone: new or changed logic, a state or data shape, a contract
   between components, concurrency, security, or what a governed snippet
   directs other agents to do. The author dispatches that
@@ -194,8 +197,8 @@ gate of its own: it does not stage, and it does not block raw git.
 `instrukt repo commit` is the canonical commit interface. It composes the
 commit's attribution and provenance — the agent as git author, `Session:`,
 `Human-Involved:` from the caller's `--human-involved`, `Todo:`, `Planned-Todo:` —
-and takes the commit's review-routing choice (Rules); it runs no other check of
-its own: it does not stage, and it does not block raw git.
+and takes the commit's review-routing choice (Rules); beyond that choice it
+runs no gate of its own: it does not stage, and it does not block raw git.
 <!-- /planned-change:author-recorded-review-routing -->
 
 The sealed interface refuses caller-supplied platform metadata before committing.
