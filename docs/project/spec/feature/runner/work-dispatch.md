@@ -131,7 +131,7 @@ later rounds or human questions. The runtime owns session ending and cleanup.
 Every tick also reads GitHub for what people did on the issues of the todos in
 this computer's record (`project/instrukt/spec/feature/work/github-record`).
 Every tick flushes pending work-record reflection under the
-per-computer reflection lock when it is free, and never waits for it. A command that writes the record flushes under
+per-computer reflection lock. A command that writes the record flushes under
 that lock when it is free and never waits on it when another process holds
 it, leaving its reflection to the next flush that acquires it
 (`project/instrukt/spec/feature/work/github-record`). Reflection holds that lock across GitHub requests and takes the writer

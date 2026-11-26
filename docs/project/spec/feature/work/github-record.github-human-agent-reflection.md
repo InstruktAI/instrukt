@@ -229,9 +229,7 @@ their secret-safe cause and never select a human fallback.
 
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
 reflection; no separate writer process runs. Every runner tick flushes
-pending reflection under that lock, held across GitHub requests, when it
-finds the lock free; a tick that finds it held flushes nothing that run and
-never waits for it. A command
+pending reflection under that lock, held across GitHub requests. A command
 that writes the record and finds the lock free flushes pending reflection
 under it before it returns. A command that finds the lock held by another
 process never waits on it: it returns as soon as its local write is

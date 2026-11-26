@@ -80,11 +80,12 @@ meaning and the writes of the conversation tables.
 - A separate per-computer reflection lock
   `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
   across GitHub requests and takes the writer lock only briefly for each local
-  transaction that records what reflection learned. A command or runner tick
-  takes it only when it is free and never waits for it: a command that finds
-  it held returns once its local write is committed, with that write's
-  reflection pending, and a tick that finds it held flushes nothing that run.
-  What is left pending is reflected by the next flush that takes the lock.
+  transaction that records what reflection learned. A command that writes the
+  record takes it only when it is free and never waits for it: finding it
+  held, the command returns once its local write is committed, with that
+  write's reflection pending. Each runner tick's reflection pass waits for the
+  lock for a bounded time and reflects what is pending; a tick whose wait runs
+  out reflects nothing that run, and the next tick tries again.
   Lock order is always reflection → writer; a local writer releases the writer
   lock before trying the reflection lock. Current-schema local readers take
   neither lock. Readers
