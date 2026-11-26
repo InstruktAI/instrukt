@@ -278,7 +278,10 @@ pub(super) fn render(
                 reason: reason.clone(),
             }]));
         }
-        RootDocument::ProjectLayer(_) => {
+        RootDocument::ProjectLayer {
+            company_repository: false,
+            ..
+        } => {
             return Ok(Rendered::Findings(vec![PluginFinding::ProjectRepository]));
         }
         root if !company_home(root, index_absent) => {
@@ -1013,6 +1016,25 @@ mod tests {
             ("docs/company.md", "# Company\n"),
         ]);
         assert_eq!(findings(&tree), [PluginFinding::ProjectRepository]);
+    }
+
+    #[test]
+    fn a_project_layer_declaring_company_repository_renders_the_plugin() {
+        let tree = Committed::of(&[
+            (
+                CONFIG_FILE_NAME,
+                "schema_version: 6\nproject: company-acme\ncompany_repository: true\n",
+            ),
+            (INDEX, "expanded: [company.md]\n"),
+            (
+                "docs/company.md",
+                "---\ndescription: Who Acme is.\n---\n# Company\n",
+            ),
+        ]);
+        assert!(matches!(
+            render(&tree, &key(), &name()).unwrap(),
+            Rendered::Files(_)
+        ));
     }
 
     #[test]

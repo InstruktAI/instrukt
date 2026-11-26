@@ -803,9 +803,10 @@ pub(super) fn project_without_index() -> Notice {
 
 /// Renders the root `AGENTS.md` of the repository whose view is `tree`,
 /// from the tree alone. What the root `instrukt.yaml` is decides the mode: a
-/// project layer renders from `docs/project/index.yaml`; a company's
-/// settings document, or no root document beside a `docs/index.yaml`, is a
-/// company home, rendered from that index; no root document and no company
+/// project layer declaring `company_repository`, a company's settings
+/// document, or no root document beside a `docs/index.yaml`, is a company
+/// home, rendered from that index; any other project layer renders from
+/// `docs/project/index.yaml`; no root document and no company
 /// index renders nothing. Every `AGENTS.md` below the root that is
 /// instrukt's rendering is removed; the root's is removed only where the
 /// mode's entry index is absent, and left as it is where the index reports a
@@ -827,13 +828,13 @@ pub(super) fn render_tree(
             });
             return Ok(plan);
         }
-        RootDocument::ProjectLayer(project) => {
-            render_project(tree, project.as_ref(), override_beside_root, &mut plan)?;
-            Some(project_index.as_str())
-        }
         root if company_home(&root, company_index_absent) => {
             super::_company::render(tree, override_beside_root, &mut plan);
             Some(super::_company::COMPANY_INDEX)
+        }
+        RootDocument::ProjectLayer { slug, .. } => {
+            render_project(tree, slug.as_ref(), override_beside_root, &mut plan)?;
+            Some(project_index.as_str())
         }
         _ => None,
     };
@@ -849,14 +850,19 @@ pub(super) fn render_tree(
 
 /// Whether a tree whose root document is `root` renders as a company home
 /// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "What makes
-/// a repository a company home"): a company's settings document, or no root
-/// document beside a `docs/index.yaml` that is there, read or linked. The one
-/// rule rendering and [`super::is_company_index`] decide by.
+/// a repository a company home"): a project layer declaring
+/// `company_repository`, a company's settings document, or no root document
+/// beside a `docs/index.yaml` that is there, read or linked. Any other
+/// project layer is a project, whatever `docs/` holds. The one rule
+/// rendering and [`super::is_company_index`] decide by.
 pub(super) fn company_home(root: &RootDocument, company_index_absent: bool) -> bool {
     match root {
+        RootDocument::ProjectLayer {
+            company_repository, ..
+        } => *company_repository,
         RootDocument::CompanySettings(_) => true,
         RootDocument::Absent => !company_index_absent,
-        RootDocument::ProjectLayer(_) | RootDocument::Unreadable(_) => false,
+        RootDocument::Unreadable(_) => false,
     }
 }
 
@@ -1204,6 +1210,36 @@ mod tests {
             ("docs/project/index.yaml", ""),
         ]));
         assert_eq!(root(&plan).text, format!("{GENERATED_LINE}\n"));
+    }
+
+    #[test]
+    fn a_project_layer_declaring_company_repository_renders_the_company_index() {
+        let plan = rendered(Committed::of(&[
+            (
+                CONFIG_FILE_NAME,
+                "schema_version: 6\nproject: company-acme\ncompany_repository: true\n",
+            ),
+            ("docs/index.yaml", "expanded: []\nlisted: []\n"),
+        ]));
+        assert_eq!(plan.findings, []);
+        assert_eq!(plan.notices, []);
+        assert!(
+            root(&plan)
+                .text
+                .contains(super::super::_company::COMPANY_PASSAGE),
+            "{}",
+            root(&plan).text
+        );
+    }
+
+    #[test]
+    fn any_other_project_layer_stays_a_project_whatever_docs_holds() {
+        let plan = rendered(Committed::of(&[
+            (CONFIG_FILE_NAME, LAYER),
+            ("docs/index.yaml", "expanded: []\nlisted: []\n"),
+        ]));
+        assert_eq!(plan.writes, []);
+        assert_eq!(plan.notices, [project_without_index()]);
     }
 
     #[test]

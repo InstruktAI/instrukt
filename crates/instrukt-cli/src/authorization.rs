@@ -165,7 +165,7 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
     };
     Ok(
         match instrukt_core::config::classify_root(bytes.as_deref()) {
-            instrukt_core::config::RootDocument::ProjectLayer(project) => project,
+            instrukt_core::config::RootDocument::ProjectLayer { slug, .. } => slug,
             _ => None,
         },
     )

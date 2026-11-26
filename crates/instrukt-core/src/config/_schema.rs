@@ -276,6 +276,9 @@ fn schema() -> Node {
             "review",
             map(vec![("automatic", Leaf(ProjectOnly, Shape::Bool))]),
         ),
+        // Declares the repository a company's: its root renders as a company
+        // home (`project/instrukt/spec/feature/configuration/company-homes`).
+        ("company_repository", Leaf(ProjectOnly, Shape::Bool)),
         (
             super::_regenerable::REGENERABLE_KEY,
             Leaf(ProjectOnly, Shape::Regenerable),
