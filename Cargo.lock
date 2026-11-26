@@ -985,6 +985,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "instrukt-outside"
+version = "0.1.0"
+dependencies = [
+ "httpdate",
+ "jiff",
+ "thiserror",
+ "tracing",
+ "ureq",
+]
+
+[[package]]
 name = "instrukt-runner"
 version = "0.1.0"
 dependencies = [
