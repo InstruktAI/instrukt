@@ -52,9 +52,8 @@ classified as:
 
 - **temporarily unavailable**: a reason from a closed vocabulary — unreachable,
   timed out, rate limited, unavailable as the service said, or a refusal the
-  part's service rules count as temporary — its extent, the moment the service
-  named for the next try when it named one, and whether the request is known
-  not to have taken effect;
+  part's service rules count as temporary — its extent, and the moment the
+  service named for the next try when it named one;
 - **a defect**: anything else. A defect is never retried by the gate and
   returns to the part unchanged.
 
@@ -83,6 +82,10 @@ none:
   result, the defect, or — when the next moment falls after the caller's wait or
   stop is requested — the wait, at once, without pausing into it.
 
+A try brought to an attempt or a call makes its request through the part's own
+client, never through another operation of the gate, so each failure is judged
+once and reported once.
+
 The wait a part receives renders as the operator sees it: the service, the
 reason and the moment of the next try. A part that records a cause records
 that rendering.
@@ -90,17 +93,17 @@ that rendering.
 ### The HTTP adapter
 
 For a client speaking HTTP, the gate's adapter classifies a response or a
-transport failure, before any service rule:
+transport failure the part's service rules left unjudged:
 
-| Answer | Judgment | Extent | Taken effect |
-| --- | --- | --- | --- |
-| `429 Too Many Requests` (RFC 6585) | rate limited | the key | known not |
-| `503 Service Unavailable` (RFC 9110) | unavailable | the scope | known not |
-| `408 Request Timeout`, `425 Too Early` | unavailable | the key | known not |
-| `502`, `504`, any other `5xx` | unavailable | the scope | unknown |
-| any other `4xx` | defect | — | — |
-| name not resolved, connection not opened | unreachable | the scope | known not |
-| timeout or broken connection after sending | timed out / unreachable | the scope | unknown |
+| Answer | Judgment | Extent |
+| --- | --- | --- |
+| `429 Too Many Requests` (RFC 6585) | rate limited | the key |
+| `503 Service Unavailable` (RFC 9110) | unavailable | the scope |
+| `408 Request Timeout`, `425 Too Early` | unavailable | the key |
+| `502`, `504`, any other `5xx` | unavailable | the scope |
+| any other `4xx` | defect | — |
+| name not resolved, connection not opened | unreachable | the scope |
+| timeout or broken connection after sending | timed out / unreachable | the scope |
 
 `Retry-After` (RFC 9110) is read in both forms: a number of seconds, counted
 from the moment the answer was received and rounded up to whole seconds, or an

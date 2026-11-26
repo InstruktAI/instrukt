@@ -126,9 +126,10 @@ Slack's answers are judged by the outside gate
 (`project/instrukt/design/architecture/outside-gate`). Beyond HTTP's own rules,
 the body code `ratelimited` limits the method that received it, and
 `request_timeout`, `internal_error`, `service_unavailable` and `fatal_error`
-make the connector's Slack unavailable, for every method; a token Slack refuses
-and a scope list it cannot provide are waited out. At admission a missing scope
-is waited out too: the connector stays withheld with its finding and is checked
+make Slack unavailable for every method the connector calls with the same
+token; a token Slack refuses, and a scope list it cannot provide, are waited
+out for every method called with that token. At admission a missing scope is
+waited out too: the connector stays withheld with its finding and is checked
 again when the wait ends.
 <!-- /planned:outside-gate-foundation -->
 
