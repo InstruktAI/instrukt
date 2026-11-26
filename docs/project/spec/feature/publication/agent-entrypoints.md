@@ -187,11 +187,11 @@ same content with the same instrukt release write the same bytes.
 
 ### A commit made without the hook
 
+<!-- planned-change:company-home-generation -->
 A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
 section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
 commit naming each stale entrypoint; the repair is `instrukt docs render` and
-<!-- planned-change:company-home-generation -->
 a commit, or a commit through the hook. In a company's repository, the
 workflow that publishes the company's skill on main also writes the
 repository's `AGENTS.md`, with the shared workflows repository's own renderer,
@@ -199,6 +199,10 @@ and commits to main only when what it rendered differs from what main holds;
 that workflow and its renderer belong to the shared workflows repository
 (`project/instrukt/policy/shared-workflows`).
 <!-- change:company-home-generation -->
+A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
+section is not installed leaves its entrypoints as they were. The
+repository's own CI runs `instrukt docs render --check`, which fails such a
+commit naming each stale entrypoint; the repair is `instrukt docs render` and
 a commit, or a commit through the hook. In a company's repository that
 carries the shared workflows repository's publishing workflow, that workflow
 also writes the repository's `AGENTS.md` on main, with the shared workflows

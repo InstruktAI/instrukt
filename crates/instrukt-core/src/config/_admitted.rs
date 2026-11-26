@@ -350,9 +350,11 @@ impl Admitted {
 
 /// The company home `name` as admitted, `None` when its folder holds no
 /// document, or its findings. Its document is read where it stands, a
-/// legacy one unconverted, and both present is a finding naming both. Its
-/// document and its secrets file are each read once: what is judged is what
-/// is admitted.
+/// legacy one unconverted, and both present is a finding naming both.
+/// Deciding which file holds the settings reads a legacy document before
+/// it is taken; the settings judged are those of one read of the chosen
+/// file, and they are what is admitted. The secrets file is read once, and
+/// that read is what validation and the admitted connectors resolve from.
 fn admit_company(
     home: &Home,
     name: &ProjectSlug,

@@ -41,17 +41,22 @@ The default role of conversation sessions is `company-agent`; a named connector
 may declare a different `role` in its company home's `instrukt.yaml`, which is
 recorded on the session's `connected_conversations` binding and returned by
 caller assignment lookup. An agents file of schema
-<!-- change:company-home-generation -->
-The default role of conversation sessions is `company-agent`; a named connector
-may declare a different `role` in its company home's `company.yaml`, which is
-recorded on the session's `connected_conversations` binding and returned by
-caller assignment lookup. An agents file of schema
-<!-- /planned-change:company-home-generation -->
 version 2 converts to version 3 on the owned migration path
 (`project/instrukt/spec/feature/configuration/owned-files`): its
 `roles.conversation` entry becomes `roles.company-agent` with every field as
 it was, and nothing else changes. A version-2 file that holds both entries is
 refused with its source intact, naming both, until one is removed.
+<!-- change:company-home-generation -->
+The default role of conversation sessions is `company-agent`; a named connector
+may declare a different `role` in its company home's `company.yaml`, which is
+recorded on the session's `connected_conversations` binding and returned by
+caller assignment lookup. An agents file of schema
+version 2 converts to version 3 on the owned migration path
+(`project/instrukt/spec/feature/configuration/owned-files`): its
+`roles.conversation` entry becomes `roles.company-agent` with every field as
+it was, and nothing else changes. A version-2 file that holds both entries is
+refused with its source intact, naming both, until one is removed.
+<!-- /planned-change:company-home-generation -->
 
 The standing project coordinator's role is `sdlc-coordinator`. An agents file
 of schema version 3 converts to version 4 on the same owned migration path: a
