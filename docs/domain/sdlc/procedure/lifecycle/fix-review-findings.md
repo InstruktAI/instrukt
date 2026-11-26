@@ -2,6 +2,10 @@
 eval: true
 description: 'Address review findings for any review phase: prepared artifacts, plan, or build. Single procedure parameterized by the findings artifact name.'
 visibility: 'public'
+role: fixer
+parameters:
+  - name: slug
+    required: true
 ---
 
 # Fix Review Findings — Procedure

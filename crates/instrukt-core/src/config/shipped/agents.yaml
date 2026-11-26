@@ -3,6 +3,7 @@ schema_version: 4
 default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
 roles:
   builder: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
+  fixer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
   finalizer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
   drift-analyzer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
   deferrer: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
