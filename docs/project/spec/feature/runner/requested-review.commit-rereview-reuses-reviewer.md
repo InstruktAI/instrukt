@@ -103,6 +103,7 @@ asked for.
 | Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the requested reviewer the ask reaches has no turn in progress (Reaching the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
 | Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, reports whether the session has a turn in progress, and reports which run an input entered and whether that run has ended (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
+| Delivery | When the caller resolves to a session, a runner wake-up serves this computer: the shared minute wake-up is registered, or the operator schedules it, as `instrukt ticks status` reports (`launchd`, `systemd`, `cron` or `operator`), or the owned runner service runs `instrukt run` (`project/instrukt/spec/feature/runner/module-installation`, Shared minute wake-up, Runner service). A caller that resolves to no session is owed no notice and needs none. | What `instrukt ticks status` reports instead, and its door: `instrukt install` for a missing or broken registration; for no demand, enabling the todos or events module of a project on this computer and then `instrukt install`, because only those modules demand the wake-up (`project/instrukt/spec/feature/runner/module-installation`). |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
 A refused ask starts no reviewer, sends nothing and records nothing.
@@ -158,7 +159,8 @@ reviewer an ask reaches follows from its kind:
 A re-review has no reviewer of record to reach when no ask of the project had
 the prior report as its report destination, when the earlier head's verdict
 does not stand here, or when its reviewer of record is not a requested
-reviewer. It then reaches the head's own requested reviewer, as a review does.
+reviewer: reuse is not possible. It then reaches the head's own requested
+reviewer, as a review does, and the reply names which of these held.
 
 | The requested reviewer it reaches | What an admitted ask does |
 | --- | --- |
@@ -200,8 +202,8 @@ reviewer of record or why it did not, the report destination, and where the
 outcome arrives: in the report destination, in `instrukt review show <head>`
 once the reviewer records its verdict, and at the session that asked
 (Returning the outcome). It names that session, or states that the caller
-resolves to none, and states whether a runner wake-up serves this computer.
-The reply does not wait for the review.
+resolves to none, and states when `instrukt ticks status` finds the runner's
+wake-up stale. The reply does not wait for the review.
 
 When the runtime does not accept the start or the wake within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
@@ -244,10 +246,10 @@ the verdict notices it made owed without waiting for the machine's dispatch
 gate, as a work command attempts approval attention
 (`project/instrukt/spec/feature/runner/session-continuity`, Approval
 attention). Every runner wake-up delivers what is still owed and observes the
-turns of outstanding asks; only a wake-up observes a stopped turn. Where no
-runner wake-up serves the computer, no stopped turn is observed and a verdict
-notice the recording could not hand over waits for the next attempt. Neither
-notice carries a report's text or anything of a conversation.
+turns of outstanding asks; only a wake-up observes a stopped turn. That is why
+an ask from a session is admitted only where a runner wake-up serves the
+computer (Admission, Delivery). Neither notice carries a report's text or
+anything of a conversation.
 
 ### Verdict
 
