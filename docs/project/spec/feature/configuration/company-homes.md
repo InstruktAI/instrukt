@@ -153,9 +153,17 @@ repositories, and the local state instrukt keeps in the home. The settings
 document stays out of the repository too: it holds the members' addresses
 and the company's live settings, and it is kept on the computer.
 
+<!-- planned-change:company-home-generation -->
 - `instrukt config init --company <name>` writes the home's ignore lines for
   them, appending each missing line and keeping every other line, also in a
   home that already exists.
+<!-- change:company-home-generation -->
+- `instrukt config init --company <name>` writes the home's ignore lines for
+  them, appending each missing line and keeping every other line, also in a
+  home that already exists. A `.gitignore` that is a symbolic link is
+  refused, naming it, before anything is read or written; it is replaced by
+  the file itself in the company's repository, and the command run again.
+<!-- /planned-change:company-home-generation -->
 - `instrukt config validate --company <name>` reports as a finding, naming
   the path, a settings document, a secrets file, a `projects/` folder or
   local state that the home's repository tracks or does not ignore.
