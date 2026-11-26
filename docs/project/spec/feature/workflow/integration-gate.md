@@ -91,7 +91,7 @@ published earlier included.
 | Work's answer on the candidate commit, and its review status | The candidate's result |
 | --- | --- |
 | The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
-| Its derived approval was withdrawn for a covering head's verdict of needs work, and no later derived approval stands (Review coverage of a candidate) | `failure`, whatever review status the commit still carries. |
+| A revision holds it: a verdict whose current version replaced an approval with needs work judged a commit the candidate adds, and no head the candidate contains that contains that commit holds an approval given after that revision | `failure`, whatever review status the commit still carries and whatever covers that commit. |
 | The commit carries no review status | Pending. |
 | The review status is a failure | `failure`. |
 | Anything else | The CI result. |
@@ -100,7 +100,18 @@ A status the reviewer bot published for an earlier version of a verdict
 therefore completes no result that the current verdict withholds. From the
 tick that finds needs work current, the result is a failure, before GitHub
 shows the failure status. A result that was reported complete before then is
-replaced by that failure, and the integrator is woken with it. On a
+replaced by that failure, and the integrator is woken with it.
+
+A revision holds what its verdict judged: for a todo's build review, its head
+and the commits that head contains; for work's head verdict, the commits after
+its pinned base up to its head
+(`project/instrukt/spec/feature/work/github-apps`, Review evidence). A verdict
+that answers a candidate request (Review coverage of a candidate) is that
+candidate's own verdict, read by the first row, and holds nothing else. The
+findings on a commit a revision holds are its head's author's to address, and
+nobody is asked to decide for it. A held candidate has no derived approval
+published: one GitHub already shows is withdrawn through work, and one not
+shown yet publishes nothing. On a
 project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
@@ -153,7 +164,7 @@ whichever parent brought it in, and each of them must be one of these.
 | A merge git reproduces | Its tree is what git's own merge of its parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
-| A commit its author exempted | Work holds an exemption for it, and no current verdict of needs work judged it: a todo's for the commits its head contains, work's for the commits after its pinned base up to its head (`project/instrukt/spec/feature/work/github-apps`, Review evidence). | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
+| A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
 <!-- /planned-change:author-recorded-review-routing -->
 
 Approval of a head that is not a todo's is work's answer on that commit's
@@ -188,8 +199,7 @@ this way.
 | Finding | What follows |
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
-| A commit is not covered, and a current verdict of needs work judged it | The candidate is held, and nothing is asked: the verdict's findings are its head's author's to address. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. |
-| Any other commit is not covered | The candidate is held, and owes no review of its own. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The commit's authoring session is asked to decide for it: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told that the candidate is held, for which commit and whose decision. The next tick derives the candidate again. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/policy/checks-and-guards`). Where the commit names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, no author of ours can decide: the runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered that no revision holds (Candidate and verification) and whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/policy/checks-and-guards`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when every commit not covered that no revision holds has no author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -200,12 +210,8 @@ gives the candidate no first approving status.
 Once GitHub shows the status, a later version of a covering head withdraws
 nothing.
 <!-- change:author-recorded-review-routing -->
-Once GitHub shows the status, the candidate is not derived again, and a later
-version of a covering head withdraws it only when that version is needs work.
-On the tick that finds such a version current, the derived approval is
-withdrawn through work and the candidate's result is a failure (Candidate and
-verification); the candidate then holds no verdict of its own and is derived
-afresh.
+Once GitHub shows the status, the candidate is not derived again; a hold of
+the candidate withdraws it (Candidate and verification).
 <!-- /planned-change:author-recorded-review-routing -->
 
 A candidate is never approved on its covered part alone, and a different
