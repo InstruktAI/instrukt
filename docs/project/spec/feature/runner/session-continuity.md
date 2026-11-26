@@ -183,6 +183,18 @@ adapter verb templates.
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
 
+<!-- planned:commit-rereview-reuses-reviewer -->
+
+Requested review also needs input-consumption observation: which run an input
+entered and whether that run has ended, as the runner observes the inputs it
+delivers. With it the runner tells the session that asked when the requested
+reviewer's turn stops without a verdict
+(`project/instrukt/spec/feature/runner/requested-review`, Returning the
+outcome). A keyed wake of a requested reviewer is a `dispatch_send` under the
+command identity Keyed wake derives.
+
+<!-- /planned:commit-rereview-reuses-reviewer -->
+
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -228,6 +240,13 @@ Retries retain both IDs, the native project ID and the entire captured request.
 | Requested reviewer | `instrukt:review:<encoded-project>:<head>`, the full id of the head commit asked for |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
+
+<!-- planned:commit-rereview-reuses-reviewer -->
+
+A requested reviewer keeps the key of the head it was started for when an ask
+for a later head wakes it (Keyed wake).
+
+<!-- /planned:commit-rereview-reuses-reviewer -->
 
 
 For standing keys, the canonical home token is `project:<slug>`,
@@ -299,6 +318,30 @@ its binding/claim, runner acceptance, opening receipt and execution tracking
 together. Company harvests available completed answers before adoption, preserves
 answer posting identities/state, and transfers unanswered questions in order.
 A released or ineligible assignment receives no successor.
+
+<!-- planned:commit-rereview-reuses-reviewer -->
+### Keyed wake
+
+A keyed wake sends input to a session an instrukt start key binds, addressed by
+the session. The caller names the session and the object it wakes it for; the
+runner finds the key whose current generation is that session, holds that
+key's lock from recording to the runtime's acceptance, and sends under a
+command identity derived from the key, the generation and the waking object.
+The caller records that identity with its object before anything reaches the
+runtime, and a replay sends the same identity again, which the runtime accepts
+once.
+
+A wake never starts a session and never moves a generation. A session no
+instrukt key binds, or one whose key's current generation is another session,
+is not woken. Neither is a session whose thread was archived or deleted, or one
+with a turn in progress. Each answer names the session and why, and the caller
+decides what follows.
+
+The requested-review caller wakes a commit's reviewer of record
+(`project/instrukt/spec/feature/runner/requested-review`, Reaching the
+reviewer). It wakes only a session under a requested-reviewer key.
+
+<!-- /planned:commit-rereview-reuses-reviewer -->
 
 ### T3 realization of keyed dispatch
 
