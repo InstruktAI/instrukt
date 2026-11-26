@@ -1,29 +1,26 @@
 ---
-description: The outside gate — the one mechanism through which instrukt judges the availability of every service outside it, decides how long to wait and tells the operator once, while each part keeps the client best fitted to its service.
-delivered_by: [outside-gate]
+description: The outside gate — the mechanism a part brings each call to an outside service through, which judges a failure temporary or a defect, decides how long to wait and tells the operator once, while the part keeps the client best fitted to its service.
+delivered_by: [outside-gate-foundation]
 ---
 
 # Outside Gate — Design
 
 ## Required reads
 
+- [project/instrukt/design/architecture/overview](overview.md)
 - [project/instrukt/policy/checks-and-guards](../../policy/checks-and-guards.md)
 
 ## Purpose
 
-instrukt depends on services outside it: GitHub, Slack, declared MCP servers
-and their sign-in issuers, Redis, the selected runtime, model endpoints. Each
-can leave at any moment, and each tells its caller something when it does. The
-outside gate is the one place where instrukt turns what a service said into a
-judgment — temporarily unavailable or a defect — decides how long to wait
-before trying again, and tells the operator once that it waits and why.
+A part that depends on a service outside instrukt brings each call's outcome to
+the outside gate. The gate turns what the service said into a judgment —
+temporarily unavailable or a defect — decides when the next try may happen, and
+tells the operator once that it waits and why. Which parts use it, and the rules
+they follow in doing so, are `project/instrukt/policy/checks-and-guards`'s.
 
-The gate governs availability, not transport. A part talks to its service
-through the best existing client for it: an HTTP client, a protocol client, an
-SDK, a command-line program. The gate never asks a part to replace a fitting
-client with hand-written requests. The client's outcome is brought to the gate,
-and the gate decides what happens next. HTTP status semantics are one adapter
-of the gate, not a requirement on callers.
+The gate governs availability, not transport. The part's own client makes the
+request; the gate never sends one. HTTP status semantics are one adapter of the
+gate.
 
 The term is always "the outside gate". "Gate" alone keeps its meaning in
 `project/instrukt/policy/checks-and-guards`: an entry check that refuses with
@@ -33,181 +30,156 @@ its door.
 
 ### Where it lives
 
-The gate is the crate `instrukt-outside`, which depends on nothing of
-instrukt. Every crate that talks to an outside service depends on it, the
-connector crates included, so its interface is reachable from every part
-without reversing a dependency between instrukt's crates
-(`project/instrukt/design/architecture/overview`).
+The crate `instrukt-outside`, which depends on nothing of instrukt
+(`project/instrukt/design/architecture/overview`, Modules and crates).
 
-### What a part gives the gate
+### Key and extent
 
-- **The service and the key it is waited on by.** A service name the operator
-  recognises (`slack`, `github`, an MCP server's declared name) and a key
-  narrowing it to what one wait applies to, such as a company, a connector and
-  a method. Waits are kept per key, so a wait on one key never delays another.
-- **The operation.** One try against the service through the part's own
-  client. It answers with its result, or with a failure the part's adapter has
-  classified as one of:
-  - **temporarily unavailable**, with the reason from a closed vocabulary
-    (unreachable, timed out, rate limited, the service saying it is unavailable
-    with its status, or a refusal the part's service rules count as temporary),
-    the moment the service named for the next try when it named one, and
-    whether the request is known not to have taken effect;
-  - **a defect**: anything else — a refusal of the request, a request instrukt
-    built wrongly, an answer of the wrong shape. A defect is never retried.
-- **Its settings for this request**, each with the gate's default when the part
-  brings none:
-  - **budget**: how long the caller may wait in all — until the service
-    returns, within a stated duration, or a single try whose outcome is only
-    judged and reported;
-  - **backoff**: the first pause and the longest pause between tries when the
-    service named no moment;
-  - **effect**: whether repeating the operation is safe. An operation whose
-    repetition is not safe is tried again only after a failure known not to
-    have taken effect; after any other failure the gate hands the outcome back
-    to the part, which owns the intent record of that effect
-    (`sdlc/policy/state-storage`);
-  - **service rules**: what counts as temporarily unavailable for this
-    service beyond the protocol's standard, such as a vendor's own throttling
-    signals, or a refusal the part's own contract says is waited out, such as
-    a connection whose credential the operator may still renew. The part's
-    adapter supplies them; the gate applies them before the standard rules.
+A part names what a call reaches by a key: a service name the operator
+recognises (`slack`, an MCP server's declared name), the scope it reaches (such
+as a company and a connector), and optionally what within that scope the call
+uses (such as a Web API method). A temporary unavailability applies either to
+the whole scope — the service cannot be reached or says it is unavailable — or
+only to what within it the call used, such as a method the service limited. The
+gate keeps waits at both levels: a call is not tried while its scope or its own
+key is inside a wait, and a wait on one key never delays another key of the
+same scope.
 
-### What the gate gives back
+### The judgment a part's adapter gives
 
-- **For a part that may wait** (a command, a part with its own thread): the
-  result, or a refusal — the defect, or the last unavailability once the
-  budget would be exceeded or the part asked the wait to stop. The gate never
-  sleeps past the budget: when the next try would fall after it, it refuses at
-  once with the moment the service named or the backoff gave.
-- **For a part that must not block** (a pass of a long-running loop): the
-  result, the defect, or the moment before which the key is not to be tried
-  again. A key still inside a wait the service named is not tried at all; the
-  part is told the moment and moves on.
+One try through the part's own client ends in its result or in a failure
+classified as:
+
+- **temporarily unavailable**: a reason from a closed vocabulary — unreachable,
+  timed out, rate limited, unavailable as the service said, or a refusal the
+  part's service rules count as temporary — its extent, the moment the service
+  named for the next try when it named one, and whether the request is known
+  not to have taken effect;
+- **a defect**: anything else. A defect is never retried by the gate and
+  returns to the part unchanged.
+
+### Settings
+
+A part's settings for its calls, each with the gate's default when it brings
+none:
+
+- **backoff**: the first and the longest pause when the service named no
+  moment; pauses double from the first to the longest and start again from the
+  first after a success;
+- **service rules**: what counts as temporarily unavailable for this service
+  beyond the protocol's standard, applied before the standard rules.
+
+### Operations
+
+- **Attempt** — one try at most, never a pause. A key or scope inside a wait is
+  not tried. Answers the result, the defect, or the wait: its reason and the
+  moment of the next possible try. Used by a part that must not block, such as
+  a pass of a long-running loop, and by every call whose repetition is not
+  safe.
+- **Call** — for a call whose repetition is safe, in a part that may wait.
+  Takes, beside the settings, the caller's wait — until the service returns, or
+  within a stated duration — and a stop request. Tries, and after a temporary
+  unavailability pauses until the next moment and tries again. Answers the
+  result, the defect, or — when the next moment falls after the caller's wait or
+  stop is requested — the wait, at once, without pausing into it.
+
+The wait a part receives renders as the operator sees it: the service, the
+reason and the moment of the next try. A part that records a cause records
+that rendering.
 
 ### The HTTP adapter
 
-For a client speaking HTTP, the gate's HTTP adapter classifies an answer by
-the protocol's standards before any service rule:
+For a client speaking HTTP, the gate's adapter classifies a response or a
+transport failure, before any service rule:
 
-- `429 Too Many Requests` (RFC 6585) and `503 Service Unavailable`
-  (RFC 9110 §15.6.4) are temporarily unavailable and known not to have taken
-  effect; `408 Request Timeout` and `425 Too Early` are temporarily
-  unavailable; `502` and `504` are temporarily unavailable with their effect
-  unknown; every other `4xx` is a defect; any other `5xx` is temporarily
-  unavailable with its effect unknown.
-- `Retry-After` (RFC 9110 §10.2.3) is read in both of its forms, a number of
-  seconds or an HTTP-date in any of the three formats a recipient must accept
-  (RFC 9110 §5.6.7). The gate waits exactly until that moment; a delay counts
-  whole seconds from the moment the answer was received.
-- A name that does not resolve and a connection that cannot be opened are
-  unreachable and known not to have taken effect; a timeout or a broken
-  connection after the request was sent is unreachable or timed out with its
-  effect unknown.
+| Answer | Judgment | Extent | Taken effect |
+| --- | --- | --- | --- |
+| `429 Too Many Requests` (RFC 6585) | rate limited | the key | known not |
+| `503 Service Unavailable` (RFC 9110) | unavailable | the scope | known not |
+| `408 Request Timeout`, `425 Too Early` | unavailable | the key | known not |
+| `502`, `504`, any other `5xx` | unavailable | the scope | unknown |
+| any other `4xx` | defect | — | — |
+| name not resolved, connection not opened | unreachable | the scope | known not |
+| timeout or broken connection after sending | timed out / unreachable | the scope | unknown |
 
-Other client families bring their client's own classification through the
-gate in the same shape — a Redis client's connection, refusal and timeout
-signals, a runtime adapter's statement that its runtime cannot be reached —
-so each judgment is made once, where the client's knowledge is.
+`Retry-After` (RFC 9110) is read in both forms: a number of seconds, counted
+from the moment the answer was received and rounded up to whole seconds, or an
+HTTP-date in any of the three formats RFC 9110 requires a recipient to accept.
+An unreadable value is treated as absent. A moment too far to represent is
+taken as the farthest representable one.
 
 ## Invariants
 
-- **One judgment.** Whether a failure is temporary, how long to wait and what
-  the operator is told are decided by the gate and nowhere else. A part never
-  carries a backoff schedule or a `Retry-After` reading of its own; it brings
-  its settings to the gate. A part that must remember a wait across restarts
-  keeps the moment the gate gave it in its own durable record, as the time of
-  its next pass, and does not try before it.
-- **The service's word governs.** Where the service names a moment, the gate
-  waits exactly until it. Otherwise it backs off exponentially, doubling the
-  pause from the part's first pause up to its longest.
-- **One retry layer.** Exactly one layer tries again. A client that retries or
-  backs off by itself is either configured not to, so the gate retries, or
-  brought through the gate with a single-try budget, so its own retrying is
-  judged and reported without being repeated. The clients instrukt uses today
-  — its HTTP client, its Redis client and its WebSocket client — retry nothing
-  by themselves.
-- **One report per wait.** While a key is waited on, the operator is told
-  once: when its first unavailability starts the wait, and when the service
-  answers again, with how long it waited. No record is written per try. The
-  report names the service, the key, the reason and the moment of the next
-  try, and never a credential, a request body or an answer body
-  (`sdlc/policy/security-awareness`).
-- **Defects pass through.** A defect returns to the part at once, unchanged,
-  and is the part's to report as its own failure
-  (`project/instrukt/policy/checks-and-guards`: any other failure is a defect
-  to fix).
-- **No wait holds a shared resource.** The gate's own bookkeeping is held only
-  to read or record a key's state, never across an operation or a pause, and a
-  part never waits on the gate while holding the writer lock or another lock
-  unrelated work takes.
-- **One gate per service in a process.** The host of the parts — a command,
-  or what the runner hosts — makes the gate and hands it to the parts it runs,
-  so every client of one service in a process shares its waits. Nothing is a
-  global.
+- **The service's word governs.** Where the service names a moment, the next
+  try is not before it and is allowed at it. Otherwise the pause follows the
+  part's backoff.
+- **One report per wait.** While a key or a scope is waited on, the operator is
+  told once: when its first unavailability starts the wait, and when a try at
+  that level next succeeds, with how long the wait lasted. No record is written
+  per try. The report names the service, the key or scope, the reason and the
+  moment of the next try, and never a credential, a request body or an answer
+  body.
+- **Waits run on a monotonic clock.** Pauses and wait ends are measured on a
+  monotonic time source the gate's host supplies; moments shown to the operator
+  and handed to parts are read from the host's clock. A frozen or adjusted
+  wall clock never stops a wait from ending.
+- **Bookkeeping holds nothing shared.** The gate holds its own state only to
+  read or record one key, never across a try or a pause.
+- **The host makes the gate.** The host of the parts makes the gate and hands
+  it to them, so every client of one service in a process shares its waits.
+  Nothing is a global.
 
 ## Primary flows
 
-### A part that may wait
+### A call that may wait
 
 ```mermaid
 sequenceDiagram
   participant P as Part
   participant G as Outside gate
   participant S as Service (through the part's client)
-  P->>G: service + key, settings, one try
-  G->>G: key inside a named wait? pause until it (within budget)
+  P->>G: key, settings, caller's wait, stop, one try
+  G->>G: key or scope inside a wait? pause until it (within the caller's wait)
   G->>S: try
-  S-->>G: unavailable (reason, named moment?)
+  S-->>G: unavailable (reason, extent, named moment?)
   G->>G: first of this wait: report it started
   G->>G: next moment = named moment, else backoff
-  alt next moment within budget
+  alt next moment within the caller's wait
     G->>S: try again at that moment
     S-->>G: result
     G->>G: report the wait ended and how long it lasted
     G-->>P: result
-  else beyond budget or stop asked
-    G-->>P: refused: last unavailability and its moment
+  else beyond the caller's wait, or stop requested
+    G-->>P: the wait: reason and next moment
   end
 ```
 
-### A part that must not block
+### An attempt
 
-Each pass asks the gate for one try. The gate answers with the result, the
-defect, or the moment before which the key is not tried; a key inside a named
-wait is answered with that moment without being tried. The part schedules its
-next pass for that moment and serves its other work meanwhile. The report is
-the same as for a waiting part.
+A pass asks for one try. A key or scope inside a wait is answered with the wait
+without a try. Otherwise the try runs and its outcome is judged and recorded as
+in a call, with the same report. The part schedules its next pass for the
+moment it received and serves other work meanwhile.
 
 ### Where the report goes
 
-The gate writes the report to instrukt's log, in the log of the command it
-runs in, under the gate's own event names
-(`project/instrukt/spec/feature/configuration/logging`). A command run in the
-foreground also shows the same report on its standard error, since its operator
-is the person running it. Status surfaces that already show a part's state,
-such as `instrukt events status`, keep showing the outcome the part received
-from the gate; they are not a second report of the wait.
+The report is written to the log of the command the gate runs in, under the
+gate's own event names (`project/instrukt/spec/feature/configuration/logging`).
+A command run in the foreground also shows it on its standard error. A status
+surface that shows a part's state, such as `instrukt events status`, shows the
+wait the part received; it is not a second report.
 
 ## Failure modes
 
-- **The service answers again during a pause:** the gate does not notice
-  before the pause ends; the pause is bounded by the backoff's longest pause or
-  by the moment the service named.
+- **The service returns during a pause:** the gate notices at the next try, at
+  most the longest pause or the named moment later.
 - **The process restarts during a wait:** waits live in the process. The first
-  try after a restart reaches the service, which names its wait again, unless
-  the part kept the moment in its own durable record.
-- **A part classifies a defect as temporary:** the gate retries it until the
-  budget ends, and the report shows the reason. The adapter is corrected; the
-  gate cannot tell a misclassified defect from an outage.
-- **An operation whose repetition is not safe fails with its effect unknown:**
-  the gate does not try again and hands the outcome to the part, which
-  reconciles through its own intent record.
-- **The caller's budget is shorter than the outage:** the caller is refused
-  within its budget with the moment of the next possible try
-  (`sdlc/principle/architectural-defaults` §10); a caller that must see the
-  eventual outcome runs as its own background work with an unbounded budget.
-
-## See Also
-
-- [project/instrukt/design/architecture/overview](overview.md)
+  try after a restart reaches the service, unless the part kept the moment it
+  received in its own durable record and does not try before it.
+- **An adapter classifies a defect as temporary:** the gate waits it out, and
+  the report shows the reason; the adapter is corrected.
+- **A call whose repetition is not safe fails with its effect unknown:** the
+  part receives the wait from an attempt and reconciles through its own record
+  of the effect (`sdlc/policy/state-storage`).
+- **The caller's wait is shorter than the outage:** the caller receives the
+  wait within it (`sdlc/principle/architectural-defaults`).

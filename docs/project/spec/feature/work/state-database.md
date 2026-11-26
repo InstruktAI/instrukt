@@ -1133,9 +1133,15 @@ bookkeeping. The store has its own SQLite writer outside live intake. It uses th
 canonical state directory. Status reads existing records without creating
 the store or touching its sidecars.
 
+<!-- planned-change:outside-gate-foundation -->
 Each connector keeps one active window with its start and lower bound, the
 provider position, the current fetched page until processed, and any
 provider retry time. Restarts resume those records. Only completion advances
+<!-- change:outside-gate-foundation -->
+Each connector keeps one active window with its start and lower bound, the
+provider position, the current fetched page until processed, and the moment
+of any wait the outside gate gave its last read. Restarts resume those records. Only completion advances
+<!-- /planned-change:outside-gate-foundation -->
 coverage to the window's start less the overlap. Page identities are kept by
 provider channel and message ID. A page with new addressed messages writes
 them in one live-intake transaction. This transaction reconciles previously

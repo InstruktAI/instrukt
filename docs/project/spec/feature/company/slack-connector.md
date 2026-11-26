@@ -121,14 +121,16 @@ the connector retries the check before connecting. Scope findings appear
 in operator status and send no message to members
 (`project/instrukt/spec/feature/configuration/company-homes`). A token Slack
 refuses later is retried and reported like a lost connection.
-<!-- planned:outside-gate -->
-Every Slack call, Web API and Socket Mode alike, is judged by the outside gate
-(`project/instrukt/design/architecture/outside-gate`): Slack's waits and the
-pauses after a failure are the gate's, kept per `(company, connector)` for the
-connection and per `(company, connector, method)` for the Web API, and a code
-Slack answers in its body for throttling or its own unavailability counts as
-temporary for every method, as an HTTP status does.
-<!-- /planned:outside-gate -->
+<!-- planned:outside-gate-foundation -->
+Slack's answers are judged by the outside gate
+(`project/instrukt/design/architecture/outside-gate`). Beyond HTTP's own rules,
+the body code `ratelimited` limits the method that received it, and
+`request_timeout`, `internal_error`, `service_unavailable` and `fatal_error`
+make the connector's Slack unavailable, for every method; a token Slack refuses
+and a scope list it cannot provide are waited out. At admission a missing scope
+is waited out too: the connector stays withheld with its finding and is checked
+again when the wait ends.
+<!-- /planned:outside-gate-foundation -->
 
 The Slack app is subscribed to exactly two kinds of message: mentions of the
 agent and direct messages to it. Slack sends instrukt nothing else from the
@@ -332,11 +334,21 @@ while it was not connected:
   names unresolved gaps and reports spans that age out of the 30-day
   read-back horizon as possibly missed. Other errors retain the current
   position for retry.
+<!-- planned-change:outside-gate-foundation -->
 - A broadcast reply uses its own timestamp and its parent thread, wherever
   Slack lists it. A limited request waits for Slack's retry time and resumes
   at the same page after a restart. Operator status shows the wait.
   If Slack has expired the cursor, only that listing starts over within the
   saved scan window.
+<!-- change:outside-gate-foundation -->
+- A broadcast reply uses its own timestamp and its parent thread, wherever
+  Slack lists it. A request the outside gate answers with a wait — Slack's
+  retry time, or the pause after Slack could not be reached — waits until the
+  wait's moment and resumes at the same page after a restart. Operator status
+  shows the wait.
+  If Slack has expired the cursor, only that listing starts over within the
+  saved scan window.
+<!-- /planned-change:outside-gate-foundation -->
 - The window starts where the last completed read-back started, less a margin;
   with none completed, at the earlier of the time the runner first saw the
   connector declared and the answering bound back
