@@ -5,6 +5,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod _project_docs;
+
 use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
@@ -936,7 +938,7 @@ fn write(
     // A company's repository publishes no project position, no third-party
     // doc and no contribution to the index.
     if !prepared.company {
-        publish_project_docs(home, project, prepared, &staging, tx)?;
+        _project_docs::publish_project_docs(home, project, prepared, &staging, tx)?;
     }
 
     // Outside the home, from the owner of `docs/general/`: the global agent
@@ -1003,71 +1005,6 @@ fn write(
         links,
         degraded,
     })
-}
-
-/// The project's position, its third-party docs and the index this sync
-/// leaves, all through `tx`.
-fn publish_project_docs(
-    home: &Home,
-    project: &Project,
-    prepared: &Prepared,
-    staging: &tempfile::TempDir,
-    tx: &mut Transaction,
-) -> Result<(), PublicationError> {
-    let root = home.root();
-    let in_home = |path: &Path| own_destination(root, &relative_to(root, path)?);
-    // Project positions use the same transaction and whole-tree replacement.
-    let project_dir = in_home(&home.project_docs_dir(&project.slug))?;
-    let claim_path = in_home(&_tree::project_claim_path(home, &project.slug))?;
-    if prepared.committed.below("docs/project/").next().is_some() {
-        let staged = staging.path().join("project").join(project.slug.as_str());
-        _tree::stage_position(&prepared.committed, &Position::Project, &staged)?;
-        _tree::stage_units(&prepared.committed, &Position::Project, &staged)?;
-        tx.replace_dir(&staged, &project_dir)?;
-        let claim = ProjectClaimRecord {
-            project: project.slug.clone(),
-            owner: project.slug.clone(),
-        };
-        let text = serde_yaml_ng::to_string(&claim).map_err(PublicationError::Render)?;
-        tx.write(&claim_path, text.as_bytes())?;
-    } else {
-        tx.remove_dir(&project_dir)?;
-        tx.remove_file(&claim_path)?;
-    }
-    // Third-party docs: file by file, owner-scoped.
-    let docs = home.docs_dir();
-    let mine = |owner: &ProjectSlug| owner == &project.slug;
-    for doc in prepared
-        .patched
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        let source = Path::new("docs").join(&doc.path);
-        if let Some(bytes) = prepared.committed.file(&source.to_string_lossy()) {
-            tx.write(&in_home(&docs.join(&doc.path))?, bytes)?;
-        }
-    }
-    let third_party: BTreeSet<&PathBuf> = prepared
-        .patched
-        .third_party
-        .iter()
-        .map(|d| &d.path)
-        .collect();
-    for old in prepared
-        .index
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        if !third_party.contains(&old.path) {
-            tx.remove_file(&in_home(&docs.join(&old.path))?)?;
-        }
-    }
-    let index_text =
-        serde_yaml_ng::to_string(&prepared.patched).map_err(PublicationError::Render)?;
-    tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
-    Ok(())
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when

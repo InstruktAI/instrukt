@@ -504,7 +504,7 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
     if let Layer::Company(name) = layer {
-        findings.extend(local_material(home, name, &path)?);
+        findings.extend(super::_company_document::local_material(home, name, &path)?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
             && !entries.is_empty()
         {
@@ -547,57 +547,6 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     }
     Ok(findings)
-}
-
-/// What the company home `name` keeps on the computer that its repository
-/// tracks or does not ignore, each a finding naming the path
-/// (`project/instrukt/spec/feature/configuration/company-homes`, "What
-/// stays out of the repository"). The settings document is the one at
-/// `document`, where it stands: a home made before `company.yaml` keeps it
-/// as its root `instrukt.yaml` until converted. Nothing outside a git
-/// working tree.
-fn local_material(
-    home: &Home,
-    name: &crate::ids::ProjectSlug,
-    document: &Path,
-) -> Result<Vec<Finding>, ConfigError> {
-    let dir = home.company_dir(name);
-    if crate::git::worktree_root(&dir)?.is_none() {
-        return Ok(Vec::new());
-    }
-    let settings = document
-        .file_name()
-        .map(|file| format!("/{}", file.to_string_lossy()));
-    let mut found = Vec::new();
-    for line in super::_company_document::COMPANY_IGNORED {
-        let line = match &settings {
-            Some(settings) if line == super::_company_document::COMPANY_IGNORED[0] => {
-                settings.as_str()
-            }
-            _ => line,
-        };
-        let relative = line.trim_matches('/');
-        let path = dir.join(relative);
-        let tracked = !crate::git::run(&dir, ["ls-files", "--", relative])?
-            .trim()
-            .is_empty();
-        let message = if tracked {
-            "the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit".to_owned()
-        } else if path.exists() && !crate::git::succeeds(&dir, ["check-ignore", "-q", relative])? {
-            format!(
-                "the home's repository does not ignore it; `instrukt config init --company {name}` adds its ignore line"
-            )
-        } else {
-            continue;
-        };
-        found.push(Finding {
-            document: path,
-            key: "repository".into(),
-            kind: FindingKind::LeavesTheComputer,
-            message,
-        });
-    }
-    Ok(found)
 }
 
 /// Validate the addressed layer using machine records, without other checkout reads.

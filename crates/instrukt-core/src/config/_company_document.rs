@@ -7,11 +7,15 @@
 //! conversion.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use serde_yaml_ng::{Mapping, Value};
 
-use super::_error::ConfigError;
-use super::_layer::{CONFIG_FILE_NAME, WRITE_LOCK_TIMEOUT, lock_path, write};
+use super::_error::{ConfigError, Finding, FindingKind};
+use super::_layer::{
+    CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, WRITE_LOCK_TIMEOUT, elapsed_ms,
+    lock_path, migrate, persists_conversion, write,
+};
 use super::_schema::COMPANY_SCHEMA_VERSION;
 use crate::fsx::{FsError, LockGuard, atomic_write};
 use crate::home::Home;
@@ -187,6 +191,101 @@ pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
     }
     atomic_write(&path, text.as_bytes())?;
     Ok(())
+}
+
+/// Converts a company's legacy document to `company.yaml` where reading
+/// `layer` through `home` persists conversion; nothing otherwise.
+pub(super) fn converted(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
+    match layer {
+        Layer::Company(name) if persists_conversion(home, layer) => convert(home, name),
+        _ => Ok(()),
+    }
+}
+
+/// [`init`](super::_layer::init) of the company home `name`, its folder made and its legacy
+/// document converted: an existing document is migrated, both present
+/// refused, an absent one written as `company.yaml`.
+pub(super) fn init_company(
+    home: &Home,
+    layer: &Layer,
+    name: &ProjectSlug,
+    started: Instant,
+) -> Result<InitOutcome, ConfigError> {
+    match resolve(home, name)? {
+        CompanyDocument::Both { company, legacy } => {
+            return Err(ConfigError::BothCompanyDocuments { company, legacy });
+        }
+        CompanyDocument::Present(_) | CompanyDocument::Legacy(_) => {
+            return match migrate(home, layer)? {
+                MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
+                MigrationOutcome::AlreadyCurrent | MigrationOutcome::Absent => {
+                    Ok(InitOutcome::AlreadyCurrent)
+                }
+            };
+        }
+        CompanyDocument::Absent => {}
+    }
+    let path = layer.path(home);
+    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
+    if !write_company_settings(&home.company_dir(name), name)? {
+        return Ok(InitOutcome::AlreadyCurrent);
+    }
+    tracing::debug!(
+        event = "config_initialized",
+        path = %path.display(),
+        schema_version = layer.kind().current_schema_version(),
+        duration_ms = elapsed_ms(started),
+    );
+    Ok(InitOutcome::Created)
+}
+
+/// What the company home `name` keeps on the computer that its repository
+/// tracks or does not ignore, each a finding naming the path
+/// (`project/instrukt/spec/feature/configuration/company-homes`, "What
+/// stays out of the repository"). The settings document is the one at
+/// `document`, where it stands: a home made before `company.yaml` keeps it
+/// as its root `instrukt.yaml` until converted. Nothing outside a git
+/// working tree.
+pub(super) fn local_material(
+    home: &Home,
+    name: &crate::ids::ProjectSlug,
+    document: &Path,
+) -> Result<Vec<Finding>, ConfigError> {
+    let dir = home.company_dir(name);
+    if crate::git::worktree_root(&dir)?.is_none() {
+        return Ok(Vec::new());
+    }
+    let settings = document
+        .file_name()
+        .map(|file| format!("/{}", file.to_string_lossy()));
+    let mut found = Vec::new();
+    for line in COMPANY_IGNORED {
+        let line = match &settings {
+            Some(settings) if line == COMPANY_IGNORED[0] => settings.as_str(),
+            _ => line,
+        };
+        let relative = line.trim_matches('/');
+        let path = dir.join(relative);
+        let tracked = !crate::git::run(&dir, ["ls-files", "--", relative])?
+            .trim()
+            .is_empty();
+        let message = if tracked {
+            "the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit".to_owned()
+        } else if path.exists() && !crate::git::succeeds(&dir, ["check-ignore", "-q", relative])? {
+            format!(
+                "the home's repository does not ignore it; `instrukt config init --company {name}` adds its ignore line"
+            )
+        } else {
+            continue;
+        };
+        found.push(Finding {
+            document: path,
+            key: "repository".into(),
+            kind: FindingKind::LeavesTheComputer,
+            message,
+        });
+    }
+    Ok(found)
 }
 
 #[cfg(test)]

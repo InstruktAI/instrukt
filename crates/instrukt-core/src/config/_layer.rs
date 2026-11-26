@@ -171,17 +171,6 @@ pub(crate) fn read_layer(
         .map(|document| (path, document)))
 }
 
-/// Converts a company's legacy document to `company.yaml` where reading
-/// `layer` through `home` persists conversion; nothing otherwise.
-fn converted(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
-    match layer {
-        Layer::Company(name) if persists_conversion(home, layer) => {
-            _company_document::convert(home, name)
-        }
-        _ => Ok(()),
-    }
-}
-
 fn parse(path: &Path, bytes: &[u8]) -> Result<Value, ConfigError> {
     let value: Value = serde_yaml_ng::from_slice(bytes).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
@@ -242,7 +231,7 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 /// committed; [`migrate`] (the `config` writing verbs and the pre-commit
 /// hook) and [`patch`] are the paths that write it
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
-fn persists_conversion(home: &Home, layer: &Layer) -> bool {
+pub(super) fn persists_conversion(home: &Home, layer: &Layer) -> bool {
     !home.is_inspection() && matches!(layer, Layer::Global | Layer::Company(_))
 }
 
@@ -266,7 +255,7 @@ pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), Config
     if !persists_conversion(home, layer) {
         return Ok(());
     }
-    converted(home, layer)?;
+    _company_document::converted(home, layer)?;
     if read_layer(home, layer)?
         .is_some_and(|(_, doc)| matches!(version(&doc.value, layer.kind()), Version::Older(_)))
     {
@@ -434,7 +423,7 @@ pub fn patch(
     if matches!(layer, Layer::Project(_)) {
         migrate_if_needed(home, &Layer::Global)?;
     }
-    converted(home, layer)?;
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
     let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
     let Some((path, mut doc)) = read_layer(home, layer)? else {
@@ -590,7 +579,7 @@ pub fn review_target(home: &Home, layer: &Layer) -> Result<Option<String>, Confi
     super::_review::repository(root, &value, global.as_ref())
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
+pub(super) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -667,7 +656,7 @@ pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u
 /// `init`, the `config` writing verbs, the pre-commit hook and, for the
 /// machine's layer, [`bring_current`] run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
-    converted(home, layer)?;
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
     let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
     let Some((path, doc)) = read_layer(home, layer)? else {
@@ -719,7 +708,7 @@ pub fn init(
         })?;
         _company_document::ignore_local_material(&dir)?;
         _company_document::convert(home, name)?;
-        return init_company(home, layer, name, started);
+        return _company_document::init_company(home, layer, name, started);
     }
     if path.exists() {
         return match migrate(home, layer)? {
@@ -754,43 +743,6 @@ pub fn init(
         path = %path.display(),
         schema_version = layer.kind().current_schema_version(),
         revision = %revision,
-        duration_ms = elapsed_ms(started),
-    );
-    Ok(InitOutcome::Created)
-}
-
-/// [`init`] of the company home `name`, its folder made and its legacy
-/// document converted: an existing document is migrated, both present
-/// refused, an absent one written as `company.yaml`.
-fn init_company(
-    home: &Home,
-    layer: &Layer,
-    name: &ProjectSlug,
-    started: Instant,
-) -> Result<InitOutcome, ConfigError> {
-    match _company_document::resolve(home, name)? {
-        CompanyDocument::Both { company, legacy } => {
-            return Err(ConfigError::BothCompanyDocuments { company, legacy });
-        }
-        CompanyDocument::Present(_) | CompanyDocument::Legacy(_) => {
-            return match migrate(home, layer)? {
-                MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
-                MigrationOutcome::AlreadyCurrent | MigrationOutcome::Absent => {
-                    Ok(InitOutcome::AlreadyCurrent)
-                }
-            };
-        }
-        CompanyDocument::Absent => {}
-    }
-    let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    if !_company_document::write_company_settings(&home.company_dir(name), name)? {
-        return Ok(InitOutcome::AlreadyCurrent);
-    }
-    tracing::debug!(
-        event = "config_initialized",
-        path = %path.display(),
-        schema_version = layer.kind().current_schema_version(),
         duration_ms = elapsed_ms(started),
     );
     Ok(InitOutcome::Created)
