@@ -68,6 +68,28 @@ pub enum Observation {
     Unobservable(String),
 }
 
+/// Why an execution root's own runtime project cannot be had, in fixed
+/// words: never native text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionRootCause {
+    Unreachable,
+    AdditionRefused,
+    MalformedMetadata,
+    DuplicateRoots,
+    Missing,
+}
+impl fmt::Display for ExecutionRootCause {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Unreachable => "the runtime is unreachable",
+            Self::AdditionRefused => "the runtime refused to add it",
+            Self::MalformedMetadata => "the runtime's project metadata is malformed",
+            Self::DuplicateRoots => "two live runtime projects share that root",
+            Self::Missing => "no runtime project is rooted there",
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum SessionsError {
     #[error("unknown compiled runtime adapter `{0}`")]
@@ -121,6 +143,29 @@ pub enum SessionsError {
     ProjectUnverified { key: String, session: SessionRef },
     #[error("thread {0} is still being placed: the runtime is preparing its requested worktree")]
     PlacementPreparing(SessionRef),
+    /// The checkout's own runtime project cannot be had: instrukt's own
+    /// outcome, naming the checkout and a cause in fixed words.
+    #[error(
+        "no runtime project at {} can be used ({cause}); retried on later passes, or run `instrukt install`",
+        checkout.display()
+    )]
+    ExecutionRootUnavailable {
+        checkout: PathBuf,
+        cause: ExecutionRootCause,
+    },
+    /// A bound thread runs in a runtime project other than its checkout's
+    /// own; `idle` says whether its owner may roll it over now.
+    #[error(
+        "thread {session} runs in a runtime project not rooted at {}{}",
+        checkout.display(),
+        if *idle { "; it rolls over to the checkout's own project" } else { "; it rolls over once idle or archived" }
+    )]
+    ThreadMisplaced {
+        key: Option<String>,
+        session: SessionRef,
+        checkout: PathBuf,
+        idle: bool,
+    },
     #[error("{0}")]
     Refused(String),
     #[error("no agent of the dispatch order could start (tried: {})", tried.join(", "))]
@@ -344,7 +389,16 @@ impl<'c> Sessions<'c> {
         input.preferences = order.to_vec();
         let adapter = self.adapter()?;
         let observed = adapter.read_state(session)?;
-        if observed.presence != crate::runtime::Presence::Present {
+        // A thread no longer present, or idle in another runtime project than
+        // the checkout's own, is succeeded; any other is followed up.
+        if observed.presence != crate::runtime::Presence::Present
+            || keyed::idle_misplaced(
+                adapter.as_ref(),
+                &input.checkout,
+                &observed,
+                Some(&input.key),
+            )?
+        {
             let thread = keyed::succeed(
                 adapter.as_ref(),
                 &crate::runtime::FollowupAssignment {
@@ -391,10 +445,11 @@ impl<'c> Sessions<'c> {
     pub fn send(
         &self,
         invocation: &keyed::RuntimeInvocation,
+        work: Option<&dyn crate::interfaces::SessionBindings>,
         session: &SessionRef,
         entry: &crate::inputs::Entry<'_>,
     ) -> Result<crate::inputs::InputOutcome, SessionsError> {
-        crate::inputs::enqueue(invocation, self.adapter()?.as_ref(), session, entry)
+        crate::inputs::enqueue(invocation, self.adapter()?.as_ref(), work, session, entry)
     }
     /// Operational listing keeps unknown activity visible and filters only supported native activity.
     pub fn list(

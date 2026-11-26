@@ -46,6 +46,8 @@ pub struct CreateRequest {
     pub catch_up: Option<CatchUp>,
     pub agent: Option<AgentPreference>,
     pub human_involved: Option<bool>,
+    /// A manual dispatch hold committed with the todo, for this reason.
+    pub hold: Option<String>,
 }
 
 /// `instrukt todo update`: every given change, applied together.
@@ -187,8 +189,18 @@ impl Work {
                 "a schedule, catch-up policy and agent preference belong to a task; this todo is not one",
             ));
         }
+        if request.icebox && request.hold.is_some() {
+            return Err(WorkError::refused(
+                "a held todo is converged work waiting in the lifecycle, and the icebox parks work that has not converged; file it with one of them",
+            ));
+        }
         ensure_slug_free(&mut s, &request.slug, None)?;
         let actor = s.actor()?;
+        let hold = request
+            .hold
+            .as_deref()
+            .map(|reason| manual_hold(reason, &actor, s.now))
+            .transpose()?;
         let after = resolve_refs(&mut s, &request.after)?;
         if request.after.contains(&request.slug) {
             return Err(WorkError::refused("a todo cannot depend on itself"));
@@ -243,7 +255,7 @@ impl Work {
             stamps: Vec::new(),
             claim: None,
             bindings: Vec::new(),
-            hold: None,
+            hold,
             hold_history: Vec::new(),
             label_actions: Vec::new(),
             after,
@@ -596,6 +608,11 @@ impl Work {
             WorkError::refused(format!("`{slug}` has no stored record to withdraw"))
         })?;
         let id = base.record.id.clone();
+        // The withdrawal acts from the project's primary checkout: it holds
+        // the project's workspace and HEAD, and is never one of the linked
+        // worktrees the release moves away, which the command may run in.
+        let checkout = instrukt_core::repository::primary_worktree(&project.root)
+            .map_err(|err| WorkError::refused(err.to_string()))?;
         let withdrawing = WithdrawalLock::acquire(&self.home)?;
         let (intent, fresh) = match store.withdrawal_intent(&id)? {
             None if resuming.is_some() => {
@@ -614,7 +631,7 @@ impl Work {
                 (intent, false)
             }
             None => {
-                let checked = plan_release(&project.root, &base.record)?;
+                let checked = plan_release(&checkout, &base.record)?;
                 let intent = WithdrawalIntent {
                     todo: id.clone(),
                     branch: checked.branch,
@@ -631,7 +648,7 @@ impl Work {
                 (intent, true)
             }
         };
-        let released = release(&project.root, slug, &store, intent, fresh)?;
+        let released = release(&checkout, slug, &store, intent, fresh)?;
         match store.complete_withdrawal(&id, s.now, released.branch, released.worktrees)? {
             Completed::Withdrawn(row) => s.take_written(index, *row, "removed"),
             Completed::NotLive(row) => {
@@ -1379,6 +1396,24 @@ impl Work {
     }
 }
 
+/// The manual dispatch hold `actor` places at `at` for `reason`, as both
+/// `instrukt todo create --hold` and `instrukt todo update --hold` record it;
+/// a reason that is blank once trimmed is refused.
+fn manual_hold(reason: &str, actor: &Actor, at: jiff::Timestamp) -> Result<HoldRecord, WorkError> {
+    let reason = reason.trim();
+    if reason.is_empty() {
+        return Err(WorkError::refused(
+            "a hold records why the work must wait; the reason is blank",
+        ));
+    }
+    Ok(HoldRecord {
+        source: HoldSource::Manual,
+        reason: reason.to_owned(),
+        by: actor.clone(),
+        at,
+    })
+}
+
 /// The record change `instrukt todo update` asks for; returns its
 /// warnings.
 fn apply_update(
@@ -1463,12 +1498,7 @@ fn apply_update(
         });
     }
     if let Some(reason) = &request.hold {
-        let reason = reason.trim();
-        if reason.is_empty() {
-            return Err(WorkError::refused(
-                "a hold records why the work must wait; the reason is blank",
-            ));
-        }
+        let hold = manual_hold(reason, actor, now)?;
         if record.status == TodoStatus::StructuralHolder {
             return Err(WorkError::refused(format!(
                 "`{}` is a structural holder; each child carries its own hold",
@@ -1481,12 +1511,7 @@ fn apply_update(
                 record.slug, record.slug
             )));
         }
-        record.hold = Some(HoldRecord {
-            source: HoldSource::Manual,
-            reason: reason.to_owned(),
-            by: actor.clone(),
-            at: now,
-        });
+        record.hold = Some(hold);
     }
     if request.unclaim {
         let caller = s.caller_session()?;

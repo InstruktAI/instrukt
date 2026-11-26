@@ -203,6 +203,23 @@ pub struct FollowupAssignment<'a> {
     pub now: jiff::Timestamp,
 }
 
+/// Whether [`RuntimeAdapter::execution_root`] only reads or also creates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionRootMode {
+    Check,
+    Ensure,
+}
+
+/// The runtime project of one execution root, as the runtime holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExecutionRootStatus {
+    /// The live project rooted exactly at the root; `None` when there is
+    /// none (only in [`ExecutionRootMode::Check`]).
+    pub project_id: Option<String>,
+    /// This call created it.
+    pub created: bool,
+}
+
 /// Operations use structured facts; no user input is executable command text.
 pub struct RuntimeAssignment<'a> {
     pub bindings: Option<&'a dyn crate::interfaces::SessionBindings>,
@@ -392,6 +409,24 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         request: &RuntimeStart,
         thread: &Thread,
     ) -> Result<(), SessionsError>;
+    /// Compares `thread`'s native project with the live project rooted
+    /// exactly at `checkout`, read-only: a thread in any other project is
+    /// [`SessionsError::ThreadMisplaced`], one without a native project is
+    /// unverified. It never registers a project.
+    fn verify_thread_project(
+        &self,
+        checkout: &Path,
+        thread: &Thread,
+        key: Option<&str>,
+    ) -> Result<(), SessionsError>;
+    /// Whether the runtime holds a live project rooted exactly at `root`,
+    /// creating one in [`ExecutionRootMode::Ensure`]; it never selects,
+    /// alters or removes another project.
+    fn execution_root(
+        &self,
+        root: &Path,
+        mode: ExecutionRootMode,
+    ) -> Result<ExecutionRootStatus, SessionsError>;
     fn delivery_realization(&self) -> DeliveryRealization;
     fn supports(&self, capability: Capability) -> bool;
     fn observe_send(

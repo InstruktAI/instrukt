@@ -194,7 +194,9 @@ impl RuntimeAdapter for T3 {
     }
     fn send_certainly_rejected(&self, session: &SessionRef, error: &SessionsError) -> bool {
         match error {
-            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. }) => true,
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. })
+            | SessionsError::ExecutionRootUnavailable { .. }
+            | SessionsError::ThreadMisplaced { .. } => true,
             SessionsError::Failed {
                 operation, detail, ..
             } if operation == "send" => {
@@ -266,8 +268,30 @@ impl RuntimeAdapter for T3 {
         request: &RuntimeStart,
         existing: Option<&SessionRef>,
     ) -> Result<RuntimeStart, SessionsError> {
-        super::_t3_readiness::resolve_launch(&self.operation_home()?, &self.env, request, existing)
-            .map_err(|error| failure("launch", error.to_string()))
+        let home = self.operation_home()?;
+        match super::_t3_readiness::resolve_launch(&home, &self.env, request, existing) {
+            // A launch registers its exact checkout when T3 holds no project
+            // there, then resolves again; adopting a present thread never
+            // registers.
+            Err(SessionsError::ExecutionRootUnavailable {
+                cause: crate::sessions::ExecutionRootCause::Missing,
+                ..
+            }) if existing.is_none() => {
+                let project = self
+                    .execution_root(&request.checkout, super::ExecutionRootMode::Ensure)?
+                    .project_id
+                    .ok_or_else(|| SessionsError::ExecutionRootUnavailable {
+                        checkout: request.checkout.clone(),
+                        cause: crate::sessions::ExecutionRootCause::AdditionRefused,
+                    })?;
+                let mut registered = request.clone();
+                if let Some(launch) = registered.native_launch.as_mut() {
+                    launch.project_id = project;
+                }
+                super::_t3_readiness::resolve_launch(&home, &self.env, &registered, existing)
+            }
+            result => result,
+        }
     }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
@@ -321,14 +345,83 @@ impl RuntimeAdapter for T3 {
         T3::create_thread(self, request)
     }
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
-        verify_request(request, thread)
+        // Presence and placement first: a thread still being placed keeps
+        // its pending outcome, and the snapshot is read only once placement
+        // verifies.
+        verify_request(request, thread)?;
+        self.verify_thread_project(&request.checkout, thread, Some(&request.key))
     }
     fn verify_placement(
         &self,
         request: &RuntimeStart,
         thread: &Thread,
     ) -> Result<(), SessionsError> {
+        self.verify_thread_project(&request.checkout, thread, Some(&request.key))?;
         verify_placement(request, thread)
+    }
+    fn verify_thread_project(
+        &self,
+        checkout: &Path,
+        thread: &Thread,
+        key: Option<&str>,
+    ) -> Result<(), SessionsError> {
+        let Some(observed) = thread.project_id.as_deref() else {
+            return Err(SessionsError::ProjectUnverified {
+                key: key.unwrap_or_default().into(),
+                session: thread.session.clone(),
+            });
+        };
+        let exact =
+            super::_t3_readiness::exact_project_id(&self.operation_home()?, &self.env, checkout)?;
+        if exact.as_deref() == Some(observed) {
+            return Ok(());
+        }
+        Err(SessionsError::ThreadMisplaced {
+            key: key.map(str::to_owned),
+            session: thread.session.clone(),
+            checkout: checkout.to_path_buf(),
+            idle: matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            ),
+        })
+    }
+    fn execution_root(
+        &self,
+        root: &Path,
+        mode: super::ExecutionRootMode,
+    ) -> Result<super::ExecutionRootStatus, SessionsError> {
+        let home = self.operation_home()?;
+        if let Some(id) = super::_t3_readiness::exact_project_id(&home, &self.env, root)? {
+            return Ok(super::ExecutionRootStatus {
+                project_id: Some(id),
+                created: false,
+            });
+        }
+        if mode == super::ExecutionRootMode::Check {
+            return Ok(super::ExecutionRootStatus {
+                project_id: None,
+                created: false,
+            });
+        }
+        // T3 titles the project from the folder name. A refusal of a root
+        // that already has an active project (a concurrent creator) is a
+        // reuse the snapshot read below confirms; T3's own words are never
+        // kept.
+        let root_text = root.to_string_lossy();
+        let added = self
+            .call(&["project", "add", "--", root_text.as_ref()], None)
+            .is_ok();
+        match super::_t3_readiness::exact_project_id(&home, &self.env, root)? {
+            Some(id) => Ok(super::ExecutionRootStatus {
+                project_id: Some(id),
+                created: added,
+            }),
+            None => Err(SessionsError::ExecutionRootUnavailable {
+                checkout: root.to_path_buf(),
+                cause: crate::sessions::ExecutionRootCause::AdditionRefused,
+            }),
+        }
     }
     fn start_or_wake(
         &self,
@@ -660,21 +753,13 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
                 "requested role branch or absolute worktree path is missing",
             ));
         }
-        let listing =
-            instrukt_core::git::run(&request.checkout, ["worktree", "list", "--porcelain"])
-                .map_err(|e| failure("start recovery", e.to_string()))?;
         let expected_path = thread
             .worktree
             .as_ref()
             .ok_or_else(|| failure("start recovery", "missing worktree path"))?;
-        let registered = listing.split("\n\n").any(|entry| {
-            entry
-                .lines()
-                .any(|l| l == format!("worktree {}", expected_path.display()))
-                && entry
-                    .lines()
-                    .any(|l| l == format!("branch refs/heads/{}", worktree.branch))
-        });
+        let registered =
+            crate::keyed::registered_worktree(&request.checkout, expected_path, &worktree.branch)
+                .map_err(|e| failure("start recovery", e.to_string()))?;
         if !registered {
             return Err(failure(
                 "start recovery",

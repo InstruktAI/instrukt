@@ -3,5 +3,5 @@ source: crates/instrukt-cli/tests/cases/configuration-editing.rs
 assertion_line: 335
 expression: written
 ---
-schema_version: 6
+schema_version: 7
 ticks: 'off'

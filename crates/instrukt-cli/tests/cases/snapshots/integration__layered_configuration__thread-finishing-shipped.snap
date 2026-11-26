@@ -1,0 +1,37 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: shipped
+---
+# instrukt docs get: acme/procedure/conclude
+
+---
+id: acme/procedure/conclude
+type: procedure
+domain: acme
+scope: global
+description: Settle a resting conversation or a finished todo's orchestrator.
+source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
+---
+# Conclude — Procedure
+
+## Goal
+
+```
+Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message.
+```
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

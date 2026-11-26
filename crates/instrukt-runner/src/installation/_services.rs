@@ -406,7 +406,10 @@ fn discover_under(
                 .into_iter()
                 .map(|port| receiver_unit(&request, port))
                 .collect(),
-            ResourceKind::LocalRedis | ResourceKind::Graphify => vec![],
+            // A runtime project is no service of any scheduler.
+            ResourceKind::LocalRedis | ResourceKind::Graphify | ResourceKind::RuntimeProject => {
+                vec![]
+            }
         };
         for candidate in candidates {
             if candidate.present()? {

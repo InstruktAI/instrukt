@@ -2073,6 +2073,17 @@ fn send(
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
+    // The bound thread must run in the company home's own runtime project
+    // before anything is attempted: a misplaced one is sent nothing.
+    let thread = adapter.read_state(session)?;
+    if thread.presence != Presence::Present {
+        return Err(SessionsError::Gone(session.clone()).into());
+    }
+    adapter.verify_thread_project(
+        &delivery.home.company_dir(&c.company),
+        &thread,
+        Some(&c.semantic_key),
+    )?;
     if let Some(id) = &next.dispatch_id {
         dispatch_frame(adapter, state, c, next, session, (id, content), delivery)?;
         accepted(
@@ -2578,6 +2589,8 @@ enum CheckedDelivery {
     },
     Dispatching,
     DispatchFailed,
+    /// The dispatch found the bound thread idle in another runtime project.
+    Misplaced,
 }
 
 impl RelayWorkers {
@@ -2666,6 +2679,10 @@ impl RelayWorkers {
                 let result = match reply.try_recv() {
                     Err(TryRecvError::Empty) => return CheckedDelivery::Dispatching,
                     Ok(Ok(())) => CheckedDelivery::Idle,
+                    Ok(Err(ConversationError::Sessions(SessionsError::ThreadMisplaced {
+                        idle: true,
+                        ..
+                    }))) => CheckedDelivery::Misplaced,
                     _ => CheckedDelivery::DispatchFailed,
                 };
                 work.remove(key);
@@ -2688,6 +2705,9 @@ impl RelayWorkers {
         }
     }
 
+    // The check carries every fact its worker thread needs, read by the
+    // pass that starts it; grouping them would only rename the list.
+    #[allow(clippy::too_many_arguments)]
     fn check(
         &self,
         adapter: &dyn RuntimeAdapter,
@@ -2696,8 +2716,10 @@ impl RelayWorkers {
         next: &Message,
         head: Option<&Message>,
         source_presence: Presence,
+        checkout: std::path::PathBuf,
     ) {
         let runtime = adapter.runtime();
+        let key = c.semantic_key.clone();
         let target = session.clone();
         let attempted = next.attempted;
         let command_id = next.dispatch_id.clone();
@@ -2722,16 +2744,22 @@ impl RelayWorkers {
                 );
             }
             let thread = adapter.read_state(&target)?;
-            Ok(if thread.presence != Presence::Present {
-                DeliveryCheck::Presence(thread.presence)
-            } else if matches!(
-                thread.state,
-                SessionState::InputReady | SessionState::EndedFailed
-            ) {
-                DeliveryCheck::Ready
-            } else {
-                DeliveryCheck::Busy
-            })
+            if thread.presence != Presence::Present {
+                return Ok(DeliveryCheck::Presence(thread.presence));
+            }
+            // A thread in another runtime project is never served, busy or
+            // not: its outcome says whether it can roll over now.
+            adapter.verify_thread_project(&checkout, &thread, Some(&key))?;
+            Ok(
+                if matches!(
+                    thread.state,
+                    SessionState::InputReady | SessionState::EndedFailed
+                ) {
+                    DeliveryCheck::Ready
+                } else {
+                    DeliveryCheck::Busy
+                },
+            )
         });
         self.work
             .lock()
@@ -3698,6 +3726,14 @@ fn relay(
                 continue;
             }
             CheckedDelivery::DispatchFailed => continue,
+            CheckedDelivery::Misplaced => {
+                // Between check and send the thread went idle in another
+                // project: its owner rolls it over.
+                if !open_messages(&state, &c)?.is_empty() {
+                    workers.succeed(home, adapter, c.clone());
+                }
+                continue;
+            }
             _ => None,
         };
         if let Some(session) = &c.session {
@@ -3783,6 +3819,35 @@ fn relay(
                     continue;
                 }
                 Ok(_) => continue,
+                // An idle thread in another project is rolled over by the
+                // conversation's succession.
+                Err(error)
+                    if matches!(*error, SessionsError::ThreadMisplaced { idle: true, .. }) =>
+                {
+                    if !open.is_empty() {
+                        workers.succeed(home, adapter, c.clone());
+                    }
+                    continue;
+                }
+                // A busy one keeps the message pending with its operator
+                // cause; it rolls over once its turn ends. The member hears
+                // nothing beyond what any busy turn produces.
+                Err(error)
+                    if matches!(*error, SessionsError::ThreadMisplaced { idle: false, .. }) =>
+                {
+                    let cause = adapter
+                        .diagnostic("conversation delivery", &error)
+                        .to_string();
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
+                    set_message_failure(
+                        &state,
+                        &c,
+                        &next.conversation,
+                        &next.message,
+                        Some(&cause),
+                    )?;
+                    continue;
+                }
                 Err(error) => {
                     if send_reconciliation_due(next, clock()) {
                         let cause = adapter
@@ -3823,7 +3888,15 @@ fn relay(
                     && before_read(m)
             });
             if let Some(candidate) = unconfirmed {
-                workers.check(adapter, &c, session, candidate, next, observed);
+                workers.check(
+                    adapter,
+                    &c,
+                    session,
+                    candidate,
+                    next,
+                    observed,
+                    home.company_dir(&c.company),
+                );
                 continue;
             }
             let next_id = next.map(|m| (m.conversation.as_str(), m.message.as_str()));
@@ -3832,7 +3905,15 @@ fn relay(
                 .map(|(conv, msg)| (conv.as_str(), msg.as_str()));
             if next_id != checked_id || checked_head.is_none() {
                 if let Some(candidate) = next {
-                    workers.check(adapter, &c, session, candidate, next, observed);
+                    workers.check(
+                        adapter,
+                        &c,
+                        session,
+                        candidate,
+                        next,
+                        observed,
+                        home.company_dir(&c.company),
+                    );
                 }
                 continue;
             }
