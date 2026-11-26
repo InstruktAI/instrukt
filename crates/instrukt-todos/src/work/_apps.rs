@@ -510,8 +510,9 @@ impl Apps {
             self.verified_apps.insert(app.app_id);
         }
         // A company repository's credential is the installation's on the
-        // organisation, named in `repository`, and reaches no repository
-        // yet: what it creates it is given access to.
+        // organisation named in `repository`. It is requested without a
+        // repository restriction, so it reaches every repository available
+        // to that installation.
         let organisation = op == Operation::CompanyRepository;
         let installation_endpoint = if organisation {
             format!("/orgs/{repository}/installation")
