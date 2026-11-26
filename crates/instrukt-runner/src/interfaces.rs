@@ -22,7 +22,8 @@
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
 //! wiring.rs`); the runner checks `modules.todos` per project before using
-//! them. The event-log
+//! them, except [`OpenWorkSessions`], which thread retention asks for every
+//! registered project whatever its switches. The event-log
 //! append work's finalize-ready stamp uses is the other direction: the
 //! runner implements [`crate::events::EventLog`] and the CLI hands it to
 //! work.
