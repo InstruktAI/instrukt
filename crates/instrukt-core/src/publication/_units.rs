@@ -38,7 +38,7 @@ pub(super) const RESERVED: &str = "_compressed";
 /// The legend of the units' notation (`general/spec/agent-shorthand`,
 /// Compressed-unit notation): one fixed passage a rendering that holds at
 /// least one unit carries once, in its opening, before its first document.
-pub(super) const LEGEND: &str = "Compressed sections, each headed by its document's name, hold rules, not prose: `MUST` required, `NEVER` forbidden, `MAY` permitted, `PREFER` default unless reasoned; ` -- ` precedes the reason; `<term> = <meaning>` defines; `->` then, `|` or, `vs` tension; ids, commands, paths, code, configured values verbatim. For a case its rules do not name, their wording or reasons, read the named document first.";
+pub(super) const LEGEND: &str = "Compressed sections (headed by document name) hold rules, not prose: `MUST` required, `NEVER` forbidden, `MAY` permitted, `PREFER` default unless reasoned; ` -- ` reason; `<term> = <meaning>` defines; `->` then, `|` or, `vs` tension; ids, commands, paths, code, configured values verbatim. Read the named document first for cases, wording or reasons left open.";
 
 /// A unit's `body` held where its source would be: one heading naming the
 /// source, `name`, at the level of the source's own title, then the body.
