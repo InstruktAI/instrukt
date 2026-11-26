@@ -45,7 +45,7 @@ account association or runtime permission mode.
 | `author` | `instruktai-author[bot]` | Authoring roles, their pull requests and bot-authored commits. |
 | `reviewer` | `instruktai-reviewer[bot]` | Reviewer roles and their native GitHub reviews. |
 
-The shipped role compositions live in
+The shipped role compositions live in the shipped `agents.yaml` defaults under
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`. An
 independent reviewer uses a different App/bot from the pull request author;
 using a different session of the same App does not satisfy GitHub's native
