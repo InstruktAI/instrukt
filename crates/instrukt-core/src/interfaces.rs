@@ -299,7 +299,7 @@ pub enum CompanyRepositoryError {
     )]
     NotReady {
         app: Option<String>,
-        organisation: String,
+        organisation: crate::ids::GitHubOrganisation,
         cause: String,
     },
     /// GitHub refused the operation or could not be asked.

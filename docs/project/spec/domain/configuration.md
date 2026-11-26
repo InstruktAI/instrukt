@@ -153,9 +153,11 @@ Adding a company extends this boundary
   `project/instrukt/spec/domain/publication`); every call to GitHub (work's
   GitHub boundary, `project/instrukt/spec/domain/work`).
 - **Published contracts** — the generation decision, a function of the
-  company's key, whether its home folder exists, the owning organisation and
-  whether the company's repository is reachable, which repository's company
-  home adoption gathers and carries out; `instrukt config
+  company's key, whether its home folder exists, the owning organisation,
+  whether the company's repository is reachable and, for a creation, the
+  name and GitHub administrator given and whether that administrator is a
+  person's own account, which repository's company home adoption gathers and
+  carries out; `instrukt config
   get|patch|validate|schema --company <name>` addressing the home's
   `company.yaml`.
 - **Allowed dependencies** — the GitHub account lookup: whether a login

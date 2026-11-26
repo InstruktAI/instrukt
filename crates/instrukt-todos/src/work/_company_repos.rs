@@ -154,7 +154,7 @@ impl GitHubAccess {
     /// be asked.
     fn administering<T>(
         &self,
-        org: &str,
+        org: &GitHubOrganisation,
         now: Timestamp,
         action: impl FnOnce(&Apps, &str, Clock) -> Result<T, CompanyRepositoryError>,
     ) -> Result<T, CompanyRepositoryError> {
@@ -162,7 +162,7 @@ impl GitHubAccess {
         let mut app = None;
         let outcome = self.with_apps(|apps| {
             app = Some(apps.selected(None).slug.clone());
-            let credential = apps.issue(org, None, Operation::CompanyRepository, clock)?;
+            let credential = apps.issue(org.as_str(), None, Operation::CompanyRepository, clock)?;
             Ok(action(apps, credential.token(), clock))
         });
         match outcome {
@@ -172,7 +172,7 @@ impl GitHubAccess {
             }
             Err(error) => Err(CompanyRepositoryError::NotReady {
                 app,
-                organisation: org.to_owned(),
+                organisation: org.clone(),
                 cause: error.to_string(),
             }),
         }
@@ -185,7 +185,7 @@ impl CompanyRepositories for GitHubAccess {
         org: &GitHubOrganisation,
         now: Timestamp,
     ) -> Result<(), CompanyRepositoryError> {
-        self.administering(org.as_str(), now, |_, _, _| Ok(()))
+        self.administering(org, now, |_, _, _| Ok(()))
     }
 
     fn create(
@@ -194,8 +194,8 @@ impl CompanyRepositories for GitHubAccess {
         repo: &ProjectSlug,
         now: Timestamp,
     ) -> Result<Creation, CompanyRepositoryError> {
-        let (org, repo) = (org.as_str(), repo.as_str());
         self.administering(org, now, |apps, token, clock| {
+            let (org, repo) = (org.as_str(), repo.as_str());
             let what = format!("creating {org}/{repo}");
             let answer = apps
                 .send(
@@ -223,8 +223,8 @@ impl CompanyRepositories for GitHubAccess {
         login: &GitHubLogin,
         now: Timestamp,
     ) -> Result<(), CompanyRepositoryError> {
-        let (org, repo, login) = (org.as_str(), repo.as_str(), login.as_str());
         self.administering(org, now, |apps, token, clock| {
+            let (org, repo, login) = (org.as_str(), repo.as_str(), login.as_str());
             let what = format!("making {login} an administrator of {org}/{repo}");
             let answer = apps
                 .send(
@@ -258,8 +258,8 @@ impl CompanyRepositories for GitHubAccess {
         branch: &str,
         now: Timestamp,
     ) -> Result<(), CompanyRepositoryError> {
-        let (org, repo) = (org.as_str(), repo.as_str());
         self.administering(org, now, |apps, token, clock| {
+            let (org, repo) = (org.as_str(), repo.as_str());
             let what = format!("setting the default branch of {org}/{repo} to {branch}");
             let answer = apps
                 .send(

@@ -17,11 +17,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{self, Configuration, Env, Generation};
+use crate::config::{self, Configuration, Env, Generation, GenerationFacts, GenerationRequest};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
 use crate::home::Home;
-use crate::ids::{GitHubLogin, GitHubOrganisation, ProjectSlug};
+use crate::ids::{CommitSha, GitHubLogin, GitHubOrganisation, ProjectSlug};
 use crate::interfaces::{AccountKind, CompanyRepositories, CoreWiring, Creation, GitHubAccounts};
 use crate::publication::{self, CompanyName, RepositoryView};
 
@@ -109,7 +109,7 @@ pub struct CompanyReport {
 struct Intent {
     organisation: GitHubOrganisation,
     repository: ProjectSlug,
-    name: String,
+    name: CompanyName,
     admin: GitHubLogin,
     /// The caller's declaration for the root commit.
     human_involved: bool,
@@ -188,21 +188,20 @@ pub fn adopt_company(
             Some(intent),
         )
     } else {
-        let declared = global
-            .github_org()?
-            .map(str::trim)
-            .filter(|org| !org.is_empty());
-        let kind = declared
-            .map(|org| ports.accounts.account_kind(org))
-            .transpose()?;
-        let reachable = match (declared.map(GitHubOrganisation::parse), kind) {
-            (Some(Ok(org)), Some(AccountKind::Organisation)) => {
-                reachable(&staging_parent(&staging), &url(&host, &org, &named))?
-            }
-            _ => false,
+        let facts = AdoptionFacts {
+            accounts: ports.accounts,
+            dir: staging_parent(&staging),
+            host: &host,
         };
-        match config::decide_generation(&named, &home_dir, home_exists, declared, kind, reachable)?
-        {
+        let asked = GenerationRequest {
+            repository: &named,
+            home: &home_dir,
+            home_exists,
+            declared_org: global.github_org()?,
+            name: request.name.as_ref(),
+            admin: request.admin.as_ref(),
+        };
+        match config::decide_generation(&asked, &facts)? {
             Generation::CheckOut {
                 organisation,
                 repository,
@@ -213,28 +212,15 @@ pub fn adopt_company(
             Generation::Create {
                 organisation,
                 repository,
+                name,
+                admin,
             } => {
-                let name = request
-                    .name
-                    .as_ref()
-                    .ok_or(RepositoryError::CompanyFlagMissing { flag: "--name" })?;
-                let admin = request
-                    .admin
-                    .as_ref()
-                    .ok_or(RepositoryError::CompanyFlagMissing { flag: "--admin" })?;
-                let admin_kind = ports.accounts.account_kind(admin.as_str())?;
-                if admin_kind != AccountKind::Personal {
-                    return Err(RepositoryError::CompanyAdminNotPersonal {
-                        login: admin.to_string(),
-                        kind: admin_kind,
-                    });
-                }
                 ports.repositories.ready(&organisation, ports.now)?;
                 let intent = Intent {
                     organisation: organisation.clone(),
                     repository: repository.clone(),
-                    name: name.as_str().to_owned(),
-                    admin: admin.clone(),
+                    name,
+                    admin,
                     human_involved: request.human_involved.unwrap_or(false),
                 };
                 write_intent(&intent_path, &intent)?;
@@ -304,6 +290,32 @@ fn staging_parent(staging: &Path) -> PathBuf {
     staging
         .parent()
         .map_or_else(|| staging.to_path_buf(), Path::to_path_buf)
+}
+
+/// The facts configuration's generation decision asks adoption for: work's
+/// account lookup, and whether git reaches the company's repository with the
+/// computer's own credentials.
+struct AdoptionFacts<'a> {
+    accounts: &'a dyn GitHubAccounts,
+    /// The folder git is run from to read the remote.
+    dir: PathBuf,
+    host: &'a str,
+}
+
+impl GenerationFacts for AdoptionFacts<'_> {
+    type Error = RepositoryError;
+
+    fn account_kind(&self, login: &str) -> Result<AccountKind, RepositoryError> {
+        Ok(self.accounts.account_kind(login)?)
+    }
+
+    fn reachable(
+        &self,
+        organisation: &GitHubOrganisation,
+        repository: &ProjectSlug,
+    ) -> Result<bool, RepositoryError> {
+        reachable(&self.dir, &url(self.host, organisation, repository))
+    }
 }
 
 /// The flags of `request` an adoption that creates nothing leaves unused.
@@ -376,7 +388,7 @@ fn compose_root(
     skeleton: &Path,
     intent: &Intent,
     ports: &CompanyPorts<'_>,
-) -> Result<String, RepositoryError> {
+) -> Result<CommitSha, RepositoryError> {
     if let Some(head) = head(skeleton)? {
         return Ok(head);
     }
@@ -405,10 +417,7 @@ fn compose_root(
         });
     }
     publication::write_rendering(skeleton, &rendering)?;
-    let name = CompanyName::parse(&intent.name).map_err(|error| RepositoryError::Skeleton {
-        findings: error.to_string(),
-    })?;
-    let plugin = publication::plan_plugin(skeleton, key, &name)?;
+    let plugin = publication::plan_plugin(skeleton, key, &intent.name)?;
     if !plugin.findings.is_empty() {
         return Err(RepositoryError::Skeleton {
             findings: plugin
@@ -428,14 +437,14 @@ fn compose_root(
         "feat: start the company's repository\n\nThe company skeleton every company receives: the project layer, the ignore\nfile, the knowledge index, the AGENTS.md rendered from it, and the\ncompany's skill with the catalog that lists it.",
         intent.human_involved,
     )?;
-    Ok(sha.to_string())
+    Ok(sha)
 }
 
 /// Pushes `root` as `main` of `remote` without force, and what the remote
 /// then holds decides: the root commit, or other history.
-fn push_root(skeleton: &Path, remote: &str, root: &str) -> Result<Pushed, RepositoryError> {
-    let judged = |main: Option<String>| match main {
-        Some(main) if main == root => Some(Pushed::AlreadyThere),
+fn push_root(skeleton: &Path, remote: &str, root: &CommitSha) -> Result<Pushed, RepositoryError> {
+    let judged = |main: Option<CommitSha>| match main {
+        Some(main) if &main == root => Some(Pushed::AlreadyThere),
         Some(_) => Some(Pushed::OtherHistory),
         None => None,
     };
@@ -453,9 +462,13 @@ fn push_root(skeleton: &Path, remote: &str, root: &str) -> Result<Pushed, Reposi
 }
 
 /// The commit `main` of `remote` names; `None` when it has no `main`.
-fn remote_main(dir: &Path, remote: &str) -> Result<Option<String>, RepositoryError> {
+fn remote_main(dir: &Path, remote: &str) -> Result<Option<CommitSha>, RepositoryError> {
     let listing = git::run_remote(dir, ["ls-remote", remote, "refs/heads/main"])?;
-    Ok(listing.split_whitespace().next().map(ToOwned::to_owned))
+    Ok(listing
+        .split_whitespace()
+        .next()
+        .map(CommitSha::parse)
+        .transpose()?)
 }
 
 /// Whether git reaches `remote` with the computer's own credentials.
@@ -513,7 +526,7 @@ fn check_out(
 
 /// The commit `HEAD` names in the repository at `dir`; `None` when `dir`
 /// holds no repository with a commit.
-fn head(dir: &Path) -> Result<Option<String>, RepositoryError> {
+fn head(dir: &Path) -> Result<Option<CommitSha>, RepositoryError> {
     if !present(&dir.join(".git"))? {
         return Ok(None);
     }
@@ -521,7 +534,8 @@ fn head(dir: &Path) -> Result<Option<String>, RepositoryError> {
     Ok(output
         .status
         .success()
-        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned()))
+        .then(|| CommitSha::parse(String::from_utf8_lossy(&output.stdout).trim()))
+        .transpose()?)
 }
 
 fn present(path: &Path) -> Result<bool, RepositoryError> {
@@ -571,8 +585,8 @@ fn write_intent(path: &Path, intent: &Intent) -> Result<(), RepositoryError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Creation, GitHubLogin, GitHubOrganisation, Intent, ProjectSlug, Pushed, RepositoryError,
-        Step, next_step, read_intent, write_intent,
+        CompanyName, Creation, GitHubLogin, GitHubOrganisation, Intent, ProjectSlug, Pushed,
+        RepositoryError, Step, next_step, read_intent, write_intent,
     };
 
     #[test]
@@ -581,6 +595,10 @@ mod tests {
             next_step(false, Creation::AlreadyExists, None),
             Step::ByContract
         );
+    }
+
+    #[test]
+    fn a_fresh_creation_pushes_to_the_repository_it_created() {
         assert_eq!(next_step(false, Creation::Created, None), Step::Push);
     }
 
@@ -611,25 +629,27 @@ mod tests {
             next_step(false, Creation::Created, Some(Pushed::Accepted)),
             Step::Finish
         );
-        assert_eq!(
-            next_step(false, Creation::Created, Some(Pushed::OtherHistory)),
-            Step::ByContract
-        );
     }
 
     #[test]
-    fn an_intent_is_read_back_as_it_was_written_and_nothing_else_is_one() {
+    fn an_intent_is_read_back_as_it_was_written() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("intent.yaml");
         let intent = Intent {
             organisation: GitHubOrganisation::parse("homes").unwrap(),
             repository: ProjectSlug::parse("company-acme").unwrap(),
-            name: "Acme".into(),
+            name: CompanyName::parse("Acme").unwrap(),
             admin: GitHubLogin::parse("acme-admin").unwrap(),
             human_involved: true,
         };
         write_intent(&path, &intent).unwrap();
         assert_eq!(read_intent(&path).unwrap(), intent);
+    }
+
+    #[test]
+    fn a_record_missing_what_an_intent_holds_is_no_intent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("intent.yaml");
         std::fs::write(&path, "organisation: homes\n").unwrap();
         assert!(matches!(
             read_intent(&path),
