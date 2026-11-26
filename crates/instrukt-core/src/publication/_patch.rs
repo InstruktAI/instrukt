@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use super::_source::Committed;
+use super::_units::{RepositoryUnits, source_digest};
 use crate::docs::{Corpus, DocDomain, Scope, Snippet, Visibility, published_destination};
 use crate::ids::{DomainName, ProjectSlug};
 use crate::index::{GlobalIndex, IndexEntry, IndexParameter, IndexScope, ThirdPartyEntry};
@@ -89,6 +91,32 @@ impl Contribution {
             domains: domains.to_vec(),
             snippets,
             third_party,
+        }
+    }
+}
+
+impl Contribution {
+    /// Records each entry's lineage facts from what the sync publishes from
+    /// `committed`: a delivered entry's source digest, and, when a unit is
+    /// published for its snippet, the source digest the unit declares and
+    /// the digest of its body (`project/instrukt/spec/domain/publication`,
+    /// Lineage facts). Raw facts, never a verdict on currency.
+    pub(super) fn record_lineage(&mut self, committed: &Committed, corpus: &Corpus) {
+        let units = RepositoryUnits::of(committed);
+        for entry in &mut self.snippets {
+            let Some(snippet) = corpus.snippet(&entry.id) else {
+                continue;
+            };
+            let path = snippet.path().display().to_string();
+            if entry.delivered_by.is_empty() {
+                entry.content_sha256 = Some(source_digest(
+                    &snippet.current().lens_body(crate::docs::Lens::Current),
+                ));
+            }
+            if let Some(Ok(unit)) = units.read(&path) {
+                entry.compressed_source_sha256 = Some(unit.source_sha256.clone());
+                entry.compressed_content_sha256 = Some(unit.body_digest());
+            }
         }
     }
 }
@@ -257,6 +285,67 @@ mod tests {
 
     use super::*;
     use crate::ids::SnippetId;
+
+    /// The general entries a project publishing `files` contributes, with
+    /// their lineage recorded.
+    fn lineage(files: &[(&str, &str)]) -> Vec<IndexEntry> {
+        let committed = Committed::of(files);
+        let corpus = Corpus::from_sources(Some(slug("demo")), None, committed.doc_sources());
+        let mut contribution = Contribution::of(&slug("demo"), &corpus, &[domain("general")]);
+        contribution.record_lineage(&committed, &corpus);
+        contribution.snippets
+    }
+
+    #[test]
+    fn a_published_entry_records_its_digest_and_its_units_facts_exactly_when_a_unit_is_published() {
+        let text = "---\ndescription: A.\n---\n\n# A — Policy\n\nRule.\n";
+        let pending =
+            "---\ndescription: P.\ndelivered_by: [a-todo]\n---\n\n# P — Policy\n\nLater.\n";
+        let unit_body = "- rule\n";
+        let unit = format!(
+            "---\nsource_sha256: {}\nmodel: m\n---\n{unit_body}",
+            "0".repeat(64)
+        );
+        let entries = lineage(&[
+            ("docs/general/policy/a.md", text),
+            ("docs/general/policy/b.md", text),
+            ("docs/general/policy/p.md", pending),
+            ("docs/_compressed/general/policy/a.md", &unit),
+        ]);
+        /// An entry's id with its three lineage facts.
+        type Facts<'e> = (&'e str, Option<String>, Option<&'e str>, Option<&'e str>);
+        let facts: Vec<Facts<'_>> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    entry.id.as_str(),
+                    entry.content_sha256.clone(),
+                    entry.compressed_source_sha256.as_deref(),
+                    entry.compressed_content_sha256.as_deref(),
+                )
+            })
+            .collect();
+        let digest = |bytes: &str| {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha256::digest(bytes.as_bytes()))
+        };
+        let prose = digest("\n# A — Policy\n\nRule.\n");
+        let body = digest(unit_body);
+        let zeros = "0".repeat(64);
+        assert_eq!(
+            facts,
+            [
+                (
+                    "general/policy/a",
+                    Some(prose.clone()),
+                    Some(zeros.as_str()),
+                    Some(body.as_str())
+                ),
+                ("general/policy/b", Some(prose), None, None),
+                ("general/policy/p", None, None, None),
+            ]
+        );
+    }
 
     fn slug(s: &str) -> ProjectSlug {
         ProjectSlug::parse(s).unwrap()

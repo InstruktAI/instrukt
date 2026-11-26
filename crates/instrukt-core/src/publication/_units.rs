@@ -130,6 +130,11 @@ impl Unit {
             body: body.to_owned(),
         })
     }
+
+    /// The SHA-256 of the unit's body.
+    pub(super) fn body_digest(&self) -> String {
+        sha256_hex(self.body.as_bytes())
+    }
 }
 
 /// Something that keeps a unit from standing in for its source, naming the
@@ -491,6 +496,71 @@ impl<'v> RepositoryUnits<'v> {
             .below("docs/_compressed/")
             .map(|(rel, _)| format!("{PLACE}/{rel}"))
     }
+}
+
+/// The place for the units of `position` in a repository:
+/// `docs/_compressed/<the position's path below docs/>`.
+pub(super) fn position_place(position: &Position) -> String {
+    let dir = position.dir();
+    format!("{PLACE}/{}", dir.strip_prefix("docs/").unwrap_or(&dir))
+}
+
+/// The content findings of the units a sync publishes: every unit below
+/// the place of each of `positions`, and every link at, above or inside
+/// those places. A unit of a snippet the view holds is compared with it
+/// while it is current; any other unit is only read.
+pub(super) fn published_findings(
+    view: &Committed,
+    corpus: &Corpus,
+    positions: &[Position],
+    project: Option<&ProjectSlug>,
+) -> Vec<UnitFinding> {
+    let places: Vec<String> = positions.iter().map(position_place).collect();
+    let within = |path: &str| {
+        places
+            .iter()
+            .any(|place| path == place || path.starts_with(&format!("{place}/")))
+    };
+    let units = RepositoryUnits::of(view);
+    let snippets: BTreeMap<String, &docs::Snippet> = corpus
+        .snippets()
+        .iter()
+        .map(|snippet| (snippet.path().display().to_string(), snippet))
+        .collect();
+    let mut found: BTreeSet<UnitFinding> = units
+        .link_findings()
+        .into_iter()
+        .filter(|finding| within(&finding.path) || finding.path == "docs" || finding.path == PLACE)
+        .collect();
+    for file in units.files().filter(|file| within(file)) {
+        let source_path = format!("docs/{}", &file[PLACE.len() + 1..]);
+        let visible =
+            snippets
+                .get(&source_path)
+                .and_then(|snippet| match snippet.view(Lens::Current) {
+                    View::Visible { version, body } => Some(Source::snippet(
+                        snippet.id(),
+                        &source_path,
+                        version.body(),
+                        &body,
+                        Lens::Current,
+                        project,
+                    )),
+                    View::Withheld { .. } | View::Retired => None,
+                });
+        match (units.read(&source_path), visible) {
+            (Some(read), Some(source)) => {
+                if let Decision::Prose(Fallback::Findings(findings)) = decide(Some(read), &source) {
+                    found.extend(findings);
+                }
+            }
+            (Some(Err(finding)), None) => {
+                found.insert(finding);
+            }
+            _ => {}
+        }
+    }
+    found.into_iter().collect()
 }
 
 /// Every entry of a position the view holds — file, folder or link — whose
@@ -1172,6 +1242,31 @@ mod tests {
             }]
         );
         assert_eq!(report.outcome(), UnitsOutcome::Findings);
+    }
+
+    #[test]
+    fn an_entry_named_compressed_in_any_position_is_a_finding() {
+        let text = policy("Alpha", "Do alpha.");
+        let view = tree(
+            &[],
+            &[
+                ("docs/general/_compressed", &text),
+                ("docs/project/spec/_compressed/a.md", &text),
+            ],
+        )
+        .with_link("docs/domain/sdlc/_compressed");
+        let paths: Vec<String> = reserved_folders(&view)
+            .into_iter()
+            .map(|finding| finding.path)
+            .collect();
+        assert_eq!(
+            paths,
+            [
+                "docs/domain/sdlc/_compressed",
+                "docs/general/_compressed",
+                "docs/project/spec/_compressed",
+            ]
+        );
     }
 
     #[test]

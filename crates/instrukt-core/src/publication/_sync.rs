@@ -13,6 +13,7 @@ use super::_render::{GENERATED_LINE, Renderer};
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
+use super::_units;
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
@@ -58,6 +59,10 @@ pub enum Refusal {
     /// The committed tree holds a domain folder with a reserved name, by
     /// its repository directory (`docs/domain/general/`).
     ReservedDomain(Vec<String>),
+    /// The committed compressed units of a position the sync publishes, or
+    /// a position itself, have content findings
+    /// (`project/instrukt/spec/domain/publication`, Unit findings).
+    Units(Vec<super::UnitFinding>),
 }
 
 impl fmt::Display for Refusal {
@@ -78,6 +83,11 @@ impl fmt::Display for Refusal {
                     named.join(" and ")
                 )
             }
+            Refusal::Units(findings) => write!(
+                f,
+                "the committed compressed units have {} finding(s); fix or remove each unit named, then commit",
+                findings.len()
+            ),
         }
     }
 }
@@ -399,7 +409,28 @@ fn publish(
         Some(home),
         committed.doc_sources(),
     );
-    let contribution = Contribution::of(&project.slug, &corpus, &held);
+    let positions: Vec<Position> = held
+        .iter()
+        .map(Position::of_domain)
+        .chain(
+            committed
+                .below("docs/project/")
+                .next()
+                .map(|_| Position::Project),
+        )
+        .collect();
+    let mut unit_findings = _units::reserved_folders(&committed);
+    unit_findings.extend(_units::published_findings(
+        &committed,
+        &corpus,
+        &positions,
+        Some(&project.slug),
+    ));
+    if !unit_findings.is_empty() {
+        return Ok(refused(Refusal::Units(unit_findings)));
+    }
+    let mut contribution = Contribution::of(&project.slug, &corpus, &held);
+    contribution.record_lineage(&committed, &corpus);
     if let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
         && claim.owner != project.slug
     {
@@ -778,6 +809,7 @@ fn write(
     for domain in &prepared.held {
         let staged = staging.path().join(domain.as_str());
         _tree::stage_position(&prepared.committed, &Position::of_domain(domain), &staged)?;
+        _tree::stage_units(&prepared.committed, &Position::of_domain(domain), &staged)?;
         tx.replace_dir(&staged, &in_home(&home.domain_dir(domain))?)?;
         let claim = ClaimRecord {
             position: domain.clone(),
@@ -798,6 +830,7 @@ fn write(
     if prepared.committed.below("docs/project/").next().is_some() {
         let staged = staging.path().join("project").join(project.slug.as_str());
         _tree::stage_position(&prepared.committed, &Position::Project, &staged)?;
+        _tree::stage_units(&prepared.committed, &Position::Project, &staged)?;
         tx.replace_dir(&staged, &project_dir)?;
         let claim = ProjectClaimRecord {
             project: project.slug.clone(),

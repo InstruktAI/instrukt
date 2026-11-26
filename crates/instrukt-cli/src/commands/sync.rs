@@ -71,6 +71,11 @@ pub fn run(_args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     ctx.out.line(&finding.to_string())?;
                 }
             }
+            if let Refusal::Units(findings) = &refusal {
+                for finding in findings {
+                    ctx.out.line(&finding.to_string())?;
+                }
+            }
             Some(format!("{project} at {commit} is not published: {refusal}"))
         }
     };
