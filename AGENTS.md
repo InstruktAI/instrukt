@@ -18,10 +18,10 @@ Compressed sections, each headed by its document's name, hold rules, not prose: 
 
 ## general/principle/trust-and-guardrails
 
-- MUST trust agents by default; gate only harm restoring state cannot repair: interference (two agents, one object) | contract changed under executor -- rest is brief's direction.
+- MUST trust agents; gate only harm restoring state cannot repair: interference (two agents, one object) | contract changed under executor -- rest is brief's direction.
 - NEVER answer irreversible mutation with permission rule; repair state layer (versioning, soft removal) -- gate makes it permanent.
 - MUST read object (holder, phase), NEVER caller rank -- rank drifts.
-- MUST name refusal's door (sanctioned path keeping invariant honestly); on refusal stop and tell someone -- door is path, not decision.
+- MUST name refusal's door (sanctioned path keeping invariant honestly); on refusal stop, tell someone -- door is path, not decision.
 - focus = brief's operation set, cheap; integrity = interference/contract, on object, no human bypass; involvement record = audit only.
 - NEVER block live human direction via eligible authoring session with agent conflict rules -- process authority governs.
 - MUST widen object model when invariant inexpressible, NEVER add call site -- missing dimension.
