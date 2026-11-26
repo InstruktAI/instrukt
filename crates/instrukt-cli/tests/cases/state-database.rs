@@ -568,10 +568,13 @@ fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
     let observed = stdout
         .lines()
         .find_map(|line| line.strip_prefix("observed-lock "))
-        .unwrap_or_else(|| panic!("the observer reported no lock: {stdout}"));
+        .unwrap_or_else(|| panic!("the observer reported no lock: {stdout}"))
+        .split(' ')
+        .map(|number| number.parse::<i64>().unwrap())
+        .collect::<Vec<_>>();
     assert_eq!(
         observed,
-        format!("{} {}", nix::libc::F_RDLCK, std::process::id()),
+        [i64::from(nix::libc::F_RDLCK), i64::from(std::process::id())],
         "another process finds this process's read lock on {} in place",
         file.display()
     );
