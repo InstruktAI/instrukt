@@ -291,6 +291,7 @@ owning design snippet or decision record is declared.
 
 ## Context map position
 
+<!-- planned-change:archive-finished-threads -->
 - **Configuration → work** — customer-supplier. Work consumes project settings.
 - **Publication → work** — customer-supplier. Work consumes the fingerprint
   recorded per published commit.
@@ -360,7 +361,76 @@ owning design snippet or decision record is declared.
   (`project/instrukt/spec/feature/work/todos`), which work performs when the
   runner asks. Work owns the attempt lock and the release; the runner owns
   when it asks.
-<!-- planned:archive-finished-threads -->
+<!-- change:archive-finished-threads -->
+- **Configuration → work** — customer-supplier. Work consumes project settings.
+- **Publication → work** — customer-supplier. Work consumes the fingerprint
+  recorded per published commit.
+- **Work → workflow** — customer-supplier. Work supplies evidence and relationships;
+  workflow interprets them into preparation, execution and integration decisions.
+- **Work → runner** — customer-supplier. The runner consumes work readiness and
+  records claims and their reflection, flushes pending reflection, writes last-fired
+  stamps and automatic holds, purges expired retained records, and updates
+  per-role session bindings through work’s command contract.
+- **Runner → work** — customer-supplier. The finalize-ready stamp appends
+  `workflow.finalized` through the runner's event-log interface, in the
+  stamp's own transaction.
+- **Work → runner (state database)** — customer-supplier. The runner's
+  operational tables live in work's state database, under its writer lock and
+  migrations; the runner owns their meaning and is their only writer. The
+  runner's history store lies outside it, with its own file, lock and
+  migrations (`project/instrukt/spec/feature/runner/history`). History reaches
+  the state database only to move earlier history out of it, through work's
+  open, its migrations and its space reclamation.
+- **Work → docs** — customer-supplier. Work supplies pending todo-slug existence
+  through the core-declared interface wired by the CLI.
+- **Work → repository** — customer-supplier. Work supplies todo existence
+  through the core-declared interface wired by the CLI when todos is enabled.
+
+- **Work → runner (automatic review)** — customer-supplier. Work answers whether
+  a pull request is a todo's, whether a commit carries a verdict and which
+  review evidence is current for it, and whether both identities are ready.
+  Through its command contract it records a derived approval, carrying the
+  coverage finding the runner read from workflow, withdraws one that a later
+  finding no longer covers, and publishes what is outstanding to the pull
+  requests the runner observed.
+- **Runner → work (automatic review)** — customer-supplier. The runner supplies
+  a commit's review requests with their standing and pinned base, which input
+  opened the turn a session has in progress when it offers a revision, and a
+  named session's conversation; work consults them when it admits a head
+  verdict.
+
+
+- **Work → runner (requested review)** — customer-supplier. Work answers
+  whether a commit's head verdict stands here, with the session that recorded
+  its current version, or was handed off, with the export that handed it off,
+  and which pinned base it admits the commit's verdict against; the runner
+  consults this when it admits a requested review
+  (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
+  requested reviewer's verdict under its own rules.
+
+
+- **Work → workflow (review coverage)** — customer-supplier. Work answers which
+  evidence is current for a commit and whether a candidate's derived
+  approval is one GitHub does not show yet;
+  workflow reads approval of a head that is not a todo's, and exemptions, from
+  that answer alone, and reads a candidate's result from it together with the
+  review status.
+
+- **Runner** — its runtime anti-corruption layer supplies session and conversation
+  references; work stores these without translating native runtime mechanics.
+- **GitHub** — anti-corruption-layer. Reflection translates work records into
+  provider artifacts and issues while local operations keep their domain model.
+
+- **Work → runner (worktree reclamation)** — customer-supplier. Through its
+  command contract work gives the runner two things for
+  `project/instrukt/spec/feature/runner/worktree-reclamation`. The first is a
+  section of the work record in which no role attempt is open on a todo's
+  worktree and none opens: the runner moves regenerable output out of the
+  worktree inside it and holds it for nothing else. The second is the release
+  of a delivered todo's worktree and work branch
+  (`project/instrukt/spec/feature/work/todos`), which work performs when the
+  runner asks. Work owns the attempt lock and the release; the runner owns
+  when it asks.
 - **Work → runner (thread retention)** — customer-supplier. Work answers which
   native sessions it associates with a project's todos that have not reached a
   terminal outcome, delivered or withdrawn: the sessions its session bindings
@@ -370,4 +440,4 @@ owning design snippet or decision record is declared.
   a project with no local record has no such sessions. The runner keeps those
   threads (`project/instrukt/spec/feature/runner/thread-retention`). Work owns
   which outcomes are terminal; the runner owns what it keeps.
-<!-- /planned:archive-finished-threads -->
+<!-- /planned-change:archive-finished-threads -->

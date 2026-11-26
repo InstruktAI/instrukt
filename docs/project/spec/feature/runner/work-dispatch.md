@@ -29,6 +29,7 @@ events and react to them; the scheduled tick supplies time-based wake-ups.
 These are execution forms of the
 same runner, not separate services per module.
 
+<!-- planned-change:archive-finished-threads -->
 **Admitted configuration.** The runner works from one admitted generation of its
 configuration: the machine layer, `agents.yaml`, each company home's document with
 the secrets its connector references resolved, and each considered project's layer,
@@ -42,15 +43,32 @@ example, a project whose code is not on GitHub) the project gets no todo dispatc
 Whether the runner considers the project, and its canonical checkout
 synchronization (the `main` fast-forward that feeds the blueprint), still follow
 its switches; its other work is unaffected.
-<!-- planned:archive-finished-threads -->
-A machine layer whose retention window the selected runtime cannot carry is
-admitted with thread retention withheld, as
-`project/instrukt/spec/feature/configuration/layered-configuration` decides.
-<!-- /planned:archive-finished-threads -->
 No part
 of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters; nothing running handles a missing one).
+<!-- change:archive-finished-threads -->
+**Admitted configuration.** The runner works from one admitted generation of its
+configuration: the machine layer, `agents.yaml`, each company home's document with
+the secrets its connector references resolved, and each considered project's layer,
+validated together. It is built when `run` or `tick` starts — an invalid machine
+layer or `agents.yaml` refuses the start, with the finding — and again at every
+wake. A valid result replaces the current generation for every part of the runner at
+once; an invalid one leaves the current generation in force and its findings are
+reported in `instrukt events status`. A project layer with a finding against a
+module withholds only that module's own work: with a `modules.todos` finding (for
+example, a project whose code is not on GitHub) the project gets no todo dispatch.
+Whether the runner considers the project, and its canonical checkout
+synchronization (the `main` fast-forward that feeds the blueprint), still follow
+its switches; its other work is unaffected.
+A machine layer whose retention window the selected runtime cannot carry is
+admitted with thread retention withheld, as
+`project/instrukt/spec/feature/configuration/layered-configuration` decides.
+No part
+of the runner reads those files on its own
+(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
+enters; nothing running handles a missing one).
+<!-- /planned-change:archive-finished-threads -->
 
 Company connections and the conversation relay follow the admitted generation
 as it changes. Adding a connector starts it, changing its settings or tokens
@@ -94,21 +112,15 @@ reached, the claim stays local and pending and no session starts; the next
 tick refreshes the todo and reflects the claim, then dispatches, or drops the
 claim on a conflict.
 
+<!-- planned-change:archive-finished-threads -->
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
 deleting it orphans this computer's live claims until they are released. On that
 computer the holder is a session bound to the todo, or the session that claimed
 it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
-<!-- planned-change:archive-finished-threads -->
 it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup.
-<!-- change:archive-finished-threads -->
-it. The dispatcher records the handoff and retains conversations needed for
-later rounds or human questions. The runtime owns session ending and cleanup;
-which finished threads are archived, and when, is the runner's thread
-retention (`project/instrukt/spec/feature/runner/thread-retention`).
-<!-- /planned-change:archive-finished-threads -->
 Every tick also polls GitHub for the todos this computer has an interest in,
 with conditional requests: the todos it holds claims on, one pickup listing per
 project with `todos` on, and the prerequisites its own work is blocked on
@@ -119,6 +131,28 @@ lock too. Reflection holds that lock across GitHub requests and takes the writer
 lock only briefly for each local commit of what it learned. Lock order is always
 reflection → writer; the local transaction releases the writer lock before a
 flush acquires the reflection lock. Local readers take neither lock.
+<!-- change:archive-finished-threads -->
+A claim is held by a computer, identified by the id created once in
+`~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
+deleting it orphans this computer's live claims until they are released. On that
+computer the holder is a session bound to the todo, or the session that claimed
+it through `instrukt todo work`; any other caller is refused as "claimed
+elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
+it. The dispatcher records the handoff and retains conversations needed for
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
+Every tick also polls GitHub for the todos this computer has an interest in,
+with conditional requests: the todos it holds claims on, one pickup listing per
+project with `todos` on, and the prerequisites its own work is blocked on
+(`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
+of that listing. Every tick flushes pending work-record reflection under the
+per-computer reflection lock; commands that write the record flush it under that
+lock too. Reflection holds that lock across GitHub requests and takes the writer
+lock only briefly for each local commit of what it learned. Lock order is always
+reflection → writer; the local transaction releases the writer lock before a
+flush acquires the reflection lock. Local readers take neither lock.
+<!-- /planned-change:archive-finished-threads -->
 
 ### Enablement and infrastructure
 

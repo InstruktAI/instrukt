@@ -197,6 +197,7 @@ This context emits no events.
 
 ## Context map position
 
+<!-- planned-change:archive-finished-threads -->
 - **Docs** — customer / supplier: configuration supplies read-time
   interpolation through the CLI.
 - **Publication** — customer / supplier: configuration supplies the project
@@ -224,12 +225,39 @@ This context emits no events.
   that it stays inside the project's checkout
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
-<!-- planned:archive-finished-threads -->
+<!-- change:archive-finished-threads -->
+- **Docs** — customer / supplier: configuration supplies read-time
+  interpolation through the CLI.
+- **Publication** — customer / supplier: configuration supplies the project
+  slug, runtime choice and the configuration schema type the editor schema of
+  `instrukt.yaml` is generated from. Publication also invokes configuration’s
+  migration operation; it is a callable contract, not a configuration key. What a
+  project publishes follows from its `docs/general/` and `docs/domain/<x>/`
+  positions, never from a configuration key.
+- **Repository** — customer / supplier: configuration supplies the project
+  slug, runtime choice and agent author settings.
+- **Specs** — customer / supplier: configuration supplies the project slug
+  identifying the inventory and bindings.
+- **Blueprint** — customer / supplier: configuration supplies its module
+  switch and engine selection.
+- **Work, workflow, runner** — customer / supplier: configuration supplies
+  board, approval gates, runtime choice and runner settings, and to runner the
+  company homes with their settings and resolved secrets.
+- **Company** — customer / supplier: configuration supplies company homes with
+  their settings, members, resolved secrets and declared connectors. Published
+  language: configuration validates `connectors:` against the company
+  context's connector declarations.
+
+- **Runner (worktree reclamation)** — customer / supplier: configuration
+  supplies a project's admitted declaration of regenerable output and decides
+  that it stays inside the project's checkout
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
 - **Runner (thread retention)** — customer / supplier: configuration supplies
   the computer's admitted retention window and refuses, where configuration
   enters, a window the selected runtime cannot carry
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
-<!-- /planned:archive-finished-threads -->
+<!-- /planned-change:archive-finished-threads -->
 
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except

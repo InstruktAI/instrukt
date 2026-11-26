@@ -123,6 +123,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
 ## Ownership boundary
 
 
+<!-- planned-change:archive-finished-threads -->
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the admission, rendering and start of requested
@@ -152,14 +153,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
   configuration storage and interpolation, owned by configuration;
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
-<!-- planned-change:archive-finished-threads -->
   session lifecycle, input delivery, restart, revival, handover,
   live transcripts and lifecycle cleanup, owned by the runtime; connectors,
-<!-- change:archive-finished-threads -->
-  session lifecycle, input delivery, restart, revival, handover,
-  live transcripts and lifecycle cleanup, owned by the runtime, which also
-  performs the archives thread retention decides; connectors,
-<!-- /planned-change:archive-finished-threads -->
   conversations, the speaker of a conversation turn and the conversation tables,
   owned by company (`project/instrukt/spec/domain/company`); instrukt's
   extracted searchable history is a separate contract. instrukt calls only the adapter's
@@ -196,6 +191,76 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+<!-- change:archive-finished-threads -->
+- **Owns:** Per-computer history extraction/search and merged history queries;
+  module-aware runner execution; todo dispatch policy; procedure
+  activation from events; the admission, rendering and start of requested
+  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  runtime capability translation, conversation-link membership, identity-envelope
+  vocabulary and deterministic turn-end relay;
+  unattended event/approval delivery and runner-owned execution observation; time
+  eligibility and missed-run decisions; anomaly-notification routing; the
+  container each company's sessions run in on a host, its state, its tools,
+  its shared defaults and the export and import of its irreplaceable state; resolving
+  a session's assignment from work's, its own and the company context's facts;
+  agents'
+  access to declared MCP servers (which declarations a caller sees and the
+  login a call carries), people's sign-ins to them and the logins kept from
+  them; the
+  meaning and writes of its tables in the state database (the
+  event log, consumer cursors and handled marks, request validators,
+  watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
+  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  `project/instrukt/spec/feature/work/state-database`; the history store with
+  its file, lock and migrations, holding retained history, source positions and
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
+- **Does not own:** Work content, approval, workflow derivation or step
+  completion evidence, owned by work and workflow;
+  configuration storage and interpolation, owned by configuration;
+  subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
+  blueprint;
+  session lifecycle, input delivery, restart, revival, handover,
+  live transcripts and lifecycle cleanup, owned by the runtime, which also
+  performs the archives thread retention decides; connectors,
+  conversations, the speaker of a conversation turn and the conversation tables,
+  owned by company (`project/instrukt/spec/domain/company`); instrukt's
+  extracted searchable history is a separate contract. instrukt calls only the adapter's
+  released primitives. Events, schedules and dispatch decisions are the
+  runner's own; a runtime's task, schedule or event features are not used.
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  operational `instrukt sessions list` surface,
+  `instrukt history extract|search|show`,
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, the sign-in return path, and wake-up
+  and runner-service registration by `instrukt install`;
+  structured adapter operations, semantic-state observation, optional bounded native conversation
+  reads and explicit delivery/assignment evidence capabilities, linked-thread
+  streams and optional notification; instrukt-owned start semantic-key discovery
+  and database locking; the hosting and the conversation assignment lookup that
+  the company context implements and the CLI wires. Every operational sessions
+  command accepts `--json`.
+  Agents use configured native operations in their own conversation and
+  record native child attempts through work. The adapter starts only without
+  an agent or for an explicit native-capability gap. Native delegation returns
+  shared workspace evidence. The unified `todo-orchestrator` and its native shared children
+  use one `<slug>/work` worktree and branch, with one workspace role admitted at a time
+  and atomic completion/release through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
+  `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
+  `workflow.finalized`.
+- **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
+  project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
+  supplies records and session identity, and the state database's file,
+  writer lock and migrations; workflow supplies assignments; company supplies
+  conversation hosting and conversation assignments; the runtime and
+  GitHub supply execution and external observations. These
+  relationships are specified in the context map position below.
+- **Implementation roots:** `instrukt-runner` realizes this context, shared by
+  `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
+  depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+<!-- /planned-change:archive-finished-threads -->
 
 
 The runner also owns worktree reclamation: that and when the disk todo
@@ -507,6 +572,7 @@ has no origin, as declared in Canonical fields.
 
 ## Use cases
 
+<!-- planned-change:archive-finished-threads -->
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
 
 - **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
@@ -554,10 +620,57 @@ has no origin, as declared in Canonical fields.
 - **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
   — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
 
-<!-- planned:archive-finished-threads -->
+<!-- change:archive-finished-threads -->
+- **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
+
+- **History** — [project/instrukt/spec/feature/runner/history](../feature/runner/history.md) — local extraction from T3 and merged search across computers.
+- **Work dispatch** — `project/instrukt/spec/feature/runner/work-dispatch`
+  — choose automatic or deliberate pickup of eligible work.
+- **Session continuity** — `project/instrukt/spec/feature/runner/session-continuity`
+  — session reuse, five-state observation, working on T3 Code once it is
+  chosen, refusing a feature the chosen runtime cannot carry, and native
+  delegation with record-backed attempts. Archive search and agent-owned
+  session ending are retired goals.
+- **Conversation links** — `project/instrukt/spec/feature/runner/conversation-links`
+  — hold a three-way conversation across two agent threads and close it for
+  everyone; includes the runner-owned identity-envelope vocabulary.
+- **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
+  — learn about upstream changes before deciding to reconcile a fork.
+- **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
+  — arrange future work and recover missed recurring occurrences.
+- **Anomaly notification** — `project/instrukt/spec/feature/runner/anomaly-notification`
+  — notice unattended failures while keeping questions in their threads.
+- **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
+  — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
+- **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
+  — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
+
+- **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
+  — have trusted authors' pull-request heads reviewed independently without anyone asking.
+
+
+- **Requested review** — [project/instrukt/spec/feature/runner/requested-review](../feature/runner/requested-review.md)
+  — have an exact committed worktree head reviewed independently on an assignment instrukt rendered from its coordinates.
+
+
+- **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
+- **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
+- **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
+- **Independent retained reactions** — `project/instrukt/spec/feature/runner/event-consumers`.
+- **Signed project and company sources** — `project/instrukt/spec/feature/runner/inbound-webhook-endpoint-framework`.
+- **Single cluster intake** — `project/instrukt/spec/feature/runner/single-ingress-webhook-termination`.
+- **GitHub provider translation** — `project/instrukt/spec/feature/runner/github-webhook-normalization`.
+- **Enablement-driven infrastructure** — `project/instrukt/spec/feature/runner/module-installation`.
+- **Continuing procedure responsibility** — `project/instrukt/spec/feature/runner/procedure-standing-agent`.
+- **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
+- **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
+
+- **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
+  — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
+
 - **Thread retention** — [project/instrukt/spec/feature/runner/thread-retention](../feature/runner/thread-retention.md)
   — have long-quiet finished threads leave the thread list without anyone archiving them.
-<!-- /planned:archive-finished-threads -->
+<!-- /planned-change:archive-finished-threads -->
 
 ## Governing designs and decisions
 

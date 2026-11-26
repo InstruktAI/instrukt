@@ -115,6 +115,7 @@ todo's worktree does not depend on it
 
 ### Layer rules
 
+<!-- planned-change:archive-finished-threads -->
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
@@ -136,9 +137,6 @@ todo's worktree does not depend on it
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
 | `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
-<!-- planned:archive-finished-threads -->
-| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
-<!-- /planned:archive-finished-threads -->
 | `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -150,6 +148,41 @@ todo's worktree does not depend on it
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- change:archive-finished-threads -->
+| Key | Layer | Meaning owned by |
+| --- | --- | --- |
+| `schema_version` | each document | configuration |
+| `agents.<name>.git_author` | global only | commit composition |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
+| `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), optional `reply_mode` (`turn_output` \| `explicit`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
+| `ticks` | global only | the runner |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
+| `runner.notify` | global only | the runner |
+| `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
+| `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
+| `project` | project only | docs and publication |
+| `requires` (modules the flavor needs) | project only | publication |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
+| `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
+| `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
+| `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- /planned-change:archive-finished-threads -->
 
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
@@ -365,6 +398,7 @@ with `--global` answers from the global layer alone. Writes address one layer
 `instrukt config validate` checks the project layer, or the global layer with
 `--global`. Findings:
 
+<!-- planned-change:archive-finished-threads -->
 - a key in a layer that does not permit it, naming the key and its layer;
 - a value of the wrong type or outside its allowed values;
 - a missing `schema_version`;
@@ -382,7 +416,24 @@ with `--global` answers from the global layer alone. Writes address one layer
   (`project/instrukt/spec/feature/work/github-record`). A write to the
   project layer that would switch todos on there is refused with the same
   reason.
-<!-- planned:archive-finished-threads -->
+<!-- change:archive-finished-threads -->
+- a key in a layer that does not permit it, naming the key and its layer;
+- a value of the wrong type or outside its allowed values;
+- a missing `schema_version`;
+- `ingress.reactions` set while `ingress.computer` is not;
+- a feature switched on whose required capabilities the chosen adapter lacks,
+  or switched on while `runner.runtime` names no compiled adapter, naming each
+  missing capability and the selected runtime
+  (`project/instrukt/spec/feature/runner/session-continuity`). A write
+  that would switch such a feature on is refused with the same naming. Events
+  on a computer that is the ingress and not the reacting computer need no
+  runtime: receiving and publishing need no agent;
+- in a project, `modules.todos` on in the effective configuration while the
+  project's code is not on GitHub, saying in plain words that todos need the
+  project's code on GitHub
+  (`project/instrukt/spec/feature/work/github-record`). A write to the
+  project layer that would switch todos on there is refused with the same
+  reason.
 - `runner.archive_finished_after` set while the selected runtime cannot
   archive threads, naming the runtime and the missing capability
   (`project/instrukt/spec/feature/runner/session-continuity`). A write that
@@ -395,7 +446,7 @@ admitted with the window off, the finding is reported with the others, and
 everything else the layer admits runs unchanged. Every other finding at
 `runner.archive_finished_after`, a value outside its shape among them, is a
 finding of the machine layer like any other.
-<!-- /planned:archive-finished-threads -->
+<!-- /planned-change:archive-finished-threads -->
 
 Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
@@ -505,19 +556,30 @@ And the configuration is unchanged
 
 ### Configuration value shapes
 
+<!-- planned-change:archive-finished-threads -->
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
-<!-- planned:archive-finished-threads -->
-| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
-<!-- /planned:archive-finished-threads -->
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- change:archive-finished-threads -->
+| Key | Type / allowed values | Default |
+| --- | --- | --- |
+| `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
+| `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
+| `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
+| `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
+| `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
+| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
+| `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- /planned-change:archive-finished-threads -->
 
 ### UC-CL5: Configure external state in its owning source
 
