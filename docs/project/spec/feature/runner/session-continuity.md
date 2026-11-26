@@ -352,9 +352,7 @@ A misplaced thread reported `input-ready` or `ended failed` is rolled over by
 its owner, at the same succession point and under the same object lock that
 follow confirmed archive or deletion, with the same transfer of outstanding
 work: a standing agent's delivery, a todo or task execution's observation or
-follow-up, the recovery of a created start the runner has not yet accepted,
-which never launches its retained request again, and a company conversation's
-succession. The new generation
+follow-up, and a company conversation's succession. The new generation
 launches as any successor does, adding the checkout's project if it is still
 missing, and the misplaced thread is left as it is, as history; instrukt never
 sends to it again. A todo successor attaches a retained worktree only when it
