@@ -309,6 +309,36 @@ fn records_work(eval: &mut Evaluated, todo: &str, first_model: &str, second_mode
     eval.reviewed(&demo, &format!("{todo}-second"), false);
 }
 
+/// `page` with each `flows` commit named by the computer whose flavor
+/// repository made it, and each commits list in name order: the commits'
+/// own identities, and so their sorted order, differ from run to run.
+fn by_computer(page: &str, computers: &[(&str, &Evaluated)]) -> String {
+    let mut page = page.to_owned();
+    for (name, eval) in computers {
+        let log = eval
+            .project
+            .env
+            .git(eval.flavor.repo.path(), ["log", "--format=%H", "--reverse"]);
+        for (number, commit) in log.lines().enumerate() {
+            page = page.replace(commit, &format!("{name}'s commit {}", number + 1));
+        }
+    }
+    let mut out = Vec::new();
+    let mut list: Vec<&str> = Vec::new();
+    let mut in_list = false;
+    for line in page.lines() {
+        if in_list && line.starts_with("<li>") {
+            list.push(line);
+            continue;
+        }
+        list.sort_unstable();
+        out.append(&mut list);
+        in_list = line == "<ul class=\"commits\">";
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
 // spec: project/instrukt/spec/feature/work/eval-report UC-ER2
 #[test]
 fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offline_one() {
@@ -387,7 +417,11 @@ fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offlin
         String::from_utf8_lossy(&output.stderr)
     );
     let printed = a.without_tmp(&String::from_utf8(output.stdout).unwrap());
-    let page = redact(&a.without_tmp(&std::fs::read_to_string(&html).unwrap()));
+    let page = std::fs::read_to_string(&html).unwrap();
+    let page = redact(&a.without_tmp(&by_computer(
+        &page,
+        &[("a", &a), ("b", &b), ("c", &c), ("d", &d)],
+    )));
     insta::assert_snapshot!("fleet-printed", printed);
     insta::assert_snapshot!("fleet-report", page);
 }

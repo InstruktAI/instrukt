@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn a_history_request_is_the_json_older_builds_read() {
-        let request = serde_json::to_string(&Envelope {
+        let request = serde_json::to_value(Envelope {
             reply: "instrukt:history:reply:0123456789abcdef0123456789abcdef".into(),
             payload: HistoryPayload {
                 query: "jewels",
@@ -276,7 +276,12 @@ mod tests {
         .unwrap();
         assert_eq!(
             request,
-            r#"{"reply":"instrukt:history:reply:0123456789abcdef0123456789abcdef","query":"jewels","limit":20,"expires":1900000120}"#
+            serde_json::json!({
+                "reply": "instrukt:history:reply:0123456789abcdef0123456789abcdef",
+                "query": "jewels",
+                "limit": 20,
+                "expires": 1_900_000_120,
+            })
         );
     }
 
