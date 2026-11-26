@@ -117,9 +117,18 @@ state database's file and migrations (work).
     supervising the connections, the relay pass over finished turns, whether
     retained work is outstanding, the relay's state, and the conversations
     section of `instrukt events status`.
+<!-- planned-change:company-home-generation -->
   - The conversation assignment lookup, which the runner's assignment
     resolution takes beside work's own, returning the connector's recorded role
     and company home.
+<!-- change:company-home-generation -->
+  - The conversation assignment lookup, which the runner's assignment
+    resolution takes beside work's own, returning the connector's recorded role
+    and company home. It recognises a conversation's session from the
+    runner's binding of the conversation's key, which the runner records with
+    the session's fixed native thread before the session starts, so a
+    conversation session is recognised from its first command.
+<!-- /planned-change:company-home-generation -->
   - The explicit reply queueing operation (`instrukt company reply`), which
     verifies an active company conversation binding, checks that the target
     conversation is admitted on that `(company, connector)`, scrubs credentials,

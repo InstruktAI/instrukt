@@ -122,6 +122,19 @@ Worktree reclamation adds these crossings; its contract is
 | workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
 | work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
 
+<!-- planned:company-home-generation -->
+Adding a company adds these crossings; its contract is
+`project/instrukt/spec/feature/configuration/company-homes` (Generation), and
+repository's company home adoption carries it out.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work GitHub boundary → configuration | Customer / Supplier | Whether a login names an organisation, a personal account or nothing, through an interface configuration declares and the CLI wires |
+| work GitHub boundary → repository | Customer / Supplier | Creating the company's private repository in the owning organisation, making its GitHub administrator an administrator and setting its default branch, through an interface core declares and the CLI wires |
+| configuration → repository | Customer / Supplier | The generation decision for a company's key, the skeleton's project layer and ignore lines, and the operation that writes the home's settings document |
+| publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
+<!-- /planned:company-home-generation -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

@@ -657,6 +657,30 @@ review enablement). The credentials that observe CI and that reflect build
 reviews are unchanged: a project that has not opted in needs none of these
 permissions.
 
+<!-- planned:company-home-generation -->
+### Company repositories
+
+Adding a company whose repository does not exist yet
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation)
+needs one more credential of the project identity, under its installation on
+the owning organisation:
+
+| Credential | Identity | Permissions | Used for |
+| --- | --- | --- | --- |
+| Company repository creation | The project identity | Write access to repository administration | Creating the company's private repository, making its GitHub administrator an administrator of it and setting its default branch. |
+
+Work verifies it by requesting the credential with exactly that permission
+before anything is created. A missing installation on the organisation or a
+missing permission refuses the addition, naming the App, the organisation,
+the permission and the configuration repair door, and nothing is created. An
+App is given access to each repository it creates, so the created repository
+is in the project identity's installation from then on, whichever
+repositories that installation selects. Whether a login is an organisation or
+a personal account is read from what GitHub shows of it publicly and needs no
+credential. Adding a company whose repository exists uses no credential of
+the project identity: nothing on GitHub is changed.
+<!-- /planned:company-home-generation -->
+
 ## Use cases
 
 ### UC-GA1: See bot authorship and receive an independent native review

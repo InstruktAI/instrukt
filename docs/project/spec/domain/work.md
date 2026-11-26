@@ -136,6 +136,22 @@ runner owns dispatch, and the configured runtime owns conversations.
   is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
+<!-- planned:company-home-generation -->
+The GitHub boundary also answers for adding a company
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation).
+It tells whether a login names an organisation, a personal account or
+nothing, from what GitHub shows of it publicly. Under the project identity's
+installation on the owning organisation it creates a private repository
+there, answering whether GitHub refused because the repository exists, makes
+a named account an administrator of it and sets its default branch. Its credential is stated in
+`project/instrukt/spec/feature/work/github-apps` (Company repositories).
+These are translations of GitHub's model and nothing more: which
+repository, when and for whom are configuration's decisions, and the sequence
+around them is repository's company home adoption. Configuration and
+repository reach them through interfaces core declares and the CLI wires, so
+core imports nothing of this crate.
+<!-- /planned:company-home-generation -->
+
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 Work also owns review evidence for exact commits that no todo's record

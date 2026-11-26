@@ -28,6 +28,17 @@ missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
+<!-- planned:company-home-generation -->
+A company repository (`project/instrukt/spec/domain/configuration`) is a
+project like any other to publication, except that its documentation is the
+company's knowledge: its sync publishes no position, writes nothing under
+`~/.instrukt/docs/` and no entry into the global index, and records the
+checkout and its published commit as every project's sync does. Publication
+decides from a repository's root whether it is a company's, for every
+rendering, for the company's skill, for docs validation's question and for
+sync.
+<!-- /planned:company-home-generation -->
+
 ## Ubiquitous language
 
 **Home**
@@ -116,11 +127,21 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    repository's committed content and the rendering instrukt release only. A
    repository has at most one.
 
+<!-- planned-change:company-home-generation -->
 **Company plugin**
 :  The Claude plugin a company's repository carries in `plugins/<key>/`,
    `<key>` being the company's key: the selection the company index makes,
    held as one skill with a manifest. It is no instruction file
    (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- change:company-home-generation -->
+**Company plugin**
+:  The Claude plugin a company's repository carries: the company's skill in
+   `skills/<key>/` at the repository's root, `<key>` being the company's key,
+   outside any vendor's folder, and the skill's entry in the plugin catalog,
+   which is the plugin's manifest. The skill holds the selection the company
+   index makes. It is no instruction file
+   (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- /planned-change:company-home-generation -->
 
 **Plugin catalog**
 :  `.claude-plugin/marketplace.json` at the root of a company's repository,
@@ -197,6 +218,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   entry but the company plugin's (the company's repository); committing and
   pushing what a rendering changed (its caller); whether and when a Claude
   client takes a new copy of a plugin (Claude).
+<!-- planned-change:company-home-generation -->
 - **Published contracts** — `instrukt sync`; the home's published tree
   (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
   `index.yaml` and `schema.yaml` when the position has them); the global
@@ -216,6 +238,28 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- change:company-home-generation -->
+- **Published contracts** — `instrukt sync`; the home's published tree
+  (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
+  `index.yaml` and `schema.yaml` when the position has them); the global
+  index `~/.instrukt/state/index.yaml`; the ownership record, published
+  commits and checkout paths under
+  `~/.instrukt/state/publication/`; the eval fingerprint per published commit
+  under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
+  of a repository and `instrukt docs render [--check]`; a company's skill
+  under `skills/<key>/` with its plugin's entry in
+  `.claude-plugin/marketplace.json`,
+  and `instrukt docs plugin --key <key> --name <name>`, which asks for a
+  rendering, with `--check` for a check and with `--validate` for a
+  validation, the two flags excluding each other
+  (`project/instrukt/spec/feature/publication/company-plugin`); whether a
+  repository's `docs/index.yaml` is its company index, which docs
+  validation asks before reading the file; the global
+  agent files; `.instrukt/schemas/` and the modeline
+  form (`project/instrukt/spec/feature/publication/editor-schemas`);
+  `instrukt status [--json]` and its report
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:company-home-generation -->
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
@@ -258,6 +302,10 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   - A sync that is refused or fails leaves the previous publication readable
     and records no commit.
   - Nothing the project published before and no longer owns remains.
+<!-- planned:company-home-generation -->
+  - A company repository's published part holds no position, no claim and
+    no index entry: only its published commit and checkout path.
+<!-- /planned:company-home-generation -->
 - **Identifier:** the project slug from the project's `instrukt.yaml`.
 - **Lifecycle:** created by the project's first sync; replaced by each sync
   whose main differs from the published commit.
@@ -307,6 +355,7 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   workflow; removed with its entry index
   (`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
+<!-- planned-change:company-home-generation -->
 #### Company plugin (aggregate)
 
 - **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
@@ -339,6 +388,48 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Lifecycle:** rendered when a caller asks for it; committed by that
   caller; left as it is where the repository holds no company index
   (`project/instrukt/spec/feature/publication/company-plugin`).
+
+<!-- change:company-home-generation -->
+#### Company plugin (aggregate)
+
+- **Root:** the folder `skills/<key>/` at the root of a company's repository,
+  `<key>` being the company's key.
+- **Contains:** the skill's main file; one file for each other document the
+  skill carries; the plugin's entry in the repository's plugin catalog, which
+  is the plugin's manifest and carries its version.
+- **Invariants:**
+  - A function of the repository's company index and documents, the key and
+    the name its caller gives, the version the catalog entry holds and the
+    rendering instrukt release: nothing published on the computer, no
+    configuration layer and no environment enters it.
+  - It holds the selection the company index makes, as the repository's
+    committed `AGENTS.md` does, and carries every document it names.
+  - The version is the one thing a rendering takes from the plugin the
+    repository holds. Its last number is raised by one exactly when the
+    rendering differs from what `skills/<key>/` holds; instrukt never changes
+    the first two.
+  - Changes only in the working tree, through `instrukt docs plugin` or the
+    company skeleton's rendering; no commit, sync, checkout, start or tick
+    writes it, and rendering a repository's `AGENTS.md` writes none.
+  - The folder is written whole, whatever it held, and never removed.
+    Nothing is read, written or removed through a symbolic link, and nothing
+    outside the folder and the catalog is read, written or removed, a
+    `plugins/<key>/` folder included.
+  - Of the plugin catalog, a rendering changes the plugin's entry and
+    nothing else; where the repository holds no catalog, it creates one named
+    by the company's key, with the company as its owner.
+  - The repository holds no other manifest for the plugin, so one catalog
+    lists the skills of several plugins, each entry naming its own.
+  - With a finding, no file is written or removed.
+  - It has no published commit, no claim and no index entry, and belongs to
+    no project's published part.
+- **Identifier:** the company's key, in its repository.
+- **Lifecycle:** rendered with the company skeleton and whenever a caller
+  asks for it; committed by that caller; left as it is where the repository
+  holds no company index
+  (`project/instrukt/spec/feature/publication/company-plugin`).
+
+<!-- /planned-change:company-home-generation -->
 
 ### Domain events emitted
 

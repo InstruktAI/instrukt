@@ -95,6 +95,16 @@ one. The grant reaches the command; which session may reclaim at a given
 moment is decided by the worktree's own writer admission, which binds every
 caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
+<!-- planned:company-home-generation -->
+`instrukt init --company <key>` belongs to the Repository family: it is
+`repository-write`, and its object is the company's home, a machine-wide
+object, so only `any` reaches it. Adding a company is the operator's: a
+session whose recorded assignment names a company, a company conversation's
+among them, is refused it whatever its class, naming the operator's door,
+and nothing is created
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation).
+<!-- /planned:company-home-generation -->
+
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
 reaches only objects bound by the recorded assignment. For machine-wide

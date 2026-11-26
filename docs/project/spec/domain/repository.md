@@ -22,6 +22,19 @@ work item when given. It does not decide what a sync publishes or a
 graph contains, owns no lint or test hook, and never runs the project's own
 commands.
 
+<!-- planned:company-home-generation -->
+It also adopts a company's home (`instrukt init --company <key>`), carrying
+out the generation decision configuration makes
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation).
+For a company whose repository is to be created, it composes the company
+skeleton's first commit in a staging checkout, has work's GitHub boundary
+create the private repository, pushes that commit as the repository's default
+branch and has the company's GitHub administrator made an administrator of it.
+For every company it then clones the repository as the home, has
+configuration write the home's settings document, installs the hook sections
+there and has publication sync the home.
+<!-- /planned:company-home-generation -->
+
 ## Ubiquitous language
 
 **Hook file**
@@ -76,6 +89,24 @@ commands.
 : The agent identity the selected adapter can resolve from its caller
   metadata. An unresolved identity remains unknown.
 
+<!-- planned:company-home-generation -->
+**Company home adoption**
+: What `instrukt init --company <key>` does: it gives a company its home on
+  this computer as the checkout of the company's repository, creating the
+  repository first when configuration's decision says so.
+
+**Staging checkout**
+: The working trees under `~/.instrukt/state/company-generation/<key>/` in
+  which a company's new repository is composed before it exists on GitHub,
+  holding the skeleton's root commit, and in which the home's clone is made
+  ready before it moves into place. It is the record of an adoption under
+  way.
+
+**Root commit**
+: The first commit of a company's new repository, holding the company
+  skeleton. It creates the repository's default branch.
+<!-- /planned:company-home-generation -->
+
 ## Ownership boundary
 
 - **Owns** — repository adoption and its claims report; the copy of the
@@ -112,6 +143,32 @@ commands.
   the core-declared interface wired by the CLI only when todos is enabled).
 - **Implementation roots** — `crates/instrukt-core/` (repository);
   `crates/instrukt-cli/` (command surface).
+
+<!-- planned:company-home-generation -->
+Company home adoption extends this boundary:
+
+- **Owns** — the sequence of a company home adoption; the staging checkout,
+  its resumption and its removal; composition of the root commit; the clone
+  of the company's repository as the home; the hook sections in the home; the
+  generation lock under which adoptions take turns on a computer.
+- **Does not own** — whether the home is created, checked out or refused,
+  the repository's name and the skeleton's project layer and ignore lines
+  (configuration, `project/instrukt/spec/domain/configuration`); the rendered
+  `AGENTS.md`, the company's skill and catalog, the project layer's modeline
+  and the sync (publication, `project/instrukt/spec/domain/publication`);
+  every call to GitHub (work's GitHub boundary,
+  `project/instrukt/spec/domain/work`); the credentials git pushes and clones
+  with, which are the computer's own, as for every git operation instrukt runs.
+- **Published contracts** — `instrukt init --company <key> [--name <name>]
+  [--admin <login>]`
+  (`project/instrukt/spec/feature/repository/project-initialization`).
+- **Allowed dependencies** — configuration (the generation decision and the
+  settings-document operation, as customer); publication (the renderings, the
+  editor-schema operation and sync, as customer); work's GitHub boundary
+  (creating the repository, its administrator and its default branch, through
+  an interface core declares and the CLI wires, as for the verified bot
+  author).
+<!-- /planned:company-home-generation -->
 
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
 it reclaims the regenerable output of a todo's worktree and belongs to runner
@@ -162,9 +219,64 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     publication keeps at the top of the files it describes.
   - Adoption publishes and claims nothing; its claims report only reads.
   - Running it again on an adopted repository changes nothing.
+<!-- planned:company-home-generation -->
+  - In a company repository
+    (`project/instrukt/spec/domain/configuration`), adoption writes no
+    `docs/project/`, no project index and no schema copy: the repository's
+    documentation is the company's knowledge.
+<!-- /planned:company-home-generation -->
 - **Identifier:** the repository.
 - **Lifecycle:** created by `instrukt init`; completed by a later run when a
   part is missing.
+
+<!-- planned:company-home-generation -->
+#### Company home adoption (aggregate)
+
+- **Root:** the company's home on this computer, and, while the adoption is
+  under way, its staging checkout.
+- **Contains:** the staging checkout with the root commit; the home's
+  checkout; its hook sections.
+- **Invariants:**
+  - The home folder comes into being only as a clone of the company's
+    repository, in one step: the clone is made beside the staging checkout,
+    given its settings document and its hook sections there, and moved into
+    place whole, after which the home is synced. An interrupted adoption
+    leaves no home folder behind, only its staging, which the next adoption
+    of that company resumes.
+  - Nothing is written into a home folder that exists, and an adoption that
+    finds one is refused before anything else happens.
+  - Whether the company's repository exists is read with git, with the
+    computer's own credentials, as the clone that follows reads it: a
+    repository the computer reaches is checked out by contract, and one it
+    cannot reach is created when configuration's decision says so.
+  - The root commit is composed in the staging checkout, holding the skeleton
+    configuration and publication supply, before the repository is created:
+    the staging checkout is the durable record of a creation under way.
+  - An adoption that finds a staging checkout for the company resumes it
+    before it reads anything else. It creates the repository when it is
+    still absent and pushes the root commit without force. A push that the repository accepts, or that finds the
+    commit already there, completes the creation: the administrator is made,
+    the default branch is set and the home is cloned. A push the repository
+    refuses because it holds other history makes it a repository by contract:
+    the staging checkout is removed and the home is cloned, with nothing
+    changed on GitHub.
+  - A creation that GitHub refuses because the repository exists makes it a
+    repository by contract in the same way.
+  - The root commit is attributed as every attributed commit is: author,
+    `Session:` and `Human-Involved:`. It is the one commit instrukt composes
+    on a default branch, because it creates that branch; from then on the
+    branch has one writer, the integrator.
+  - Adoptions take turns: one company home adoption runs on a computer at a
+    time, holding `~/.instrukt/state/company-generation.lock` for its run.
+  - The home is ready when the adoption ends: its settings document names the
+    company, its hook sections are installed and the sync has run. A sync
+    that refuses, as it does for a repository that commits no project layer,
+    is reported, and the home stays.
+- **Identifier:** the company's key.
+- **Lifecycle:** started by `instrukt init --company <key>`; the staging
+  checkout is removed once the home is in place; complete when the home is
+  ready. The home is configuration's company home from then on.
+<!-- /planned:company-home-generation -->
 
 #### Attributed commit (aggregate)
 
@@ -227,6 +339,12 @@ This context emits no events.
   branches and exact-commit main advancement.
 - Core declares the optional todo-existence and graph-generation interfaces;
   the CLI wires work and blueprint implementations when their modules are on.
+<!-- planned:company-home-generation -->
+- **work's GitHub boundary** — Customer / Supplier. Company home adoption has
+  the company's repository created, its administrator made and its default
+  branch set through an interface core declares and the CLI wires
+  (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+<!-- /planned:company-home-generation -->
 
 ## See Also
 

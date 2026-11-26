@@ -26,6 +26,7 @@ names a home path.
 | `schema.yaml` at the root of any position | `snippet-schema.schema.json` | the snippet-schema type |
 | `instrukt.yaml` (the project layer) | `instrukt.schema.json` | the configuration schema at the current schema version |
 
+<!-- planned-change:company-home-generation -->
 The table lists the files that carry a modeline, each with the schema it
 names. The generated set holds one schema more: `company-index.schema.json`,
 generated from the type publication reads a company home's `docs/index.yaml`
@@ -35,6 +36,20 @@ and a document holding nothing admitted). It is written wherever the others
 are, and no file carries a modeline naming it: in a project a file at
 `docs/index.yaml` is a misplaced index, and in a company home nothing writes
 `.instrukt/schemas/`.
+<!-- change:company-home-generation -->
+The table lists the files that carry a modeline, each with the schema it
+names. The generated set holds one schema more: `company-index.schema.json`,
+generated from the type publication reads a company home's `docs/index.yaml`
+with (`project/instrukt/spec/feature/publication/agent-entrypoints`:
+`expanded` and `listed`, each a list of paths ending in `.md`, no other key,
+and a document holding nothing admitted). It is written wherever the others
+are, and no file carries a modeline naming it: in a project a file at
+`docs/index.yaml` is a misplaced index, and a company repository's
+`docs/index.yaml` carries none. A company repository is synced as every
+project is, so its `.instrukt/schemas/` is written there, and its committed
+project layer carries its modeline from the commit that creates it, so a sync
+of the home changes no committed file.
+<!-- /planned-change:company-home-generation -->
 
 - Each schema is generated from the same type the validator reads that file
   with — the position index and snippet schema types of the docs context
