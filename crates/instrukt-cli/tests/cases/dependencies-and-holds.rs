@@ -198,6 +198,86 @@ fn a_held_todo_shows_why_it_waits_and_keeps_its_recorded_work() {
     insta::assert_snapshot!("held", redact(&format!("{held}---\n{shown}")));
 }
 
+/// The time a `todo show` line beginning with `prefix` ends its field
+/// with: `created: <time> by …` or `hold: … (manual, by …, <time>)`.
+fn shown_time<'a>(shown: &'a str, prefix: &str) -> &'a str {
+    let line = shown
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap();
+    match prefix {
+        "created: " => line.split(" by ").next().unwrap(),
+        _ => line.rsplit(", ").next().unwrap().trim_end_matches(')'),
+    }
+}
+
+/// Runs a filing that must be refused; returns what the developer is told:
+/// work's refusal line, or the argument error before clap's usage text.
+fn refused_creation(project: &Project, filing: &[&str]) -> String {
+    let mut args = vec![
+        "create",
+        "renderer-rollout",
+        "Render nested lists with the new renderer.",
+        "--kind",
+        "change",
+        "--approved",
+    ];
+    args.extend_from_slice(filing);
+    let refusal = project.todo(&args).failure();
+    String::from_utf8_lossy(&refusal.get_output().stderr)
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH7
+#[test]
+fn converged_work_filed_on_hold_waits_from_its_first_revision_and_a_refused_filing_records_nothing()
+{
+    let project = Project::new();
+
+    let created = project.ok([
+        "create",
+        "nested-lists",
+        "Keep the depth of nested lists when parsing Markdown.",
+        "--kind",
+        "feature",
+        "--approved",
+        "--hold",
+        "--reason",
+        "waiting for the renderer binary to roll out",
+    ]);
+    let shown = project.ok(["show", "nested-lists"]);
+    let listed = project.ok(["list"]);
+    assert_eq!(
+        shown_time(&shown, "hold: "),
+        shown_time(&shown, "created: "),
+        "the creating change placed the hold"
+    );
+
+    let refused = [
+        refused_creation(&project, &["--hold", "--reason", "   "]),
+        refused_creation(
+            &project,
+            &["--hold", "--reason", "waiting for the rollout", "--icebox"],
+        ),
+        refused_creation(&project, &["--hold"]),
+    ]
+    .join("\n---\n");
+    let active = project.ok(["list"]);
+    let iceboxed = project.ok(["list", "--iceboxed"]);
+
+    insta::assert_snapshot!(
+        "held-at-creation",
+        redact(&format!("{created}---\n{shown}---\n{listed}"))
+    );
+    insta::assert_snapshot!(
+        "held-at-creation-refused",
+        redact(&format!("{refused}\n---\n{active}---\n{iceboxed}"))
+    );
+}
+
 /// Planned documentation of `list-depth` in the project's working tree: a
 /// new snippet it delivers, a planned block in a live snippet, and that
 /// snippet's next version as a companion; beside it, a snippet another

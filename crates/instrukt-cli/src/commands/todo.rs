@@ -165,10 +165,22 @@ struct CreateArgs {
     /// nothing is created.
     #[arg(long)]
     approved: bool,
-    /// Park it in the icebox.
+    /// Park work whose outcome has not converged in the icebox, outside the
+    /// lifecycle. Never for a wait on another todo (`--after`) or for
+    /// converged work waiting on a merge or release (`--hold`).
     #[arg(long)]
     icebox: bool,
-    /// Prerequisites, comma-separated slugs.
+    /// File converged work on hold for a concrete condition outside the
+    /// project's todos, such as a one-off branch merge, a binary rollout or
+    /// an external gate; needs `--reason`. The hold commits with the todo.
+    /// Never for a wait on another todo (`--after`).
+    #[arg(long, requires = "reason", conflicts_with = "icebox")]
+    hold: bool,
+    /// The condition the held work waits on.
+    #[arg(long, requires = "hold")]
+    reason: Option<String>,
+    /// Prerequisites, comma-separated slugs: the todos this one waits on. It
+    /// is ready once they deliver; never hold or icebox it for them.
     #[arg(long, value_name = "SLUGS")]
     after: Option<String>,
     /// The group parent.
@@ -760,6 +772,7 @@ impl Session<'_> {
                 tier: args.tier.map(tier),
             }),
             human_involved: args.human_involved,
+            hold: args.hold.then(|| args.reason.unwrap_or_default()),
         };
         if request.kind == TodoKind::Bug {
             bail!(
@@ -778,6 +791,8 @@ impl Session<'_> {
             record.kind,
             if record.status == TodoStatus::Iceboxed {
                 ", in the icebox"
+            } else if record.hold.is_some() {
+                ", on hold"
             } else {
                 ""
             },
@@ -1078,6 +1093,10 @@ fn admission(slug: &TodoSlug) -> String {
 - Is the work already covered? Read `instrukt todo list` and the `input` of each plausible match.
 - Does a small addition belong in an existing todo that has not started build?
 - Has the intended outcome converged, with every contract preparation consumes authored and reviewed? If not, file it with --icebox.
+- Does converged work wait on something? Place it by what it waits on:
+  - on other todos: --after <slugs>; it is ready once they deliver.
+  - on a concrete condition outside the project's todos (a one-off branch merge, a binary rollout, an external gate): --hold --reason <condition>.
+  Never use --hold or --icebox for a wait on another todo, nor --icebox for converged work waiting on a merge or release.
 - Is it documentation-only? That executes in context and needs no todo.
 - Does a defect claim name the contract it breaks and cite the occurrence?
 "
