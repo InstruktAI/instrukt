@@ -218,6 +218,7 @@ pub struct CoreWiring {
     pub caller_identity: Option<Arc<dyn CallerIdentityLookup>>,
     pub github_actors: Option<Arc<dyn GitHubActors>>,
     pub github_accounts: Option<Arc<dyn GitHubAccounts>>,
+    pub company_repositories: Option<Arc<dyn CompanyRepositories>>,
     pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
@@ -232,6 +233,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("caller_identity", &self.caller_identity.is_some())
             .field("github_actors", &self.github_actors.is_some())
             .field("github_accounts", &self.github_accounts.is_some())
+            .field("company_repositories", &self.company_repositories.is_some())
             .field("session_role", &self.session_role.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
@@ -279,6 +281,68 @@ pub enum AccountKind {
 /// (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
 pub trait GitHubAccounts: Send + Sync {
     fn account_kind(&self, login: &str) -> Result<AccountKind, InterfaceError>;
+}
+
+/// What creating a company's repository found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Creation {
+    /// GitHub created the repository, empty.
+    Created,
+    /// A repository of that name already exists in the organisation.
+    AlreadyExists,
+}
+
+/// Why work's GitHub boundary could not act on a company repository.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompanyRepositoryError {
+    /// The project identity cannot administer repositories in the
+    /// organisation: no installation there, or one without the permission.
+    #[error(
+        "the project App{} cannot create repositories in the GitHub organisation `{organisation}` ({cause}); install it on `{organisation}` with write access to repository administration (administration: write), then run the command again — the configuration skill's GitHub App setup, Company repositories, walks through it",
+        app.as_deref().map(|slug| format!(" `{slug}`")).unwrap_or_default()
+    )]
+    NotReady {
+        app: Option<String>,
+        organisation: String,
+        cause: String,
+    },
+    /// GitHub refused the operation or could not be asked.
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// Work's GitHub boundary for company repositories, under the project
+/// identity's installation on the owning organisation
+/// (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+/// `now` is the time credentials are issued at.
+pub trait CompanyRepositories: Send + Sync {
+    /// Whether the project identity can administer repositories in `org`:
+    /// its credential requested with exactly that permission.
+    fn ready(&self, org: &str, now: jiff::Timestamp) -> Result<(), CompanyRepositoryError>;
+    /// Creates the private repository `org/repo`, empty.
+    fn create(
+        &self,
+        org: &str,
+        repo: &str,
+        now: jiff::Timestamp,
+    ) -> Result<Creation, CompanyRepositoryError>;
+    /// Makes `login` an administrator of `org/repo`: at once for a member
+    /// of `org`, by GitHub's invitation for anyone else.
+    fn grant_admin(
+        &self,
+        org: &str,
+        repo: &str,
+        login: &str,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
+    /// Sets the default branch of `org/repo` to `branch`.
+    fn set_default_branch(
+        &self,
+        org: &str,
+        repo: &str,
+        branch: &str,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
 }
 
 /// Setup-verified stable actor facts for local author attribution. No repository

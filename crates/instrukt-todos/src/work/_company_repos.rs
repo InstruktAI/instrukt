@@ -1,13 +1,20 @@
 //! Work's GitHub boundary for company repositories
 //! (`project/instrukt/spec/feature/work/github-apps`, Company repositories):
 //! what kind of account a login names, read from GitHub's public account
-//! record without authentication.
+//! record without authentication, and the company repository's creation,
+//! administrator and default branch, under the project identity's
+//! installation on the owning organisation.
 
 use instrukt_core::config::Configuration;
-use instrukt_core::interfaces::{AccountKind, GitHubAccounts, InterfaceError};
-use serde_json::Value;
+use instrukt_core::github::{AppError, Operation};
+use instrukt_core::interfaces::{
+    AccountKind, CompanyRepositories, CompanyRepositoryError, Creation, GitHubAccounts,
+    InterfaceError,
+};
+use jiff::Timestamp;
+use serde_json::{Value, json};
 
-use super::_apps::{GitHubAccess, agent, api_base};
+use super::_apps::{Answer, Apps, Clock, GitHubAccess, Method, agent, api_base};
 
 fn unanswered(message: impl Into<String>) -> InterfaceError {
     InterfaceError {
@@ -75,10 +82,164 @@ impl GitHubAccounts for GitHubAccess {
     }
 }
 
+/// Whether GitHub's 422 answer `body` to creating a repository says a
+/// repository of that name already exists.
+fn already_exists(body: &Value) -> bool {
+    body["errors"].as_array().is_some_and(|errors| {
+        errors.iter().any(|error| {
+            error["field"] == "name"
+                && error["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("already exists"))
+        })
+    })
+}
+
+/// The failure of `what` GitHub answered with `answer`.
+fn failed(what: &str, answer: &Answer) -> CompanyRepositoryError {
+    let said = answer.body["message"]
+        .as_str()
+        .map(|message| format!(": {message}"))
+        .unwrap_or_default();
+    CompanyRepositoryError::Failed(format!("GitHub refused {what} ({}{said})", answer.status))
+}
+
+fn unreached(what: &str, error: &AppError) -> CompanyRepositoryError {
+    CompanyRepositoryError::Failed(format!("GitHub could not be asked {what}: {error}"))
+}
+
+impl GitHubAccess {
+    /// Runs `action` with the project identity's credential for
+    /// administering repositories in `org`; a credential that cannot be
+    /// issued is the organisation not being ready, unless GitHub could not
+    /// be asked.
+    fn administering<T>(
+        &self,
+        org: &str,
+        now: Timestamp,
+        action: impl FnOnce(&Apps, &str, Clock) -> Result<T, CompanyRepositoryError>,
+    ) -> Result<T, CompanyRepositoryError> {
+        let clock = Clock::starting(now);
+        let mut app = None;
+        let outcome = self.with_apps(|apps| {
+            app = Some(apps.selected(None).slug.clone());
+            let credential = apps.issue(org, None, Operation::CompanyRepository, clock)?;
+            Ok(action(apps, credential.token(), clock))
+        });
+        match outcome {
+            Ok(result) => result,
+            Err(error @ (AppError::Unreachable | AppError::RateLimited { .. })) => {
+                Err(unreached("for the project identity's credential", &error))
+            }
+            Err(error) => Err(CompanyRepositoryError::NotReady {
+                app,
+                organisation: org.to_owned(),
+                cause: error.to_string(),
+            }),
+        }
+    }
+}
+
+impl CompanyRepositories for GitHubAccess {
+    fn ready(&self, org: &str, now: Timestamp) -> Result<(), CompanyRepositoryError> {
+        self.administering(org, now, |_, _, _| Ok(()))
+    }
+
+    fn create(
+        &self,
+        org: &str,
+        repo: &str,
+        now: Timestamp,
+    ) -> Result<Creation, CompanyRepositoryError> {
+        self.administering(org, now, |apps, token, clock| {
+            let what = format!("creating {org}/{repo}");
+            let answer = apps
+                .send(
+                    Method::Post,
+                    &format!("/orgs/{org}/repos"),
+                    token,
+                    Some(&json!({"name": repo, "private": true})),
+                    clock,
+                )
+                .map_err(|error| unreached(&what, &error))?;
+            match answer.status {
+                201 => Ok(Creation::Created),
+                422 if already_exists(&answer.body) => Ok(Creation::AlreadyExists),
+                _ => Err(failed(&what, &answer)),
+            }
+        })
+    }
+
+    fn grant_admin(
+        &self,
+        org: &str,
+        repo: &str,
+        login: &str,
+        now: Timestamp,
+    ) -> Result<(), CompanyRepositoryError> {
+        self.administering(org, now, |apps, token, clock| {
+            let what = format!("making {login} an administrator of {org}/{repo}");
+            let answer = apps
+                .send(
+                    Method::Put,
+                    &format!("/repos/{org}/{repo}/collaborators/{login}"),
+                    token,
+                    Some(&json!({"permission": "admin"})),
+                    clock,
+                )
+                .map_err(|error| unreached(&what, &error))?;
+            // 201: GitHub invited them; 204: a member, added at once.
+            match answer.status {
+                201 | 204 => Ok(()),
+                _ => Err(failed(&what, &answer)),
+            }
+        })
+    }
+
+    fn set_default_branch(
+        &self,
+        org: &str,
+        repo: &str,
+        branch: &str,
+        now: Timestamp,
+    ) -> Result<(), CompanyRepositoryError> {
+        self.administering(org, now, |apps, token, clock| {
+            let what = format!("setting the default branch of {org}/{repo} to {branch}");
+            let answer = apps
+                .send(
+                    Method::Patch,
+                    &format!("/repos/{org}/{repo}"),
+                    token,
+                    Some(&json!({"default_branch": branch})),
+                    clock,
+                )
+                .map_err(|error| unreached(&what, &error))?;
+            match answer.status {
+                200 => Ok(()),
+                _ => Err(failed(&what, &answer)),
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    #[test]
+    fn only_a_name_that_already_exists_is_an_existing_repository() {
+        assert!(already_exists(&json!({
+            "message": "Repository creation failed.",
+            "errors": [{"resource": "Repository", "code": "custom", "field": "name",
+                        "message": "name already exists on this account"}]
+        })));
+        assert!(!already_exists(&json!({
+            "message": "Repository creation failed.",
+            "errors": [{"resource": "Repository", "code": "custom", "field": "name",
+                        "message": "name is too long"}]
+        })));
+        assert!(!already_exists(&json!({"message": "Validation Failed"})));
+    }
 
     #[test]
     fn an_accounts_type_decides_its_kind() {
