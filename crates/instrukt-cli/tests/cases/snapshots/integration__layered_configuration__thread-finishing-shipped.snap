@@ -17,7 +17,7 @@ source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
 ## Goal
 
 ```
-Preserve unfinished human and worker obligations before settling. Automation never settles a standing agent; it remains unsettled in the sidebar. For other threads, a resting conversation or a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when its current turn ends. A human-settled standing thread stays reachable and wakes on a message.
+Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message.
 ```
 
 ## Preconditions
