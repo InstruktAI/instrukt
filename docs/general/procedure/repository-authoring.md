@@ -27,8 +27,9 @@ gives it, so no agent invents a worktree, branch name or location.
    workers it dispatches in the todo's worktree; you hold neither role without
    an assignment saying so, so your work is ad hoc. That includes pending
    documentation you write ahead for a todo. Work ad hoc in a one-off worktree
-   from the freshly fetched canonical branch, on a branch named by the work's
-   own slug (`general/policy/commits`).
+   from the freshly fetched canonical branch, on a branch prefixed with the
+   change's Commitizen type and never a todo's branch
+   (`general/policy/commits`).
 2. **Author and verify.** Make the change there and run the checks the
    repository's own instructions name, `instrukt docs validate` for snippets
    included.
@@ -44,12 +45,12 @@ gives it, so no agent invents a worktree, branch name or location.
 
 ## Outputs
 
-- A reviewed, committed head on a slug-named branch, merged onto main by the
+- A reviewed, committed head on a one-off branch, merged onto main by the
   integrator, with its one-off worktree removed.
 
 ## Recovery
 
 - A refused commit or review stays with this session: correct the change and
   commit again on the same branch.
-- A worktree or branch that `general/policy/commits` does not give is moved
-  onto the placement it gives before any further commit.
+- Work begun in a todo's worktree or on its branch without that todo's
+  assignment moves to a one-off worktree before any further commit.

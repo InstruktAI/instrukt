@@ -13,8 +13,8 @@ visibility: public
 Main has one writer: the integrator. Every other agent authors and commits in a worktree, placed by these rules alone:
 
 - **A todo's work** is done by its orchestrator and the workers it dispatches in the todo's single `<slug>/work` worktree, which exists once the orchestrator starts its work: the configured `runtime.start_thread` places it. Pending documentation edits authored there are reviewed alongside implementation and folded by the integrator at delivery.
-- **Everything else is ad hoc:** a short-lived one-off worktree from the freshly fetched canonical branch, on a branch named by the work's own slug. Pending documentation written ahead for a todo is ad hoc work: its carriers name the todo, it is committed with `--todo <slug>`, reviewed and merged onto main, and its worktree removed. No todo worktree is opened or kept for it; the todo's own worktree starts from main carrying it.
-- **No other placement exists.** A worktree, branch name or location that these rules do not give is not chosen by the agent at hand.
+- **Everything else is ad hoc:** a short-lived one-off worktree from the freshly fetched canonical branch, on a branch whose name carries the change's Commitizen type as its prefix (`docs/…`, `fix/…`), never a todo's branch. Pending documentation written ahead for a todo is ad hoc work: its carriers name the todo, it is committed with `--todo <slug>`, reviewed and merged onto main, and its worktree removed. No todo worktree is opened or kept for it; the todo's own worktree starts from main carrying it.
+- **These placements are exclusive.** A todo's work happens only in its worktree, written-ahead documentation only as ad hoc work, and main changes only through the integrator.
 
 Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
 
