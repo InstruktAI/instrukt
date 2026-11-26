@@ -563,7 +563,7 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
     std::fs::create_dir_all(&home_docs).unwrap();
     std::fs::write(home_docs.join("stewardship.md"), "published elsewhere\n").unwrap();
     repo.write(
-        "docs/domain/acme/concept/borrowing.md",
+        "docs/project/concept/borrowing.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
             "# Sample — Concept\n\n## Required reads\n\n- general/principle/stewardship\n\
@@ -823,10 +823,14 @@ fn required_domain_tree(repo: &Repo, overview_reads: &str) {
         "description: Operations.\nexpanded: [ops/concept/operations]\n",
     )
     .write(
+        "docs/domain/ops/principle/base.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
         "docs/domain/ops/concept/operations.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
-            "# Sample — Concept\n\n## Required reads\n\n- acme/principle/care\n",
+            "# Sample — Concept\n\n## Required reads\n\n- ops/principle/base\n",
         ),
     )
     .write(
