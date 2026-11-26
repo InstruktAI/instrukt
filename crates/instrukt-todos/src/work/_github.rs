@@ -20,8 +20,6 @@ const API_VERSION: &str = "2026-03-10";
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GitHubError {
-    #[error("{message}")]
-    RecordSchema { message: String },
     #[error(transparent)]
     App(#[from] instrukt_core::github::AppError),
     /// The App one todo's operation selected (a role's pull request or
@@ -40,6 +38,16 @@ pub enum GitHubError {
     Unauthorized { status: u16 },
     #[error("GitHub has no {path}")]
     NotFound { path: String },
+    /// GitHub refused what was sent as invalid: a 400 or 422 that is no
+    /// throttle, with GitHub's validation detail. Content, not an outage:
+    /// the same request is refused again.
+    #[error("GitHub refused {method} {path} as invalid ({status}): {detail}")]
+    Invalid {
+        method: &'static str,
+        path: String,
+        status: u16,
+        detail: String,
+    },
     #[error("GitHub answered {method} {path} with {status}: {message}")]
     Status {
         method: &'static str,
@@ -116,7 +124,6 @@ pub(crate) struct GitHub {
     /// Whether this client's credential serves one operation rather than
     /// every request of the command ([`GitHub::for_role`]).
     scoped: bool,
-    bots: std::cell::RefCell<Vec<instrukt_core::github::Bot>>,
 }
 
 impl GitHub {
@@ -142,7 +149,6 @@ impl GitHub {
             clock: super::_apps::Clock::starting(Timestamp::now()),
             apps: None,
             scoped: false,
-            bots: Default::default(),
         }
     }
 
@@ -177,15 +183,6 @@ impl GitHub {
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
         gh
-    }
-    pub fn bots(&self) -> std::cell::Ref<'_, Vec<instrukt_core::github::Bot>> {
-        self.bots.borrow()
-    }
-    pub fn trusts(&self, comment: &Value) -> bool {
-        self.bots
-            .borrow()
-            .iter()
-            .any(|bot| bot.matches(&comment["user"]))
     }
     pub fn bot(&self) -> Result<instrukt_core::github::Bot, GitHubError> {
         self.credential()?;
@@ -224,10 +221,8 @@ impl GitHub {
                     self.clock,
                 )
                 .map_err(|error| self.app_failure(error))?;
-            let bots = apps.verified_bots(&self.repository, self.clock)?;
             *self.token.borrow_mut() = credential.token().to_owned();
             *self.credential.borrow_mut() = Some(credential);
-            *self.bots.borrow_mut() = bots;
         }
         Ok(())
     }
@@ -503,16 +498,68 @@ fn check(
             path: path.to_owned(),
         });
     }
-    let message = serde_json::from_str::<Value>(text)
-        .ok()
-        .and_then(|value| value["message"].as_str().map(str::to_owned))
-        .unwrap_or_default();
+    let answer = serde_json::from_str::<Value>(text).unwrap_or(Value::Null);
+    if matches!(status, 400 | 422) {
+        return Err(GitHubError::Invalid {
+            method,
+            path: path.to_owned(),
+            status,
+            detail: validation_detail(&answer),
+        });
+    }
+    let message = answer["message"].as_str().unwrap_or_default().to_owned();
     Err(GitHubError::Status {
         method,
         path: path.to_owned(),
         status,
         message,
     })
+}
+
+/// GitHub's validation detail of a refused request, from its answer
+/// `{message, errors: [{resource, field, code, message}], documentation_url}`:
+/// the message, each error, and where GitHub documents it.
+pub(crate) fn validation_detail(answer: &Value) -> String {
+    let mut detail = answer["message"]
+        .as_str()
+        .filter(|m| !m.is_empty())
+        .unwrap_or("no message")
+        .to_owned();
+    let errors: Vec<String> = answer["errors"]
+        .as_array()
+        .map(|errors| {
+            errors
+                .iter()
+                .map(|error| match error {
+                    Value::String(text) => text.clone(),
+                    error => {
+                        let field = [error["resource"].as_str(), error["field"].as_str()]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>()
+                            .join(".");
+                        let said = error["message"]
+                            .as_str()
+                            .or_else(|| error["code"].as_str())
+                            .unwrap_or_default();
+                        match (field.is_empty(), said.is_empty()) {
+                            (false, false) => format!("{field}: {said}"),
+                            (false, true) => field,
+                            _ => said.to_owned(),
+                        }
+                    }
+                })
+                .filter(|text| !text.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if !errors.is_empty() {
+        detail.push_str(&format!(" ({})", errors.join("; ")));
+    }
+    if let Some(url) = answer["documentation_url"].as_str() {
+        detail.push_str(&format!("; see {url}"));
+    }
+    detail
 }
 
 /// GitHub's rate-limit signals on one answer: the primary quota's

@@ -52,8 +52,6 @@ enum TodoCommand {
     Show(AddressArg),
     /// Change a todo's metadata, relationships, hold or claim.
     Update(UpdateArgs),
-    /// Refresh a conflicted todo from GitHub.
-    Refresh(AddressArg),
     /// Park a todo in the icebox.
     Freeze(SlugArg),
     /// Return a parked todo to active consideration.
@@ -521,7 +519,6 @@ impl TodoCommand {
             TodoCommand::Create(_)
             | TodoCommand::Show(_)
             | TodoCommand::Update(_)
-            | TodoCommand::Refresh(_)
             | TodoCommand::Freeze(_)
             | TodoCommand::Unfreeze(_)
             | TodoCommand::Remove(_)
@@ -561,7 +558,7 @@ impl Session<'_> {
                     ctx.out.line("no todos")?;
                 }
                 for entry in &listing.entries {
-                    ctx.out.line(&list_line(entry, ctx.clock.now()))?;
+                    ctx.out.line(&list_line(entry))?;
                 }
                 Ok(ExitCode::SUCCESS)
             }
@@ -601,14 +598,6 @@ impl Session<'_> {
                 Ok(ExitCode::SUCCESS)
             }
             TodoCommand::Update(args) => self.update(args, ctx),
-            TodoCommand::Refresh(args) => {
-                let outcome = work.refresh(project, &args.todo)?;
-                ctx.out.line(&format!(
-                    "refreshed {} to revision {}",
-                    outcome.value.slug, outcome.value.revision
-                ))?;
-                reflection(ctx, &outcome)
-            }
             TodoCommand::Freeze(args) => {
                 let outcome = work.freeze(project, &args.slug)?;
                 ctx.out
@@ -1120,15 +1109,10 @@ fn reflection_word(status: &ReflectionStatus) -> String {
     match status {
         ReflectionStatus::Reflected => "reflected to GitHub".to_owned(),
         ReflectionStatus::Pending(reason) => format!("pending: {}", describe(reason)),
-        ReflectionStatus::Conflicted { door } => {
-            format!(
-                "conflicted with a newer GitHub revision; refresh with `instrukt todo refresh {door}`"
-            )
-        }
     }
 }
 
-fn list_line(entry: &ListEntry, now: Timestamp) -> String {
+fn list_line(entry: &ListEntry) -> String {
     let record = &entry.record;
     let mut parts = vec![
         record.slug.to_string(),
@@ -1142,35 +1126,13 @@ fn list_line(entry: &ListEntry, now: Timestamp) -> String {
     if let Some(hold) = &record.hold {
         parts.push(format!("on hold: {}", hold.reason));
     }
-    match &entry.last_known {
-        None if record.claim.is_some() => parts.push("claimed here".to_owned()),
-        None => {}
-        Some(last_known) => {
-            parts.push(match &last_known.runs_on {
-                Some(machine) => format!("runs on {machine}"),
-                None => "unclaimed".to_owned(),
-            });
-            if let Some(at) = last_known.copied_at {
-                let seconds = now.duration_since(at).as_secs();
-                let age = match seconds {
-                    i64::MIN..=-1 => "copy is newer than the current clock".into(),
-                    0..=59 => "less than a minute old".into(),
-                    60..=3599 => format!("{} minutes old", seconds / 60),
-                    3600..=86399 => format!("{} hours old", seconds / 3600),
-                    _ => format!("{} days old", seconds / 86400),
-                };
-                parts.push(format!("last known {} ({age})", time(at)));
-            }
-        }
+    match (&record.claim, &entry.claimed_on) {
+        (Some(_), None) => parts.push("claimed here".to_owned()),
+        (Some(_), Some(machine)) => parts.push(format!("claimed on {machine}")),
+        (None, _) => {}
     }
-    if !entry.local {
-        parts.push("not on this computer".to_owned());
-    }
-    if let Some(ReflectionStatus::Pending(_)) = &entry.reflection {
+    if let ReflectionStatus::Pending(_) = &entry.reflection {
         parts.push("reflection pending".to_owned());
-    }
-    if let Some(ReflectionStatus::Conflicted { .. }) = &entry.reflection {
-        parts.push("conflicted".to_owned());
     }
     parts.join(" · ")
 }
@@ -1210,24 +1172,12 @@ fn render_view(
             None => out.push("  (content not on this computer)".to_owned()),
         }
     }
-    out.push(match &view.reflection {
-        Some(status) => format!("reflection: {}", reflection_word(status)),
-        None => "reflection: read from GitHub; not on this computer".to_owned(),
-    });
-    if let instrukt_todos::work::GitHubRead::Unjudged = &view.refresh {
-        out.push(
-            "GitHub holds a revision of this todo that this computer has not recorded; shown as this computer records it. A reflection is in progress on this computer, so that revision is judged by the next refresh or reflection of this todo that holds the reflection lock"
-                .to_owned(),
-        );
-    }
-    if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.refresh {
+    out.push(format!("reflection: {}", reflection_word(&view.reflection)));
+    if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.github {
         out.push(format!(
-            "not refreshed from GitHub ({}); shown as this computer last knew it",
+            "GitHub not read ({}): shown as this computer records it; what people did on the issue since its last read is applied by the next read",
             describe(reason)
         ));
-        if let Some(at) = view.copied_at.filter(|_| !view.local) {
-            out.push(format!("last known copy: {}", time(at)));
-        }
     }
     if let Some(issue) = view.issue {
         out.push(format!("issue: #{issue}"));

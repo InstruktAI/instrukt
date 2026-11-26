@@ -656,10 +656,11 @@ configuration through `@config`; it is never an adapter command template.
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract
-covers every runner mutation: recording and reflecting execution claims,
-flushing pending reflection on ticks, writing last-fired stamps, setting
-automatic holds, purging expired retained records, and reading and writing
-per-role session bindings. Work owns validation and persistence of those writes.
+covers every runner mutation: recording execution claims, flushing pending
+reflection and reading people's controls on ticks, writing last-fired stamps,
+setting automatic holds, purging expired retained records, and reading and
+writing per-role session bindings. Work owns validation and persistence of
+those writes, and what a tick's reflection publishes.
 
 For worktree reclamation the runner asks its suppliers and derives none of
 their answers: configuration supplies the project's admitted declaration of
@@ -687,8 +688,9 @@ project's todos that have not reached a terminal outcome. The runtime adapter li
 - A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
   one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
-  instrukt. GitHub-backed todos cover work movement without a separate
-  computer-transfer feature.
+  instrukt. Moving a todo between computers is not supported: the runner picks
+  up only the todos of its own computer's work record, and GitHub carries no
+  copy of a todo for another computer to take up.
 - There is no installation inspector or incident-alert subsystem. Module
   infrastructure checks retain their existing contract; anomaly notification
   and the log bug hunter cover unattended failures.

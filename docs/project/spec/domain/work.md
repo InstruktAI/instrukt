@@ -51,8 +51,8 @@ runner owns dispatch, and the configured runtime owns conversations.
   grouping its children by durable identity.
 
 **Execution claim**
-: The item-level claim recorded and reflected before work starts — by the
-  runner on automatic dispatch, or by `instrukt todo work` on
+: The item-level claim recorded in this computer's work record before work
+  starts — by the runner on automatic dispatch, or by `instrukt todo work` on
   deliberate pickup — exposed as `claim.held`; distinct from per-todo, per-role session bindings.
 
 **Session binding**
@@ -65,9 +65,14 @@ runner owns dispatch, and the configured runtime owns conversations.
 **Dispatch hold**
 : An attributed pause on automatic pickup, carrying its cause.
 
-**Remote revision**
-: The committed version of a todo's reflected GitHub record, against which
-  later reflection checks for conflicts.
+**Reflection**
+: The one-way showing of a todo on GitHub — its issue, labels, board card,
+  artifacts, work branch and pull request — from the work record, which holds
+  the only copy of the todo. Nothing reflected is read back as work state.
+
+**People's control**
+: An approval, a change request or a hold a person exercises on a todo's
+  issue, entering the record as that person's attributed change, once.
 
 **Eval fingerprint**
 : The identity of the process-document set in force when evidence is stamped.
@@ -115,13 +120,15 @@ runner owns dispatch, and the configured runtime owns conversations.
 
 - **Owns:** todo identity and record mutations; artifact versions; stamp
   evidence; approvals and intent-check records; prerequisite and group facts;
-  holds; per-role session bindings and task schedules; local-leading
-  persistence in the state database — its file, writer rules, migrations and
-  work tables (`project/instrukt/spec/feature/work/state-database`);
-  GitHub reflection and recovery, record-schema checks/conversion, verified App
-  bot trust and installation credentials at its GitHub boundary; reports derived
-  from that record. The GitHub boundary's credential interface is shared through
-  CLI wiring with runner and repository consumers, not a reverse core dependency.
+  holds; per-role session bindings and task schedules; the work record's only
+  copy, in the state database — its file, writer rules, migrations and work
+  tables (`project/instrukt/spec/feature/work/state-database`); reflection of
+  each todo to GitHub, including publishing a repository todo's work branch
+  while it is built and reviewed and the pull request and reviews on it;
+  people's controls read from a todo's issue; verified App actors and
+  installation credentials at its GitHub boundary; reports derived from that
+  record. The GitHub boundary's credential interface is shared through CLI
+  wiring with runner and repository consumers, not a reverse core dependency.
 - **Does not own:** workflow definitions and next-action derivation, execution
   and integration decisions, runner scheduling and dispatch, runtime thread
   status and conversation storage, or documentation publication. Those
@@ -138,7 +145,9 @@ runner owns dispatch, and the configured runtime owns conversations.
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
   published eval provenance; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
-  GitHub supplies the required reflected store; the runner supplies the event-log
+  GitHub is the required surface reflection writes to and people's controls
+  are read from, and holds no copy of the record; the project's git remote
+  receives the published work branch; the runner supplies the event-log
   append the finalize-ready stamp uses, and the fleet-attention contract its
   status, hold and attempt changes call. Standing-agent event delivery
   is optional and is not the work record.
@@ -165,11 +174,10 @@ Work supplies its recorded todo-role attempt, native session and workspace
 facts to command admission; the capability contract is
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`. Role grants
 supply focus and every caller still meets the object's claim, phase and admitted
-workspace-writer checks. The record's GitHub schema is checked on every read
-before dependent mutation under
-`project/instrukt/spec/feature/work/github-record`. Configuration supplies App
-profiles and per-role selection; work's shared GitHub boundary verifies actors
-and issues installation credentials under
+workspace-writer checks. Admission reads this computer's record and waits on
+nothing from GitHub. Configuration supplies App profiles and per-role
+selection; work's shared GitHub boundary verifies actors and issues
+installation credentials under
 `project/instrukt/spec/feature/work/github-apps`.
 
 ### Aggregates
@@ -256,13 +264,14 @@ the facts of that change: the todo, its hold before and after, whether it left
 active work, a failed attempt with that role's earlier failed attempts, and
 whether the project still has an active todo that is unheld and not a
 structural holder. Which of those facts are conditions, and their events, are
-the runner's (`project/instrukt/spec/feature/runner/fleet-attention`). A record
-adopted from GitHub is another computer's change and makes no call.
+the runner's (`project/instrukt/spec/feature/runner/fleet-attention`).
 
 ### Domain events consumed
 
-Work consumes no events in the first build. GitHub changes reconcile into
-local records and workflow results enter as evidence-bound mutations.
+Work consumes no events in the first build. People's controls on a todo's
+issue enter the record as attributed mutations, each applied once; nothing
+else on GitHub changes the record. Workflow results enter as evidence-bound
+mutations.
 
 ## Event subjects and origins
 
@@ -279,7 +288,9 @@ record changes lead to are the runner's (`project/instrukt/spec/domain/runner`).
   with its kind and recover withdrawn intent and evidence.
 - **GitHub Apps** — [project/instrukt/spec/feature/work/github-apps](../feature/work/github-apps.md) — role-selected project/author/reviewer bots, installation credentials, bot trust and visible bot authorship.
 - **GitHub record** — `project/instrukt/spec/feature/work/github-record`
-  — retain local progress through outages and follow reflected delivery evidence.
+  — retain local progress through outages, discuss and decide on a todo's
+  issue, follow the live pull request and read its reviews, and follow
+  reflected delivery evidence.
 - **Stamps** — `project/instrukt/spec/feature/work/stamps` — retain
   attributed evidence for approval, workflow and evaluation goals.
 - **Approvals** — `project/instrukt/spec/feature/work/approvals` —
@@ -362,8 +373,11 @@ owning design snippet or decision record is declared.
 
 - **Runner** — its runtime anti-corruption layer supplies session and conversation
   references; work stores these without translating native runtime mechanics.
-- **GitHub** — anti-corruption-layer. Reflection translates work records into
-  provider artifacts and issues while local operations keep their domain model.
+- **GitHub** — anti-corruption-layer. Reflection translates work records one
+  way into issues, labels, board items, native artifacts, the published work
+  branch, its pull request and reviews; the boundary translates people's
+  controls on an issue into attributed record mutations. Local operations keep
+  their domain model.
 
 - **Work → runner (worktree reclamation)** — customer-supplier. Through its
   command contract work gives the runner two things for

@@ -124,6 +124,7 @@ fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let db = Connection::open(&file).unwrap();
     db.execute_batch("DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=4;")
         .unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     let checkout = env.git_repo("retained");
     let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
     db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'retry_allowed')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
@@ -405,14 +406,22 @@ fn finished_within(mut command: Command, bound: Duration) -> Option<Output> {
     finished.recv_timeout(bound).ok()
 }
 
+/// Waits for `child` to exit within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn exited_within(child: std::process::Child, bound: Duration) -> Option<Output> {
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
+}
+
 // spec: project/instrukt/spec/feature/work/state-database UC-SD5
 #[test]
 fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     const FIRST: &str = "Started the depth parser.";
     const SECOND: &str = "Joined the nested-list cases.";
     let mut project = support::Project::new();
-    // One application clock for every command, so the listing's age of
-    // the copy is what the record says, whatever time the test takes.
+    // One application clock for every command, so what the listing and the
+    // todo show does not depend on the time the test takes.
     project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
     project.create(
         "list-depth",
@@ -426,9 +435,8 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     };
     let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
 
-    // The coming reflection stops at its artifact upload, before its
-    // revision comment, and again at the issue fields once GitHub holds the
-    // revision.
+    // The coming reflection stops at its artifact upload, and again at the
+    // issue fields once GitHub holds the artifact version.
     let upload = project.github.pause_once("POST", "/issues/1/artifacts");
     let fields = project.github.pause_once("PATCH", "/issues/1");
     let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
@@ -456,17 +464,17 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     let current = String::from_utf8(current.stdout).unwrap();
     drop(writer);
 
-    // GitHub accepts the first revision, with newly assigned artifact
-    // coordinates, and the reflection stops before this computer records
-    // it.
+    // GitHub accepts the first artifact version, with newly assigned
+    // coordinates, and the reflection stops at the issue update before this
+    // computer records anything of it.
     drop(upload);
     assert!(
         fields.wait_until_received(Duration::from_secs(30)),
-        "the first command's revision never reached GitHub"
+        "the first command's issue update never reached GitHub"
     );
 
     // A local change to the same todo commits while the reflection is in
-    // flight: its entry meets this computer's own unrecorded post.
+    // flight.
     let second = todo(&["artifacts", "write", "list-depth", "log", SECOND])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -484,17 +492,23 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         );
     }
 
-    // This computer holds a revision past the one GitHub holds and has not
-    // recorded. Reading the todo marks no conflict.
+    // This computer holds a revision past the one GitHub shows; reading the
+    // todo waits on nothing.
     let during = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
         .expect("showing the todo waited on the in-flight reflection");
     assert!(during.status.success(), "{during:?}");
     let during = String::from_utf8(during.stdout).unwrap();
+    // The second command returns once its local write is committed: it
+    // does not wait for the reflection in flight.
+    let second = exited_within(second, UNBLOCKED)
+        .expect("the second command waited on the in-flight reflection");
+    assert!(second.status.success(), "{second:?}");
     drop(fields);
-    for command in [first, second] {
-        let output = command.wait_with_output().unwrap();
-        assert!(output.status.success(), "{output:?}");
-    }
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    // The next reflection that takes the lock — here a command that changes
+    // nothing — reflects what the second command left pending.
+    project.ok(["update", "list-depth"]);
 
     // Both changes reached GitHub intact.
     let listed = project.ok(["artifacts", "list", "list-depth"]);
@@ -509,16 +523,10 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .collect();
     // GitHub lists an artifact's versions newest first.
     let on_github = on_github.join("\n");
-    let comments = project.github.comments(support::REPOSITORY, 1);
-    let head = comments
-        .iter()
-        .filter_map(|c| c["body"].as_str())
-        .next_back()
-        .unwrap();
     insta::assert_snapshot!(
         "reflection-in-flight",
         support::redact(&format!(
-            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n---\n{head}"
+            "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n"
         ))
     );
 }
@@ -714,7 +722,6 @@ fn work_rows(db: &Connection) -> Vec<Vec<Option<String>>> {
     let mut rows = Vec::new();
     for query in [
         "SELECT * FROM todos ORDER BY id",
-        "SELECT * FROM reflections ORDER BY todo_id",
         "SELECT * FROM artifacts ORDER BY todo_id, name",
         "SELECT * FROM artifact_versions ORDER BY todo_id, sequence",
         "SELECT * FROM stamps ORDER BY todo_id, sequence",

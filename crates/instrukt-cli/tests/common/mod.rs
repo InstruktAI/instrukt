@@ -990,3 +990,24 @@ pub fn tool_executable(program: &str) -> PathBuf {
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| panic!("required test tool {program} is not installed"))
 }
+
+/// Brings back the empty `listing_copies` table Version 40 dropped, on a
+/// current state database a test rewinds below Version 15: the shipped
+/// Version 15, replayed on the next open, reads it.
+pub fn recreate_pre_v40_listing_copies(db: &instrukt_core::state_db::rusqlite::Connection) {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS listing_copies (
+            project         TEXT NOT NULL,
+            issue_number    INTEGER NOT NULL,
+            slug            TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            remote_revision INTEGER NOT NULL,
+            claim_machine   TEXT,
+            record          TEXT NOT NULL,
+            copied_at       TEXT NOT NULL,
+            PRIMARY KEY (project, issue_number)
+        );",
+    )
+    .unwrap();
+}

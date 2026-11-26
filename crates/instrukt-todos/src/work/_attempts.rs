@@ -12,7 +12,7 @@ use instrukt_runner::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::_session::Session;
+use super::_session::{LockWait, Session};
 use super::{Attempt, Binding, Outcome, TodoRecord, Work, WorkError};
 use crate::evidence::{PreparationReview, TodoStatus, artifact_names};
 
@@ -117,12 +117,12 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
 }
 /// Whether `assignment`, just reserved on item `index` and flushed, may be
 /// returned with `dispatch_allowed`: the row the state database holds now,
-/// never the session's copy, must not be conflicted and must still stand on
-/// the calling orchestrator's claim, active and unheld, with the
-/// reservation unbound, and in the same snapshot no withdrawal of the todo
-/// may be open. A flush that found another computer's head, a refresh that
-/// replaced the row meanwhile, or a withdrawal opened meanwhile refuses;
-/// the reservation stays recorded, with nothing started by this call.
+/// never the session's copy, must still stand on the calling
+/// orchestrator's claim, active and unheld, with the reservation unbound,
+/// and in the same snapshot no withdrawal of the todo may be open. A change
+/// another command made meanwhile, or a withdrawal opened meanwhile,
+/// refuses; the reservation stays recorded, with nothing started by this
+/// call.
 fn dispatch_admitted(
     s: &Session<'_>,
     index: usize,
@@ -142,9 +142,6 @@ fn dispatch_admitted(
         return Err(not_admitted(
             "the todo's withdrawal is releasing its working resources",
         ));
-    }
-    if live.reflection.conflicted {
-        return Err(WorkError::conflicted(&live.record));
     }
     let record = &live.record;
     let caller = s.caller_session()?;
@@ -425,9 +422,6 @@ impl Work {
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
-                if s.unjudged(index) {
-                    return Err(super::_session::unjudged_refusal(todo));
-                }
                 result.selection = native_selection(&s, record, procedure)?;
                 let key = result.semantic_key.clone();
                 s.commit("native dispatch retry admitted", |s| {
@@ -442,16 +436,13 @@ impl Work {
                     }
                     Ok(())
                 })?;
-                s.flush()?;
+                s.flush(LockWait::No)?;
                 dispatch_admitted(&s, index, &result)?;
             }
             return Ok(ReservedAttempt {
                 assignment: result,
                 prior_session: prior,
             });
-        }
-        if s.unjudged(index) {
-            return Err(super::_session::unjudged_refusal(todo));
         }
         let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
         let (lane, worktree, branch, base, assignment_kind) = if is_task {
@@ -571,7 +562,7 @@ impl Work {
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         dispatch_admitted(&s, index, &assignment)?;
         Ok(ReservedAttempt {
             assignment,
@@ -675,7 +666,7 @@ impl Work {
             b.session = Some(session.clone());
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
     pub fn resolve_native_attempt(
@@ -780,7 +771,7 @@ impl Work {
             s.items[index].record.bindings[pos] = next.clone();
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: next,
             reflection: s.status(index),
@@ -1728,7 +1719,7 @@ impl Work {
                 binding.attempt.released_at = None;
                 Ok(())
             })?;
-            s.flush()?;
+            s.flush(LockWait::No)?;
         }
         if admission == Admission::Place {
             let now = s.now;
@@ -1764,7 +1755,7 @@ impl Work {
                 });
                 Ok(())
             })?;
-            s.flush()?;
+            s.flush(LockWait::No)?;
         }
         let selection = if admitted {
             None

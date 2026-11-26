@@ -673,3 +673,30 @@ repository, this one included, needs a commit for this change.
 Once an instrukt of this release has written a computer's machine layer, an
 instrukt from before it on the same computer refuses that layer as newer
 than it supports. Upgrade every instrukt on a computer together.
+
+### The work record lives on this computer only
+
+GitHub no longer carries a copy of the work record: the issue, its labels,
+the board, the native artifacts, the pull request and its reviews show the
+todo one way, and the state database holds the only copy. `instrukt todo
+refresh` is gone, and a computer no longer lists, picks up or reads todos
+another computer created. The state database migrates forward on its own
+(Version 40); existing record comments on issues are left where they are.
+
+A todo this computer holds can carry artifact versions whose content only
+GitHub has: versions another computer recorded, taken in by an earlier
+build's pickup listing without their bodies. The new build reads artifacts
+from the local record alone, so it cannot fetch them later. Before installing
+it, restore them with the build you have. List the versions without content:
+
+    sqlite3 ~/.instrukt/state/instrukt.db "SELECT t.project, t.slug || '@' || substr(t.id, 1, 8), v.name, v.digest FROM artifact_versions v JOIN todos t ON t.id = v.todo_id WHERE v.content IS NULL"
+
+The list covers every todo this computer retains — live, delivered and
+withdrawn ones alike — and names each by its exact address. In a checkout of
+each project listed, read each version once with the installed build, which
+fetches its content from GitHub, checks it against its digest and keeps it in
+the record:
+
+    instrukt todo artifacts diff <address> <name> <digest> <digest>
+
+A version the command reports GitHub no longer serves stays without content.

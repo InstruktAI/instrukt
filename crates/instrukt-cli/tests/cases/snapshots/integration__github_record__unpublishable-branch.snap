@@ -1,0 +1,44 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "redact(&crew.project.ok([\"show\", \"nested-lists\"]))"
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 12
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: branch `nested-lists/work` on `origin` moved where this computer's branch cannot follow it, so its commits are not published; the branch on `origin` is left as it is
+issue: #1
+pull request: #2
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: nested-lists/work; base: <commit 1>
+    worktree: [TMP]/team-nested-lists-work
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  prd (1 version)
+    <digest 2> by session t3:lead-1 at <time>
+  implementation-plan (1 version)
+    <digest 3> by session t3:lead-1 at <time>
+  prd-review-findings (1 version)
+    <digest 4> by session t3:lead-1 at <time>
+  plan-review-findings (1 version)
+    <digest 5> by session t3:lead-1 at <time>
+  log (1 version)
+    <digest 6> by session t3:lead-1 at <time>
+stamps:
+  #5 <time> prd_review verdict approve — target <digest 2>, report <digest 4> — by session t3:lead-1, model unknown, eval <digest 7>
+  #6 <time> prd approved by a human — <digest 2> — by session t3:lead-1, model unknown, eval <digest 7>
+  #8 <time> plan_review verdict approve — target <digest 3>, report <digest 5> — by session t3:lead-1, model unknown, eval <digest 7>
+  #9 <time> build started — base <commit 1>, plan <digest 3> — by session t3:lead-1 as todo-lead, model unknown, eval <digest 7>
+workspace:
+  branch: nested-lists/work
+  worktree: [TMP]/team-nested-lists-work (clean)
+  head: <commit 2>
+  remote: <commit 3> (behind local)

@@ -84,13 +84,10 @@ whose effective configuration (project over global) enables `todos` or
 `events`, without a separate registry. A project whose code is not on GitHub
 gets no todo pickup: todos need the project's code on GitHub
 (`project/instrukt/spec/feature/work/github-record`).
-Before starting a session for a todo, the runner refreshes the todo from
-GitHub, so work starts from its current state, then commits a claim on the
-item and reflects it to GitHub; a revision conflict means another computer
-claimed it first, and this runner leaves the item. When GitHub cannot be
-reached, the claim stays local and pending and no session starts; the next
-tick refreshes the todo and reflects the claim, then dispatches, or drops the
-claim on a conflict.
+Pickup considers the todos of this computer's work record. Before starting a
+session for a todo, the runner commits a claim on it in that record; the
+claim needs no answer from GitHub, so an unreachable GitHub delays the
+claim's reflection and never the session.
 
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
@@ -102,13 +99,13 @@ it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup;
 which finished threads are archived, and when, is the runner's thread
 retention (`project/instrukt/spec/feature/runner/thread-retention`).
-Every tick also polls GitHub for the todos this computer has an interest in,
-with conditional requests: the todos it holds claims on, one pickup listing per
-project with `todos` on, and the prerequisites its own work is blocked on
-(`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
-of that listing. Every tick flushes pending work-record reflection under the
-per-computer reflection lock; commands that write the record flush it under that
-lock too. Reflection holds that lock across GitHub requests and takes the writer
+Every tick also reads GitHub for what people did on the issues of the todos in
+this computer's record (`project/instrukt/spec/feature/work/github-record`).
+Every tick flushes pending work-record reflection under the
+per-computer reflection lock. A command that writes the record flushes under
+that lock when it is free and never waits on it when another process holds
+it, leaving its reflection to the next flush that acquires it
+(`project/instrukt/spec/feature/work/github-record`). Reflection holds that lock across GitHub requests and takes the writer
 lock only briefly for each local commit of what it learned. Lock order is always
 reflection → writer; the local transaction releases the writer lock before a
 flush acquires the reflection lock. Local readers take neither lock.
@@ -182,7 +179,7 @@ The responsible orchestrator delegates the intent checker natively on the
 computer where the originating conversation is readable, using the configured
 native instruction. Work records the attempt and native child id through
 `todo attempt` and `todo bind`. The runtime delivers its result to its parent;
-GitHub carries the checked record and stamp, not the conversation.
+the work record carries the checked record and stamp, not the conversation.
 
 ### Dispatch evidence
 

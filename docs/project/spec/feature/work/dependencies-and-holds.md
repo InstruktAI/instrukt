@@ -73,10 +73,10 @@ these bindings and records role-associated execution evidence through work’s
 mutation surface. A binding is distinct from a claim; different roles can
 have different sessions without transferring execution ownership.
 
-The runner records and reflects the todo's item-level execution claim before
-starting any session. `claim.held` exposes that claim. Session identities are
-retained only in per-todo, per-role bindings. A dispatch hold pauses automatic
-pickup without establishing or transferring the claim.
+The runner records the todo's item-level execution claim before starting any
+session. `claim.held` exposes that claim. Session identities are retained only
+in per-todo, per-role bindings. A dispatch hold pauses automatic pickup without
+establishing or transferring the claim.
 
 A todo's recorded orchestrator is its latest driver binding for the
 orchestrator role that has not failed. That binding's own native session

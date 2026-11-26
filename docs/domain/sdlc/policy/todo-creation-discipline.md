@@ -212,8 +212,8 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **A filing exists once its command confirms local creation.** Inspect the
   command outcome before preparing it, writing artifacts or releasing a hold.
-  GitHub reflection follows the work-record contract: reflect saved record
-  changes and reconcile remote revisions before retrying a refused write.
+  GitHub reflection follows the work-record contract: saved record changes
+  are reflected from the local record.
 
 - **Failed integration checks stay with the integrator.** A red candidate
   remains unpromoted; the integrator reads the result and chooses remediation

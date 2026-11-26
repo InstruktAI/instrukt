@@ -169,7 +169,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }
         ("GET", ["branches", branch @ ..]) => {
             let branch = branch.join("/");
-            match state.repo(&full).branches.get(&branch) {
+            match state.repo(&full).branch_head(&branch) {
                 Some(sha) => Reply::ok(json!({"name": branch, "commit": {"sha": sha}})),
                 None => Reply::not_found(),
             }
@@ -353,7 +353,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
                 return Reply::invalid("title, head and base are required");
             };
             let head = head.split_once(':').map_or(head, |(_, b)| b).to_owned();
-            if !state.repo(&full).branches.contains_key(&head) {
+            if state.repo(&full).branch_head(&head).is_none() {
                 return Reply::invalid(&format!("head branch {head} does not exist"));
             }
             let body = input["body"].as_str().unwrap_or("").to_owned();
@@ -484,11 +484,18 @@ fn issue_route(
             issue_reply(state)
         }
         ("GET", ["comments"]) => {
+            // `since`: only comments updated at or after it.
+            let since = query_param(query, "since").map(decode);
             let items = state
                 .repo(full)
                 .comments
                 .values()
                 .filter(|c| c.issue == n)
+                .filter(|c| {
+                    since
+                        .as_deref()
+                        .is_none_or(|since| c.updated_at.as_str() >= since)
+                })
                 .map(|c| c.json(base, full))
                 .collect();
             paginate(base, path, query, items)
@@ -509,7 +516,10 @@ fn issue_route(
                 None => Reply::not_found(),
             }
         }
-        ("GET", ["events"]) => Reply::ok(json!([])),
+        ("GET", ["events"]) => {
+            let items = state.repo(full).issues[&n].events.clone();
+            paginate(base, path, query, items)
+        }
         ("GET", ["labels"]) => {
             let r = state.repo(full);
             let items = r.issues[&n]
@@ -677,7 +687,7 @@ fn issue_route(
                 .artifacts
                 .values()
                 .filter(|a| kind.is_none_or(|k| a.kind == k))
-                .map(Artifact::json)
+                .map(|a| a.json(full, n))
                 .collect();
             paginate(base, path, query, items)
         }
@@ -711,7 +721,7 @@ fn issue_route(
                     login: login.to_owned(),
                 }],
             };
-            let value = artifact.json();
+            let value = artifact.json(full, n);
             issue.artifacts.insert(number, artifact);
             Reply::created(value)
         }
@@ -730,10 +740,31 @@ fn issue_route(
             };
             match method {
                 "GET" => {
+                    // Versions newest first, paged as GitHub pages them.
                     let artifact = &issue.artifacts[&a];
-                    Reply::ok(
-                        json!({"artifact": artifact.json(), "versions": artifact.versions_json()}),
-                    )
+                    let per_page = query_param(query, "per_page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(30)
+                        .clamp(1, 100);
+                    let page = query_param(query, "page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .max(1);
+                    let Value::Array(all) = artifact.versions_json() else {
+                        return Reply::not_found();
+                    };
+                    let total = all.len();
+                    let versions: Vec<Value> = all
+                        .into_iter()
+                        .skip((page - 1) * per_page)
+                        .take(per_page)
+                        .collect();
+                    Reply::ok(json!({
+                        "artifact": artifact.json(full, n),
+                        "versions": versions,
+                        "has_next_page": page * per_page < total,
+                        "total_count": total,
+                    }))
                 }
                 "PATCH" => {
                     let Some(artifact) = issue.artifacts.get_mut(&a) else {
@@ -751,7 +782,7 @@ fn issue_route(
                     });
                     artifact.updated_at = now;
                     artifact.updated_by = login.to_owned();
-                    Reply::ok(artifact.json())
+                    Reply::ok(artifact.json(full, n))
                 }
                 "DELETE" => {
                     issue.artifacts.remove(&a);

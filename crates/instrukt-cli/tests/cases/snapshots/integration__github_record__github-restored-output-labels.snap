@@ -22,7 +22,7 @@ expression: "project.github.issue(REPOSITORY, 1).unwrap()[\"labels\"]"
     "description": null
   },
   {
-    "id": 102103,
+    "id": 102003,
     "name": "team-owned",
     "color": "ededed",
     "description": null

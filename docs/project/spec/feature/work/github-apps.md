@@ -1,15 +1,17 @@
 ---
-description: Role-selected GitHub App bot identities, protected keys and installation tokens for visible bot authorship, independent native reviews and trusted record recovery.
+description: Role-selected GitHub App bot identities, protected keys and installation tokens for visible bot authorship and independent native reviews.
+binding_reservations:
+  UC-GA2: github-human-agent-reflection
 ---
 # GitHub Apps — Spec
 
 ## What it is
 
 instrukt writes to GitHub as configured GitHub Apps. The bot is visible on
-records, issues, bugs, board updates, pull requests and reviews. Authoring and
-review use separate bots, so GitHub's native prohibition on author self-approval
-does not prevent independent review. Account lineage is distinct from who did
-the work (`general/concept/lineage-vs-authorship`).
+issues, their artifacts, bugs, board updates, pull requests and reviews.
+Authoring and review use separate bots, so GitHub's native prohibition on
+author self-approval does not prevent independent review. Account lineage is
+distinct from who did the work (`general/concept/lineage-vs-authorship`).
 
 ## Canonical fields
 
@@ -31,17 +33,17 @@ The actual recorded session role selects `roles.<role>.github_app` in
 `todo-orchestrator`, the role agents migration replaces the split entries with.
 An omitted mapping uses `github.project_app`, including an unknown role resolved
 through `default`. No per-task model override,
-command argument or profile order selects the GitHub actor. Background record,
-issue, bug and board maintenance uses the project identity. Role-driven pull
+command argument or profile order selects the GitHub actor. Background issue,
+artifact, bug and board maintenance uses the project identity. Role-driven pull
 request authoring and reviews use the selected role identity. Human work
-performed directly on GitHub keeps its human identity; instrukt's shared-record
-maintenance still uses the project App. This contract changes no human login/
-account association or runtime permission mode.
+performed directly on GitHub keeps its human identity; instrukt's issue and
+board maintenance still uses the project App. This contract changes no human
+login/account association or runtime permission mode.
 
 
 | Profile reference | Shipped identity | Responsibility |
 | --- | --- | --- |
-| `project` | `instruktai[bot]` | Shared records, issues, bugs and the board; roles without a specific mapping. |
+| `project` | `instruktai[bot]` | Issues, their artifacts, bugs and the board; roles without a specific mapping. |
 | `author` | `instruktai-author[bot]` | Authoring roles, their pull requests and bot-authored commits. |
 | `reviewer` | `instruktai-reviewer[bot]` | Reviewer roles and their native GitHub reviews. |
 
@@ -64,7 +66,7 @@ It writes private keys only through `instrukt secrets set`, into
 carried in a configuration report, repo file or assignment brief.
 
 Setup verifies the App installation reaches the project's repository and has
-the permissions required by the operation: records/issues/artifacts and board
+the permissions required by the operation: issues/artifacts and board
 maintenance, code/pull-request authoring, or reviews/check observation as
 applicable. Missing installation, permissions or an API capability remains an
 explicit incomplete setup with its repair door. No personal token or `gh`
@@ -102,7 +104,7 @@ shares, an issuance GitHub throttles, may be throttling or cannot serve, a rate
 limit, an unreachable GitHub and GitHub refusing an issued credential are
 command-wide. What a failure stops depends on the operation it interrupts:
 
-- Record, issue, pull request and review reflection: a command-wide failure
+- Issue, artifact, pull request and review reflection: a command-wide failure
   stops the command's remaining GitHub requests; a local failure keeps the
   todo's remaining reflection in that pass pending with the cause, and the pass
   continues with the next todo.
@@ -124,14 +126,15 @@ refusal is judged by its headers alone, never by its body: a 429, or a 403 with 
 requests remaining or a `Retry-After`, is a rate limit with the boundary its
 headers name, and any other 403 stays a refusal. Locally accepted
 work and its pending reflection survive; no credential failure is reported as
-remote success or as proof that an ambiguous write had no effect. The record's existing
-revision and retry-convergence rules remain in force.
+remote success or as proof that an ambiguous write had no effect. Reflection's
+existing retry-convergence rules remain in force
+(`project/instrukt/spec/feature/work/github-record`).
 
 
 ### Read-only reflection readiness
 
 Work verifies the project App, protected key, repository installation,
-record and account-board permission scopes, expiry and stable bot identities.
+issue and account-board permission scopes, expiry and stable bot identities.
 It reads repository issues, existing issue artifacts when an issue is available,
 and the configured board or its account's project listing. Newer pages containing
 only pull requests do not exclude older issues from artifact readiness checks.
@@ -142,15 +145,7 @@ It establishes declared write permissions and available read surfaces; it cannot
 prove a future remote write, or artifact access on an empty repository, without
 performing a mutation.
 
-### Restore trust and commit authorship
-
-Record restoration accepts an author matching a configured App's verified
-stable bot identity even when GitHub reports association `NONE`. A display
-login or bot-shaped name alone establishes no trust. Repository owner/member/
-collaborator records retain their existing admission. Trust admits record
-envelope processing; it bypasses neither schema-version checks, digests,
-revision history nor approval attribution. Bot trust grants no human approval
-or hold-control authority.
+### Commit authorship
 
 The App boundary supplies verified bot actor facts; commit-author resolution,
 precedence and refusal belong to
@@ -661,18 +656,10 @@ permissions.
 Given a developer has configured distinct project, author and reviewer Apps
 When an author role opens its implementation pull request and a reviewer role approves it
 Then GitHub shows the author bot and the different reviewer bot
-And shared record, issue and board maintenance shows the project bot
+And issue and board maintenance shows the project bot
 ```
 
 ### UC-GA2: Recover reflected work written by the configured bots
-
-```gherkin
-Given a developer's reflected work was written by a configured verified App bot
-When they rebuild their local record from GitHub
-Then the bot's NONE association does not exclude its valid record revisions
-And schema, artifact and evidence checks still apply
-But a similarly named unconfigured actor gains no record trust
-```
 
 ### UC-GA3: See an automatic review's verdict where GitHub can enforce it
 

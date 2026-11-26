@@ -59,22 +59,6 @@ pub(crate) fn waits_on<'g>(graph: &'g [WaitNode], of: &'g WaitNode) -> Vec<&'g T
     next
 }
 
-/// Every todo waiting from `start` reaches in `graph` ([`waits_on`]),
-/// `start` included.
-pub(crate) fn reached(graph: &[WaitNode], start: &TodoId) -> BTreeSet<TodoId> {
-    let mut found = BTreeSet::new();
-    let mut frontier = vec![start.clone()];
-    while let Some(id) = frontier.pop() {
-        if !found.insert(id.clone()) {
-            continue;
-        }
-        if let Some(node) = graph.iter().find(|n| n.id == id) {
-            frontier.extend(waits_on(graph, node).into_iter().cloned());
-        }
-    }
-    found
-}
-
 /// The first cycle of waiting ([`waits_on`]) through one of `through` in
 /// `graph`: the one rule both a command's check of the graph it read and
 /// its transaction's check of the graph it commits to apply.
@@ -146,23 +130,6 @@ mod tests {
         let cycle = first_cycle(&graph, &[graph[0].id.clone()]).unwrap();
         let names: Vec<&str> = cycle.iter().map(TodoSlug::as_str).collect();
         assert_eq!(names, ["alpha", "hold", "beta", "alpha"]);
-    }
-
-    #[test]
-    fn waiting_reaches_a_holder_s_children_and_a_prerequisite_the_graph_does_not_hold() {
-        let graph = [
-            node("alpha", &["hold"], None),
-            holder(node("hold", &[], None)),
-            node("beta", &["zulu"], Some("hold")),
-            node("xray", &[], None),
-        ];
-        // alpha, beta, hold and the unknown zulu; never the unrelated xray.
-        let zulu = node("zulu", &[], None).id;
-        let expected: BTreeSet<TodoId> = [&graph[0].id, &graph[1].id, &graph[2].id, &zulu]
-            .into_iter()
-            .cloned()
-            .collect();
-        assert_eq!(reached(&graph, &graph[0].id), expected);
     }
 
     #[test]

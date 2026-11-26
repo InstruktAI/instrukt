@@ -98,9 +98,6 @@ fn pickup(pickup: &Pickup) -> String {
     match pickup {
         Pickup::Claimed => "claimed by this session".to_owned(),
         Pickup::AlreadyHeld => "held by this session".to_owned(),
-        Pickup::NotReflected => {
-            "claimed by this session; reflection to GitHub is pending".to_owned()
-        }
         Pickup::ReadOnly(status) => {
             format!("none; the todo is {} (read-only)", status_name(*status))
         }

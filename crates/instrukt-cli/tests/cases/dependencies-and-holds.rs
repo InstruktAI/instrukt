@@ -150,25 +150,6 @@ fn a_prerequisite_that_waits_through_a_group_on_its_own_child_is_refused_naming_
     insta::assert_snapshot!("cycle-through-a-group", refused);
 }
 
-// spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH1
-#[test]
-fn a_cycle_through_a_prerequisite_changed_on_another_computer_is_refused() {
-    let project = Project::new();
-    project.create("parser-depth", "change", "Track list depth in the parser.");
-    project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    );
-    project
-        .other_computer()
-        .ok(["update", "parser-depth", "--after", "nested-lists"]);
-
-    let refused = refused_unchanged(&project, "nested-lists", &["--after", "parser-depth"]);
-
-    insta::assert_snapshot!("cycle-through-a-remote-change", refused);
-}
-
 // spec: project/instrukt/spec/feature/work/dependencies-and-holds UC-DH2
 #[test]
 fn a_held_todo_shows_why_it_waits_and_keeps_its_recorded_work() {

@@ -1111,6 +1111,7 @@ fn a_titleless_persisted_request_retries_with_its_original_key_only_title() {
     db.execute("UPDATE runtime_bindings SET request=?1", [old.to_string()])
         .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
     p.tick();
     let normalized: String = db
@@ -1265,51 +1266,8 @@ fn an_older_public_placement_proof_is_normalized_before_binding() {
     assert_eq!(fake.message_count(&id), 1);
 }
 
-fn previous_driver_record(p: &Tracked) -> serde_json::Value {
-    p.github
-        .comments(flavor::REPOSITORY, 1)
-        .iter()
-        .rev()
-        .find_map(|comment| {
-            comment["body"].as_str()?.lines().find_map(|line| {
-                line.strip_prefix("<!-- instrukt:work-record:v2:")
-                    .and_then(|v| v.strip_suffix(" -->"))
-                    .map(|v| {
-                        serde_json::from_str::<serde_json::Value>(v).unwrap()["record"].clone()
-                    })
-            })
-        })
-        .unwrap()
-}
-fn previous_driver_binding(record: &serde_json::Value) -> serde_json::Value {
-    let mut binding = record["bindings"][0].clone();
-    let mut old: serde_json::Value =
-        serde_json::from_str(include_str!("../fixtures/native-placement-v14.json")).unwrap();
-    for (field, value) in old.as_object_mut().unwrap() {
-        *value = binding["native_placement"][field].clone();
-    }
-    binding["native_placement"] = old;
-    binding
-}
-fn retain_previous_driver_input(p: &Tracked, id: &str) {
-    let mut record = previous_driver_record(p);
-    let old = previous_driver_binding(&record);
-    record["bindings"] = serde_json::json!([old]);
-    record["schema"] = 2.into();
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        p.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    db.execute(
-        "UPDATE session_bindings SET evidence=?1,display_title=NULL WHERE session=?2",
-        instrukt_core::state_db::rusqlite::params![old.to_string(), format!("t3:{id}")],
-    )
-    .unwrap();
-    db.execute("INSERT OR REPLACE INTO listing_copies(project,issue_number,slug,kind,status,remote_revision,record,copied_at) VALUES('demo',1,?1,'change','active',?2,?3,'2026-11-09T12:00:00Z')",instrukt_core::state_db::rusqlite::params![record["slug"].as_str().unwrap(),record["revision"].as_u64().unwrap(),record.to_string()]).unwrap();
-    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
-    db.pragma_update(None, "user_version", 14).unwrap();
-}
-fn retained_driver_titles(p: &Tracked, id: &str) -> (serde_json::Value, serde_json::Value) {
+/// The binding of session `id` as the state database records it.
+fn previous_driver_binding(p: &Tracked, id: &str) -> serde_json::Value {
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         p.env.instrukt_home().join("state/instrukt.db"),
     )
@@ -1321,23 +1279,50 @@ fn retained_driver_titles(p: &Tracked, id: &str) -> (serde_json::Value, serde_js
             |row| row.get(0),
         )
         .unwrap();
-    let copied: String = db
+    let mut binding: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/native-placement-v14.json")).unwrap();
+    for (field, value) in old.as_object_mut().unwrap() {
+        *value = binding["native_placement"][field].clone();
+    }
+    binding["native_placement"] = old;
+    binding
+}
+fn retain_previous_driver_input(p: &Tracked, id: &str) {
+    let old = previous_driver_binding(p, id);
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE session_bindings SET evidence=?1,display_title=NULL WHERE session=?2",
+        instrukt_core::state_db::rusqlite::params![old.to_string(), format!("t3:{id}")],
+    )
+    .unwrap();
+    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
+    db.pragma_update(None, "user_version", 14).unwrap();
+}
+/// The readable title the binding of session `id` carries after
+/// conversion.
+fn retained_driver_title(p: &Tracked, id: &str) -> serde_json::Value {
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let evidence: String = db
         .query_row(
-            "SELECT record FROM listing_copies WHERE project='demo' AND issue_number=1",
-            [],
+            "SELECT evidence FROM session_bindings WHERE session=?1",
+            [format!("t3:{id}")],
             |row| row.get(0),
         )
         .unwrap();
     let evidence: serde_json::Value = serde_json::from_str(&evidence).unwrap();
-    let copied: serde_json::Value = serde_json::from_str(&copied).unwrap();
-    (
-        evidence["native_placement"]["title"].clone(),
-        copied["bindings"][0]["native_placement"]["title"].clone(),
-    )
+    evidence["native_placement"]["title"].clone()
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn previous_readable_driver_resumes_after_local_and_cached_conversion() {
+fn previous_readable_driver_resumes_after_its_local_conversion() {
     let (p, fake, id, tree, title) = deliberate_preparation();
     p.env
         .instrukt(&tree)
@@ -1349,9 +1334,7 @@ fn previous_readable_driver_resumes_after_local_and_cached_conversion() {
     p.env
         .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
         .success();
-    let (local, copied) = retained_driver_titles(&p, &id);
-    assert_eq!(local, title);
-    assert_eq!(copied, title);
+    assert_eq!(retained_driver_title(&p, &id), title);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 2);
@@ -1379,9 +1362,7 @@ fn renamed_previous_readable_driver_recovers_its_original_phase_title() {
     p.env
         .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
         .success();
-    let (local, copied) = retained_driver_titles(&p, &id);
-    assert_eq!(local, title);
-    assert_eq!(copied, title);
+    assert_eq!(retained_driver_title(&p, &id), title);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 2);
@@ -1481,48 +1462,6 @@ fn previous_whole_key_driver_still_resumes_after_a_rename() {
     assert_eq!(fake.title(&id), key);
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
-#[test]
-fn remote_previous_driver_recovers_its_readable_title_after_a_rename() {
-    let (p, fake, id, tree, title) = deliberate_preparation();
-    p.env
-        .instrukt(&tree)
-        .env("T3CODE_THREAD_ID", &id)
-        .args([
-            "todo",
-            "update",
-            "native-parser",
-            "--slug",
-            "renamed-native-parser",
-        ])
-        .assert()
-        .success();
-    let mut record = previous_driver_record(&p);
-    let base = record["revision"].as_u64().unwrap();
-    record["bindings"] = serde_json::json!([previous_driver_binding(&record)]);
-    record["schema"] = 2.into();
-    record["revision"] = (base + 1).into();
-    let envelope = serde_json::json!({"base":base,"record":record});
-    p.github.seed_comment(
-        flavor::REPOSITORY,
-        1,
-        "instrukt-test",
-        "COLLABORATOR",
-        &format!("<!-- instrukt:work-record:v2:{envelope} -->"),
-    );
-    p.env
-        .instrukt(&tree)
-        .env("T3CODE_THREAD_ID", &id)
-        .args(["todo", "update", "renamed-native-parser", "--unclaim"])
-        .assert()
-        .success();
-    p.tick();
-    assert_eq!(fake.threads().len(), 1);
-    assert_eq!(fake.message_count(&id), 2);
-    assert_eq!(fake.title(&id), title);
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
 fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     let p = Tracked::new(true);
@@ -1554,6 +1493,7 @@ fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     )
     .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
     fake.change("s1", "title", key.clone().into());
     p.env

@@ -1,10 +1,8 @@
 //! `project/instrukt/spec/feature/work/github-record`: the local
 //! record keeps accepted work through GitHub outages, a delivered todo's
-//! evidence can be followed on GitHub, progress that loses to a change made
-//! elsewhere is not reflected until refreshed, records posted without write
-//! access never change the work, todos need the project's code on GitHub,
-//! and a todo is refreshed before work on it starts and before each command
-//! acts on it.
+//! evidence can be followed on GitHub, the issue's conversation belongs to
+//! people, people's controls on the issue arrive once, and todos need the
+//! project's code on GitHub.
 #![allow(
     clippy::unwrap_used,
     clippy::expect_used,
@@ -17,7 +15,7 @@ use crate::fixtures::runtime;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
 use common::TestEnv;
-use common::github::{CannedResponse, FakeGitHub};
+use common::github::CannedResponse;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -56,6 +54,399 @@ fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
+fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reason() {
+    let project = Project::new();
+    project.create("nested-lists", "feature", INTENT);
+    project.github.respond_once(
+        "POST",
+        "/issues/1/artifacts",
+        CannedResponse {
+            status: 422,
+            headers: vec![],
+            body: serde_json::json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "IssueArtifact", "field": "body", "code": "too_long"}],
+                "documentation_url": "https://docs.github.com/rest/issues/artifacts"
+            }),
+        },
+    );
+
+    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    let read = project.ok(["artifacts", "read", "nested-lists", "prd"]);
+    let attempts = project
+        .github
+        .requests_to("POST", "/issues/1/artifacts")
+        .len();
+    // Another change reflects the todo again; the refused content is not
+    // sent again, and the rest of its reflection goes on.
+    project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/issues/1/artifacts")
+            .len(),
+        attempts,
+        "the refused content was sent again"
+    );
+    assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
+    let shown = project.ok(["show", "nested-lists"]);
+
+    // The door is the artifact's next version: once GitHub accepts it, the
+    // refused version no longer holds the todo's reflection back.
+    const NEXT: &str = "Lists keep their depth, and numbering restarts per level.";
+    let next = project.ok(["artifacts", "write", "nested-lists", "prd", NEXT]);
+    // The same holds for an artifact already on GitHub.
+    let prd = project
+        .github
+        .artifacts(REPOSITORY, 1)
+        .into_iter()
+        .find(|a| a["artifact"]["name"] == "prd")
+        .unwrap()["artifact"]["number"]
+        .as_u64()
+        .unwrap();
+    project.github.respond_once(
+        "PATCH",
+        &format!("/issues/1/artifacts/{prd}"),
+        CannedResponse {
+            status: 422,
+            headers: vec![],
+            body: serde_json::json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "IssueArtifact", "field": "body", "code": "too_long"}],
+            }),
+        },
+    );
+    const REFUSED_AGAIN: &str = "Lists keep their depth in every renderer.";
+    let refused_again = project.ok(["artifacts", "write", "nested-lists", "prd", REFUSED_AGAIN]);
+    const LATER: &str = "Lists keep their depth through parse, render and export.";
+    let later = project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    let settled = project.ok(["show", "nested-lists"]);
+    // Neither refused version was sent again.
+    let sent = |content: &str| {
+        project
+            .github
+            .requests()
+            .iter()
+            .filter(|r| r.path.starts_with("/repos/acme/demo/issues/1/artifacts"))
+            .filter(|r| {
+                serde_json::from_str::<Value>(&r.body)
+                    .is_ok_and(|body| body["body"].as_str() == Some(content))
+            })
+            .count()
+    };
+    assert_eq!((sent(PRD), sent(REFUSED_AGAIN)), (1, 1));
+
+    insta::assert_snapshot!(
+        "refused-by-github",
+        redact(&format!(
+            "{recorded}---\n{read}---\n{shown}---\n{next}---\n{refused_again}---\n{later}---\n{settled}"
+        ))
+    );
+}
+
+/// A todo of `crew` prepared and approved, its build started on its work
+/// branch, with its workspace.
+fn worked_todo(crew: &workflow::Crew, slug: &str) -> std::path::PathBuf {
+    let project = &crew.project;
+    project.create(slug, "feature", INTENT);
+    project.ok(["artifacts", "write", slug, "prd", PRD]);
+    project.ok([
+        "artifacts",
+        "write",
+        slug,
+        "implementation-plan",
+        "1. Track depth in the parser.\n2. Render it.",
+    ]);
+    let workspace = crew.workspace(slug);
+    crew.write(
+        slug,
+        "prd-review-findings",
+        "The product requirement is approved.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
+    crew.stamp(slug, &["--prd-approved", "--by", "human"]);
+    crew.write(
+        slug,
+        "plan-review-findings",
+        "The implementation plan is approved.",
+    );
+    crew.stamp(slug, &["--verdict", "approve", "--phase", "plan_review"]);
+    crew.next("work", slug);
+    crew.todo_in(&workspace, ["stamp", slug, "--build-started"]);
+    workspace
+}
+
+/// Commits `file` with `content` on the workspace's branch; its head.
+fn land(crew: &workflow::Crew, workspace: &Path, file: &str, content: &str) -> String {
+    let env = &crew.project.env;
+    std::fs::write(workspace.join(file), content).unwrap();
+    env.git(workspace, ["add", file]);
+    env.git(workspace, ["commit", "--quiet", "-m", file]);
+    env.git(workspace, ["rev-parse", "HEAD"])
+}
+
+/// The commit branch `branch` names in the bare repository `origin`.
+fn remote_head(crew: &workflow::Crew, branch: &str) -> String {
+    crew.project.env.git(
+        crew.root(),
+        [
+            "--git-dir",
+            crew.origin.to_str().unwrap(),
+            "rev-parse",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR16
+#[test]
+fn commits_landed_on_a_todos_branch_reach_its_pull_request_on_github() {
+    let mut crew = workflow::Crew::new();
+    crew.project
+        .github
+        .serve_branches_from(REPOSITORY, &crew.origin.clone());
+    // The runner ticks for the published project.
+    crate::fixtures::documented::sync(&crew.project.env, &crew.project.repo);
+    let workspace = worked_todo(&crew, "nested-lists");
+    let tick = |crew: &workflow::Crew| crew.project.env.run(crew.root(), ["tick"]).success();
+
+    // A builder lands a commit; the next tick publishes it and the pull
+    // request opens on it.
+    let built = land(&crew, &workspace, "parser.rs", "fn parse() {}\n");
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), built);
+    let pulls: Vec<Value> = crew
+        .project
+        .github
+        .issues(REPOSITORY)
+        .into_iter()
+        .filter(|i| i.get("pull_request").is_some())
+        .collect();
+    insta::assert_json_snapshot!(
+        "pull-request-opened-on-the-published-branch",
+        pulls
+            .iter()
+            .map(|pull| serde_json::json!({"title": pull["title"], "state": pull["state"]}))
+            .collect::<Vec<_>>()
+    );
+
+    // While GitHub cannot be reached the work goes on; the commit reaches
+    // GitHub once it can.
+    let away = crew.origin.with_extension("away");
+    std::fs::rename(&crew.origin, &away).unwrap();
+    crew.project.github.stop();
+    let fixed = land(&crew, &workspace, "render.rs", "fn render() {}\n");
+    crew.project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Rendering joined.",
+    ]);
+    tick(&crew);
+    std::fs::rename(&away, &crew.origin).unwrap();
+    assert_eq!(remote_head(&crew, "nested-lists/work"), built);
+    crew.project.github.resume();
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), fixed);
+
+    // The branch on GitHub moves where the todo's branch cannot follow it:
+    // it is left as it is, and the developer is told why.
+    let elsewhere = crew.project.env.git(
+        crew.root(),
+        [
+            "commit-tree",
+            "-p",
+            &fixed,
+            "-m",
+            "pushed elsewhere",
+            &format!("{fixed}^{{tree}}"),
+        ],
+    );
+    crew.project.env.git(
+        crew.root(),
+        [
+            "push",
+            "--quiet",
+            "origin",
+            &format!("{elsewhere}:refs/heads/nested-lists/work"),
+        ],
+    );
+    land(&crew, &workspace, "lists.rs", "fn lists() {}\n");
+    tick(&crew);
+    assert_eq!(remote_head(&crew, "nested-lists/work"), elsewhere);
+    insta::assert_snapshot!(
+        "unpublishable-branch",
+        redact(&crew.project.ok(["show", "nested-lists"]))
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR14
+#[test]
+fn a_build_review_on_the_todos_pull_request_states_its_verdict_and_findings_and_links_the_findings_artifact()
+ {
+    let crew = workflow::Crew::new();
+    crew.project
+        .github
+        .serve_branches_from(REPOSITORY, &crew.origin.clone());
+    crate::fixtures::documented::sync(&crew.project.env, &crew.project.repo);
+    common::agent_profiles(
+        &crew.project.env,
+        "roles: {todo-lead: {github_app: author}, build-reviewer: {github_app: reviewer}}",
+    );
+    let workspace = worked_todo(&crew, "nested-lists");
+    let built = land(&crew, &workspace, "parser.rs", "fn parse() {}\n");
+    crew.project.env.run(crew.root(), ["tick"]).success();
+
+    crew.project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "review-findings",
+        "1. The parser keeps the depth of nested lists.\n2. Rendering is untouched.",
+    ]);
+    let worker = crew.worker(
+        "nested-lists",
+        "build-reviewer",
+        Some("crew/procedure/review-build"),
+    );
+    crew.project
+        .env
+        .instrukt(Path::new(worker["worktree"].as_str().unwrap()))
+        .env(
+            "T3CODE_THREAD_ID",
+            worker["session"]
+                .as_str()
+                .unwrap()
+                .strip_prefix("t3:")
+                .unwrap(),
+        )
+        .args([
+            "todo",
+            "stamp",
+            "nested-lists",
+            "--verdict",
+            "changes_requested",
+            "--phase",
+            "build_review",
+        ])
+        .assert()
+        .success();
+    crew.project.env.run(crew.root(), ["tick"]).success();
+
+    let pull = crew
+        .project
+        .github
+        .issues(REPOSITORY)
+        .into_iter()
+        .find(|i| i.get("pull_request").is_some())
+        .unwrap()["number"]
+        .as_u64()
+        .unwrap();
+    let reviews: Vec<Value> = crew
+        .project
+        .github
+        .reviews(REPOSITORY, pull)
+        .into_iter()
+        .map(|r| {
+            serde_json::json!({
+                "reviewer": r["user"]["login"],
+                "state": r["state"],
+                "commit": if r["commit_id"] == built.as_str() { "the built commit" } else { "another commit" },
+                "body": r["body"].as_str().unwrap().replace(&built, "<the built commit>"),
+            })
+        })
+        .collect();
+    insta::assert_json_snapshot!("readable-build-review", reviews);
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR13
+#[test]
+fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_issue() {
+    use sha2::{Digest, Sha256};
+    let project = Project::new();
+    project.repo.write(
+        "instrukt.yaml",
+        "schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo, approvers: [maintainer]}\n",
+    );
+    project.create("nested-lists", "feature", INTENT);
+    // The issue already carries a record comment an earlier instrukt wrote,
+    // and the developer and a collaborator discuss the todo there.
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "instrukt-test",
+        "COLLABORATOR",
+        &format!("[instrukt record · nested-lists · rev 1 on rev 0]\n{RECORD_MARKER}{{}}{CLOSE}\n"),
+    );
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        "Should tables keep their depth too?",
+    );
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "contributor",
+        "CONTRIBUTOR",
+        "Only lists, I think.",
+    );
+
+    // Agents keep recording progress.
+    project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Started the parser.",
+    ]);
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Joined the cases.",
+    ]);
+    let prefix = &hex::encode(Sha256::digest(PRD.as_bytes()))[..12];
+    project.github.seed_comment(
+        REPOSITORY,
+        1,
+        "maintainer",
+        "COLLABORATOR",
+        &format!("/instrukt approve prd {prefix}"),
+    );
+    project.ok(["show", "nested-lists"]);
+    project.ok([
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Approved; building.",
+    ]);
+
+    let conversation: Vec<String> = project
+        .github
+        .comments(REPOSITORY, 1)
+        .iter()
+        .map(|c| {
+            format!(
+                "{}: {}",
+                c["user"]["login"].as_str().unwrap(),
+                c["body"].as_str().unwrap()
+            )
+        })
+        .collect();
+    insta::assert_snapshot!(
+        "conversation-holds-only-peoples-exchange",
+        conversation.join("\n---\n").replace(prefix, "<prefix>")
+    );
+}
+
+// spec: project/instrukt/spec/feature/work/github-record UC-GR1
+#[test]
 fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending() {
     let mut project = Project::new();
     project.create("nested-lists", "feature", INTENT);
@@ -84,7 +475,7 @@ fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending(
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
-fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests() {
+fn reflection_held_back_by_rate_limiting_or_another_reflection_completes_later() {
     let project = Project::new();
     project.create("nested-lists", "feature", INTENT);
     // GitHub limits the next two requests; its window has already reset.
@@ -99,50 +490,74 @@ fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests(
         "Lists keep their depth, and numbering restarts per level.",
     ]);
     let accepted = project.ok(["artifacts", "write", "nested-lists", "log", "Started."]);
+    let reflected = retained_artifacts(&project);
+
+    // Another process is reflecting: a first command's reflection stops at
+    // its issue update. A second command records its progress and returns
+    // without waiting for that reflection.
+    let todo = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command
+            .arg("todo")
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        command
+    };
+    let fields = project.github.pause_once("PATCH", "/issues/1");
+    let first = todo(&[
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Joined the cases.",
+    ])
+    .spawn()
+    .unwrap();
+    assert!(
+        fields.wait_until_received(std::time::Duration::from_secs(30)),
+        "the first command's reflection never reached GitHub"
+    );
+    let second = exited_within(
+        todo(&[
+            "artifacts",
+            "write",
+            "nested-lists",
+            "log",
+            "Rendered the depth.",
+        ])
+        .spawn()
+        .unwrap(),
+        std::time::Duration::from_secs(20),
+    )
+    .expect("the second command waited for the reflection in progress");
+    assert!(second.status.success(), "{second:?}");
+    let while_reflecting = String::from_utf8(second.stdout).unwrap();
+    drop(fields);
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    // The next reflection that takes the lock — here a command that changes
+    // nothing — reflects what the second command left pending.
+    project.ok(["update", "nested-lists"]);
 
     insta::assert_snapshot!(
         "rate-limited-then-reflected",
         redact(&format!(
-            "{limited}---\n{still_limited}---\n{accepted}---\n{}",
+            "{limited}---\n{still_limited}---\n{accepted}---\n{reflected}---\n{while_reflecting}---\n{}",
             retained_artifacts(&project)
         ))
     );
 }
 
-// spec: project/instrukt/spec/feature/work/github-record UC-GR1
-#[test]
-fn a_revision_github_accepted_whose_answer_was_lost_completes_without_a_conflict() {
-    let project = Project::new();
-    project.create("nested-lists", "feature", INTENT);
-    // GitHub accepts the next revision, but its answer never arrives.
-    project.github.respond_once(
-        "POST",
-        "/issues/1/comments",
-        CannedResponse {
-            status: 502,
-            headers: Vec::new(),
-            body: serde_json::json!({"message": "Bad Gateway"}),
-        },
-    );
-    let interrupted = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
-    let lost = project.github.requests_to("POST", "/issues/1/comments");
-    let landed = lost.last().unwrap().json()["body"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    project
-        .github
-        .seed_comment(REPOSITORY, 1, "instrukt-test", "COLLABORATOR", &landed);
-
-    let resumed = project.ok(["artifacts", "write", "nested-lists", "log", "Started."]);
-
-    insta::assert_snapshot!(
-        "answer-lost-then-reflected",
-        redact(&format!(
-            "{interrupted}---\n{resumed}---\n{}",
-            revision_headers(&project)
-        ))
-    );
+/// Waits for `child` to exit within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn exited_within(
+    child: std::process::Child,
+    bound: std::time::Duration,
+) -> Option<std::process::Output> {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR2
@@ -254,157 +669,12 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         "native-pull-review-identities",
         serde_json::json!({"author":remote.iter().find(|i|i.get("pull_request").is_some()).unwrap()["user"],"reviewer":reviews.last().unwrap()["user"],"state":reviews.last().unwrap()["state"]})
     );
-    // Reconstruction must recognize the native verdict already on GitHub.
-    let other = project.other_computer();
-    other.ok(["update", "nested-lists"]);
+    // A later reflection recognizes the native verdict already on GitHub.
+    project.ok(["update", "nested-lists"]);
     assert_eq!(project.github.reviews(REPOSITORY, pull), reviews);
     project.ok(["deliver", "nested-lists", "--commit", &built]);
 
     insta::assert_snapshot!("delivery-on-github", redact(&github_view(project)));
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR3
-#[test]
-fn progress_that_loses_to_a_change_made_elsewhere_is_reflected_only_after_refreshing() {
-    let mut project = Project::new();
-    project.create("nested-lists", "feature", INTENT);
-    let elsewhere = project.other_computer();
-    // This computer records progress while it cannot reach GitHub.
-    let gh_config = project.env.path("gh-config");
-    std::fs::create_dir_all(&gh_config).unwrap();
-    project
-        .env
-        .remove_env("GITHUB_TOKEN")
-        .set_env("GH_CONFIG_DIR", gh_config.to_str().unwrap());
-    std::fs::rename(
-        project.env.instrukt_home().join("secrets.env"),
-        project.env.instrukt_home().join("secrets.saved"),
-    )
-    .unwrap();
-    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
-    // Meanwhile the other computer's change reaches GitHub first.
-    elsewhere.ok([
-        "update",
-        "nested-lists",
-        "--hold",
-        "--reason",
-        "waiting for the renderer rewrite",
-    ]);
-    let chain_before = revision_headers(&project);
-
-    std::fs::rename(
-        project.env.instrukt_home().join("secrets.saved"),
-        project.env.instrukt_home().join("secrets.env"),
-    )
-    .unwrap();
-    project.env.set_env("GITHUB_TOKEN", "test-token");
-    let reflected = project.ok(["show", "nested-lists"]);
-    let refused = project
-        .todo(["artifacts", "write", "nested-lists", "log", "Started."])
-        .failure();
-    assert_eq!(
-        revision_headers(&project),
-        chain_before,
-        "the losing progress overwrote nothing on GitHub"
-    );
-    let refreshed = project.ok(["refresh", "nested-lists"]);
-    let rerecorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
-    let shown = project.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "lost-then-refreshed",
-        redact(&format!(
-            "{recorded}---\n{reflected}---\n{}---\n{refreshed}---\n{rerecorded}---\n{shown}",
-            String::from_utf8_lossy(&refused.get_output().stderr)
-        ))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR3
-#[test]
-fn of_two_computers_recording_at_once_the_later_is_told_to_refresh() {
-    let project = Project::new();
-    project.create("nested-lists", "feature", INTENT);
-    let elsewhere = project.other_computer();
-    elsewhere.ok(["artifacts", "write", "nested-lists", "log", "Joined."]);
-    project.ok(["show", "nested-lists"]);
-    // What the other computer reads while this one writes.
-    let before_write = project.github.comments(REPOSITORY, 1);
-
-    let first = project.ok([
-        "update",
-        "nested-lists",
-        "--hold",
-        "--reason",
-        "waiting for the renderer rewrite",
-    ]);
-    // The other computer's reads race the write: they still see the
-    // revision both built on.
-    project.github.respond_once(
-        "GET",
-        "/issues/1",
-        CannedResponse {
-            status: 304,
-            headers: Vec::new(),
-            body: Value::Null,
-        },
-    );
-    project.github.respond_once(
-        "GET",
-        "/issues/1/comments",
-        CannedResponse {
-            status: 200,
-            headers: Vec::new(),
-            body: Value::Array(before_write),
-        },
-    );
-    let second = elsewhere.ok([
-        "update",
-        "nested-lists",
-        "--hold",
-        "--reason",
-        "waiting for a review",
-    ]);
-    let refused = elsewhere
-        .todo(["artifacts", "write", "nested-lists", "prd", PRD])
-        .failure();
-    elsewhere.ok(["refresh", "nested-lists"]);
-    let after_refresh = elsewhere.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "concurrent-writers",
-        redact(&format!(
-            "{first}---\n{second}---\n{}---\n{after_refresh}",
-            String::from_utf8_lossy(&refused.get_output().stderr)
-        ))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR4
-#[test]
-fn records_posted_without_write_access_never_change_the_work_and_collaborators_still_do() {
-    let project = Project::new();
-    project.create("nested-lists", "feature", INTENT);
-
-    let forged = next_revision_holding(&project, "forged: stop all work");
-    project
-        .github
-        .seed_comment(REPOSITORY, 1, "passer-by", "NONE", &forged);
-    project
-        .github
-        .seed_comment(REPOSITORY, 1, "drive-by", "CONTRIBUTOR", &forged);
-    let unchanged = project.ok(["show", "nested-lists"]);
-
-    let agreed = next_revision_holding(&project, "waiting for the renderer rewrite");
-    project
-        .github
-        .seed_comment(REPOSITORY, 1, "teammate", "COLLABORATOR", &agreed);
-    let applied = project.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "untrusted-ignored-trusted-applied",
-        redact(&format!("{unchanged}---\n{applied}"))
-    );
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR6
@@ -508,183 +778,6 @@ fn told(env: &TestEnv, assert: &assert_cmd::assert::Assert) -> String {
     .replace(base.trim_end_matches('/'), "[TMP]")
 }
 
-/// The computer that held the todo before its claim moved.
-const OTHER_MACHINE: &str = "c0ffee00c0ffee00c0ffee00c0ffee00";
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR7
-#[test]
-fn a_todo_whose_claim_moves_here_starts_from_what_github_holds_now() {
-    let project = flavor::Tracked::new(true);
-    let collaborator = support::computer(&project.github);
-    collaborator.ok([
-        "create",
-        "tidy-imports",
-        "Sort the imports of every module.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
-    // Another computer holds the todo.
-    seed_revision(&project.github, |record| {
-        record["claim"] =
-            serde_json::json!({"machine": OTHER_MACHINE, "at": "2026-11-03T12:00:00Z"});
-    });
-    project.tick();
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "work held elsewhere is not dispatched here"
-    );
-    project.github.clear_requests();
-    let listed = project.todo(["list"]);
-    assert!(
-        project.github.requests().is_empty(),
-        "a listing reads no GitHub: {:?}",
-        project.github.requests()
-    );
-
-    // A collaborator changes the todo while it is held, then the claim is
-    // released.
-    seed_revision(&project.github, |record| {
-        record["hold_history"] = serde_json::json!([{
-            "hold": {
-                "source": "manual",
-                "reason": "the import order is being agreed",
-                "by": {"person": {"name": "Other Developer"}},
-                "at": "2026-11-03T12:00:00Z"
-            },
-            "released": "2026-11-03T13:00:00Z",
-            "by": {"person": {"name": "Other Developer"}}
-        }]);
-    });
-    seed_revision(&project.github, |record| {
-        record.as_object_mut().unwrap().remove("claim");
-    });
-    project.tick();
-
-    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
-    let shown = project.todo(["show", "tidy-imports"]);
-    insta::assert_snapshot!(
-        "claim-moved-here",
-        redact(&format!(
-            "{listed}---\n{shown}---\n{}",
-            chain(&project.github)
-        ))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR7
-#[test]
-fn a_todo_changed_elsewhere_is_refreshed_before_progress_is_recorded() {
-    let project = Project::new();
-    project.create("nested-lists", "feature", INTENT);
-    let elsewhere = project.other_computer();
-    elsewhere.ok([
-        "update",
-        "nested-lists",
-        "--hold",
-        "--reason",
-        "waiting for the renderer rewrite",
-    ]);
-
-    let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
-    let shown = project.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "refreshed-before-progress",
-        redact(&format!(
-            "{recorded}---\n{shown}---\n{}",
-            revision_headers(&project)
-        ))
-    );
-}
-
-/// Appends the next revision of todo #1 to its issue, built on its latest
-/// one and changed by `change`: what an instrukt elsewhere writes.
-fn seed_revision(github: &FakeGitHub, change: impl FnOnce(&mut Value)) {
-    let latest = latest_envelope(github);
-    let mut record = latest["record"].clone();
-    let base = record["revision"].as_u64().unwrap();
-    record["revision"] = Value::from(base + 1);
-    change(&mut record);
-    let slug = record["slug"].as_str().unwrap().to_owned();
-    let next = serde_json::json!({"base": base, "record": record});
-    github.seed_comment(
-        REPOSITORY,
-        1,
-        "instrukt-test",
-        "COLLABORATOR",
-        &format!(
-            "[instrukt record · {slug} · rev {} on rev {base}]\n{RECORD_MARKER}{next}{CLOSE}\n",
-            base + 1
-        ),
-    );
-}
-
-/// The latest trusted record envelope on issue #1.
-fn latest_envelope(github: &FakeGitHub) -> Value {
-    let line = github
-        .comments(REPOSITORY, 1)
-        .into_iter()
-        .rev()
-        .filter(|c| c["author_association"] == "COLLABORATOR")
-        .find_map(|c| {
-            c["body"]
-                .as_str()?
-                .lines()
-                .find(|l| l.starts_with(RECORD_MARKER))
-                .map(str::to_owned)
-        })
-        .unwrap();
-    serde_json::from_str(&line[RECORD_MARKER.len()..line.len() - CLOSE.len()]).unwrap()
-}
-
-/// The first line of every comment on issue #1: the revision chain.
-fn chain(github: &FakeGitHub) -> String {
-    github
-        .comments(REPOSITORY, 1)
-        .iter()
-        .filter_map(|c| c["body"].as_str()?.lines().next().map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// The envelope of todo #1's next revision, built on its latest one, with
-/// a hold for `reason`: what an instrukt elsewhere writes, or what a forger
-/// copies.
-fn next_revision_holding(project: &Project, reason: &str) -> String {
-    let latest = project
-        .github
-        .comments(REPOSITORY, 1)
-        .into_iter()
-        .rev()
-        .filter(|c| c["author_association"] == "COLLABORATOR")
-        .find_map(|c| {
-            let body = c["body"].as_str()?.to_owned();
-            let line = body
-                .lines()
-                .find(|l| l.starts_with(RECORD_MARKER))?
-                .to_owned();
-            Some(line)
-        })
-        .unwrap();
-    let envelope: Value =
-        serde_json::from_str(&latest[RECORD_MARKER.len()..latest.len() - CLOSE.len()]).unwrap();
-    let mut record = envelope["record"].clone();
-    let base = record["revision"].as_u64().unwrap();
-    record["revision"] = Value::from(base + 1);
-    record["hold"] = serde_json::json!({
-        "source": "manual",
-        "reason": reason,
-        "by": {"person": {"name": "Other Developer"}},
-        "at": "2026-11-03T12:00:00Z",
-    });
-    let next = serde_json::json!({"base": base, "record": record});
-    format!(
-        "[instrukt record · nested-lists · rev {} on rev {base}]\n{RECORD_MARKER}{next}{CLOSE}\n",
-        base + 1
-    )
-}
-
 /// Every artifact GitHub retains for issue #1, each version's body in
 /// version order, the current one last.
 fn retained_artifacts(project: &Project) -> String {
@@ -711,21 +804,8 @@ fn retained_artifacts(project: &Project) -> String {
     out
 }
 
-/// The first line of every record comment on issue #1, in order: the
-/// revision chain.
-fn revision_headers(project: &Project) -> String {
-    project
-        .github
-        .comments(REPOSITORY, 1)
-        .iter()
-        .filter_map(|c| c["body"].as_str()?.lines().next().map(str::to_owned))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// What a collaborator sees on GitHub: each issue and pull request with
-/// its state, body, revision chain and the latest revision's decisions,
-/// artifacts and reviews.
+/// its state, body, conversation, artifacts and reviews.
 fn github_view(project: &Project) -> String {
     let mut out = String::new();
     for item in project.github.issues(REPOSITORY) {
@@ -747,16 +827,6 @@ fn github_view(project: &Project) -> String {
         for comment in &comments {
             let first = comment["body"].as_str().unwrap().lines().next().unwrap();
             out.push_str(&format!("comment: {first}\n"));
-        }
-        if let Some(latest) = comments.last() {
-            for line in latest["body"]
-                .as_str()
-                .unwrap()
-                .lines()
-                .filter(|l| l.starts_with("- "))
-            {
-                out.push_str(&format!("decision {line}\n"));
-            }
         }
         for artifact in project.github.artifacts(REPOSITORY, number) {
             out.push_str(&format!(
@@ -927,7 +997,7 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     choose_board(&project, "acme/8");
     project.ok(["update", slugs[0], "--hold", "--reason", "waiting"]);
     project.ok(["update", slugs[2], "--release"]);
-    project.ok(["refresh", slugs[1]]);
+    project.ok(["update", slugs[1]]);
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
     // Both owned fields are created on the newly selected board.
@@ -954,30 +1024,6 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     );
 }
 
-// spec: project/instrukt/spec/feature/work/github-record UC-GR7
-#[test]
-fn an_existing_local_item_uses_the_later_pickup_copy_and_shows_its_age() {
-    let mut project = flavor::Tracked::new(false);
-    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:00:00Z");
-    project.todo([
-        "create",
-        "held-away",
-        "Keep this record visible locally.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
-    seed_revision(&project.github, |record| {
-        record["claim"] = serde_json::json!({"machine":OTHER_MACHINE,"at":"2030-01-06T09:00:00Z"});
-    });
-    project.tick_at("2030-01-06T09:01:00Z");
-    project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:06:00Z");
-    project.github.clear_requests();
-    let listed = project.todo(["list"]);
-    assert!(project.github.requests().is_empty());
-    insta::assert_snapshot!("local-copy-age", redact(&listed));
-}
-
 // spec: project/instrukt/spec/feature/work/github-record UC-GR9
 #[test]
 fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change_work() {
@@ -987,16 +1033,13 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         "feature",
         "Retain this work through a dispatch pause.",
     );
-    let action = |id: u64, event: &str, login: &str| serde_json::json!({"id":id,"event":event,"label":{"name":"hold"},"actor":{"login":login},"created_at":"2026-11-06T10:00:00Z"});
-    let respond = |actions: Vec<Value>, login: &str, permission: &str| {
-        project.github.respond_once(
-            "GET",
-            "/issues/1/events",
-            CannedResponse {
-                status: 200,
-                headers: vec![],
-                body: actions.into(),
-            },
+    // People's label actions are the issue's events, read from where the
+    // last read stopped; each actor's access is GitHub's answer.
+    let label = |event: &str, login: &str, permission: &str| {
+        project.github.seed_event(
+            REPOSITORY,
+            1,
+            serde_json::json!({"event":event,"label":{"name":"hold"},"actor":{"login":login},"created_at":"2026-11-06T10:00:00Z"}),
         );
         project.github.respond_once(
             "GET",
@@ -1011,11 +1054,7 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
     project
         .github
         .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
-    respond(
-        vec![action(801, "labeled", "maintainer")],
-        "maintainer",
-        "write",
-    );
+    label("labeled", "maintainer", "write");
     let held = project.ok(["show", "held-work"]);
     project.ok([
         "artifacts",
@@ -1030,19 +1069,13 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         issue.labels.push("status:delivered".into());
         issue.labels.push("team-owned".into());
     });
-    respond(
-        vec![
-            action(801, "labeled", "maintainer"),
-            action(802, "unlabeled", "collaborator"),
-        ],
-        "collaborator",
-        "write",
-    );
+    label("unlabeled", "collaborator", "write");
     let released = project.ok(["show", "held-work"]);
     // A subsequent write reflects the accepted release and restores output labels.
     project.ok(["update", "held-work"]);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
-    respond(vec![action(803, "labeled", "outsider")], "outsider", "read");
+    project.github.edit_issue(REPOSITORY, 1, |_| {});
+    label("labeled", "outsider", "read");
     let refused = project.ok(["show", "held-work"]);
     insta::assert_snapshot!(
         "github-hold-label-audit",
@@ -1182,54 +1215,6 @@ fn a_confirmation_failure_retries_without_reapplying_the_github_decision() {
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR8
 #[test]
-fn moving_work_to_another_computer_keeps_the_decisions_source_identity() {
-    let project = Project::new();
-    let config = "schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo, approvers: [maintainer]}\n";
-    project.repo.write("instrukt.yaml", config);
-    project.create(
-        "moved-decision",
-        "feature",
-        "Keep the applied decision when work moves.",
-    );
-    project.ok([
-        "artifacts",
-        "write",
-        "moved-decision",
-        "prd",
-        "The current outcome.",
-    ]);
-    project.github.seed_comment(
-        REPOSITORY,
-        1,
-        "maintainer",
-        "COLLABORATOR",
-        "/instrukt request-changes prd Clarify the result.",
-    );
-    project.ok(["show", "moved-decision"]);
-    project.ok([
-        "artifacts",
-        "write",
-        "moved-decision",
-        "log",
-        "Reflect the applied decision.",
-    ]);
-    let other = project.other_computer();
-    other.repo.write("instrukt.yaml", config);
-    other.ok([
-        "update",
-        "moved-decision",
-        "--hold",
-        "--reason",
-        "Inspect on this computer.",
-    ]);
-    insta::assert_snapshot!(
-        "moved-decision-applied-once",
-        redact(&other.ok(["show", "moved-decision"]))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR8
-#[test]
 fn a_failed_mixed_handover_does_not_resend_an_approval_to_a_released_claimant() {
     let crew = workflow::Crew::new();
     let project = &crew.project;
@@ -1309,263 +1294,6 @@ fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
     assert_eq!(crew.runtime.message_count("lead-1"), 1);
 }
 
-// spec: project/instrukt/spec/feature/work/github-record UC-GR9
-#[test]
-fn replaying_label_history_on_another_computer_preserves_a_newer_manual_hold() {
-    let project = Project::new();
-    project.create(
-        "retained-hold",
-        "change",
-        "Keep the operator's later decision.",
-    );
-    let actions = serde_json::json!([
-        {"id":801,"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"},
-        {"id":802,"event":"unlabeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:01:00Z"}
-    ]);
-    let history = || {
-        project.github.respond_once(
-            "GET",
-            "/issues/1/events",
-            CannedResponse {
-                status: 200,
-                headers: vec![],
-                body: actions.clone(),
-            },
-        )
-    };
-    project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission":"write"}),
-        },
-    );
-    project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission":"write"}),
-        },
-    );
-    history();
-    project.ok(["show", "retained-hold"]);
-    project.ok([
-        "update",
-        "retained-hold",
-        "--hold",
-        "--reason",
-        "Await operator decision.",
-    ]);
-    let other = project.other_computer();
-    history();
-    other.ok(["update", "retained-hold"]);
-    let first = other.ok(["show", "retained-hold"]);
-    history();
-    let replay = other.ok(["show", "retained-hold"]);
-    insta::assert_snapshot!(
-        "cross-computer-label-history",
-        redact(&format!("{first}---\n{replay}"))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR8
-// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
-#[test]
-fn a_decision_imported_by_another_computer_reaches_the_claim_host_once() {
-    let crew = workflow::Crew::new();
-    let project = &crew.project;
-    let slug = "remote-decision";
-    project.create(slug, "feature", "Retain the remote decision.");
-    crew.next("prepare", slug);
-    crew.write(slug, "prd", "The current audience.");
-    crew.runtime.open_session_in("lead-1", crew.root());
-    crew.runtime.set_status("lead-1", "ended ok");
-    let other = project.other_computer();
-    let source = other
-        .repo
-        .read("instrukt.yaml")
-        .replace("github:\n", "github:\n  approvers: [maintainer]\n");
-    other.repo.write("instrukt.yaml", &source);
-    let fake = runtime::FakeRuntime::new(&other.env, "other", false);
-    project.github.seed_comment(
-        REPOSITORY,
-        1,
-        "maintainer",
-        "COLLABORATOR",
-        "/instrukt request-changes prd Explain the intended audience.",
-    );
-    other.ok(["update", slug]);
-    assert_eq!(fake.calls().len(), 0);
-    crew.todo(["show", slug]);
-    assert_eq!(crew.runtime.message_count("lead-1"), 1);
-    crew.todo(["show", slug]);
-    assert_eq!(crew.runtime.message_count("lead-1"), 1);
-    insta::assert_snapshot!(
-        "imported-decision-attention",
-        redact(&crew.runtime.input_log("lead-1"))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR9
-#[test]
-fn imported_accepted_label_identity_supersedes_local_ignored_bookkeeping_through_reconstruction() {
-    let project = Project::new();
-    let slug = "reconciled-action";
-    project.create(slug, "change", "Preserve the accepted action identity.");
-    let other = project.other_computer();
-    let action = serde_json::json!({"id":901,"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"});
-    let history = || {
-        project.github.respond_once(
-            "GET",
-            "/issues/1/events",
-            CannedResponse {
-                status: 200,
-                headers: vec![],
-                body: serde_json::json!([action.clone()]),
-            },
-        )
-    };
-    let permission = |value: &str| {
-        project.github.respond_once(
-            "GET",
-            "/collaborators/maintainer/permission",
-            CannedResponse {
-                status: 200,
-                headers: vec![],
-                body: serde_json::json!({"permission":value}),
-            },
-        )
-    };
-    // B observed the historical action while its actor could not be admitted.
-    history();
-    permission("read");
-    other.ok(["update", slug]);
-    // A subsequently accepts and reflects that same action, then records a later hold.
-    history();
-    permission("write");
-    project.ok(["show", slug]);
-    project.ok(["update", slug, "--release"]);
-    project.ok([
-        "update",
-        slug,
-        "--hold",
-        "--reason",
-        "Await the later operator decision.",
-    ]);
-    history();
-    other.ok(["update", slug]);
-    other.ok([
-        "artifacts",
-        "write",
-        slug,
-        "log",
-        "Continue from the imported accepted record.",
-    ]);
-    // Replace B's local database after all writes reflected, as on machine recovery.
-    for name in ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"] {
-        let file = other.env.instrukt_home().join("state").join(name);
-        if file.exists() {
-            std::fs::remove_file(file).unwrap();
-        }
-    }
-    history();
-    permission("write");
-    other.ok(["update", slug]);
-    insta::assert_snapshot!(
-        "accepted-label-identity-reconstructed",
-        redact(&other.ok(["show", slug]))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR10
-#[test]
-fn newer_remote_schema_refuses_progress_before_any_write() {
-    let project = Project::new();
-    project.create("schema-change", "bug", INTENT);
-    project.create("unrelated-record", "bug", "Continue independent work.");
-    seed_revision(&project.github, |record| record["schema"] = 999.into());
-    let before = project.github.comments(REPOSITORY, 1);
-    let artifacts = project.github.artifacts(REPOSITORY, 1);
-    let result = project
-        .todo([
-            "artifacts",
-            "write",
-            "schema-change",
-            "log",
-            "must not append",
-        ])
-        .failure();
-    insta::assert_snapshot!("newer-schema-refusal", told(&project.env, &result));
-    assert_eq!(project.github.comments(REPOSITORY, 1), before);
-    assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
-    project.ok([
-        "artifacts",
-        "write",
-        "unrelated-record",
-        "log",
-        "independent progress",
-    ]);
-    assert_eq!(project.github.comments(REPOSITORY, 1), before);
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR10
-#[test]
-fn older_remote_schema_converts_without_losing_retained_evidence() {
-    let project = Project::new();
-    project.create("schema-change", "bug", INTENT);
-    seed_revision(&project.github, |record| record["schema"] = 1.into());
-    project.ok([
-        "artifacts",
-        "write",
-        "schema-change",
-        "log",
-        "continued after conversion",
-    ]);
-    assert_eq!(latest_envelope(&project.github)["record"]["schema"], 4);
-    insta::assert_snapshot!(
-        "converted-schema-evidence",
-        project.ok(["artifacts", "read", "schema-change", "input"])
-    );
-
-    // A schema 3 record's retained stamps and bindings (golden fixture)
-    // convert to schema 4 unchanged.
-    let golden: Value =
-        serde_json::from_str(include_str!("../fixtures/record-v3-evidence.json")).unwrap();
-    let mut seeded = Value::Null;
-    seed_revision(&project.github, |record| {
-        record["schema"] = 3.into();
-        record["sequence"] = golden["sequence"].clone();
-        record["stamps"] = golden["stamps"].clone();
-        record["bindings"] = golden["bindings"].clone();
-        seeded = record.clone();
-    });
-    project.ok([
-        "artifacts",
-        "write",
-        "schema-change",
-        "log",
-        "continued after the schema 3 conversion",
-    ]);
-    let converted = &latest_envelope(&project.github)["record"];
-    assert_eq!(converted["schema"], 4);
-    assert_eq!(converted["stamps"], golden["stamps"]);
-    assert_eq!(converted["bindings"], golden["bindings"]);
-    let input = |record: &Value| {
-        record["artifacts"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|a| a["name"] == "input")
-            .cloned()
-            .unwrap()
-    };
-    assert_eq!(input(converted), input(&seeded));
-}
-
 // spec: project/instrukt/spec/feature/work/github-record UC-GR5
 #[test]
 fn missing_board_is_set_up_automatically_and_reused() {
@@ -1629,11 +1357,18 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
     );
     let elsewhere = project.other_computer();
     without_board(elsewhere.repo.path());
-    project.github.clear_project_items("acme", 2);
-    elsewhere.ok(["update", "cockpit"]);
+    elsewhere.ok([
+        "create",
+        "dashboard",
+        INTENT,
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    let theirs = issue_node(&project, 2);
     assert!(
-        on_board(&project, "acme", 2).contains(&todo),
-        "the other computer reflects the todo onto the board it found"
+        on_board(&project, "acme", 2).contains(&theirs),
+        "the other computer reflects its own todo onto the board it found"
     );
     assert_eq!(
         project.github.project_numbers("acme"),
@@ -2107,45 +1842,4 @@ fn an_empty_projects_cockpit_failure_is_a_project_reflection_failure() {
     );
     assert_eq!(project.github.project_workflows("acme", 1), workflows);
     insta::assert_json_snapshot!("empty-project-cockpit-recovered", cockpit());
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR10
-#[test]
-fn old_remote_native_placement_is_converted_before_record_mutation() {
-    let project = Project::new();
-    project.create("legacy-driver", "change", INTENT);
-    let mut key = String::new();
-    seed_revision(&project.github, |record| {
-        record["schema"] = 2.into();
-        let mut placement: Value = serde_json::from_str(
-            &include_str!("../fixtures/native-placement-v14.json")
-                .replace("__WORKTREE__", project.repo.path().to_str().unwrap())
-                .replace("__HEAD__", &project.repo.head()),
-        )
-        .unwrap();
-        key = instrukt_runner::keyed::todo_key(
-            "demo",
-            record["id"].as_str().unwrap(),
-            "prepare-orchestrator",
-            1,
-        );
-        placement["key"] = key.clone().into();
-        record["bindings"] = serde_json::json!([{"role":"prepare-orchestrator","session":placement["session"],"worktree":placement["worktree"],"runtime":"t3","native_placement":placement,"assignment":"driver","attempt":1,"semantic_key":key}]);
-    });
-    project.ok([
-        "artifacts",
-        "write",
-        "legacy-driver",
-        "log",
-        "Continue after upgrade.",
-    ]);
-    let current = latest_envelope(&project.github);
-    insta::assert_snapshot!(
-        "converted-old-native-placement-title",
-        redact(
-            current["record"]["bindings"][0]["native_placement"]["title"]
-                .as_str()
-                .unwrap()
-        )
-    );
 }
