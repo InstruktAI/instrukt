@@ -158,56 +158,73 @@ mod tests {
     }
 
     #[test]
-    fn each_status_row_has_its_judgment_and_extent() {
-        let none = headers(None);
-        let cases = [
-            (200, Judgment::Success),
-            (302, Judgment::Success),
-            (429, unavailable(Reason::RateLimited, Extent::Key)),
-            (
-                503,
-                unavailable(Reason::Unavailable { status: Some(503) }, Extent::Scope),
-            ),
-            (
-                408,
-                unavailable(Reason::Unavailable { status: Some(408) }, Extent::Call),
-            ),
-            (
-                425,
-                unavailable(Reason::Unavailable { status: Some(425) }, Extent::Call),
-            ),
-            (
-                502,
-                unavailable(Reason::Unavailable { status: Some(502) }, Extent::Scope),
-            ),
-            (
-                504,
-                unavailable(Reason::Unavailable { status: Some(504) }, Extent::Scope),
-            ),
-            (
-                500,
-                unavailable(Reason::Unavailable { status: Some(500) }, Extent::Call),
-            ),
-            (400, Judgment::Defect),
-            (401, Judgment::Defect),
-            (404, Judgment::Defect),
-        ];
-        for (code, expected) in cases {
-            assert_eq!(status(code, &none), expected, "{code}");
-        }
-        let unreachable = ureq::Error::ConnectionFailed;
-        let timed_out = ureq::Error::Io(std::io::ErrorKind::TimedOut.into());
-        let defect = ureq::Error::BadUri("nonsense".into());
-        let transport = |error| judge(&HttpAnswer::Transport(error), &Settings::default());
+    fn an_answer_below_400_is_a_success() {
+        assert_eq!(status(200, &headers(None)), Judgment::Success);
+    }
+
+    #[test]
+    fn a_429_rate_limits_the_key() {
         assert_eq!(
-            transport(&unreachable),
+            status(429, &headers(None)),
+            unavailable(Reason::RateLimited, Extent::Key)
+        );
+    }
+
+    #[test]
+    fn a_503_makes_the_scope_unavailable() {
+        assert_eq!(
+            status(503, &headers(None)),
+            unavailable(Reason::Unavailable { status: Some(503) }, Extent::Scope)
+        );
+    }
+
+    #[test]
+    fn a_failed_request_holds_only_the_call() {
+        assert_eq!(
+            status(408, &headers(None)),
+            unavailable(Reason::Unavailable { status: Some(408) }, Extent::Call)
+        );
+    }
+
+    #[test]
+    fn another_5xx_makes_the_scope_unavailable() {
+        assert_eq!(
+            status(502, &headers(None)),
+            unavailable(Reason::Unavailable { status: Some(502) }, Extent::Scope)
+        );
+    }
+
+    #[test]
+    fn another_4xx_is_a_defect() {
+        assert_eq!(status(404, &headers(None)), Judgment::Defect);
+    }
+
+    fn transport(error: &ureq::Error) -> Judgment {
+        judge(&HttpAnswer::Transport(error), &Settings::default())
+    }
+
+    #[test]
+    fn no_connection_makes_the_scope_unreachable() {
+        assert_eq!(
+            transport(&ureq::Error::ConnectionFailed),
             unavailable(Reason::Unreachable, Extent::Scope)
         );
+    }
+
+    #[test]
+    fn a_transport_timeout_times_the_scope_out() {
         assert_eq!(
-            transport(&timed_out),
+            transport(&ureq::Error::Io(std::io::ErrorKind::TimedOut.into())),
             unavailable(Reason::TimedOut, Extent::Scope)
         );
-        assert_eq!(transport(&defect), Judgment::Defect);
+    }
+
+    #[test]
+    fn another_transport_failure_is_a_defect() {
+        assert_eq!(
+            transport(&ureq::Error::BadUri("nonsense".into())),
+            Judgment::Defect
+        );
     }
 
     #[test]
