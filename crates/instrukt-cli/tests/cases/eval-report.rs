@@ -293,9 +293,10 @@ fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
     insta::assert_snapshot!("checkout-gone-report", page);
 }
 
-/// Records `computer`'s work in project `demo` under both eval sets: one
-/// todo under the first with `first_model`, the process changed, then one
-/// under the second with `second_model` (returned once when `returned`).
+/// Records work in `eval`'s project `demo` under both eval sets: a todo
+/// `<todo>-first` under the first with `first_model`, returned once before
+/// it is approved, then, the process changed, a todo `<todo>-second` under
+/// the second with `second_model`, approved at its first review.
 fn records_work(eval: &mut Evaluated, todo: &str, first_model: &str, second_model: &str) {
     let demo = eval.project.repo.path().to_path_buf();
     eval.at("2030-01-05T12:00:00Z");

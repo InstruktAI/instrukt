@@ -591,9 +591,6 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
         );
     }
 }
-/// The owned service that keeps `instrukt run` running while a company
-/// home declares a connector; withdrawn when that
-/// demand ends. Its state is recorded in the report as it was found.
 /// Where a cluster connection is configured and the computer has a demand
 /// this run covers that keeps a runner or a cluster reader — history,
 /// events, an MCP server with sign-in, the minute wake-up or the runner
@@ -637,6 +634,9 @@ fn fleet_permissions(
     }
 }
 
+/// The owned service that keeps `instrukt run` running while a company
+/// home declares a connector; withdrawn when that
+/// demand ends. Its state is recorded in the report as it was found.
 fn runner_service(request: &Request<'_>, demand: &Demand, report: &mut Report) {
     let desired = _services::runner(request);
     let paths = desired.files.keys().cloned().collect::<Vec<_>>();

@@ -84,7 +84,7 @@ pub(super) fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::H
 }
 
 /// Work's answers to other computers' evaluation requests, read from this
-/// home with the process environment and the system clock.
+/// home with the process environment and this invocation's clock.
 pub(super) fn evaluation(
     ctx: &Ctx,
 ) -> anyhow::Result<Arc<dyn instrukt_runner::interfaces::EvaluationAnswers>> {
