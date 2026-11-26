@@ -37,6 +37,7 @@ renderings and by sync
 
 ### Checks
 
+<!-- planned-change:docs-dependency-direction -->
 | Family | A finding when |
 | --- | --- |
 | Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
@@ -50,6 +51,21 @@ renderings and by sync
 | Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
 | Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
 | Directives | an `@exec` or `@include` directive in a snippet, companion or third-party doc, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+<!-- change:docs-dependency-direction -->
+| Family | A finding when |
+| --- | --- |
+| Identity | the path yields no identity (outside `docs/general/`, `docs/domain/<x>/`, `docs/project/` and `docs/third-party/`; an unknown taxonomy directory; a file directly under `docs/domain/`; a project snippet in a repository whose `instrukt.yaml` declares no `project`); a domain folder carries a reserved name (`general`, `project`); classification fields are authored in frontmatter |
+| Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without an explicit or subscription-default role or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
+| Procedures | a non-subscribed workflow or project procedure has a `role` absent from its `workflow/workflow.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
+| Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
+| References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a Required reads entry, an id or a bare domain name, or a See Also entry, opening with an id or carrying a linked id, that names a position its snippet may not reference: from `general` anything but `general`, from a domain another domain or a project, from a project another project (`general/policy/referencing-doc-snippets`); the finding names the reference and the positions its snippet may reference |
+| Required-reads hygiene | a required read already implied by the closure of another required read of the same snippet; the finding names the read that implies it |
+| Position index | as `project/instrukt/spec/feature/docs/position-index` lists |
+| Schema | a `schema.yaml` finding as `project/instrukt/spec/feature/docs/snippet-schema` lists |
+| Pending | `delivered_by` is not a non-empty list of slugs; a companion, planned or change marker names a slug of invalid form; planned markers are inline, nested, unbalanced or overlapping |
+| Third-party | `description` missing; a `## Sources` entry that is neither a web URL nor a documentation-service identifier |
+| Directives | an `@exec` or `@include` directive in a snippet, companion or third-party doc, naming its command or path; a `@config` directive with a `runtime.*` path in a snippet rendered into a global agent file — reached through `docs/general/index.yaml`'s `expanded` closure or `agents`; any `@config` directive in a snippet the repository's committed `AGENTS.md` renders in full (`project/instrukt/spec/feature/publication/agent-entrypoints`) |
+<!-- /planned-change:docs-dependency-direction -->
 
 A todo slug is checked for form only. Whether it names an existing todo is
 checked as well when the `todos` module is on, by asking that module without
@@ -199,13 +215,32 @@ When they validate without `--no-todo-lookup` against a home whose state databas
 Then validation succeeds without taking the writer lock or modifying the state database
 ```
 
+<!-- planned:docs-dependency-direction -->
+### UC-SV8: A developer learns where a reference points away from the generic
+
+```gherkin
+Given a developer's general snippet requires a domain snippet and requires a domain by name
+And a domain snippet requires a project snippet and lists another domain's snippet under See Also
+And a project snippet requires another project's snippet
+When they validate the project's documentation
+Then each of those references is reported with its file, the reference and the positions its snippet may reference
+And the run reports failure while any of them remains
+But a domain snippet requiring general and its own domain, and a project snippet requiring its own project, general and a domain, are not reported
+```
+<!-- /planned:docs-dependency-direction -->
+
 ## Known caveats
 
 - Validation does not judge prose: a citation that no longer holds, a restated
   rule or a misleading description passes.
 - A present `## Required reads` that is not the first H2 is a validation finding.
 - A same-repository reference written as a plain id is valid; authoring uses the clickable form.
+<!-- planned-change:docs-dependency-direction -->
 - A prose citation is not resolved: only Required reads and See Also entries are.
+<!-- change:docs-dependency-direction -->
+- A prose citation is neither resolved nor checked for direction: only Required reads and See Also entries are.
+- Validation judges the validated repository's own snippets. A reference against the direction inside a domain another repository publishes is reported where that repository is validated or synced, and never fails this repository's run.
+<!-- /planned-change:docs-dependency-direction -->
 - Two required reads whose closures overlap are not redundant; a read is reported only when it lies in another read's closure.
 - Mermaid syntax validation is outside the first build.
 

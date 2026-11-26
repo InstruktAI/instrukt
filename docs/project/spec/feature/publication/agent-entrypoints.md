@@ -54,6 +54,7 @@ forms and closures are
 owns the domain read. This spec owns the grouping and headings. A rendered
 section, in order:
 
+<!-- planned-change:docs-dependency-direction -->
 1. **Heading.** `# <Name>`: the position's name with its first letter
    capitalised (`# General`, `# Sdlc`, `# Project`).
 2. **Expanded.** Each id in `expanded`, in the order listed, in full with its
@@ -72,6 +73,28 @@ section, in order:
 4. **Triggered procedures.** One listing line per procedure of the position
    carrying an `activation_trigger`, naming its trigger and leading to
    `instrukt docs get <id> --closure`.
+<!-- change:docs-dependency-direction -->
+1. **Heading.** `# <Name>`: the position's name with its first letter
+   capitalised (`# General`, `# Sdlc`, `# Project`).
+2. **Expanded.** Each id in `expanded`, in the order listed, in full with its
+   closure: its transitive required reads, each before the snippet that
+   requires it. The traversal order is kept: each snippet sits under the
+   `# <Domain>` heading of the domain it belongs to, so an `sdlc` snippet
+   that a project snippet requires sits under `# Sdlc`, not `# Project`,
+   and when the traversal moves to a snippet of another domain a heading for
+   that domain opens there — a domain's heading appears again when the
+   traversal returns to it (`project/A`, then `sdlc/B`, then `project/C`
+   renders `# Project`, `# Sdlc`, `# Project`). `general`'s index names only
+   `general` snippets, so a global file's always-on section stays under
+   `# General`. Order is never changed to
+   group a domain's snippets together. Every heading of a rendered
+   snippet is demoted one level, except inside fenced code; an H6 stays H6.
+3. **Listed.** One listing line per id in `listed`, leading to
+   `instrukt docs get <id>`.
+4. **Triggered procedures.** One listing line per procedure of the position
+   carrying an `activation_trigger`, naming its trigger and leading to
+   `instrukt docs get <id> --closure`.
+<!-- /planned-change:docs-dependency-direction -->
 
 A global agent file gives its listed snippets and its triggered procedures
 each a heading of their own that carries the read command once, in the
@@ -400,6 +423,7 @@ frontmatter of Cursor's rule file does, the generated line follows it.
      closure, appended to that runtime's file only. Claude appends `claude`
      then `claudeAgent`, sharing the shown-id set so closures appear once.
      An ACP registry agent id is diagnostic identity, never a selection alias.
+<!-- planned-change:docs-dependency-direction -->
 - **Rendering.** Required reads resolve from the documentation published on
   the computer and are inlined; nothing is left for an agent program to
   resolve. `@config` directives resolve against the publishing project's
@@ -412,6 +436,20 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   reference is written as rendered and named, and the sync goes on;
   `general/principle/trust-and-guardrails`: the next sync rebuilds the file
   once the snippet is corrected, so a refusal would guard nothing).
+<!-- change:docs-dependency-direction -->
+- **Rendering.** Required reads resolve from the documentation published on
+  the computer and are inlined; nothing is left for an agent program to
+  resolve. `@config` directives resolve against the publishing project's
+  effective configuration. A global file that keeps a reference left for an
+  agent program to resolve is written as rendered, and the sync reports a
+  finding naming the file and the reference and goes on: a domain's
+  `description` line comes from what another project published, which this
+  sync does not validate again, and one such line stops no other file
+  (`general/policy/agent-artifact-governance`: a global file with such a
+  reference is written as rendered and named, and the sync goes on;
+  `general/principle/trust-and-guardrails`: the next sync rebuilds the file
+  once the source is corrected, so a refusal would guard nothing).
+<!-- /planned-change:docs-dependency-direction -->
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
@@ -575,6 +613,7 @@ When an agent checks the repository out on a computer without instrukt
 Then it starts with that instruction file
 ```
 
+<!-- planned-change:docs-dependency-direction -->
 ### UC-AE2: A developer sees native instruction delivery and explicit non-delivery for configured agent runtimes
 
 ```gherkin
@@ -600,6 +639,32 @@ And no global instruction file is written, and the developer is told which runti
 When publication runs again while the runtime can be asked
 Then every configured agent runtime with an established native loader receives the changed doctrine
 ```
+<!-- change:docs-dependency-direction -->
+### UC-AE2: A developer sees native instruction delivery and explicit non-delivery for configured agent runtimes
+
+```gherkin
+Given a developer's runtime has several agent runtimes configured, some with homes of their own, and another agent program is installed but not configured
+And the computer publishes always-on doctrine (with a triggered procedure and a subscribed procedure) and an on-demand domain with a description, a triggered procedure and a subscribed procedure
+And the agent runtimes' settings hold the developer's own preferences
+And one configured agent runtime's global instruction file holds text another tool wrote
+When publication runs for the project that owns the always-on doctrine
+Then each configured agent runtime with an established native loader receives the always-on doctrine in full in its native format and home
+And each of those files carries the line that names it as generated
+And every configured instance without an established loader or home is named with its non-delivery reason
+And the text the other tool wrote is gone
+And it reads one line naming the on-demand domain, its description and the command that loads it
+And the always-on doctrine's own triggered procedure and subscribed procedure appear in the global file
+And the on-demand domain's triggered procedures and subscribed procedures are absent from the global file
+And each configured agent runtime that needs it is set to load project instruction files
+And every other setting the developer had is unchanged
+And the agent program that is not configured receives nothing
+But when the always-on doctrine changes and publication runs while the runtime cannot be asked
+Then the rest of the documentation is published
+And no global instruction file is written, and the developer is told which runtime could not be asked and why
+When publication runs again while the runtime can be asked
+Then every configured agent runtime with an established native loader receives the changed doctrine
+```
+<!-- /planned-change:docs-dependency-direction -->
 
 ### UC-AE3: A developer gives one agent runtime rules of its own
 

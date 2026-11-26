@@ -82,11 +82,18 @@ the position's rendering carries; depth below that comes from required reads.
 - `agents` — a map from the name of an agent runtime instrukt deploys to, to
   snippet ids. Those snippets are ordinary `policy` snippets, appended to that
   one runtime's global file only.
+<!-- planned-change:docs-dependency-direction -->
 - `general`'s `expanded` and `listed` may name ids from any domain, which is
   how always-on content from several domains is chosen in one place. A
   domain's index and the project's index name only snippets of their own
   position.
+<!-- change:docs-dependency-direction -->
+- Every position's index, `general`'s included, names only snippets of its
+  own position: always-on content is `general`'s own, and a domain is reached
+  through its `description` line (`general/policy/referencing-doc-snippets`).
+<!-- /planned-change:docs-dependency-direction -->
 
+<!-- planned-change:docs-dependency-direction -->
 `instrukt docs validate`, and the sync that publishes the position, report as
 findings a key the position does not allow (`agents` outside
 `docs/general/index.yaml` among them), an id that names no delivered snippet,
@@ -94,6 +101,16 @@ an `agents` key that names no agent runtime instrukt deploys to, a `listed` id a
 closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
 refuses on them. A domain without `index.yaml` is a notice: it is
 absent from the global file and found only through `instrukt docs index`.
+<!-- change:docs-dependency-direction -->
+`instrukt docs validate`, and the sync that publishes the position, report as
+findings a key the position does not allow (`agents` outside
+`docs/general/index.yaml` among them), an id that names no delivered snippet
+or a snippet of another position,
+an `agents` key that names no agent runtime instrukt deploys to, a `listed` id already in the
+closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
+refuses on them. A domain without `index.yaml` is a notice: it is
+absent from the global file and found only through `instrukt docs index`.
+<!-- /planned-change:docs-dependency-direction -->
 
 What each rendering carries — the global agent files, `instrukt docs get
 --domain <x>`, the project's root `AGENTS.md` — is owned by

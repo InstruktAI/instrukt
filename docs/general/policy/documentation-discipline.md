@@ -167,7 +167,3 @@ doc-hygiene worktree-head review catches self-reviewed and stale snippets.
 ## Exceptions
 
 - Trivial implementation-internal changes with no contract change touch no docs.
-
-## See Also
-
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md) — owns whether work executes in context or through a todo.
