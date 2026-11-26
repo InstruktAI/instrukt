@@ -238,41 +238,7 @@ pub fn adopt_company(
         None => CompanyOrigin::ByContract,
     };
     let (settings_written, hooks) = check_out(home, key, &staging, &remote, &home_dir)?;
-    // A repository checked out by contract may hold no project layer: the
-    // home stays, and there is nothing to publish.
-    let sync = if !present(&home_dir.join(config::CONFIG_FILE_NAME))? {
-        CompanySync::NoProjectLayer
-    } else {
-        match publication::sync(&publication::SyncRequest {
-            home,
-            cwd: &home_dir,
-            wiring: ports.wiring,
-            now: ports.now,
-        }) {
-            Ok(report) => match report.outcome {
-                publication::SyncOutcome::Published { .. } => CompanySync::Published,
-                publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
-                publication::SyncOutcome::Refused { refusal, .. } => {
-                    tracing::warn!(
-                        event = "company_home_publication_refused",
-                        company = %key,
-                        reason = %refusal,
-                        "{}", NOT_PUBLISHED
-                    );
-                    CompanySync::NotPublished(refusal.to_string())
-                }
-            },
-            Err(error) => {
-                tracing::warn!(
-                    event = "company_home_publication_failed",
-                    company = %key,
-                    error = %error,
-                    "{}", NOT_PUBLISHED
-                );
-                CompanySync::NotPublished(error.to_string())
-            }
-        }
-    };
+    let sync = publish_home(home, key, &home_dir, ports.wiring, ports.now)?;
     tracing::info!(
         event = "company_home_adopted",
         company = %key,
@@ -291,6 +257,52 @@ pub fn adopt_company(
         settings_written,
         hooks,
         sync,
+    })
+}
+
+/// Publishes the home at `home_dir`, company `key`'s, by syncing it: what
+/// the sync did, or why it did not publish. The home stays either way.
+fn publish_home(
+    home: &Home,
+    key: &ProjectSlug,
+    home_dir: &Path,
+    wiring: &CoreWiring,
+    now: jiff::Timestamp,
+) -> Result<CompanySync, RepositoryError> {
+    // A repository checked out by contract may hold no project layer: the
+    // home stays, and there is nothing to publish.
+    if !present(&home_dir.join(config::CONFIG_FILE_NAME))? {
+        return Ok(CompanySync::NoProjectLayer);
+    }
+    let synced = publication::sync(&publication::SyncRequest {
+        home,
+        cwd: home_dir,
+        wiring,
+        now,
+    });
+    Ok(match synced {
+        Ok(report) => match report.outcome {
+            publication::SyncOutcome::Published { .. } => CompanySync::Published,
+            publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
+            publication::SyncOutcome::Refused { refusal, .. } => {
+                tracing::warn!(
+                    event = "company_home_publication_refused",
+                    company = %key,
+                    reason = %refusal,
+                    "{}", NOT_PUBLISHED
+                );
+                CompanySync::NotPublished(refusal.to_string())
+            }
+        },
+        Err(error) => {
+            tracing::warn!(
+                event = "company_home_publication_failed",
+                company = %key,
+                error = %error,
+                "{}", NOT_PUBLISHED
+            );
+            CompanySync::NotPublished(error.to_string())
+        }
     })
 }
 
@@ -595,9 +607,31 @@ fn write_intent(path: &Path, intent: &Intent) -> Result<(), RepositoryError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        CompanyName, Creation, GitHubLogin, GitHubOrganisation, Intent, ProjectSlug, Pushed,
-        RepositoryError, Step, next_step, read_intent, write_intent,
+        CompanyName, CompanySync, CoreWiring, Creation, GitHubLogin, GitHubOrganisation, Home,
+        Intent, ProjectSlug, Pushed, RepositoryError, Step, next_step, publish_home, read_intent,
+        write_intent,
     };
+
+    #[test]
+    fn a_home_whose_repository_holds_no_project_layer_is_not_synced() {
+        let root = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(root.path().to_path_buf()).for_writing();
+        let key = ProjectSlug::parse("globex").unwrap();
+        // A repository made before generation: a README and nothing else.
+        let home_dir = home.company_dir(&key);
+        std::fs::create_dir_all(&home_dir).unwrap();
+        std::fs::write(home_dir.join("README.md"), "# Globex\n").unwrap();
+        assert!(matches!(
+            publish_home(
+                &home,
+                &key,
+                &home_dir,
+                &CoreWiring::default(),
+                jiff::Timestamp::UNIX_EPOCH
+            ),
+            Ok(CompanySync::NoProjectLayer)
+        ));
+    }
 
     #[test]
     fn a_fresh_creation_that_finds_the_repository_takes_it_by_contract_and_pushes_nothing() {
