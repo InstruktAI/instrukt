@@ -10,6 +10,6 @@ model: claude-opus-5-5
 - MAY tell a person writing to a company's agent about their request and their own world (their service unreachable, the assistant unavailable a while); NEVER about instrukt internals; what instrukt cannot resolve goes to the operator -- a person acts only on their own world.
 - MUST give each object generation a fixed native start key and thread ID that retries replay -- retries stay one generation.
 - MUST start a new generation automatically for outstanding work after confirmed native archive or deletion, or after an idle thread is confirmed in a runtime project other than its checkout's own; NEVER touch a misplaced thread while it is busy -- wait until idle.
-- native lifecycle owns provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
+- native lifecycle = owner of provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
 - NEVER discard a record of older or unknown shape unless its spec names the source that rebuilds it; MUST migrate, never discard or expire, a person's stated choices and restrictions and records of external effects -- discarding is safe only when the rebuild source survives.
-- applies to instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.
+- scope = instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.

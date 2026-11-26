@@ -12,7 +12,7 @@ Compressed sections (headed by document name) hold rules, not prose: `MUST` requ
 
 - this project's shared workflows repository = `InstruktAI/workflows`, the InstruktAI organisation's own: the within-organisation case of `sdlc/policy/ci-pipeline-conventions`.
 - MUST compose from it at a released version and route improvements and divergences through it -- it is the project's own code, not a stranger's.
-- MUST, as reviewer, apply that policy's enforcement with `InstruktAI/workflows` as the existing path for generic pipeline logic.
+- MUST apply that policy's enforcement in review with `InstruktAI/workflows` as the existing path for generic pipeline logic -- reviewers judge by it.
 
 # General
 
@@ -40,9 +40,9 @@ Compressed sections (headed by document name) hold rules, not prose: `MUST` requ
 - MUST share a write-isolation unit only within one owning domain with a compatible write pattern; NEVER let background writers (pollers, outboxes, delivery queues, maintenance) share one with a path a person or agent waits on; a domain whose write pattern or lifecycle differs gets its own -- fewer files is no reason; shared waits add latency.
 - MUST name each state's scope (machine | project | home | cluster); state of a responsibility moving between computers moves with it by a defined transfer -- else the new owner rebuilds it.
 - MUST give a growing store its bound and retirement, keeping current state apart from history, logs and outboxes -- retention prunes history, never current state.
-- applies to durable state a delivery introduces, relocates or changes; an existing store is brought in line when the change path touches it or by work for that purpose.
+- scope = durable state a delivery introduces, relocates or changes; an existing store is brought in line when the change path touches it or by work for that purpose.
 - enforcement = architecture records each piece of durable state and its review verifies it; work without reviewed architecture records it in the plan; build and commit review reject undeclared state or storage breaking these rules.
-- MAY, for a tool with no background process whose every write runs in a bounded invocation (a command, or a scheduled run that exits) under one per-computer writer lock, share one database across its domains; the architecture names the lock as the unit and the invocations that hold it -- the lock already serializes all writers.
+- MAY share one database across its domains, for a tool with no background process whose every write runs in a bounded invocation (a command, or a scheduled run that exits) under one per-computer writer lock; the architecture names the lock as the unit and the invocations that hold it -- the lock already serializes all writers.
 
 # Project
 
@@ -56,9 +56,9 @@ Compressed sections (headed by document name) hold rules, not prose: `MUST` requ
 - MAY tell a person writing to a company's agent about their request and their own world (their service unreachable, the assistant unavailable a while); NEVER about instrukt internals; what instrukt cannot resolve goes to the operator -- a person acts only on their own world.
 - MUST give each object generation a fixed native start key and thread ID that retries replay -- retries stay one generation.
 - MUST start a new generation automatically for outstanding work after confirmed native archive or deletion, or after an idle thread is confirmed in a runtime project other than its checkout's own; NEVER touch a misplaced thread while it is busy -- wait until idle.
-- native lifecycle owns provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
+- native lifecycle = owner of provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
 - NEVER discard a record of older or unknown shape unless its spec names the source that rebuilds it; MUST migrate, never discard or expire, a person's stated choices and restrictions and records of external effects -- discarding is safe only when the rebuild source survives.
-- applies to instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.
+- scope = instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.
 
 - project/instrukt/spec/verification-substrate: Live verification substrate for instrukt — archetype classification (Rust CLI/daemon/orchestrator), real surfaces, Docker-free isolated-root primitive, concurrency cap, and declared blind spots. — `instrukt docs get project/instrukt/spec/verification-substrate`
 - project/instrukt/policy/reliability-checklist: Diff-triggered live verification checks for instrukt born solely from confirmed real occurrences with auditable evidence, governed by sdlc/policy/live-verification. — `instrukt docs get project/instrukt/policy/reliability-checklist`
