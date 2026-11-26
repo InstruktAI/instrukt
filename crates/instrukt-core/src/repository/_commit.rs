@@ -557,17 +557,14 @@ mod tests {
 
     #[test]
     fn every_routing_refusal_names_both_options_and_the_policy() {
-        for refusal in [
+        let refusals = [
             RepositoryError::RoutingMissing,
             RepositoryError::RoutingBoth,
             RepositoryError::RoutingBasisEmpty,
             RepositoryError::ExemptOutsideProject,
             RepositoryError::ExemptionUnavailable,
-        ] {
-            let text = refusal.to_string();
-            for named in ["--review", "--exempt <basis>", "general/policy/commits"] {
-                assert!(text.contains(named), "{text}: {named}");
-            }
-        }
+        ]
+        .map(|refusal| refusal.to_string());
+        insta::assert_snapshot!("routing-refusals", refusals.join("\n\n"));
     }
 }

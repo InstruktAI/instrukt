@@ -405,14 +405,6 @@ mod tests {
         let commit = CommitSha::parse(&"d".repeat(40)).unwrap();
         let content: serde_json::Value =
             serde_json::from_str(&ask_content(&project, &candidate, &commit)).unwrap();
-        assert_eq!(content["commit"], commit.as_str());
-        let ask = content["ask"].as_str().unwrap();
-        for named in [
-            "general/policy/commits",
-            &format!("instrukt review exempt --commit {commit} --basis <basis>"),
-            "instrukt review start",
-        ] {
-            assert!(ask.contains(named), "{ask}: {named}");
-        }
+        insta::assert_json_snapshot!("review-ask-content", content);
     }
 }

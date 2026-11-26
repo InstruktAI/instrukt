@@ -854,10 +854,9 @@ fn a_developers_agent_decides_whether_its_commit_owes_review() {
         .args(["review", "show", &oneoff])
         .assert()
         .success();
-    let shown = String::from_utf8(shown.get_output().stdout.clone()).unwrap();
-    assert!(
-        shown.contains(&format!("exemption: {BASIS} (declared by t3:oneoff-author")),
-        "{shown}"
+    log_snapshot!(
+        "uc-ig7-exemption-shown",
+        String::from_utf8(shown.get_output().stdout.clone()).unwrap()
     );
 
     // Every other commit integrated with it is covered: an approved head
@@ -902,11 +901,13 @@ fn a_developers_agent_decides_whether_its_commit_owes_review() {
         .args(["review", "show", &candidate])
         .assert()
         .success();
-    let shown = String::from_utf8(shown.get_output().stdout.clone()).unwrap();
-    assert!(shown.contains("derived approval:"), "{shown}");
-    assert!(
-        shown.contains(&oneoff),
-        "the exemption covers the one-off commit: {shown}"
+    // The derived approval names the one-off commit's exemption among its
+    // covering items.
+    log_snapshot!(
+        "uc-ig7-derived-approval",
+        String::from_utf8(shown.get_output().stdout.clone())
+            .unwrap()
+            .replace(&oneoff, "<one-off commit>")
     );
 
     // A further commit reaches integration with neither a review nor a
@@ -941,17 +942,13 @@ fn a_developers_agent_decides_whether_its_commit_owes_review() {
     let started = project.rt.started_count();
     project.tick();
     project.tick();
-    let asks = project.rt.input_log("author-a");
-    assert_eq!(
-        asks.matches("Kind: review_ask").count(),
-        1,
-        "the authoring agent is asked to decide, once: {asks}"
-    );
-    assert!(
-        asks.contains(&format!(
-            "instrukt review exempt --commit {undecided} --basis <basis>"
-        )),
-        "{asks}"
+    // The authoring agent is asked to decide, once over both wake-ups.
+    log_snapshot!(
+        "uc-ig7-author-ask",
+        project
+            .rt
+            .input_log("author-a")
+            .replace(&undecided, "<undecided commit>")
     );
     assert_eq!(
         logged(&project, "runner.candidate_held", &undecided),
