@@ -122,9 +122,9 @@ state database's file and migrations (work).
     and company home.
   - The explicit reply queueing operation (`instrukt company reply`), which
     verifies an active company conversation binding, checks that the target
-    conversation is admitted on that `(company, connector)`, scrubs credentials,
-    and writes ordered pieces into `conversation_answers` for connector
-    delivery.
+    conversation is admitted on that `(company, connector)`, and writes the
+    reply exactly as the agent wrote it, in ordered pieces, into
+    `conversation_answers` for connector delivery.
   - The speaker lookup: a function of this context that the CLI calls for
     `instrukt mcp` and hands to MCP access.
   Other contexts obtain conversation facts only through these; none reads the

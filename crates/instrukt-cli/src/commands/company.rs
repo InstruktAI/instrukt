@@ -4,7 +4,7 @@ use std::io::Read as _;
 use std::process::ExitCode;
 
 use crate::{context::Ctx, wiring};
-use instrukt_company::conversations::{company_scrub, conversation_binding, queue_reply};
+use instrukt_company::conversations::queue_reply;
 use instrukt_core::config::Configuration;
 
 #[derive(Debug, clap::Args)]
@@ -46,8 +46,6 @@ pub fn run(args: CompanyArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     "`instrukt company reply` requires a recognized active company conversation session"
                 );
             };
-            let scrub = conversation_binding(&ctx.home, &session)?
-                .map(|binding| company_scrub(&ctx.home, &binding.company));
             let body = if text == "-" {
                 let mut buf = String::new();
                 std::io::stdin().read_to_string(&mut buf)?;
@@ -55,24 +53,14 @@ pub fn run(args: CompanyArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             } else {
                 text
             };
-            let (queued, scrub) =
-                match queue_reply(&ctx.home, &session, conversation.as_deref(), &body) {
-                    Ok(result) => result,
-                    Err(error) => {
-                        let message = scrub
-                            .as_ref()
-                            .map_or_else(|| error.to_string(), |s| s.text(&error.to_string()));
-                        anyhow::bail!("{message}");
-                    }
-                };
+            let queued = queue_reply(&ctx.home, &session, conversation.as_deref(), &body)?;
             if json {
-                let value = scrub.json(serde_json::to_value(&queued)?);
-                ctx.out.json(&value)?;
+                ctx.out.json(&queued)?;
             } else {
-                ctx.out.line(&scrub.text(&format!(
+                ctx.out.line(&format!(
                     "Queued reply for {} ({}, {} piece(s), turn {}).",
                     queued.conversation, queued.connector, queued.pieces, queued.turn
-                )))?;
+                ))?;
             }
             Ok(ExitCode::SUCCESS)
         }

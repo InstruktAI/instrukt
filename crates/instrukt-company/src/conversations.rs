@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use instrukt_connector::{Accompanying, ConversationDisplay, Incoming, RefusalReason, Sender};
 use instrukt_core::config::{
     Admitted, Agents, COMPANY_AGENT_ROLE, ConfigError, Configuration, DeclaredConnector, Env,
-    ReplyMode, SecretSource, SessionScope, connector_declaration, readable_secret_values,
+    ReplyMode, SessionScope, connector_declaration,
 };
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
@@ -2313,7 +2313,6 @@ fn message_for_input<'a>(sent: &'a [Message], text: &str) -> Option<&'a Message>
 /// started any other way is not posted. Missing native content leaves the
 /// delivery unresolved with its cause; the position does not move past it.
 fn harvest(
-    home: &Home,
     state: &RunnerState,
     source: &dyn ConversationSource,
     c: &Conversation,
@@ -2431,15 +2430,6 @@ fn harvest(
                 .join("\n\n");
             answers.push((message, turn, output));
         }
-        let scrub = if reply_mode == ReplyMode::TurnOutput
-            && answers
-                .iter()
-                .any(|(_, turn, output)| turn.succeeded && !output.is_empty())
-        {
-            Some(company_scrub(home, &c.company))
-        } else {
-            None
-        };
         let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
@@ -2460,10 +2450,7 @@ fn harvest(
                 let turn_id = turn.native_turn.to_string();
                 let has_answer = match reply_mode {
                     ReplyMode::TurnOutput => {
-                        let scrubbed = scrub
-                            .as_ref()
-                            .map_or_else(|| output.clone(), |s| s.text(output));
-                        for (piece, text) in split(&scrubbed, message_chars).iter().enumerate() {
+                        for (piece, text) in split(output, message_chars).iter().enumerate() {
                             tx.execute(
                                 "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,admission_position)
                                  SELECT ?1,?2,?3,?4,?5,?6,admission_position FROM conversation_messages
@@ -2473,7 +2460,7 @@ fn harvest(
                             )
                             .map_err(state::sql(&path))?;
                         }
-                        !scrubbed.is_empty()
+                        !output.is_empty()
                     }
                     ReplyMode::Explicit => false,
                 };
@@ -3512,7 +3499,7 @@ fn relay(
         // Intake runs alongside source reads. Only work already captured
         // when the read began may use the presence it observed.
         let before_read = open_messages(&state, &c)?;
-        let observed = answers(home, admitted, &state, source, connectors, receipts, &c)?;
+        let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
         if let Err(error) = require_source(&c, source.identity()) {
             if !open_messages(&state, &c)?.is_empty() {
                 adopt_replacement(home, &state, adapter, source, &mut c)?;
@@ -4014,7 +4001,6 @@ fn observe(
 /// interval of the turns handed over; a turn read as ended whose answer is
 /// not posted opens its message's, and a posted answer closes it.
 fn answers(
-    home: &Home,
     admitted: &Admitted,
     state: &RunnerState,
     source: &dyn ConversationSource,
@@ -4033,7 +4019,6 @@ fn answers(
         .map_err(ConversationError::from)
         .and_then(|connector| {
             harvest(
-                home,
                 state,
                 source,
                 c,
@@ -4450,67 +4435,6 @@ pub fn conversation_binding(
     }))
 }
 
-/// Minimum trimmed length for a secret value to be scrubbed from outbound
-/// text, preventing short configuration values (such as `"1"`, `"true"`, or a
-/// port) from corrupting ordinary prose or leaking secret names.
-const MIN_SCRUB_SECRET_LEN: usize = 8;
-
-/// Build a credential scrubber covering every readable secret of `company`
-/// and the machine, plus stored MCP logins and OAuth client secrets visible
-/// to `company` (at least [`MIN_SCRUB_SECRET_LEN`] characters long), sorted
-/// longest-value-first.
-pub fn company_scrub(home: &Home, company: &ProjectSlug) -> instrukt_runner::mcp::Scrub {
-    let mut items: Vec<instrukt_runner::mcp::Login> = Vec::new();
-    let mut push = |value: String, label: String| {
-        if value.trim().len() >= MIN_SCRUB_SECRET_LEN {
-            items.push(instrukt_runner::mcp::Login { value, label });
-        }
-    };
-    for (name, value) in readable_secret_values(home, &SecretSource::Company(company.clone())) {
-        push(value, format!("[redacted secret:{name}]"));
-    }
-    for (name, value) in readable_secret_values(home, &SecretSource::Machine) {
-        push(value, format!("[redacted secret:{name}]"));
-    }
-    if let Ok(Some(db)) = instrukt_core::state_db::StateRead::open(home) {
-        if let Ok(mut stmt) = db
-            .conn()
-            .prepare("SELECT server, access_token, refresh_token FROM mcp_logins WHERE company=?1")
-            && let Ok(rows) = stmt.query_map([company.as_str()], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            })
-        {
-            for (server, access_token, refresh_token) in rows.flatten() {
-                push(access_token, format!("[redacted mcp-login:{server}]"));
-                if let Some(refresh) = refresh_token {
-                    push(refresh, format!("[redacted mcp-login:{server}]"));
-                }
-            }
-        }
-        if let Ok(mut stmt) = db.conn().prepare(
-            "SELECT coalesce(server, host_client, 'client'), client_secret FROM mcp_registrations WHERE client_secret IS NOT NULL AND (company=?1 OR company IS NULL)",
-        ) && let Ok(rows) = stmt.query_map([company.as_str()], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            for (name, secret) in rows.flatten() {
-                push(secret, format!("[redacted mcp-client:{name}]"));
-            }
-        }
-    }
-    items.sort_by(|a, b| {
-        b.value
-            .len()
-            .cmp(&a.value.len())
-            .then_with(|| a.value.cmp(&b.value))
-    });
-    items.dedup_by(|a, b| a.value == b.value);
-    instrukt_runner::mcp::Scrub::new(items)
-}
-
 /// Summary of an explicit reply queued into `conversation_answers`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedReply {
@@ -4522,20 +4446,19 @@ pub struct QueuedReply {
 }
 
 /// Queue an explicit reply from an active company conversation session into
-/// the durable `conversation_answers` outbox, scrubbing credentials before
-/// persisting and splitting to the connector's declared message character limit.
+/// the durable `conversation_answers` outbox, exactly as the agent wrote it,
+/// split to the connector's declared message character limit.
 pub fn queue_reply(
     home: &Home,
     caller: &SessionRef,
     requested_conversation: Option<&str>,
     text: &str,
-) -> Result<(QueuedReply, instrukt_runner::mcp::Scrub), ConversationError> {
+) -> Result<QueuedReply, ConversationError> {
     let Some(binding) = conversation_binding(home, caller).map_err(StateError::from)? else {
         return Err(ConversationError::Refused(
             "this session is not bound to an active company conversation".into(),
         ));
     };
-    let scrub = company_scrub(home, &binding.company);
     if text.trim().is_empty() {
         return Err(ConversationError::Refused(
             "reply text must not be empty".into(),
@@ -4609,8 +4532,7 @@ pub fn queue_reply(
         ))
     })?;
     let message_chars = declaration.message_chars;
-    let scrubbed = scrub.text(text);
-    let parts = split(&scrubbed, message_chars);
+    let parts = split(text, message_chars);
     if parts.is_empty() {
         return Err(ConversationError::Refused(
             "reply text must not be empty".into(),
@@ -4644,16 +4566,13 @@ pub fn queue_reply(
         }
         Ok(())
     })?;
-    Ok((
-        QueuedReply {
-            company: binding.company.to_string(),
-            connector: binding.connector,
-            conversation: target,
-            turn,
-            pieces: parts.len(),
-        },
-        scrub,
-    ))
+    Ok(QueuedReply {
+        company: binding.company.to_string(),
+        connector: binding.connector,
+        conversation: target,
+        turn,
+        pieces: parts.len(),
+    })
 }
 
 /// The speaker of `session`'s current turn: the sender recorded with the
