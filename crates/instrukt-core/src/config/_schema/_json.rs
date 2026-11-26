@@ -8,9 +8,9 @@ use super::super::_module::Module;
 use super::{LayerKind, Node, Rule, SHIPPED_BLUEPRINT_ENGINES, Shape, schema};
 
 /// The JSON Schema of the project layer for the developer's editor,
-/// generated from the same schema [`check`] validates a project layer
-/// with: a key only the global layer may hold is absent, and every map
-/// admits exactly the keys validation admits.
+/// generated from the same schema [`check`](super::check) validates a
+/// project layer with: a key only the global layer may hold is absent, and
+/// every map admits exactly the keys validation admits.
 pub fn editor_schema() -> serde_json::Value {
     let mut schema = json_node(&schema(), LayerKind::Project).unwrap_or_else(|| json!({}));
     if let Some(object) = schema.as_object_mut() {
@@ -29,7 +29,7 @@ pub fn editor_schema() -> serde_json::Value {
 }
 
 /// JSON Schema of `layer` (`Global`, `Project`, or `Company`), generated from
-/// the same schema tree [`check`] validates with.
+/// the same schema tree [`check`](super::check) validates with.
 pub fn layer_json_schema(layer: LayerKind) -> serde_json::Value {
     let mut schema = json_node(&schema(), layer).unwrap_or_else(|| json!({}));
     if let Some(object) = schema.as_object_mut() {
@@ -279,8 +279,9 @@ pub(in crate::config) fn secret_reference(contract: &str, layer: LayerKind) -> s
 }
 
 /// A JSON Schema `pattern` admitting exactly the strings
-/// [`Field::NonEmptyStr`] accepts: those holding a character outside Rust's
-/// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
+/// [`Field::NonEmptyStr`](super::Field::NonEmptyStr) accepts: those holding a
+/// character outside Rust's `char::is_whitespace`, the set `str::trim`
+/// removes. A regex class escape
 /// such as `\S` would not do, because JSON Schema reads patterns as ECMA-262,
 /// whose whitespace differs (it adds U+FEFF and omits U+0085). The pattern is
 /// a complemented class of `\uXXXX` escapes, which ECMA-262 reads as exactly

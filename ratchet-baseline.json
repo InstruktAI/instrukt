@@ -6,7 +6,7 @@
     "crates/instrukt-connector-slack/src/lib.rs": 1585,
     "crates/instrukt-core/src/config/_agents.rs": 1119,
     "crates/instrukt-core/src/config/_mcp.rs": 1241,
-    "crates/instrukt-core/src/config/_schema.rs": 1391,
+    "crates/instrukt-core/src/config/_schema.rs": 1390,
     "crates/instrukt-core/src/config/_validate.rs": 1172,
     "crates/instrukt-core/src/docs/_retrieval.rs": 1524,
     "crates/instrukt-core/src/docs/_validate.rs": 1684,

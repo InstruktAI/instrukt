@@ -148,7 +148,7 @@ pub(crate) fn read(path: &Path) -> Result<Option<Document>, ConfigError> {
 /// converted; both present refused), the project layer unless its file
 /// holds a company's settings, the machine's layer. `None` when there is
 /// none. Nothing is converted; the paths that persist a conversion run
-/// [`converted`] first.
+/// [`converted`](super::_company_document::converted) first.
 pub(crate) fn read_layer(
     home: &Home,
     layer: &Layer,

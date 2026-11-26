@@ -848,7 +848,6 @@ fn insert_at(root: &mut Mapping, path: &[&str], value: Value) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn yaml(text: &str) -> Value {
         serde_yaml_ng::from_str(text).unwrap()
@@ -911,7 +910,7 @@ mod tests {
             Some("object") => value.as_object().is_some_and(|map| {
                 let required = object.get("required").and_then(J::as_array);
                 let names = object.get("propertyNames");
-                names.is_none_or(|names| map.keys().all(|key| fits(names, &json!(key))))
+                names.is_none_or(|names| map.keys().all(|key| fits(names, &serde_json::json!(key))))
                     && required.is_none_or(|names| {
                         names
                             .iter()
