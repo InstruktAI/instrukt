@@ -428,7 +428,8 @@ fn create_repo(state: &mut State, org: &str, input: &Value) -> Reply {
     }
     let id = state.next_id();
     let mut repo = Repo::new(id, org, name);
-    repo.public = input["private"] == false;
+    // GitHub creates a public repository unless `private` is true.
+    repo.public = input["private"] != true;
     let body = repo.json();
     state.repos.insert(full, repo);
     if let Some(remotes) = &state.remotes {
