@@ -2,6 +2,28 @@
 
 ## 0.1.0
 
+### A company's settings and skill move
+
+A company home keeps its settings in `company.yaml`, beside the project
+layer its repository commits as `instrukt.yaml`. A home whose settings are
+still its root `instrukt.yaml` declaring `company` needs nothing done: it is
+read as it stands, and the next writing command (`instrukt config patch
+--company`, `instrukt config init --company`) adds the `/company.yaml` ignore
+line and renames the file to `company.yaml` with every setting it holds. A
+home that holds both files is reported naming both and left as it is; keep the
+one that holds the settings and remove the other.
+
+`instrukt docs plugin` now renders the company's skill at `skills/<key>/` and
+makes its entry in `.claude-plugin/marketplace.json` the plugin's manifest,
+creating the catalog where the repository holds none. It no longer renders a
+`plugins/<key>/` folder or a `plugin.json`, and it never touches one: once
+`skills/<key>/` is rendered and committed, remove `plugins/<key>/` from the
+company's repository unless another publisher still renders it.
+
+New companies are added with `instrukt init --company <key>`, after declaring
+the owning GitHub organisation once with `instrukt config patch --global` and
+`github.org`.
+
 ### This repository's commit check
 
 For developers of instrukt itself. The pre-commit hook runs the checks the
