@@ -162,7 +162,6 @@ struct Progress {
     position: Option<String>,
     page: Option<String>,
     retry_at: Option<i64>,
-    failure: Option<String>,
 }
 
 struct ScanWindow {
@@ -294,6 +293,16 @@ fn failed(error: impl std::fmt::Display) -> ConnectorError {
     ConnectorError::new(error.to_string())
 }
 
+/// Where one scan left the connector's read-back.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Scanned {
+    /// It read what it could; `catch_up` asks for a fresh window at once.
+    Done { catch_up: bool },
+    /// The read waits until this moment on the host clock: the outside
+    /// gate's wait for its last read, live or as stored before a restart.
+    Waiting { until: Timestamp },
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn scan(
     home: &Home,
@@ -306,9 +315,10 @@ pub(crate) fn scan(
     clock: &dyn Fn() -> Timestamp,
     quit: &dyn Fn() -> bool,
     nudge: &dyn Fn(),
-) -> Result<bool, ConnectorError> {
+) -> Result<Scanned, ConnectorError> {
+    let done = |catch_up| Scanned::Done { catch_up };
     let Some(mut conn) = open(home, true).map_err(failed)? else {
-        return Ok(false);
+        return Ok(done(false));
     };
     let requested = clock();
     observed(&conn, home, company, key, requested).map_err(failed)?;
@@ -344,23 +354,20 @@ pub(crate) fn scan(
         .map_err(sql)?;
     tx.commit().map_err(sql)?;
     if opened == 0 && !remains {
-        return Ok(false);
+        return Ok(done(false));
     }
 
     while !quit() {
         let progress = conn.query_row(
-            "SELECT started,lower_bound,position,page,retry_at,failure FROM scans WHERE company=?1 AND connector=?2",
+            "SELECT started,lower_bound,position,page,retry_at FROM scans WHERE company=?1 AND connector=?2",
             [owner, key],
             |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
-                page: row.get(3)?, retry_at: row.get(4)?, failure: row.get(5)? }),
+                page: row.get(3)?, retry_at: row.get(4)? }),
         ).map_err(sql)?;
-        if progress.retry_at.is_some_and(|at| micros(clock()) < at) {
-            return Err(failed(
-                progress
-                    .failure
-                    .as_deref()
-                    .unwrap_or("waiting to retry read-back"),
-            ));
+        if let Some(at) = progress.retry_at.filter(|at| micros(clock()) < *at) {
+            return Ok(Scanned::Waiting {
+                until: Timestamp::from_microsecond(at).map_err(failed)?,
+            });
         }
         let window = ScanWindow {
             from: Timestamp::from_microsecond(progress.lower).map_err(failed)?,
@@ -390,7 +397,10 @@ pub(crate) fn scan(
                             "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
                             params![owner, key, retry, error.to_string()],
                         ).map_err(sql)?;
-                        return Err(failed(error));
+                        return match error.wait {
+                            Some(wait) => Ok(Scanned::Waiting { until: wait.at() }),
+                            None => Err(failed(error)),
+                        };
                     }
                 }
             }
@@ -424,10 +434,10 @@ pub(crate) fn scan(
         if page.next.is_none() {
             // A resumed window can end before the most recent connection.
             // Take a fresh window once its earlier coverage is durable.
-            return Ok(window.started < requested);
+            return Ok(done(window.started < requested));
         }
     }
-    Ok(false)
+    Ok(done(false))
 }
 
 fn channel(item: &Incoming) -> &str {
@@ -767,4 +777,60 @@ pub(super) fn channel_gaps(home: &Home, now: Timestamp) -> Result<Vec<ChannelGap
         })
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Scanned, micros, observe, open, scan};
+    use crate::connector_host::test_connector::TestConnector;
+    use instrukt_connector::Limits;
+    use instrukt_core::config::{ReplyMode, SessionScope};
+    use instrukt_core::ids::{ProjectSlug, RoleName};
+    use instrukt_core::state_db::rusqlite::params;
+    use jiff::Timestamp;
+
+    #[test]
+    fn a_stored_future_wait_is_answered_as_waiting_without_reading() {
+        let root = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = instrukt_core::home::Home::at_user_home(root.path().to_path_buf()).for_writing();
+        drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
+        let acme = ProjectSlug::parse("acme").unwrap();
+        // A company whose configuration cannot be read keeps every
+        // connector's read-back record.
+        let company = home.company_dir(&acme);
+        instrukt_core::fsx::create_dir_all(&company).unwrap();
+        instrukt_core::fsx::write(company.join("company.yaml"), "connectors: [").unwrap();
+        let now: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
+        let until = now + jiff::SignedDuration::from_secs(120);
+        observe(&home, &acme, "slack", now).unwrap();
+        open(&home, true)
+            .unwrap()
+            .unwrap()
+            .execute(
+                "UPDATE scans SET retry_at=?3 WHERE company=?1 AND connector=?2",
+                params!["acme", "slack", micros(until)],
+            )
+            .unwrap();
+        let connector = TestConnector {
+            limits: Limits {
+                message_chars: 100,
+                working_refresh: None,
+            },
+            per_message: false,
+        };
+        let scanned = scan(
+            &home,
+            &acme,
+            "slack",
+            &RoleName::parse("company-agent").unwrap(),
+            SessionScope::Conversation,
+            ReplyMode::default(),
+            &connector,
+            &|| now,
+            &|| false,
+            &|| {},
+        )
+        .unwrap();
+        assert_eq!(scanned, Scanned::Waiting { until });
+    }
 }

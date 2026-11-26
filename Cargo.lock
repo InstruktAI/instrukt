@@ -921,6 +921,7 @@ dependencies = [
  "hex",
  "instrukt-connector",
  "instrukt-core",
+ "instrukt-outside",
  "instrukt-runner",
  "jiff",
  "serde",

@@ -22,6 +22,7 @@ use instrukt_core::config::{
 };
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName};
+use instrukt_outside::Wait;
 use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 use serde_yaml_ng::Value;
@@ -35,13 +36,35 @@ const LOG_TARGET: &str = "instrukt_runner::connectors";
 /// How often the working pass looks at what is unfinished.
 const STATUS_TICK: Duration = Duration::from_secs(1);
 
-/// The longest wait before retrying intake work that failed.
-const MOST_BACKOFF: Duration = Duration::from_secs(60);
-
-/// How long retained intake work waits between passes, and how long it first
-/// waits after a pass that failed; each further failure in a row doubles
-/// that wait, up to [`MOST_BACKOFF`].
+/// How long retained intake work waits between passes, and before retrying
+/// a message whose failure carried no wait.
 const RETRY: Duration = Duration::from_secs(2);
+
+/// The pause between one connection's end and the next opening.
+const RECONNECT: Duration = Duration::from_secs(1);
+
+/// How long a whole loop (admission, the connection, read-back, an intake
+/// pass) waits after a failure that carries no wait: a local failure or a
+/// defect. A fixed supervision recheck, not a backoff.
+const RECHECK: Duration = Duration::from_secs(60);
+
+/// When a whole loop tries again after a failure: at the outside gate's
+/// moment when the failure carried a wait, otherwise after [`RECHECK`].
+fn after_failure(wait: Option<&Wait>, now: Instant) -> Instant {
+    wait.map_or(now + RECHECK, Wait::until)
+}
+
+/// Whether the host clock has reached a stored moment.
+fn due(until: Timestamp, now: Timestamp) -> bool {
+    now >= until
+}
+
+/// Sleep until `until` or `stop`, in slices that observe it.
+fn sleep_until(until: Instant, stop: &dyn Fn() -> bool) {
+    while Instant::now() < until && !stop() {
+        std::thread::sleep(Duration::from_millis(100).min(until - Instant::now()));
+    }
+}
 
 /// The connectors the host reaches: one company's, opened from a generation,
 /// and the runner's clock.
@@ -403,27 +426,24 @@ fn admit_connector(
     key: &str,
     stop: &AtomicBool,
 ) {
-    let mut delay = Duration::from_secs(1);
-    while !stop.load(Ordering::Acquire) {
+    let stop = || stop.load(Ordering::Acquire);
+    while !stop() {
         let result = reach
             .connectors
             .open(&reach.current.get(), company, key)
             .and_then(|connector| connector.check_permissions());
-        match result {
+        let error = match result {
             Ok(()) => return,
-            Err(error) => state(
-                home,
-                company,
-                key,
-                ConnectionState::Failed,
-                Some(&error.cause),
-            ),
-        }
-        let until = Instant::now() + delay;
-        while Instant::now() < until && !stop.load(Ordering::Acquire) {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        delay = (delay * 2).min(Duration::from_secs(60));
+            Err(error) => error,
+        };
+        state(
+            home,
+            company,
+            key,
+            ConnectionState::Failed,
+            Some(&error.to_string()),
+        );
+        sleep_until(after_failure(error.wait.as_ref(), Instant::now()), &stop);
     }
 }
 
@@ -625,14 +645,20 @@ fn connection(
             if let Err(error) = conversations::read_back::observe(home, company, key, reach.connectors.now()) {
                 tracing::warn!(target: LOG_TARGET, event = "connector_read_back_unrecorded", company = %company, error = %error);
             }
-            let mut retry_at: Option<Instant> = None;
-            let mut delay = Duration::from_secs(1);
+            // A scan runs when a connection wakes it, when its recheck is
+            // due, or when the stored moment of its wait passes on the host
+            // clock, the clock that moment was stored on.
+            let mut recheck: Option<Instant> = None;
+            let mut waiting_until: Option<Timestamp> = None;
             while !quit() {
                 let event = scans.recv_timeout(Duration::from_millis(200));
                 if quit() {
                     break;
                 }
-                if event.is_err() && retry_at.is_none_or(|at| Instant::now() < at) {
+                let woken = event.is_ok()
+                    || recheck.is_some_and(|at| Instant::now() >= at)
+                    || waiting_until.is_some_and(|until| due(until, reach.connectors.now()));
+                if !woken {
                     continue;
                 }
                 let admitted_gen = reach.current.get();
@@ -661,18 +687,23 @@ fn connection(
                 );
                 match result {
                     Err(error) => {
-                        tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
-                        retry_at = Some(Instant::now() + delay);
-                        delay = (delay * 2).min(Duration::from_secs(60));
+                        if error.wait.is_none() {
+                            tracing::warn!(target: LOG_TARGET, event = "connector_read_back_failed", company = %company, connector = key, error = %error);
+                        }
+                        recheck = Some(after_failure(error.wait.as_ref(), Instant::now()));
+                        waiting_until = None;
                     }
-                    Ok(catch_up) => {
-                        retry_at = catch_up.then(Instant::now);
-                        delay = Duration::from_secs(1);
+                    Ok(conversations::read_back::Scanned::Done { catch_up }) => {
+                        recheck = catch_up.then(Instant::now);
+                        waiting_until = None;
+                    }
+                    Ok(conversations::read_back::Scanned::Waiting { until }) => {
+                        recheck = None;
+                        waiting_until = Some(until);
                     }
                 }
             }
         });
-        let mut backoff = Duration::from_secs(1);
         while !quit() {
             state(home, company, key, ConnectionState::Connecting, None);
             let inbox = HostInbox {
@@ -692,25 +723,23 @@ fn connection(
             if quit() {
                 break;
             }
-            if let Some(error) = &failure {
-                tracing::warn!(target: LOG_TARGET, event = "connector_failed", company = %company, connector = key, error = %error);
-                state(
-                    home,
-                    company,
-                    key,
-                    ConnectionState::Failed,
-                    Some(&error.cause),
-                );
-            }
-            let until = Instant::now() + backoff;
-            while Instant::now() < until && !quit() {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            backoff = if failure.is_some() {
-                (backoff * 2).min(Duration::from_secs(60))
-            } else {
-                Duration::from_secs(1)
+            let until = match &failure {
+                None => Instant::now() + RECONNECT,
+                Some(error) => {
+                    if error.wait.is_none() {
+                        tracing::warn!(target: LOG_TARGET, event = "connector_failed", company = %company, connector = key, error = %error);
+                    }
+                    state(
+                        home,
+                        company,
+                        key,
+                        ConnectionState::Failed,
+                        Some(&error.to_string()),
+                    );
+                    after_failure(error.wait.as_ref(), Instant::now())
+                }
             };
+            sleep_until(until, &quit);
         }
     });
     if stop.load(Ordering::Acquire) {
@@ -725,46 +754,35 @@ struct Wakes<'a> {
     context: &'a SyncSender<()>,
 }
 
-/// How long intake waits before its next pass after `failures` failed
-/// passes in a row: [`RETRY`] after a clean pass and after the first
-/// failure, doubling with each further one up to [`MOST_BACKOFF`].
-fn retry_wait(failures: u32) -> Duration {
-    if failures == 0 {
-        RETRY
-    } else {
-        RETRY
-            .saturating_mul(1 << (failures - 1).min(5))
-            .min(MOST_BACKOFF)
-    }
-}
-
 /// The company's retained intake work, until `stop`: run when a retained
-/// message nudges it, every [`RETRY`] while it runs clean, and after a
-/// failure once its wait ([`retry_wait`]) has passed.
+/// message nudges it, and otherwise at the moment its last pass gave
+/// ([`next_pass`]).
 fn intake_worker(
     stop: &dyn Fn() -> bool,
     nudges: &std::sync::mpsc::Receiver<()>,
     mut pass: impl FnMut() -> IntakeProgress,
 ) {
-    let mut failures: u32 = 0;
     while !stop() {
-        let progress = pass();
-        if !progress.clean {
-            failures = failures.saturating_add(1);
-        } else if !progress.reading_context {
-            failures = 0;
-        }
-        let wait = if progress.reading_context {
-            RETRY
-        } else {
-            retry_wait(failures)
-        };
-        let retry_at = Instant::now() + wait;
-        while Instant::now() < retry_at && !stop() {
+        let next = next_pass(&pass(), Instant::now());
+        while Instant::now() < next && !stop() {
             if nudges.recv_timeout(Duration::from_millis(100)).is_ok() {
                 break;
             }
         }
+    }
+}
+
+/// When intake passes again: [`RETRY`] after a clean pass, while reading
+/// context and after a message failed without a wait; at the earliest
+/// moment the outside gate gave, never sooner than [`RETRY`], when every
+/// failure carried a wait; [`RECHECK`] after a pass that failed locally.
+fn next_pass(progress: &IntakeProgress, now: Instant) -> Instant {
+    let retry = now + RETRY;
+    match progress.failures {
+        Failures::Local => after_failure(None, now),
+        _ if progress.reading_context => retry,
+        Failures::Clean | Failures::Unwaited => retry,
+        Failures::Waits(earliest) => retry.max(earliest),
     }
 }
 
@@ -777,21 +795,17 @@ fn intake_pass(
 ) -> IntakeProgress {
     let failed = |error: conversations::ConversationError| {
         tracing::warn!(target: LOG_TARGET, event = "connector_intake_failed", company = %company, connector = key, %error);
-        IntakeProgress {
-            clean: false,
-            ..Default::default()
-        }
+        IntakeProgress::local()
     };
     match reach.connectors.open(&reach.current.get(), company, key) {
         Ok(connector) => pass(connector).unwrap_or_else(failed),
         Err(error) => {
-            if let Err(record) = conversations::intake_failed(home, company, key, &error.cause) {
+            if let Err(record) =
+                conversations::intake_failed(home, company, key, &error.to_string())
+            {
                 return failed(record);
             }
-            IntakeProgress {
-                clean: false,
-                ..Default::default()
-            }
+            IntakeProgress::local()
         }
     }
 }
@@ -1135,16 +1149,8 @@ fn deliver_pending_sign_in_dms(
                     }
                 }
             }
-            Err(DirectMessageError::Retryable(cause)) => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    event = "mcp_sign_in_dm_retryable",
-                    company = %company,
-                    connector = key,
-                    server = %item.server,
-                    cause = %cause
-                );
-            }
+            // The outside gate reports the wait; the next poll retries.
+            Err(DirectMessageError::Retryable(_)) => {}
             Err(DirectMessageError::Final(cause)) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -1222,16 +1228,8 @@ fn deliver_pending_sign_in_dms(
                     }
                 }
             }
-            Err(DirectMessageError::Retryable(cause)) => {
-                tracing::warn!(
-                    target: LOG_TARGET,
-                    event = "mcp_sign_in_outcome_dm_retryable",
-                    company = %company,
-                    connector = key,
-                    server = %item.server,
-                    cause = %cause
-                );
-            }
+            // The outside gate reports the wait; the next poll retries.
+            Err(DirectMessageError::Retryable(_)) => {}
             Err(DirectMessageError::Final(cause)) => {
                 tracing::warn!(
                     target: LOG_TARGET,
@@ -1270,7 +1268,7 @@ fn deliver_notice(
     let connector = match reach.connectors.open(&reach.current.get(), company, key) {
         Ok(connector) => connector,
         Err(error) => {
-            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error.cause);
+            tracing::warn!(target: LOG_TARGET, event = "conversation_notice_failed", company = %company, connector = key, error = %error);
             return;
         }
     };
@@ -1286,7 +1284,7 @@ fn deliver_notice(
         Ok(conversations::NoticeStep::Post) => {
             let outcome = connector
                 .unavailable_notice(&notice.conversation, &notice.sender)
-                .map_err(|error| error.cause);
+                .map_err(|error| error.to_string());
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
             conversations::notice_posted(
                 home,
@@ -1313,8 +1311,9 @@ enum Next {
     Admitted(Sender),
     /// Refused: the sender receives the fixed reply for this reason.
     Refused(RefusalReason),
-    /// It waits, with this cause.
-    Waiting(String),
+    /// It waits, with this cause and the outside gate's wait when there is
+    /// one.
+    Waiting(ConnectorError),
 }
 
 fn next_record(admission: Admission, admit: ConnectorAdmit) -> Next {
@@ -1330,7 +1329,7 @@ fn next_record(admission: Admission, admit: ConnectorAdmit) -> Next {
             ConnectorAdmit::Members => RefusalReason::NotOwn,
             ConnectorAdmit::AdminsOnly => RefusalReason::NotAdmin,
         }),
-        Admission::Undecided { cause, .. } => Next::Waiting(cause),
+        Admission::Undecided { cause, wait } => Next::Waiting(ConnectorError { cause, wait }),
     }
 }
 
@@ -1443,15 +1442,41 @@ impl ContextReads {
     }
 }
 
+/// What one intake pass's failures were.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum Failures {
+    #[default]
+    Clean,
+    /// Every failed message carried a wait; the earliest's deadline.
+    Waits(Instant),
+    /// A message failed without a wait.
+    Unwaited,
+    /// The pass itself failed.
+    Local,
+}
+
+impl Failures {
+    /// One more failed message, with the outside gate's wait when it had one.
+    fn add(&mut self, wait: Option<&Wait>) {
+        *self = match (*self, wait.map(Wait::until)) {
+            (Self::Local, _) => Self::Local,
+            (Self::Unwaited, _) | (_, None) => Self::Unwaited,
+            (Self::Clean, Some(until)) => Self::Waits(until),
+            (Self::Waits(earliest), Some(until)) => Self::Waits(earliest.min(until)),
+        };
+    }
+}
+
+#[derive(Debug, Default)]
 struct IntakeProgress {
-    clean: bool,
+    failures: Failures,
     reading_context: bool,
 }
 
-impl Default for IntakeProgress {
-    fn default() -> Self {
+impl IntakeProgress {
+    fn local() -> Self {
         Self {
-            clean: true,
+            failures: Failures::Local,
             reading_context: false,
         }
     }
@@ -1476,7 +1501,7 @@ fn admit_messages(
         .filter(|item| !item.admitted)
     {
         let Some(sender) = unread.sender.as_deref() else {
-            progress.clean = false;
+            progress.failures.add(None);
             conversations::waiting(home, company, key, &unread, "the message has no sender")?;
             continue;
         };
@@ -1497,17 +1522,18 @@ fn admit_messages(
                     Timestamp::now(),
                 )?;
             }
-            Next::Waiting(cause) => {
-                progress.clean = false;
-                conversations::waiting(home, company, key, &unread, &cause)?;
+            Next::Waiting(error) => {
+                progress.failures.add(error.wait.as_ref());
+                conversations::waiting(home, company, key, &unread, &error.to_string())?;
             }
         }
     }
     for refusal in owed(conversations::refusals(home, company, key)?) {
-        let outcome = connector
-            .turn_away(&refusal.conversation, refusal.reason)
-            .map_err(|error| error.cause);
-        progress.clean &= outcome.is_ok();
+        let outcome = connector.turn_away(&refusal.conversation, refusal.reason);
+        if let Err(error) = &outcome {
+            progress.failures.add(error.wait.as_ref());
+        }
+        let outcome = outcome.map_err(|error| error.to_string());
         conversations::refusal_posted(home, company, key, &refusal, outcome, Timestamp::now())?;
     }
     Ok(progress)
@@ -1542,13 +1568,13 @@ fn capture_contexts(
                 continue;
             }
             Some(Err(error)) => {
-                progress.clean = false;
+                progress.failures.add(error.wait.as_ref());
                 conversations::captured(
                     home,
                     company,
                     key,
                     &unread,
-                    Err(error.cause),
+                    Err(error.to_string()),
                     clock.now(),
                 )?;
             }
@@ -1636,7 +1662,7 @@ fn status_worker(
         let pass = reach
             .connectors
             .open(&reach.current.get(), company, key)
-            .map_err(|error| error.cause)
+            .map_err(|error| error.to_string())
             .and_then(|connector| {
                 let unfinished =
                     conversations::unfinished(home, company, key).map_err(|e| e.to_string())?;
@@ -1726,14 +1752,14 @@ fn call(
 }
 
 #[cfg(test)]
-mod test_connector {
+pub(crate) mod test_connector {
     //! An in-memory connector whose facts each test sets: its limits and
     //! where it places a message's status. It records nothing.
     use instrukt_connector::{
         Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place, Status,
     };
 
-    pub(super) struct TestConnector {
+    pub(crate) struct TestConnector {
         pub limits: Limits,
         /// Places every message of a conversation at the conversation, or
         /// each message at itself.
@@ -1905,14 +1931,81 @@ mod tests {
         assert_eq!(shown(&[&Status::Working, &update]), update);
     }
 
+    /// A wait the outside gate gives `after` past `base` on its monotonic
+    /// source.
+    fn wait_after(base: Instant, after: Duration) -> Wait {
+        let gate = instrukt_outside::Gate::new(
+            Arc::new(|| "2026-11-20T10:00:00Z".parse().unwrap()),
+            Arc::new(move || base),
+            instrukt_outside::Report::to(|_| {}),
+        );
+        let settings = instrukt_outside::Settings {
+            backoff: instrukt_outside::Backoff::new(after, after).unwrap(),
+            ..Default::default()
+        };
+        let key = instrukt_outside::Key::new("test", ["acme"]).item("method");
+        let unavailable = instrukt_outside::Unavailable {
+            reason: instrukt_outside::Reason::Unreachable,
+            extent: instrukt_outside::Extent::Key,
+            named: None,
+        };
+        match gate.attempt(&key, &settings, || {
+            instrukt_outside::Tried::<(), ()>::Unavailable(unavailable, ())
+        }) {
+            instrukt_outside::Attempted::Wait { wait, .. } => wait,
+            _ => panic!("a wait"),
+        }
+    }
+
     #[test]
-    fn the_intake_wait_doubles_after_each_failure_up_to_a_minute() {
-        assert_eq!(retry_wait(0), Duration::from_secs(2));
-        assert_eq!(retry_wait(1), Duration::from_secs(2));
-        assert_eq!(retry_wait(2), Duration::from_secs(4));
-        assert_eq!(retry_wait(3), Duration::from_secs(8));
-        assert_eq!(retry_wait(6), Duration::from_secs(60));
-        assert_eq!(retry_wait(40), Duration::from_secs(60));
+    fn a_whole_loop_retries_at_the_wait_or_after_the_recheck() {
+        let now = Instant::now();
+        let wait = wait_after(now, Duration::from_secs(7));
+        assert_eq!(after_failure(Some(&wait), now), wait.until());
+        assert_eq!(after_failure(None, now), now + RECHECK);
+    }
+
+    #[test]
+    fn intake_after_waits_only_passes_at_the_later_of_retry_and_the_earliest_wait() {
+        let now = Instant::now();
+        let mut failures = Failures::default();
+        failures.add(Some(&wait_after(now, Duration::from_secs(30))));
+        failures.add(Some(&wait_after(now, Duration::from_secs(10))));
+        let progress = IntakeProgress {
+            failures,
+            reading_context: false,
+        };
+        assert_eq!(next_pass(&progress, now), now + Duration::from_secs(10));
+        let mut soon = Failures::default();
+        soon.add(Some(&wait_after(now, Duration::from_millis(500))));
+        let progress = IntakeProgress {
+            failures: soon,
+            reading_context: false,
+        };
+        assert_eq!(next_pass(&progress, now), now + RETRY);
+    }
+
+    #[test]
+    fn a_stored_moment_is_due_once_the_host_clock_reaches_it() {
+        let until: Timestamp = "2026-11-20T10:02:00Z".parse().unwrap();
+        let micro = jiff::SignedDuration::from_micros(1);
+        assert!(due(until, until));
+        assert!(due(until, until + micro));
+        assert!(!due(until, until - micro));
+    }
+
+    #[test]
+    fn an_unwaited_message_failure_retries_at_retry_and_a_failed_pass_at_the_recheck() {
+        let now = Instant::now();
+        let mut failures = Failures::default();
+        failures.add(Some(&wait_after(now, Duration::from_secs(30))));
+        failures.add(None);
+        let progress = IntakeProgress {
+            failures,
+            reading_context: false,
+        };
+        assert_eq!(next_pass(&progress, now), now + RETRY);
+        assert_eq!(next_pass(&IntakeProgress::local(), now), now + RECHECK);
     }
 
     #[test]
@@ -1958,7 +2051,7 @@ mod tests {
                 },
                 ConnectorAdmit::Members
             ),
-            Next::Waiting("later".into())
+            Next::Waiting(ConnectorError::new("later"))
         );
     }
 
