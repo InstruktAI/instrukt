@@ -34,6 +34,19 @@ repos:
         language: system
         always_run: true
         require_serial: true
+      # The whole tree against ratchet-baseline.json, whenever a commit adds,
+      # changes, renames or deletes a file the ratchet reads: a Rust, Python or
+      # shell file, a hook file, or the baseline itself
+      # (project/instrukt/policy/size-and-suppression-ratchet). Removing or
+      # moving an oversized file counts, because its entry no longer matches.
+      - id: ratchet
+        name: file size and lint suppression ratchet
+        files: &ratchet (\.(rs|py|sh)$|^scripts/[^/.]+$|^\.githooks/|^ratchet-baseline\.json$)
+        entry: scripts/commit-check.py
+        args: [--pattern, *ratchet, --run, scripts/check-ratchet.py, --]
+        language: system
+        always_run: true
+        require_serial: true
       # The committed layer alone, under a throwaway machine layer: what this
       # computer's own configuration says does not decide a commit.
       - id: config-validate
