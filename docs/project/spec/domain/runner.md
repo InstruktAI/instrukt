@@ -538,11 +538,22 @@ never fails the read. A read tells the store being unreachable apart from the
 store refusing the read.
 
 A responder or membership write that cannot reach the cluster store retries:
-`instrukt run`'s responder in its own thread, with its failure recorded among
-the runner's workers while it lasts, and `instrukt tick` at its next wake,
-recording the failure the same way until a wake succeeds and running the rest
-of its wake meanwhile (`project/instrukt/policy/checks-and-guards`). A
-configured cluster connection that cannot be used is recorded the same way.
+`instrukt run`'s responder in its own thread, and `instrukt tick` at its next
+wake, running the rest of its wake meanwhile
+(`project/instrukt/policy/checks-and-guards`). While the failure lasts it is
+recorded, with when it began, in the computer fleet's failure file
+`state/computer-fleet.json`, and the next success removes the file; a
+configured cluster connection that cannot be used is recorded the same way,
+and the file is removed when no cluster connection is configured.
+`instrukt install --check` and `instrukt events status` report it as they
+report the runner's other workers, under the name `computer-fleet`. The file
+is written whole beside its previous version and renamed over it, by
+`instrukt run`'s responder or by `instrukt tick`'s fleet step, which the
+runner lock never lets run at once; readers take no lock. It is current state
+the runner owns for this home, and losing it costs nothing: the next attempt
+records the failure again. It is kept apart from the state database so that
+this background writer never waits on, or holds, the writer lock that work
+commands wait on (`sdlc/policy/state-storage`, Write isolation).
 Whether the cluster user permits the fleet query is checked where the
 connection enters, at installation
 (`project/instrukt/spec/feature/runner/module-installation`).
