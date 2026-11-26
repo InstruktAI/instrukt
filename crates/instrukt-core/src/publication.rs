@@ -208,7 +208,8 @@ fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, Pub
 /// while it holds a finding. Each removal comes first, with each folder it
 /// leaves empty inside the plugin's folder, so a new file never meets an
 /// old file or an emptied folder on its way. Then each write follows, one file at a
-/// time: the plugin's other files, then its manifest, then the catalog.
+/// time: the skill's files, then the catalog, whose entry is the plugin's
+/// manifest.
 /// Each write is atomic and nothing passes through a symbolic link. A
 /// rendering cut short leaves exactly the removals and writes made before
 /// the cut; the next rendering compares against what the folder then
@@ -512,7 +513,7 @@ mod tests {
         let root = dir.path();
         let key = ProjectSlug::parse("acme").unwrap();
         let name = CompanyName::parse("Acme").unwrap();
-        let references = root.join("plugins/acme/skills/acme/references");
+        let references = root.join("skills/acme/references");
         write(
             root,
             ".claude-plugin/marketplace.json",

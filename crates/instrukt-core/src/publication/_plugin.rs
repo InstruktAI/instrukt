@@ -1,10 +1,11 @@
 //! A company's Claude plugin
-//! (`project/instrukt/spec/feature/publication/company-plugin`): the folder
-//! `plugins/<key>/` of a company's repository, holding one skill whose main
-//! file carries the company passage and each `expanded` document in full,
-//! and one file for every other document the index selects or a required
-//! read reaches, each reference between documents naming where the plugin
-//! carries the document it names.
+//! (`project/instrukt/spec/feature/publication/company-plugin`): the skill
+//! folder `skills/<key>/` at a company's repository's root, whose main file
+//! carries the company passage and each `expanded` document in full, and one
+//! file for every other document the index selects or a required read
+//! reaches, each reference between documents naming where the skill carries
+//! the document it names; and the skill's entry in the repository's plugin
+//! catalog, which is the plugin's manifest.
 //!
 //! The documents are read once, by the reading the company's `AGENTS.md` is
 //! rendered from ([`super::_company::read`]); every finding of that reading
@@ -14,10 +15,10 @@
 //! mapping, and a `visibility` that is unknown or a `public` document that
 //! depends on an `internal` one.
 //!
-//! A plan of a rendering ([`plan`]) also keeps or raises the manifest's
-//! version against what `plugins/<key>/` holds, sets the plugin's entry in
-//! the repository's plugin catalog, and finds every symbolic link on the
-//! way to either. It is a function of the view alone; applying it is
+//! A plan of a rendering ([`plan`]) also keeps or raises the version the
+//! catalog entry holds against what `skills/<key>/` holds, sets the entry in
+//! the repository's plugin catalog, creating the catalog where there is
+//! none, and finds every symbolic link on the way to either. It is a function of the view alone; applying it is
 //! [`super::write_plugin`].
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -34,14 +35,15 @@ use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_paths};
 use crate::ids::ProjectSlug;
 
-/// The folder below a repository's root that holds its plugins.
-const PLUGINS: &str = "plugins";
+/// The folder below a repository's root that holds its skills.
+const SKILLS: &str = "skills";
 
 /// The repository's plugin catalog, from its root.
 pub(super) const CATALOG: &str = ".claude-plugin/marketplace.json";
 
-/// The plugin's manifest, inside the plugin's folder.
-const MANIFEST: &str = ".claude-plugin/plugin.json";
+/// The catalog's own repository as an entry's source: its root, in the form
+/// Claude's catalog format gives it.
+const ROOT_SOURCE: &str = "./";
 
 /// The skill's main file, inside the skill's folder.
 const SKILL_FILE: &str = "SKILL.md";
@@ -141,20 +143,12 @@ pub enum PluginFinding {
     Uncarried { document: String, reference: String },
     /// A reference names a file under `docs/` that is no company document.
     NotADocument { document: String, reference: String },
-    /// A symbolic link at or above the plugin's folder, inside it, or at or
+    /// A symbolic link at or above the skill's folder, inside it, or at or
     /// above the catalog.
     Link { path: String },
-    /// The manifest the repository holds cannot be read as a JSON object:
-    /// why.
-    ManifestUnreadable { path: String, reason: String },
-    /// The manifest's `version` is not three numbers: as written, `None`
-    /// when it holds none.
-    ManifestVersion {
-        path: String,
-        version: Option<String>,
-    },
-    /// The repository holds no plugin catalog.
-    NoCatalog,
+    /// The plugin's catalog entry holds a `version` that is not three
+    /// numbers: as written, `None` when it holds none.
+    EntryVersion { version: Option<String> },
     /// The catalog cannot be read as a JSON object holding a list of
     /// plugins: why.
     CatalogUnreadable { reason: String },
@@ -206,29 +200,17 @@ impl std::fmt::Display for PluginFinding {
             ),
             Self::Link { path } => write!(
                 f,
-                "{path}: a symbolic link, and nothing of the plugin or its catalog is read, written or removed through one; replace it with what it points to"
+                "{path}: a symbolic link, and nothing of the skill or its catalog is read, written or removed through one; replace it with what it points to"
             ),
-            Self::ManifestUnreadable { path, reason } => write!(
-                f,
-                "{path}: cannot be read as the plugin's manifest ({reason}); correct it to a JSON object or remove it, and the version is kept or raised from it once it can be read"
-            ),
-            Self::ManifestVersion {
-                path,
+            Self::EntryVersion {
                 version: Some(version),
             } => write!(
                 f,
-                "{path}: its `version` is `{version}`, which is not three numbers; set it to three numbers joined by dots, such as `1.0.0`"
+                "{CATALOG}: the plugin's entry has the `version` `{version}`, which is not three numbers; set it to three numbers joined by dots, such as `1.0.0`"
             ),
-            Self::ManifestVersion {
-                path,
-                version: None,
-            } => write!(
+            Self::EntryVersion { version: None } => write!(
                 f,
-                "{path}: holds no `version` text; set one of three numbers joined by dots, such as `1.0.0`"
-            ),
-            Self::NoCatalog => write!(
-                f,
-                "{CATALOG}: missing, and instrukt creates no catalog because its name and owner are the repository's; create it with its `name`, `owner` and a `plugins` list"
+                "{CATALOG}: the plugin's entry holds no `version` text; set one of three numbers joined by dots, such as `1.0.0`"
             ),
             Self::CatalogUnreadable { reason } => write!(
                 f,
@@ -238,17 +220,17 @@ impl std::fmt::Display for PluginFinding {
     }
 }
 
-/// The plugin of `key`, named `name`, rendered from `tree`: every file of
-/// it but the manifest, by repository-relative path, or the findings that
-/// leave every file as it is.
+/// The skill of `key`, named `name`, rendered from `tree`: every file of
+/// it, by repository-relative path, or the findings that leave every file as
+/// it is.
 pub(super) enum Rendered {
     Files(BTreeMap<String, String>),
     Findings(Vec<PluginFinding>),
 }
 
-/// The folder of the plugin of `key`, from the repository's root.
+/// The folder of the skill of `key`, from the repository's root.
 pub(super) fn folder(key: &ProjectSlug) -> String {
-    format!("{PLUGINS}/{key}")
+    format!("{SKILLS}/{key}")
 }
 
 /// What the plugin's description says: whose knowledge it holds.
@@ -306,7 +288,7 @@ pub(super) fn render(
     if !findings.is_empty() {
         return Ok(Rendered::Findings(findings));
     }
-    let skill = format!("{folder}/skills/{key}");
+    let skill = folder;
     let mut files = BTreeMap::new();
     for (path, selected) in &selection.documents {
         let Some(place) = carried.file(path) else {
@@ -342,7 +324,7 @@ fn main_file(
     frontmatter.insert("description".into(), skill_description(name).into());
     let frontmatter =
         serde_yaml_ng::to_string(&frontmatter).map_err(|err| PublicationError::Rendering {
-            file: format!("{}/skills/{key}/{SKILL_FILE}", folder(key)),
+            file: format!("{}/{SKILL_FILE}", folder(key)),
             reason: err.to_string(),
         })?;
     let mut blocks = vec![
@@ -527,7 +509,8 @@ impl Carried {
 
 /// A plugin's version: three numbers, of which instrukt raises only the
 /// last. Each number is held as the ASCII digits it is written with, so the
-/// first two stay exactly what the manifest holds and the last has no bound.
+/// first two stay exactly what the catalog entry holds and the last has no
+/// bound.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginVersion {
     /// The first two numbers with the dot between them, as written.
@@ -549,8 +532,8 @@ impl PluginVersion {
         })
     }
 
-    /// The version a plugin starts from where the repository holds no
-    /// manifest for it: 0.1.0.
+    /// The version a plugin starts from where the repository's catalog
+    /// holds no entry for it: 0.1.0.
     fn first() -> Self {
         Self {
             series: "0.1".to_owned(),
@@ -592,19 +575,19 @@ impl std::fmt::Display for PluginVersion {
 /// and would change. It writes nothing itself.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginPlan {
-    /// The plugin's folder, relative to the repository's root.
+    /// The skill's folder, relative to the repository's root.
     pub folder: PathBuf,
     /// What leaves every file as it is.
     pub findings: Vec<PluginFinding>,
     /// What the rendering changes against what the view holds; `None` when
-    /// a finding leaves the rendering, the held version or the plugin's
+    /// a finding leaves the rendering, the held version or the skill's
     /// folder unknown. It is applied only when the plan holds no finding.
     pub drift: Option<PluginDrift>,
-    /// The catalog with the plugin's entry set, when that differs from what
-    /// the view holds: known from the key, the name and the catalog alone,
-    /// whatever the plugin's files. `None` when the entry already holds its
-    /// values, or a finding or a link leaves the catalog unread. It is
-    /// written last, with the drift, only when the plan holds no finding.
+    /// The catalog with the plugin's entry set, or created where the view
+    /// holds none, when that differs from what the view holds. `None` when
+    /// the entry already holds its values, or the drift, a finding or a
+    /// link leaves the entry's version or the catalog unknown. It is written
+    /// last, with the drift, only when the plan holds no finding.
     pub catalog: Option<PlannedFile>,
 }
 
@@ -613,22 +596,31 @@ pub struct PluginPlan {
 pub struct PluginDrift {
     /// The plugin's version once the rendering is applied.
     pub version: PluginVersion,
-    /// Each file of the plugin whose content differs from what the view
-    /// holds, or that it does not hold, in the order they are written: the
-    /// plugin's files other than its manifest, then its manifest.
+    /// Each file of the skill whose content differs from what the view
+    /// holds, or that it does not hold, in the order they are written.
     pub writes: Vec<PlannedFile>,
-    /// Each file the view holds under the plugin's folder that the plugin
+    /// Each file the view holds under the skill's folder that the skill
     /// does not hold, relative to the repository's root.
     pub removals: Vec<PathBuf>,
 }
 
-/// The version the plugin's manifest holds, as far as it can be known.
+/// The version the plugin's catalog entry holds, as far as it can be known.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Held {
-    /// The repository holds no manifest for the plugin.
+    /// The catalog holds no entry for the plugin, or there is no catalog.
     Absent,
     Version(PluginVersion),
-    /// A finding, or a link on the way to the manifest, leaves it unknown.
+    /// A finding, or a link on the way to the catalog, leaves it unknown.
+    Unknown,
+}
+
+/// The repository's catalog, as far as it can be read.
+enum Catalog<'t> {
+    /// The repository holds none.
+    Missing,
+    /// The catalog as read, with its bytes.
+    Read(Json, &'t [u8]),
+    /// A finding or a link leaves it unread.
     Unknown,
 }
 
@@ -638,9 +630,8 @@ struct Assessment<'t> {
     /// The rendering, unless a finding of the documents prevents it.
     files: Option<BTreeMap<String, String>>,
     held: Held,
-    /// The catalog as read, with its bytes, when it can be read.
-    catalog: Option<(Json, &'t [u8])>,
-    /// Whether a link stands at or above the plugin's folder or inside it.
+    catalog: Catalog<'t>,
+    /// Whether a link stands at or above the skill's folder or inside it.
     folder_linked: bool,
 }
 
@@ -652,7 +643,6 @@ fn assess<'t>(
     name: &CompanyName,
 ) -> Result<Assessment<'t>, PublicationError> {
     let folder = folder(key);
-    let manifest_path = format!("{folder}/{MANIFEST}");
     let mut folder_linked = false;
     let mut findings = Vec::new();
     for link in tree.links() {
@@ -665,30 +655,31 @@ fn assess<'t>(
         }
     }
     let rendered = render(tree, key, name)?;
-    // Nothing behind a link is read: the manifest and the catalog are each
-    // judged unless a link stands at or above that file.
-    let held = if tree.is_link(&manifest_path) {
-        Held::Unknown
+    // Nothing behind a link is read: the catalog, and the version its entry
+    // holds, are judged unless a link stands at or above it.
+    let catalog = if tree.is_link(CATALOG) {
+        Catalog::Unknown
     } else {
-        match held_version(tree, &manifest_path) {
+        match read_catalog(tree) {
+            Ok(None) => Catalog::Missing,
+            Ok(Some((document, bytes))) => Catalog::Read(document, bytes),
+            Err(finding) => {
+                findings.push(finding);
+                Catalog::Unknown
+            }
+        }
+    };
+    let held = match &catalog {
+        Catalog::Missing => Held::Absent,
+        Catalog::Unknown => Held::Unknown,
+        Catalog::Read(document, _) => match held_version(document, key) {
             Ok(None) => Held::Absent,
             Ok(Some(version)) => Held::Version(version),
             Err(finding) => {
                 findings.push(finding);
                 Held::Unknown
             }
-        }
-    };
-    let catalog = if tree.is_link(CATALOG) {
-        None
-    } else {
-        match read_catalog(tree) {
-            Ok(catalog) => Some(catalog),
-            Err(finding) => {
-                findings.push(finding);
-                None
-            }
-        }
+        },
     };
     let files = match rendered {
         Rendered::Files(files) => Some(files),
@@ -707,7 +698,7 @@ fn assess<'t>(
 }
 
 /// Every finding of the plugin of `key`, named `name`, in `tree`, a view
-/// holding the plugin's folder and the catalog, without comparing any file.
+/// holding the skill's folder and the catalog, without comparing any file.
 pub(super) fn findings(
     tree: &Committed,
     key: &ProjectSlug,
@@ -717,23 +708,30 @@ pub(super) fn findings(
 }
 
 /// Plans the rendering of the plugin of `key`, named `name`, from `tree`,
-/// a view holding the plugin's folder and the catalog
+/// a view holding the skill's folder and the catalog
 /// ([`Committed::working_tree_places`]): every finding, and what the
-/// rendering changes wherever that can be known, findings or not.
+/// rendering changes wherever that can be known, findings or not. The
+/// drift comes first, because the catalog entry carries the version it
+/// keeps or raises.
 pub(super) fn plan(
     tree: &Committed,
     key: &ProjectSlug,
     name: &CompanyName,
 ) -> Result<PluginPlan, PublicationError> {
     let assessment = assess(tree, key, name)?;
-    let catalog = match assessment.catalog {
-        Some((document, bytes)) => catalog_entry(document, bytes, key, name)?,
-        None => None,
-    };
     let drift = match (assessment.files, assessment.held, assessment.folder_linked) {
-        (Some(files), Held::Absent, false) => Some(drift(tree, key, name, files, None)?),
+        (Some(files), Held::Absent, false) => Some(drift(tree, key, files, None)),
         (Some(files), Held::Version(version), false) => {
-            Some(drift(tree, key, name, files, Some(version))?)
+            Some(drift(tree, key, files, Some(version)))
+        }
+        _ => None,
+    };
+    let catalog = match (&drift, assessment.catalog) {
+        (Some(drift), Catalog::Read(document, bytes)) => {
+            catalog_entry(document, Some(bytes), key, name, &drift.version)?
+        }
+        (Some(drift), Catalog::Missing) => {
+            catalog_entry(new_catalog(key, name), None, key, name, &drift.version)?
         }
         _ => None,
     };
@@ -745,53 +743,45 @@ pub(super) fn plan(
     })
 }
 
-/// What the rendering `files`, every file but the manifest, changes against
-/// what `tree` holds: the version kept from `held` when the rendering with
-/// it equals the folder file for file, and raised otherwise; the files to
-/// write, in their order; and the files to remove.
+/// What the rendering `files` changes against what `tree` holds: the
+/// version kept from `held` when the rendering equals the skill's folder
+/// file for file, and raised otherwise; the files to write, in their order;
+/// and the files to remove.
 fn drift(
     tree: &Committed,
     key: &ProjectSlug,
-    name: &CompanyName,
-    mut files: BTreeMap<String, String>,
+    files: BTreeMap<String, String>,
     held: Option<PluginVersion>,
-) -> Result<PluginDrift, PublicationError> {
-    let folder = folder(key);
-    let manifest_path = format!("{folder}/{MANIFEST}");
-    let prefix = format!("{folder}/");
+) -> PluginDrift {
+    let prefix = format!("{}/", folder(key));
     let holds: BTreeMap<String, &[u8]> = tree
         .below(&prefix)
         .map(|(rel, bytes)| (format!("{prefix}{rel}"), bytes))
         .collect();
-    let raise = held.is_some();
-    let mut version = held.unwrap_or_else(PluginVersion::first);
-    files.insert(manifest_path.clone(), manifest(key, name, &version)?);
-    if raise && !same(&files, &holds) {
-        version = version.raised();
-        files.insert(manifest_path.clone(), manifest(key, name, &version)?);
-    }
+    let version = match held {
+        Some(held) if !same(&files, &holds) => held.raised(),
+        Some(held) => held,
+        None => PluginVersion::first(),
+    };
     let removals = holds
         .keys()
         .filter(|path| !files.contains_key(*path))
         .map(PathBuf::from)
         .collect();
-    let planned = |path: String, text: String| PlannedFile {
-        current: tree.file(&path).map(<[u8]>::to_vec),
-        path: PathBuf::from(path),
-        text,
-    };
-    let manifest_text = files.remove(&manifest_path);
     let mut writes: Vec<PlannedFile> = files
         .into_iter()
-        .map(|(path, text)| planned(path, text))
+        .map(|(path, text)| PlannedFile {
+            current: tree.file(&path).map(<[u8]>::to_vec),
+            path: PathBuf::from(path),
+            text,
+        })
         .collect();
-    writes.extend(manifest_text.map(|text| planned(manifest_path, text)));
     writes.retain(PlannedFile::differs);
-    Ok(PluginDrift {
+    PluginDrift {
         version,
         writes,
         removals,
-    })
+    }
 }
 
 /// Whether `link` is `place` or a folder above it.
@@ -816,48 +806,34 @@ fn same(files: &BTreeMap<String, String>, holds: &BTreeMap<String, &[u8]>) -> bo
             .all(|(path, text)| holds.get(path) == Some(&text.as_bytes()))
 }
 
-/// The version of the manifest the view holds at `path`: `None` when it
-/// holds none, or the finding that it cannot be read or holds no version.
-fn held_version(tree: &Committed, path: &str) -> Result<Option<PluginVersion>, PluginFinding> {
-    let Some(bytes) = tree.file(path) else {
+/// The version the catalog `document`'s entry for `key` holds: `None` when
+/// it lists no entry of that name, or the finding that the entry's version
+/// is not three numbers.
+fn held_version(
+    document: &Json,
+    key: &ProjectSlug,
+) -> Result<Option<PluginVersion>, PluginFinding> {
+    let Some(entry) = document["plugins"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry.get("name").and_then(Json::as_str) == Some(key.as_str()))
+    else {
         return Ok(None);
     };
-    let unreadable = |reason: String| PluginFinding::ManifestUnreadable {
-        path: path.to_owned(),
-        reason,
-    };
-    let manifest = match serde_json::from_slice::<Json>(bytes) {
-        Ok(Json::Object(manifest)) => manifest,
-        Ok(_) => return Err(unreadable("it is not a JSON object".to_owned())),
-        Err(err) => return Err(unreadable(format!("it is not JSON: {err}"))),
-    };
-    let version = |version| PluginFinding::ManifestVersion {
-        path: path.to_owned(),
-        version,
-    };
-    match manifest.get("version") {
-        Some(Json::String(text)) => PluginVersion::parse(text)
-            .map(Some)
-            .ok_or_else(|| version(Some(text.clone()))),
-        Some(other) => Err(version(Some(other.to_string()))),
-        None => Err(version(None)),
+    match entry.get("version") {
+        Some(Json::String(text)) => {
+            PluginVersion::parse(text)
+                .map(Some)
+                .ok_or_else(|| PluginFinding::EntryVersion {
+                    version: Some(text.clone()),
+                })
+        }
+        Some(other) => Err(PluginFinding::EntryVersion {
+            version: Some(other.to_string()),
+        }),
+        None => Err(PluginFinding::EntryVersion { version: None }),
     }
-}
-
-/// The plugin's manifest: its name, its version, its description and the
-/// company as its author, as one JSON document.
-fn manifest(
-    key: &ProjectSlug,
-    name: &CompanyName,
-    version: &PluginVersion,
-) -> Result<String, PublicationError> {
-    let manifest = serde_json::json!({
-        "name": key.as_str(),
-        "version": version.to_string(),
-        "description": plugin_description(name),
-        "author": { "name": name.as_str() },
-    });
-    json_document(&manifest, &format!("{}/{MANIFEST}", folder(key)))
 }
 
 /// `value` as one JSON document: indented by two spaces, ending in one
@@ -871,12 +847,12 @@ fn json_document(value: &Json, file: &str) -> Result<String, PublicationError> {
         })
 }
 
-/// The catalog the view holds, as read, with its bytes, or the finding
-/// that it holds none or one that is no JSON object holding a list of
+/// The catalog the view holds, as read, with its bytes; `None` when it
+/// holds none, or the finding that it is no JSON object holding a list of
 /// plugins.
-fn read_catalog(tree: &Committed) -> Result<(Json, &[u8]), PluginFinding> {
+fn read_catalog(tree: &Committed) -> Result<Option<(Json, &[u8])>, PluginFinding> {
     let Some(bytes) = tree.file(CATALOG) else {
-        return Err(PluginFinding::NoCatalog);
+        return Ok(None);
     };
     let unreadable = |reason: &str| PluginFinding::CatalogUnreadable {
         reason: reason.to_owned(),
@@ -889,34 +865,62 @@ fn read_catalog(tree: &Committed) -> Result<(Json, &[u8]), PluginFinding> {
     if !matches!(document.get("plugins"), Some(Json::Array(_))) {
         return Err(unreadable("it holds no `plugins` list"));
     }
-    Ok((document, bytes))
+    Ok(Some((document, bytes)))
 }
 
-/// The catalog `document`, read from `bytes`, with the plugin's entry set,
-/// as the file to write; `None` when the entry already holds its values.
-fn catalog_entry(
-    mut document: Json,
-    bytes: &[u8],
+/// The catalog a repository without one receives: named by the company's
+/// key, the company as its owner, listing no plugin yet.
+fn new_catalog(key: &ProjectSlug, name: &CompanyName) -> Json {
+    serde_json::json!({
+        "name": key.as_str(),
+        "owner": { "name": name.as_str() },
+        "plugins": [],
+    })
+}
+
+/// The plugin's entry, which is its manifest: its name, the repository's
+/// root as its source, its one skill, its version, its description and the
+/// company as its author.
+fn wanted_entry(
     key: &ProjectSlug,
     name: &CompanyName,
+    version: &PluginVersion,
+) -> [(&'static str, Json); 7] {
+    [
+        ("name", Json::from(key.as_str())),
+        ("source", Json::from(ROOT_SOURCE)),
+        ("strict", Json::from(false)),
+        ("skills", serde_json::json!([format!("./{}", folder(key))])),
+        ("version", Json::from(version.to_string())),
+        ("description", Json::from(plugin_description(name))),
+        ("author", serde_json::json!({ "name": name.as_str() })),
+    ]
+}
+
+/// The catalog `document`, read from `bytes` (`None`: the repository holds
+/// none), with the plugin's entry set at `version`, as the file to write;
+/// `None` when the entry already holds its values.
+fn catalog_entry(
+    mut document: Json,
+    bytes: Option<&[u8]>,
+    key: &ProjectSlug,
+    name: &CompanyName,
+    version: &PluginVersion,
 ) -> Result<Option<PlannedFile>, PublicationError> {
     let Some(Json::Array(plugins)) = document.get_mut("plugins") else {
         return Ok(None);
     };
-    let wanted = [
-        ("name", Json::from(key.as_str())),
-        ("source", Json::from(format!("./{}", folder(key)))),
-        ("description", Json::from(plugin_description(name))),
-    ];
+    let wanted = wanted_entry(key, name, version);
     let listed = plugins
         .iter_mut()
         .filter_map(Json::as_object_mut)
         .find(|entry| entry.get("name").and_then(Json::as_str) == Some(key.as_str()));
     match listed {
         Some(entry)
-            if wanted
-                .iter()
-                .all(|(member, value)| entry.get(*member) == Some(value)) =>
+            if bytes.is_some()
+                && wanted
+                    .iter()
+                    .all(|(member, value)| entry.get(*member) == Some(value)) =>
         {
             return Ok(None);
         }
@@ -935,7 +939,7 @@ fn catalog_entry(
     Ok(Some(PlannedFile {
         path: PathBuf::from(CATALOG),
         text: json_document(&document, CATALOG)?,
-        current: Some(bytes.to_vec()),
+        current: bytes.map(<[u8]>::to_vec),
     }))
 }
 
@@ -1136,15 +1140,25 @@ mod tests {
         Committed::of(&files)
     }
 
-    /// The catalog with the plugin's entry set, or the finding that it
-    /// cannot be read.
+    /// The catalog with the plugin's entry set at `version`, or the
+    /// finding that it cannot be read.
     fn catalog(
         tree: &Committed,
-        key: &ProjectSlug,
-        name: &CompanyName,
+        version: &str,
     ) -> Result<Result<Option<PlannedFile>, PluginFinding>, PublicationError> {
+        let version = PluginVersion::parse(version).unwrap();
         match read_catalog(tree) {
-            Ok((document, bytes)) => catalog_entry(document, bytes, key, name).map(Ok),
+            Ok(Some((document, bytes))) => {
+                catalog_entry(document, Some(bytes), &key(), &name(), &version).map(Ok)
+            }
+            Ok(None) => catalog_entry(
+                new_catalog(&key(), &name()),
+                None,
+                &key(),
+                &name(),
+                &version,
+            )
+            .map(Ok),
             Err(finding) => Ok(Err(finding)),
         }
     }
@@ -1214,8 +1228,9 @@ mod tests {
             ("docs/company.md", "# Company\n\nWe make things.\n"),
             (CATALOG, CATALOG_TEXT),
         ]);
-        let plan1 = drift_of(&view(&first));
-        let rendered = applied(&first, &plan1);
+        let planned = plan(&view(&first), &key(), &name()).unwrap();
+        let plan1 = planned.drift.clone().unwrap();
+        let rendered = applied_plan(&first, &planned);
         let again = drift_of(&view(&rendered));
         assert!(again.writes.is_empty() && again.removals.is_empty());
         assert_eq!(again.version, plan1.version);
@@ -1228,67 +1243,112 @@ mod tests {
         let raised = drift_of(&view(&changed));
         assert_eq!(raised.version, plan1.version.raised());
         let mut stray = rendered.clone();
-        stray.push(("plugins/acme/notes.md".to_owned(), "old".to_owned()));
+        stray.push(("skills/acme/notes.md".to_owned(), "old".to_owned()));
         let cleaned = drift_of(&view(&stray));
-        assert_eq!(cleaned.removals, [PathBuf::from("plugins/acme/notes.md")]);
+        assert_eq!(cleaned.removals, [PathBuf::from("skills/acme/notes.md")]);
         assert_eq!(cleaned.version, plan1.version.raised());
     }
 
+    /// `tree` with the plan's skill files and catalog applied.
+    fn applied_plan(tree: &[(String, String)], plan: &PluginPlan) -> Vec<(String, String)> {
+        let mut files = applied(tree, plan.drift.as_ref().unwrap());
+        if let Some(catalog) = &plan.catalog {
+            files.retain(|(path, _)| path != CATALOG);
+            files.push((CATALOG.to_owned(), catalog.text.clone()));
+        }
+        files
+    }
+
     #[test]
-    fn the_manifest_is_written_after_the_plugins_other_files() {
+    fn the_entry_carries_the_version_kept_or_raised_against_the_skill() {
+        let first = files_of(&[
+            (INDEX, "expanded: [company.md]\n"),
+            ("docs/company.md", "# Company\n\nWe make things.\n"),
+            (CATALOG, CATALOG_TEXT),
+        ]);
+        let plan1 = plan(&view(&first), &key(), &name()).unwrap();
+        let rendered = applied_plan(&first, &plan1);
+        let entry = |files: &[(String, String)]| -> Json {
+            let text = &files.iter().find(|(path, _)| path == CATALOG).unwrap().1;
+            serde_json::from_str::<Json>(text).unwrap()["plugins"][1].clone()
+        };
+        assert_eq!(entry(&rendered)["version"], "0.1.0");
+        // Unchanged: nothing is written, the catalog included.
+        let again = plan(&view(&rendered), &key(), &name()).unwrap();
+        assert_eq!(again.catalog, None);
+        assert!(again.drift.unwrap().writes.is_empty());
+        // A changed document raises the entry's version.
+        let mut changed = rendered.clone();
+        for (path, text) in &mut changed {
+            if path == "docs/company.md" {
+                *text = "# Company\n\nWe make more things.\n".to_owned();
+            }
+        }
+        let raised = plan(&view(&changed), &key(), &name()).unwrap();
+        assert_eq!(entry(&applied_plan(&changed, &raised))["version"], "0.1.1");
+    }
+
+    #[test]
+    fn the_skill_stands_at_the_root_and_no_manifest_is_written() {
         let tree = repository(Some(CATALOG_TEXT), &[]);
         let paths: Vec<PathBuf> = drift_of(&tree)
             .writes
             .into_iter()
             .map(|file| file.path)
             .collect();
-        assert_eq!(
-            paths,
-            [
-                PathBuf::from("plugins/acme/skills/acme/SKILL.md"),
-                PathBuf::from("plugins/acme/.claude-plugin/plugin.json"),
-            ]
-        );
+        assert_eq!(paths, [PathBuf::from("skills/acme/SKILL.md")]);
     }
 
     #[test]
-    fn the_catalogs_entry_is_known_without_the_plugins_files() {
+    fn findings_that_leave_the_version_unknown_leave_the_catalog_unwritten() {
         let tree = Committed::of(&[(CATALOG, CATALOG_TEXT)]);
         let plan = plan(&tree, &key(), &name()).unwrap();
         assert_eq!(plan.findings, [PluginFinding::NoIndex]);
         assert_eq!(plan.drift, None);
-        assert_eq!(
-            plan.catalog.map(|file| file.path),
-            Some(PathBuf::from(CATALOG))
-        );
+        assert_eq!(plan.catalog, None);
     }
 
     #[test]
     fn the_entry_is_set_by_value_and_every_other_member_keeps_its_value_and_place() {
-        let listed = r#"{"name": "acme-tools", "plugins": [{"name": "acme", "version": "9", "source": "./old"}, {"name": "other"}], "owner": {"name": "Acme"}}"#;
+        let listed = r#"{"name": "acme-tools", "plugins": [{"name": "acme", "version": "9", "category": "knowledge", "source": "./old"}, {"name": "other"}], "owner": {"name": "Acme"}}"#;
         let tree = repository(Some(listed), &[]);
-        let file = catalog(&tree, &key(), &name()).unwrap().unwrap().unwrap();
+        let file = catalog(&tree, "1.2.3").unwrap().unwrap().unwrap();
         let written: Json = serde_json::from_str(&file.text).unwrap();
         let wanted: Json = serde_json::json!({
             "name": "acme-tools",
             "plugins": [
-                {"name": "acme", "version": "9", "source": "./plugins/acme", "description": plugin_description(&name())},
+                {"name": "acme", "version": "1.2.3", "category": "knowledge", "source": "./",
+                 "strict": false, "skills": ["./skills/acme"],
+                 "description": plugin_description(&name()), "author": {"name": "Acme"}},
                 {"name": "other"}
             ],
             "owner": {"name": "Acme"}
         });
         assert_eq!(written, wanted);
         let order: Vec<&String> = written["plugins"][0].as_object().unwrap().keys().collect();
-        assert_eq!(order, ["name", "version", "source", "description"]);
+        assert_eq!(
+            order,
+            [
+                "name",
+                "version",
+                "category",
+                "source",
+                "strict",
+                "skills",
+                "description",
+                "author"
+            ]
+        );
+        assert!(file.text.ends_with("}\n") && file.text.contains("\n  \"plugins\""));
         // Once set, the entry holds its values: the catalog is left as it is.
         let tree = repository(Some(&file.text), &[]);
-        assert_eq!(catalog(&tree, &key(), &name()).unwrap(), Ok(None));
+        assert_eq!(catalog(&tree, "1.2.3").unwrap(), Ok(None));
     }
 
     #[test]
     fn an_entry_the_catalog_does_not_list_is_added_after_the_others() {
         let tree = repository(Some(CATALOG_TEXT), &[]);
-        let file = catalog(&tree, &key(), &name()).unwrap().unwrap().unwrap();
+        let file = catalog(&tree, "0.1.0").unwrap().unwrap().unwrap();
         let written: Json = serde_json::from_str(&file.text).unwrap();
         let names: Vec<&str> = written["plugins"]
             .as_array()
@@ -1301,15 +1361,23 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_or_unreadable_catalog_is_a_finding() {
-        assert_eq!(
-            catalog(&repository(None, &[]), &key(), &name()).unwrap(),
-            Err(PluginFinding::NoCatalog)
-        );
+    fn a_missing_catalog_is_created_and_an_unreadable_one_is_a_finding() {
+        let file = catalog(&repository(None, &[]), "0.1.0")
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(file.current, None);
+        let written: Json = serde_json::from_str(&file.text).unwrap();
+        assert_eq!(written["name"], "acme");
+        assert_eq!(written["owner"], serde_json::json!({"name": "Acme"}));
+        let names: Vec<&String> = written.as_object().unwrap().keys().collect();
+        assert_eq!(names, ["name", "owner", "plugins"]);
+        assert_eq!(written["plugins"].as_array().unwrap().len(), 1);
+        assert_eq!(written["plugins"][0]["name"], "acme");
         for text in ["[]", "{\"plugins\": {}}", "{"] {
             assert!(
                 matches!(
-                    catalog(&repository(Some(text), &[]), &key(), &name()).unwrap(),
+                    catalog(&repository(Some(text), &[]), "0.1.0").unwrap(),
                     Err(PluginFinding::CatalogUnreadable { .. })
                 ),
                 "{text:?}"
@@ -1318,52 +1386,61 @@ mod tests {
     }
 
     #[test]
-    fn a_manifest_that_cannot_be_read_or_holds_no_version_of_three_numbers_is_a_finding() {
-        let path = "plugins/acme/.claude-plugin/plugin.json";
-        let held = |text: &str| held_version(&repository(None, &[(path, text)]), path);
-        assert!(matches!(
-            held("[]"),
-            Err(PluginFinding::ManifestUnreadable { .. })
-        ));
-        assert!(matches!(
-            held("{"),
-            Err(PluginFinding::ManifestUnreadable { .. })
-        ));
+    fn an_entry_whose_version_is_not_three_numbers_is_a_finding_naming_it() {
+        let held = |entry: &str| {
+            let document: Json =
+                serde_json::from_str(&format!("{{\"plugins\": [{entry}]}}")).unwrap();
+            held_version(&document, &key())
+        };
         assert_eq!(
-            held("{\"version\": \"1.0\"}"),
-            Err(PluginFinding::ManifestVersion {
-                path: path.to_owned(),
+            held(r#"{"name": "acme", "version": "1.0"}"#),
+            Err(PluginFinding::EntryVersion {
                 version: Some("1.0".to_owned()),
             })
         );
         assert_eq!(
-            held("{\"name\": \"acme\"}"),
-            Err(PluginFinding::ManifestVersion {
-                path: path.to_owned(),
-                version: None,
-            })
+            held(r#"{"name": "acme"}"#),
+            Err(PluginFinding::EntryVersion { version: None })
         );
         assert_eq!(
-            held("{\"version\": \"2.3.4\"}")
+            held(r#"{"name": "acme", "version": "2.3.4"}"#)
                 .unwrap()
                 .map(|v| v.to_string())
                 .as_deref(),
             Some("2.3.4")
         );
+        assert_eq!(held(r#"{"name": "other", "version": "x"}"#), Ok(None));
+        let plan = plan(
+            &repository(
+                Some(r#"{"plugins": [{"name": "acme", "version": "one"}]}"#),
+                &[],
+            ),
+            &key(),
+            &name(),
+        )
+        .unwrap();
+        assert_eq!(
+            plan.findings,
+            [PluginFinding::EntryVersion {
+                version: Some("one".to_owned())
+            }]
+        );
+        assert_eq!((plan.drift, plan.catalog), (None, None));
     }
 
     #[test]
-    fn a_link_on_the_way_to_the_plugin_or_the_catalog_or_inside_the_plugin_is_a_finding() {
+    fn a_link_on_the_way_to_the_skill_or_the_catalog_or_inside_the_skill_is_a_finding() {
         for link in [
-            "plugins",
-            "plugins/acme",
-            "plugins/acme/skills/acme/x.md",
+            "skills",
+            "skills/acme",
+            "skills/acme/x.md",
             ".claude-plugin",
         ] {
             let tree = repository(Some(CATALOG_TEXT), &[]).with_link(link);
             let plan = plan(&tree, &key(), &name()).unwrap();
-            // Behind a link at the plugin's folder nothing is compared.
-            assert_eq!(plan.drift.is_none(), link != ".claude-plugin", "{link}");
+            // Behind a link at the skill's folder, or at the catalog that
+            // holds the version, nothing is compared.
+            assert!(plan.drift.is_none(), "{link}");
             assert_eq!(
                 plan.findings,
                 [PluginFinding::Link {
@@ -1372,46 +1449,28 @@ mod tests {
                 "{link}"
             );
         }
-        let elsewhere = repository(Some(CATALOG_TEXT), &[]).with_link("plugins/other");
+        for elsewhere in ["skills/other", "plugins/acme"] {
+            let tree = repository(Some(CATALOG_TEXT), &[]).with_link(elsewhere);
+            assert!(
+                plan(&tree, &key(), &name()).unwrap().findings.is_empty(),
+                "{elsewhere}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_plugins_folder_is_never_read_written_or_removed() {
+        let tree = repository(
+            Some(CATALOG_TEXT),
+            &[("plugins/acme/skills/acme/SKILL.md", "an earlier layout")],
+        );
+        let drift = drift_of(&tree);
+        assert!(drift.removals.is_empty());
         assert!(
-            plan(&elsewhere, &key(), &name())
-                .unwrap()
-                .findings
-                .is_empty()
-        );
-    }
-
-    #[test]
-    fn a_check_still_knows_what_differs_beside_a_catalog_finding() {
-        let plan = plan(&repository(None, &[]), &key(), &name()).unwrap();
-        assert_eq!(plan.findings, [PluginFinding::NoCatalog]);
-        let written: Vec<PathBuf> = plan
-            .drift
-            .unwrap()
-            .writes
-            .into_iter()
-            .map(|file| file.path)
-            .collect();
-        assert_eq!(
-            written,
-            [
-                PathBuf::from("plugins/acme/skills/acme/SKILL.md"),
-                PathBuf::from("plugins/acme/.claude-plugin/plugin.json"),
-            ]
-        );
-    }
-
-    #[test]
-    fn a_link_inside_the_plugin_leaves_the_catalog_judged() {
-        let tree = repository(None, &[]).with_link("plugins/acme/skills/acme/x.md");
-        assert_eq!(
-            plan(&tree, &key(), &name()).unwrap().findings,
-            [
-                PluginFinding::Link {
-                    path: "plugins/acme/skills/acme/x.md".to_owned()
-                },
-                PluginFinding::NoCatalog,
-            ]
+            drift
+                .writes
+                .iter()
+                .all(|file| file.path.starts_with("skills/acme"))
         );
     }
 
