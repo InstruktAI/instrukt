@@ -452,24 +452,7 @@ fn a_reference_against_the_direction_is_reported_with_what_its_position_may_refe
     );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
-    let findings_of = |file: &str| {
-        run.out
-            .lines()
-            .filter(|line| !line.starts_with("notice:") && line.starts_with(file))
-            .count()
-    };
-    assert_eq!(
-        findings_of("docs/domain/acme/concept/fine.md"),
-        0,
-        "{}",
-        run.out
-    );
-    assert_eq!(
-        findings_of("docs/project/concept/home.md"),
-        0,
-        "{}",
-        run.out
-    );
+    // The snapshot holds every finding: none names fine.md or home.md.
     insta::assert_snapshot!(run.out);
 }
 
