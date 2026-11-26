@@ -1,0 +1,28 @@
+---
+source: crates/instrukt-core/src/publication/_plugin.rs
+expression: "files[SKILL]"
+---
+---
+name: acme
+description: The knowledge of Acme, as the company keeps it. Use it whenever the work is for Acme or about Acme.
+---
+
+# Acme
+
+This is the company's knowledge, rendered from the company's repository: its `docs/index.yaml` and the Markdown documents under `docs/` that index selects. A document named below by one line, its path and what it holds, is read at that path when the work calls for it. The checkout of that repository at `~/.instrukt/companies/<slug>/`, where `<slug>` is the company's key, is the company's home: it serves the company's agents and stays on the repository's default branch.
+
+An agent with access to the repository improves this knowledge by editing the Markdown documents (`*.md`) under `docs/`, subfolders included, and the index that selects them. It edits on a branch, in a separate worktree of the company's home or in a clone of the repository (by convention named `company-<slug>`), and opens a pull request. Someone other than the pull request's author reviews it before it merges to the default branch, and through that branch the change reaches the company's agents. The change is made in those documents and that index alone: `AGENTS.md` and any skill published from them are generated output and are left as rendered.
+
+Each of those documents carries a non-empty `description` in its frontmatter and states what is true of the company now, in the present tense; what was true before stays in the repository's history.
+
+The company's own documents name any live agents and messaging channels the company operates, what each one handles, and who may reach it. A cloud agent reading this knowledge cannot invoke those agents or relay to them, and does not push the company's software directly: when a person needs a live company service or software built, it helps them frame the request clearly and follows the company's documented routing and access rules — directing them to address a documented agent only when that agent handles the work and admits them, or otherwise routing them as the company's documents say or noting that no live agent is documented for it.
+
+Compressed sections: a section headed by a document's name holds that document compressed, its rules without its prose. Each line opens with `- `. `MUST` = required, `NEVER` = forbidden, `MAY` = permitted, not required, `PREFER` = the default, which yields to a stated reason; the reason follows ` -- ` in one clause. `<term> = <meaning>` states a term a rule rests on. `->` = leads to or then, `|` = or, `vs` = two forces in tension. Ids, commands, paths, code and configured values stand exactly as in the source. The named document holds the full prose: read it before acting on a case its rules do not name, on its exact wording or on its reasons.
+
+# docs/company.md
+
+Full prose: `references/company.md`
+
+- we make things; roles: [roles](references/roles.md)
+
+- references/roles.md: Who does what.
