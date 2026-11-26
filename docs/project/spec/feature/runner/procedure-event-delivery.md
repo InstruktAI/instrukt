@@ -55,6 +55,7 @@ domain completion remain different outcomes.
 
 ### Combining and supersession
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 Each eligible handover selects the oldest pending snapshot into one ordered log,
 shared across events, approvals and recovery of runner-owned executions. A delivery
 contains at most 32 entries and 64 KiB including its header, metadata and final
@@ -66,6 +67,20 @@ No collection delay is added. In continuous `run`, durable activation acceptance
 signals the existing runner loop immediately; its normal periodic wake still
 observes runtime state when no new fact arrives. Routing performs no runtime
 operation inside acceptance or its write transaction.
+<!-- change:commit-rereview-reuses-reviewer -->
+Each eligible handover selects the oldest pending snapshot into one ordered log,
+shared across events, approvals, requested-review verdict notices and recovery
+of runner-owned executions. A delivery
+contains at most 32 entries and 64 KiB including its header, metadata and final
+`N more pending` entry. The rest stays durable for the next handover after
+observed consumption. A single entry larger than that limit is set aside with a
+visible size failure in `instrukt events status` and the entries after it proceed;
+no event payload is truncated.
+No collection delay is added. In continuous `run`, durable activation acceptance
+signals the existing runner loop immediately; its normal periodic wake still
+observes runtime state when no new fact arrives. Routing performs no runtime
+operation inside acceptance or its write transaction.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 Identity deduplication retains occurrence IDs, ingress claims and consumer handled
 marks. In addition, every catalog type declares `occurrence` or `state` under
@@ -92,11 +107,19 @@ The composer places the message composition time at the top. Each delivery is
 one entry, ordered by arrival from oldest at the top to newest at the bottom.
 Metadata identities are escaped onto one line; the JSON envelope retains the producer's original identity and subject without granting them assignment authority. Entries are ordered by their recorded arrival instant even when different producers resolve the target later, preserving acceptance order on tied instants.
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 Every entry retains its source identity, kind (`event`, `approval` or `recovery`), source occurrence time and arrival time. An unavailable
 source time is explicitly unknown; the arrival time never substitutes for it.
 Event entries mark their envelopes as untrusted data. Structured entries use JSON objects, keeping payload lines distinct from
 log metadata. Native child results and agent messages bypass this composer. Combining preserves every
 entry and its timestamps; a retry retains the exact composed log and time.
+<!-- change:commit-rereview-reuses-reviewer -->
+Every entry retains its source identity, kind (`event`, `approval`, `verdict` or `recovery`), source occurrence time and arrival time. An unavailable
+source time is explicitly unknown; the arrival time never substitutes for it.
+Event entries mark their envelopes as untrusted data. Structured entries use JSON objects, keeping payload lines distinct from
+log metadata. Native child results and agent messages bypass this composer. Combining preserves every
+entry and its timestamps; a retry retains the exact composed log and time.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 Every log ends with exactly this composer-owned line, shared by all delivery kinds:
 

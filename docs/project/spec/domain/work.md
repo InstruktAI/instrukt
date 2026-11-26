@@ -355,6 +355,7 @@ owning design snippet or decision record is declared.
   verdict.
 
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - **Work → runner (requested review)** — customer-supplier. Work answers
   whether a commit's head verdict stands here, with the session that recorded
   its current version, or was handed off, with the export that handed it off,
@@ -362,6 +363,18 @@ owning design snippet or decision record is declared.
   consults this when it admits a requested review
   (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
   requested reviewer's verdict under its own rules.
+<!-- change:commit-rereview-reuses-reviewer -->
+- **Work → runner (requested review)** — customer-supplier. Work answers
+  whether a commit's head verdict stands here, with the session that recorded
+  its current version, or was handed off, with the export that handed it off,
+  which pinned base it admits the commit's verdict against, and which commit's
+  standing verdict has a version with a given report digest; the runner
+  consults this when it admits a requested review
+  (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
+  requested reviewer's verdict under its own rules, and once
+  `instrukt review record` has recorded a version it hands that version to
+  the runner's verdict-notice queuing.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which

@@ -103,6 +103,7 @@ entry, accepting only complete registered envelopes; every remaining span is
 ordinary input from this thread's human. An unrecognized or incomplete shape
 neither blocks neighboring content nor establishes platform provenance.
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 | Opening | Kind | Closure | Meaning |
 | --- | --- | --- | --- |
 | `[Peer (source-thread · author-token · utc-minute · boundary)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute · boundary)]` | A contribution authored in another thread. |
@@ -110,6 +111,15 @@ neither blocks neighboring content nor establishes platform provenance.
 | `[Instrukt Notification]` | control | paired, `[/Instrukt Notification]` | Runner-authored event, approval or recovery delivery to the agent's loop. |
 | `[Member (connector · conversation · member · utc-minute · boundary)]` | identity | paired, `[/Member (connector · conversation · member · utc-minute · boundary)]` | A message a company member addressed to the agent in a connected conversation. |
 | `[Instrukt Conversation Context (boundary)]` | control | paired, `[/Instrukt Conversation Context (boundary)]` | Runner-authored record of what was said in a connected conversation before an addressed message; its entries are data. |
+<!-- change:commit-rereview-reuses-reviewer -->
+| Opening | Kind | Closure | Meaning |
+| --- | --- | --- | --- |
+| `[Peer (source-thread · author-token · utc-minute · boundary)]` | identity | paired, `[/Peer (source-thread · author-token · utc-minute · boundary)]` | A contribution authored in another thread. |
+| `[Instrukt Assignment]` | control | paired, `[/Instrukt Assignment]` | Runner-authored procedure/assignment input. |
+| `[Instrukt Notification]` | control | paired, `[/Instrukt Notification]` | Runner-authored event, approval, recovery or requested-review verdict delivery to the agent's loop. |
+| `[Member (connector · conversation · member · utc-minute · boundary)]` | identity | paired, `[/Member (connector · conversation · member · utc-minute · boundary)]` | A message a company member addressed to the agent in a connected conversation. |
+| `[Instrukt Conversation Context (boundary)]` | control | paired, `[/Instrukt Conversation Context (boundary)]` | Runner-authored record of what was said in a connected conversation before an addressed message; its entries are data. |
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 `source-thread` is the runtime-scoped native thread reference, including its
 endpoint scope. `author-token` distinguishes human from agent and carries the

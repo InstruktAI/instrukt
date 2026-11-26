@@ -112,17 +112,28 @@ Native agent-operation prose is supplied by configuration and rendered through `
   instrukt's own initiative, answered by a standing reviewer
   (`project/instrukt/spec/feature/runner/pull-request-review`).
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 **Requested review**
 : An independent review of an exact committed worktree head that an authoring
   session asks for with `instrukt review start`, naming coordinates only; the
   runner renders the reviewer's assignment and starts the requested reviewer
   on it. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
+<!-- change:commit-rereview-reuses-reviewer -->
+**Requested review**
+: An independent review of an exact committed worktree head that an authoring
+  session asks for with `instrukt review start`, naming coordinates only; the
+  runner renders the reviewer's assignment, starts the requested reviewer on
+  it or wakes the reviewer that recorded an earlier head's verdict, and
+  returns each verdict recorded for the head to the session that asked. It is no review request and emits no event
+  (`project/instrukt/spec/feature/runner/requested-review`).
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 
 ## Ownership boundary
 
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the admission, rendering and start of requested
@@ -191,6 +202,77 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Implementation roots:** `instrukt-runner` realizes this context, shared by
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+<!-- change:commit-rereview-reuses-reviewer -->
+- **Owns:** Per-computer history extraction/search and merged history queries;
+  module-aware runner execution; todo dispatch policy; procedure
+  activation from events; the admission, rendering, start and wake of
+  requested reviews and the return of their verdicts to the sessions that
+  asked; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  runtime capability translation, conversation-link membership, identity-envelope
+  vocabulary and deterministic turn-end relay;
+  unattended event/approval delivery and runner-owned execution observation; time
+  eligibility and missed-run decisions; anomaly-notification routing; the
+  container each company's sessions run in on a host, its state, its tools,
+  its shared defaults and the export and import of its irreplaceable state; resolving
+  a session's assignment from work's, its own and the company context's facts;
+  agents'
+  access to declared MCP servers (which declarations a caller sees and the
+  login a call carries), people's sign-ins to them and the logins kept from
+  them; the
+  meaning and writes of its tables in the state database (the
+  event log, consumer cursors and handled marks, request validators,
+  watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
+  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  `project/instrukt/spec/feature/work/state-database`; the history store with
+  its file, lock and migrations, holding retained history, source positions and
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
+- **Does not own:** Work content, approval, workflow derivation or step
+  completion evidence, owned by work and workflow;
+  configuration storage and interpolation, owned by configuration;
+  subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
+  blueprint;
+  session lifecycle, input delivery, restart, revival, handover,
+  live transcripts and lifecycle cleanup, owned by the runtime, which also
+  performs the archives thread retention decides; connectors,
+  conversations, the speaker of a conversation turn and the conversation tables,
+  owned by company (`project/instrukt/spec/domain/company`); instrukt's
+  extracted searchable history is a separate contract. instrukt calls only the adapter's
+  released primitives. Events, schedules and dispatch decisions are the
+  runner's own; a runtime's task, schedule or event features are not used.
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  operational `instrukt sessions list` surface,
+  `instrukt history extract|search|show`,
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, the sign-in return path, and wake-up
+  and runner-service registration by `instrukt install`;
+  structured adapter operations, semantic-state observation, optional bounded native conversation
+  reads and explicit delivery/assignment evidence capabilities, linked-thread
+  streams and optional notification; instrukt-owned start semantic-key discovery
+  and database locking; the hosting and the conversation assignment lookup that
+  the company context implements and the CLI wires. Every operational sessions
+  command accepts `--json`.
+  Agents use configured native operations in their own conversation and
+  record native child attempts through work. The adapter starts only without
+  an agent or for an explicit native-capability gap. Native delegation returns
+  shared workspace evidence. The unified `todo-orchestrator` and its native shared children
+  use one `<slug>/work` worktree and branch, with one workspace role admitted at a time
+  and atomic completion/release through the work and workflow contracts. Events include
+  `runner.upstream_changed`,
+  `runner.ci_completed`, `runner.dependency_failing`, `runner.main_failing` and
+  `workflow.finalized`.
+- **Allowed dependencies:** blueprint supplies its release-owned tool lifecycle to module installation; configuration supplies effective machine and
+  project settings and company homes; publication supplies project checkout paths; docs supplies subscribed procedures; work
+  supplies records and session identity, and the state database's file,
+  writer lock and migrations; workflow supplies assignments; company supplies
+  conversation hosting and conversation assignments; the runtime and
+  GitHub supply execution and external observations. These
+  relationships are specified in the context map position below.
+- **Implementation roots:** `instrukt-runner` realizes this context, shared by
+  `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
+  depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 Fleet attention is the runner's: which facts of a project's active work are
 attention conditions, the `runner.attention.*` vocabulary, each condition's
@@ -628,6 +710,7 @@ conversation
 (`project/instrukt/spec/domain/context-map`).
 
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 For a requested review the runner asks work whether the head's verdict stands
 here, with the session that recorded its current version, or was handed off,
 with the export that handed it off, and for the pinned base work admits its
@@ -636,6 +719,19 @@ records.
 It starts the requested reviewer through the runtime adapter under its own
 start key; work admits that reviewer's verdict like any other
 (`project/instrukt/spec/feature/runner/requested-review`).
+<!-- change:commit-rereview-reuses-reviewer -->
+For a requested review the runner asks work whether the head's verdict stands
+here, with the session that recorded its current version, or was handed off,
+with the export that handed it off, for the pinned base work admits its
+verdict against and, for a re-review, for the commit whose standing verdict
+has a version with the prior report's digest; it reads the commit's review requests from its own delivery
+records.
+It starts the requested reviewer through the runtime adapter under its own
+start key, or wakes the earlier head's reviewer of record; work admits that
+reviewer's verdict like any other and hands each version it records to the
+runner, which queues a verdict notice for each session that asked
+(`project/instrukt/spec/feature/runner/requested-review`).
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 
 The runtime adapter and the event-source boundary form an

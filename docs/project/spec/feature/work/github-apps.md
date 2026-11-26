@@ -204,6 +204,9 @@ and no new commit. The latest version is current and earlier ones are kept as
 history.
 
 <!-- planned:commit-rereview-reuses-reviewer -->
+A head verdict's versions are numbered from one in the order they are
+recorded, and `instrukt review show` names each by its number.
+
 The session that recorded the current version of a commit's verdict that
 stands here is that commit's reviewer of record. Work answers it with the
 commit's verdict, and `instrukt review show` names it. Work also answers which
@@ -222,7 +225,7 @@ and delivers them on its own wake-ups
 only for that queuing, never for a delivery, and is not undone when it fails. A
 revision whose verdict equals the current one is admitted on the same terms as
 one that changes it (Admission of review evidence, Settlement). A reviewer
-records a judged dispute as such a version
+records each dispute it judges as a revision
 (`sdlc/procedure/lifecycle/work/review-commits`).
 <!-- /planned:commit-rereview-reuses-reviewer -->
 

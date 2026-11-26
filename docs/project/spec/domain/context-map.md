@@ -125,13 +125,26 @@ Fleet attention adds these crossings
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 A requested review (`project/instrukt/spec/feature/runner/requested-review`)
 adds one crossing and is no part of the review gate: it emits no event and the
 runner holds no review request for it.
+<!-- change:commit-rereview-reuses-reviewer -->
+A requested review (`project/instrukt/spec/feature/runner/requested-review`)
+adds two crossings and is no part of the review gate: it emits no event and the
+runner holds no review request for it.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+<!-- change:commit-rereview-reuses-reviewer -->
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; the pinned base work admits the commit's verdict against; and which commit's standing verdict has a version with a given report digest; consulted when a requested review is admitted |
+| runner → work | Customer / Supplier | The requested-review verdict-notice queuing, called by `instrukt review record` once its evidence write has closed, with the recorded version |
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 
 Worktree reclamation adds these crossings; its contract is

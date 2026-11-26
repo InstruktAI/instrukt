@@ -43,6 +43,13 @@ creates no replacement session identity.
 | `finished_threads` | Registered project checkout; returns each thread the runtime lists for that project and reports finished, with its finishing time, its latest activity (a person reading or writing to it included), whether it is quiet (not running, queued, snoozed or waiting on a person's input or approval) and whether a person pinned it. A time the runtime does not report is unknown, never substituted. Optional capability: thread archiving. | Thread retention (`project/instrukt/spec/feature/runner/thread-retention`). |
 | `archive` | Native session id and the finished-thread observation it was chosen from; archives the thread only while that observation still holds: present, finished, quiet, not pinned and without activity after the observed latest activity. Returns archived, already archived (which is done) or changed (not archived). Optional capability: thread archiving. | Thread retention. |
 
+<!-- planned:commit-rereview-reuses-reviewer -->
+The `send` primitive also delivers the runner's requested-review verdict
+notices to the session that asked, and `caller_identity` names that session
+when the review is asked for
+(`project/instrukt/spec/feature/runner/requested-review`).
+<!-- /planned:commit-rereview-reuses-reviewer -->
+
 `execution_root` takes an execution root and a mode, check or ensure. It
 returns whether the selected runtime holds a live project rooted exactly at
 that root, creating one in ensure mode, together with the runtime's own door
@@ -83,6 +90,7 @@ optional task `occurrence: <RFC 3339>`, and supplied briefing text. The runner
 binds procedure parameters before dispatch. User text travels as separate
 process arguments or standard input, never as executable shell text.
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 For subscribed procedures, the opening input establishes the assignment before
 its separately identified event data. Delivery has two intents: as soon as
 possible (default) and only at entry. The adapter exposes steering, queue-only
@@ -95,15 +103,38 @@ while preserving their separate identities. Native agent messages and child
 reports belong to the runtime and do not occupy this instrukt-owned slot.
 Recovery here concerns only instrukt-started orchestrators/tasks, never their
 natively delegated workers.
+<!-- change:commit-rereview-reuses-reviewer -->
+For subscribed procedures, the opening input establishes the assignment before
+its separately identified event data. Delivery has two intents: as soon as
+possible (default) and only at entry. The adapter exposes steering, queue-only
+or entry-only realization, as specified in
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. T3 uses queued
+input rather than a required hook. Missing steering creates no finding.
+Runtime acceptance is transport evidence, not entry consumption or completion.
+One session-wide waiting slot combines instrukt event, approval, requested-review verdict and runner-owned recovery deliveries
+while preserving their separate identities. Native agent messages and child
+reports belong to the runtime and do not occupy this instrukt-owned slot.
+Recovery here concerns only instrukt-started orchestrators/tasks, never their
+natively delegated workers.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ### The waiting message is a delivery log
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 The composer places the message composition time at the top. Each delivery is
 one entry, ordered by arrival from oldest at the top to newest at the bottom.
 Every entry retains its source identity, kind (`event`, `approval` or `recovery`), source occurrence time and arrival time. An unavailable
 source time is explicitly unknown; the arrival time never substitutes for it.
 Event entries mark their envelopes as untrusted data. Combining preserves every
 entry and its timestamps; a retry retains the exact composed log and time.
+<!-- change:commit-rereview-reuses-reviewer -->
+The composer places the message composition time at the top. Each delivery is
+one entry, ordered by arrival from oldest at the top to newest at the bottom.
+Every entry retains its source identity, kind (`event`, `approval`, `verdict` or `recovery`), source occurrence time and arrival time. An unavailable
+source time is explicitly unknown; the arrival time never substitutes for it.
+Event entries mark their envelopes as untrusted data. Combining preserves every
+entry and its timestamps; a retry retains the exact composed log and time.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ### Runtime evidence capabilities
 
@@ -182,6 +213,13 @@ adapter verb templates.
 | Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
+
+<!-- planned:commit-rereview-reuses-reviewer -->
+Requested review also needs `caller_identity`, to record the session that
+asks, and native input delivery (`send`), to return each verdict recorded for
+the head to that session
+(`project/instrukt/spec/feature/runner/requested-review`).
+<!-- /planned:commit-rereview-reuses-reviewer -->
 
 
 Receiving and publishing external facts need no agent runtime. A computer that
@@ -380,6 +418,7 @@ workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
 
+<!-- planned-change:commit-rereview-reuses-reviewer -->
 Every placement runs in the checkout's own project. Whenever instrukt adopts,
 wakes or succeeds an instrukt-owned thread, and before every input it delivers
 to one — event, approval, recovery and conversation input alike, for every
@@ -389,6 +428,18 @@ comparison never registers a project. The binding's recorded project is not
 proof of a match, and a checkout with no live project of its own never
 matches. A thread that does not match is misplaced: it is not adopted and is
 sent nothing, and the input stays pending.
+<!-- change:commit-rereview-reuses-reviewer -->
+Every placement runs in the checkout's own project. Whenever instrukt adopts,
+wakes or succeeds an instrukt-owned thread, and before every input it delivers
+to one — event, approval, recovery, verdict-notice and conversation input
+alike, for every
+binding kind — it looks up the checkout's project in T3's project snapshot by
+exact root, read-only, and compares it with the thread's native project. The
+comparison never registers a project. The binding's recorded project is not
+proof of a match, and a checkout with no live project of its own never
+matches. A thread that does not match is misplaced: it is not adopted and is
+sent nothing, and the input stays pending.
+<!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 A misplaced thread reported `input-ready` or `ended failed` is rolled over by
 its owner, at the same succession point and under the same object lock that
