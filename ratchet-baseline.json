@@ -24,7 +24,7 @@
     "crates/instrukt-runner/src/keyed.rs": 1489,
     "crates/instrukt-runner/src/mcp/_oauth.rs": 2345,
     "crates/instrukt-runner/src/runner.rs": 1241,
-    "crates/instrukt-runner/src/runtime/_t3.rs": 1134,
+    "crates/instrukt-runner/src/runtime/_t3.rs": 1098,
     "crates/instrukt-runner/src/runtime/_t3_conversations.rs": 1362,
     "crates/instrukt-runner/src/runtime/_t3_readiness.rs": 1738,
     "crates/instrukt-runner/src/standing.rs": 1419,

@@ -906,7 +906,7 @@ pub fn retention(checkout: &Path) -> Result<Value> {
 pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     let mut token = Token::issue(true)?;
     let input = json!({"commandId":"contract-keyed-launch","threadId":"contract-keyed-thread","projectId":project,
-        "title":"Readable contract title","generateTitle":false,"modelSelection":{"instanceId":"codex","model":"default"},
+        "title":"Readable contract title","generateTitle":false,"modelSelection":{"instanceId":"codex","model":"default","options":[{"id":"reasoningEffort","value":"high"}]},
         "runtimeMode":"approval-required","interactionMode":"default","creationSource":"mcp",
         "workspaceStrategy":{"type":"existing_worktree","worktreePath":root.join("project"),"branch":"main"}});
     let first = rpc(&token.secret, "orchestration.launchThread", input.clone())?;
@@ -926,6 +926,10 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
         "native captured mode pair"
     );
     ensure!(
+        thread["modelSelection"]["options"] == json!([{"id":"reasoningEffort","value":"high"}]),
+        "native launch model-selection options"
+    );
+    ensure!(
         thread["projectId"] == project
             && thread["worktreePath"] == root.join("project").to_str().unwrap(),
         "native existing-worktree placement"
@@ -936,7 +940,7 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     );
     token.revoke()?;
     Ok(
-        json!({"same_thread":true,"modes_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
+        json!({"same_thread":true,"modes_retained":true,"options_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
     )
 }
 

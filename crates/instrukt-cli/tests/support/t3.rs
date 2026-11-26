@@ -305,6 +305,8 @@ elif command=='start':
         create_worktree(t,root/'worktrees'/id,flags['--worktree'],flags.get('--branch'))
     if launch:
         t['runtimeMode']=launch['runtimeMode'];t['interactionMode']=launch['interactionMode'];t['createdBy']='user';t['commandId']=launch['commandId']
+        # T3 keeps a launch's model selection on its thread as given, options included.
+        t['modelSelection']=launch['modelSelection']
         if 'initialMessage' not in launch: t['messages']=[];t['status']='idle';t['latestRunId']=None;t['activeRunId']=None
         if launch['workspaceStrategy']['type']=='existing_worktree':
             t['worktreePath']=launch['workspaceStrategy']['worktreePath'];t['branch']=launch['workspaceStrategy'].get('branch')
@@ -659,6 +661,11 @@ impl FakeT3 {
     /// The model a thread was started on.
     pub fn model(&self, id: &str) -> String {
         self.read(id)["model"].as_str().unwrap().to_owned()
+    }
+    /// The native options a thread was launched with: T3's list of option
+    /// `id` and `value`, `null` when its launch sent none.
+    pub fn options(&self, id: &str) -> serde_json::Value {
+        self.read(id)["modelSelection"]["options"].clone()
     }
     pub fn native_id(&self, id: &str) -> String {
         std::fs::read_to_string(self.state.join(format!("{id}.alias")))
