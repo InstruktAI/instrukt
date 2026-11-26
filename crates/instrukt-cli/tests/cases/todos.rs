@@ -625,3 +625,110 @@ fn a_further_round_keeps_the_worker_that_did_the_earlier_one() {
     assert_eq!(attempt_record(&shown, "planner/1"), earlier);
     insta::assert_snapshot!("continued-worker-record", redact(&shown));
 }
+
+// spec: project/instrukt/spec/feature/work/todos UC-TD14
+#[test]
+fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
+    let crew = Crew::new();
+    let slug = "single-role-worker";
+    crew.project
+        .create(slug, "change", "Keep list depth inside block quotes.");
+    crew.next("prepare", slug);
+
+    // The planner is bound, writes its plan and completes its attempt.
+    let planner = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let session = planner["session"].as_str().unwrap().to_owned();
+    let tree = std::path::PathBuf::from(planner["worktree"].as_str().unwrap());
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first.",
+        ],
+    );
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &["todo", "stamp", slug, "--role-complete"],
+    );
+
+    // The plan's review is reserved, and the orchestrator binds it to the
+    // planner's session.
+    crew.next("prepare", slug);
+    let reserved = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "plan-reviewer",
+            "--procedure",
+            "crew/procedure/review-plan",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Review the plan.")
+        .assert()
+        .success();
+    let review: serde_json::Value = serde_json::from_slice(&reserved.get_output().stdout).unwrap();
+    let refused = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "bind",
+            slug,
+            "--role",
+            "plan-reviewer",
+            "--attempt",
+            &review["attempt"].to_string(),
+            "--session",
+            &session,
+            "--worktree",
+            review["worktree"].as_str().unwrap(),
+            "--branch",
+            review["branch"].as_str().unwrap(),
+            "--base",
+            review["base"].as_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // The reserved review stays outstanding and unbound, and the planner's
+    // session still runs its commands in the role it holds.
+    let shown = crew.todo(["show", slug]);
+    let outstanding = attempt_record(&shown, "plan-reviewer/1");
+    assert!(!outstanding.is_empty(), "{shown}");
+    assert!(!outstanding.contains(&session), "{outstanding}");
+    let help = crew
+        .project
+        .env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", session.strip_prefix("t3:").unwrap())
+        .arg("--help")
+        .assert()
+        .success();
+    assert!(stdout(&help).contains("Role: planner"), "{}", stdout(&help));
+    as_worker(&crew, &tree, &session, &["todo", "show", slug]);
+    insta::assert_snapshot!(
+        "second-role-binding-refused",
+        redact(&format!(
+            "{}---\n{outstanding}",
+            String::from_utf8_lossy(&refused.get_output().stderr)
+        ))
+    );
+}

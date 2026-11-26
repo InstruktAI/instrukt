@@ -1,5 +1,5 @@
 //! Read fixed role and placement evidence without changing a work claim.
-use super::Binding;
+use super::{Binding, WorkError};
 use instrukt_core::{
     capabilities::Assignment,
     home::Home,
@@ -301,6 +301,79 @@ pub(crate) fn assignment_candidates(
         });
     }
     Ok(candidates)
+}
+
+/// The sessions `bindings` newly records, each with the key it is recorded
+/// on: a binding whose session is set and differs from the stored row
+/// `base`'s binding of the same semantic key, or a new binding carrying a
+/// session. A binding whose session the row already held is not one, so a
+/// release, completion or reopen records no session.
+pub(crate) fn newly_recorded<'a>(
+    bindings: &'a [Binding],
+    base: Option<&[Binding]>,
+) -> Vec<(&'a SessionRef, &'a str)> {
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let session = binding.session.as_ref()?;
+            let held = base
+                .into_iter()
+                .flatten()
+                .find(|before| before.attempt.semantic_key == binding.attempt.semantic_key)
+                .and_then(|before| before.session.as_ref());
+            (held != Some(session)).then_some((session, binding.attempt.semantic_key.as_str()))
+        })
+        .collect()
+}
+
+/// The entry check of a change that records sessions on bindings
+/// (`recorded`, from [`newly_recorded`]), run in its write transaction once
+/// its rows are written: each such session must still resolve to one
+/// assignment by the rule assignment resolution applies, or the change is
+/// refused whole, naming what the session holds and the door.
+pub(crate) fn admit_recorded(
+    conn: &Connection,
+    path: &Path,
+    recorded: &[(&SessionRef, &str)],
+) -> Result<(), WorkError> {
+    let mut judged: Vec<&SessionRef> = Vec::new();
+    for &(session, _) in recorded {
+        if judged.contains(&session) {
+            continue;
+        }
+        judged.push(session);
+        let Err(conflict) = select_assignment(assignment_candidates(conn, path, session, &[])?)
+        else {
+            continue;
+        };
+        let records: Vec<String> = recorded
+            .iter()
+            .filter(|(other, _)| *other == session)
+            .map(|(_, key)| (*key).to_owned())
+            .collect();
+        let held: Vec<String> = conflict
+            .keys
+            .iter()
+            .filter(|key| !records.contains(key))
+            .cloned()
+            .collect();
+        let holds = if held.is_empty() {
+            format!(
+                "would be recorded on bindings of several assignments ({})",
+                quoted(&conflict.keys)
+            )
+        } else {
+            format!(
+                "holds {}, so it cannot also be recorded on {}",
+                quoted(&held),
+                quoted(&records)
+            )
+        };
+        return Err(WorkError::refused(format!(
+            "session `{session}` {holds}: a session resolves to one assignment, so it is bound to attempts of one role on one todo; nothing of this change was written. Bind the attempt to a new native session, or let that session continue the attempt it holds"
+        )));
+    }
+    Ok(())
 }
 
 pub fn target_identity(
