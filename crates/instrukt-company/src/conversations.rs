@@ -4330,8 +4330,13 @@ pub fn conversation_assignment(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0",
-            [caller.to_string()],
+            // In this order: the conversation's own session, a generation the
+            // runner recorded, and the binding it writes with the fixed native
+            // thread before the start, so a conversation session is
+            // recognised from its first command. A session that is already
+            // recorded is answered by its record, never by a binding alone.
+            "SELECT company,semantic_key,checkout,role FROM (SELECT 0 AS rank,company,semantic_key,NULL AS checkout,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT 1,c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT 2,c.company,c.semantic_key,b.checkout,c.role FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?2 AND b.session=?1) ORDER BY rank LIMIT 1",
+            instrukt_core::state_db::rusqlite::params![caller.to_string(), caller.runtime.as_str()],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -4580,7 +4585,10 @@ pub fn queue_reply(
 /// turn is correlated with its stored delivery by the delivery's boundary
 /// token, which the member envelope of the turn's opening input carries. A
 /// session bound to no conversation, and a turn whose opening input carries
-/// no member envelope, have no speaker. Any other uncertainty refuses.
+/// no member envelope, have no speaker. A conversation's session the runner
+/// has bound but not yet recorded as the conversation's is refused as
+/// unbound: it is never a session nobody is asking in. Any other
+/// uncertainty refuses.
 pub fn speaker(
     home: &Home,
     session: &SessionRef,
@@ -4606,7 +4614,22 @@ pub fn speaker(
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
     let Some((company, connector, conversation, session_scope)) = conversation else {
-        return Ok(None);
+        let bound = db
+            .conn()
+            .query_row(
+                "SELECT c.company FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?1 AND b.session=?2 LIMIT 1",
+                instrukt_core::state_db::rusqlite::params![
+                    session.runtime.as_str(),
+                    session.to_string()
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
+        return match bound {
+            Some(company) => Err(instrukt_runner::mcp::McpError::Unbound { company }),
+            None => Ok(None),
+        };
     };
     let opening = adapter
         .active_turn_input(session)
@@ -5010,6 +5033,58 @@ mod tests {
     #[test]
     fn the_limit_counts_characters_not_bytes() {
         assert_eq!(cut(&"é".repeat(41), 40), (vec![40, 1], true));
+    }
+
+    #[test]
+    fn a_conversation_session_is_recognised_from_its_binding_before_it_starts() {
+        let root = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = instrukt_core::home::Home::at_user_home(root.path().to_path_buf()).for_writing();
+        let session: instrukt_core::ids::SessionRef = "t3:thread-before-start".parse().unwrap();
+        let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+        db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
+            tx.execute(
+                "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope,reply_mode) VALUES ('acme','slack','C1','company:acme:slack:C1','company-agent','conversation','thread')",
+                [],
+            )
+            .unwrap();
+            // The runner's binding, written with the fixed native thread
+            // before the native start: the conversation records no session
+            // and no generation yet.
+            tx.execute(
+                "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES ('t3','company:acme:slack:C1','conversation','company:acme:slack:C1',?1,'/h/companies/acme',0,1)",
+                [session.to_string()],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+        drop(db);
+        let assignment = super::conversation_assignment(&home, &session)
+            .unwrap()
+            .expect("the bound session is the conversation's");
+        assert_eq!(
+            assignment.company.map(|c| c.to_string()).as_deref(),
+            Some("acme")
+        );
+        assert_eq!(assignment.role.as_str(), "company-agent");
+        // Until the runner records it as the conversation's, the session has
+        // no speaker to act for: it is refused, never served as a session
+        // nobody is asking in.
+        let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
+        assert!(matches!(
+            super::speaker(&home, &session, adapter.as_ref()),
+            Err(instrukt_runner::mcp::McpError::Unbound { company }) if company == "acme"
+        ));
+        let other: instrukt_core::ids::SessionRef = "t3:someone-else".parse().unwrap();
+        assert!(
+            super::conversation_assignment(&home, &other)
+                .unwrap()
+                .is_none()
+        );
+        assert!(matches!(
+            super::speaker(&home, &other, adapter.as_ref()),
+            Ok(None)
+        ));
     }
 
     #[test]

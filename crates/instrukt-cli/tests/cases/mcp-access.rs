@@ -207,15 +207,13 @@ fn a_tool_call_in_a_members_turn_carries_that_members_own_login() {
     c.run();
     let state = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    // The runner has recorded the session as the conversation's: its start
+    // is done and the turn under way. The assignment itself answers from the
+    // binding made before the start.
     wait("the session's recorded binding", || {
-        instrukt_runner::assignments::resolve(
-            &state,
-            &caller,
-            instrukt_todos::work::recorded_assignment,
-            instrukt_company::conversations::conversation_assignment,
-        )
-        .unwrap()
-        .is_some()
+        instrukt_company::conversations::conversation_binding(&state, &caller)
+            .unwrap()
+            .is_some()
     });
     // In Steven's turn the call reaches the server as Steven, by his own
     // login, which the agent never supplied; what the server returns reaches
@@ -465,15 +463,13 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
     let session = c.session();
     let state = instrukt_core::home::Home::at_user_home(c.env.home().into());
     let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    // The runner has recorded the session as the conversation's: its start
+    // is done and the turn under way. The assignment itself answers from the
+    // binding made before the start.
     wait("the session's recorded binding", || {
-        instrukt_runner::assignments::resolve(
-            &state,
-            &caller,
-            instrukt_todos::work::recorded_assignment,
-            instrukt_company::conversations::conversation_assignment,
-        )
-        .unwrap()
-        .is_some()
+        instrukt_company::conversations::conversation_binding(&state, &caller)
+            .unwrap()
+            .is_some()
     });
     // A server answering an earlier version instrukt speaks gives its
     // catalog and its tool's result.
@@ -527,15 +523,13 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
 fn wait_for_binding(env: &TestEnv, session: &str) {
     let state = instrukt_core::home::Home::at_user_home(env.home().into());
     let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    // The runner has recorded the session as the conversation's: its start
+    // is done and the turn under way. The assignment itself answers from the
+    // binding made before the start.
     wait("the session's recorded binding", || {
-        instrukt_runner::assignments::resolve(
-            &state,
-            &caller,
-            instrukt_todos::work::recorded_assignment,
-            instrukt_company::conversations::conversation_assignment,
-        )
-        .unwrap()
-        .is_some()
+        instrukt_company::conversations::conversation_binding(&state, &caller)
+            .unwrap()
+            .is_some()
     });
 }
 

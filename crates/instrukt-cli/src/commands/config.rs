@@ -163,16 +163,10 @@ fn check_company_agent_scope(
         return Ok(None);
     };
     let assignment = authorization::caller(ctx)?.map(|(assignment, _)| assignment);
-    let own_company = match assignment.and_then(|a| a.company) {
-        Some(company) => company,
-        None => {
-            if let Some(company) = company_cwd(ctx) {
-                anyhow::bail!(
-                    "config access refused: this session works in company `{company}`'s home with no recorded binding yet; retry once bound, or have the local operator run outside any session"
-                );
-            }
-            return Ok(None);
-        }
+    // Confinement reads the session's recorded assignment, never where it
+    // stands: a conversation session is recorded from its first command.
+    let Some(own_company) = assignment.and_then(|a| a.company) else {
+        return Ok(None);
     };
 
     // Establish active turn's speaker and require is_admin && is_direct.
@@ -250,13 +244,6 @@ fn check_company_agent_scope(
     }
 
     Ok(Some(own_company))
-}
-
-fn company_cwd(ctx: &Ctx) -> Option<ProjectSlug> {
-    let companies = ctx.home.companies_dir().canonicalize().ok()?;
-    let here = ctx.cwd.canonicalize().ok()?;
-    let name = here.strip_prefix(&companies).ok()?.components().next()?;
-    ProjectSlug::parse(name.as_os_str().to_str()?).ok()
 }
 
 fn layer(global: bool, company: Option<&ProjectSlug>, ctx: &Ctx) -> anyhow::Result<Layer> {
