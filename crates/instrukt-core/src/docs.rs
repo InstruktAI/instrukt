@@ -119,6 +119,7 @@ pub use _position::{
     is_reserved_domain_folder,
 };
 pub use _refs::{RefTarget, Reference};
+pub(crate) use _render::render_unit_body;
 pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
 pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
 pub use _schema::{

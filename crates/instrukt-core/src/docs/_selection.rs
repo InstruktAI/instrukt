@@ -116,7 +116,9 @@ pub struct InFull {
     /// `project`), whose heading it sits under.
     pub position: String,
     /// Its body after the read pipeline: frontmatter and required reads
-    /// stripped, its own H1 first.
+    /// stripped, its own H1 first. A caller may hold a source's compressed
+    /// unit here instead, framed under an H1 naming the source; it is
+    /// demoted like any body.
     pub body: String,
     /// A procedure's `activation_trigger`, shown directly under its
     /// heading.

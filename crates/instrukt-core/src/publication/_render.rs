@@ -6,7 +6,10 @@
 //! the snippet requiring it, each once per file — in traversal order, under
 //! the heading of the position each belongs to; the section shapes are the
 //! docs context's ([`docs::Selection`]). Planned material is dropped and a
-//! pending snippet is never inlined.
+//! pending snippet is never inlined. A snippet whose compressed unit is
+//! current is held as that unit, framed under its id, and the file opens
+//! with the units' legend
+//! (`project/instrukt/spec/feature/publication/compressed-units`).
 //!
 //! Where the snippets and the domain indexes come from is a [`Source`]:
 //! the renderer reads a snippet, and a bare domain's `index.yaml`, only
@@ -31,6 +34,7 @@ use std::path::{Path, PathBuf};
 
 use super::_patch::Contribution;
 use super::_source::{Committed, EntryIndex};
+use super::_units::{self, Decision, Fallback, LEGEND, RepositoryUnits, UnitFinding};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
@@ -100,6 +104,8 @@ struct Expansion {
     seen: BTreeSet<SnippetId>,
     domains: BTreeSet<DomainName>,
     references: Vec<String>,
+    /// How many of the snippets in full are held as their units.
+    units: usize,
 }
 
 impl Expansion {
@@ -179,6 +185,7 @@ impl Renderer<'_> {
                 seen: expansion.seen.clone(),
                 domains: expansion.domains.clone(),
                 references: Vec::new(),
+                units: 0,
             };
             let names: &[&str] = if matches!(cli, "claude" | "claudeAgent") {
                 &["claude", "claudeAgent"]
@@ -245,14 +252,19 @@ impl Rendering<'_> {
     /// The root `AGENTS.md`'s text below the generated line: the rendering
     /// of `docs/project/index.yaml` (`expanded`, `listed`, then the
     /// project's triggered procedures), then the configured
-    /// responsibilities; empty when there are none.
-    fn root_agents(&self, project_index: &PositionIndex) -> Result<String, PublicationError> {
+    /// responsibilities; empty when there are none. With whether it holds a
+    /// unit.
+    fn root_agents(
+        &self,
+        project_index: &PositionIndex,
+    ) -> Result<(String, bool), PublicationError> {
         let mut expansion = Expansion::default();
         let index_file = "docs/project/index.yaml";
         self.expand(project_index.expanded(), index_file, &mut expansion)?;
         let listed = self.listings(project_index.listed(), index_file, &mut expansion)?;
         let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = self.triggered(|e| self.local(e), &shown);
+        let units = expansion.units > 0;
         let mut blocks = Vec::new();
         if !expansion.order.is_empty()
             || !expansion.references.is_empty()
@@ -275,7 +287,7 @@ impl Rendering<'_> {
         {
             blocks.push(configured);
         }
-        Ok(finish(&blocks.join("\n\n")))
+        Ok((finish(&blocks.join("\n\n")), units))
     }
 
     /// Whether `entry` is one of this project's own snippets.
@@ -337,10 +349,17 @@ impl Rendering<'_> {
                 for nested in &rendered.required_reads {
                     self.follow(nested, &source, into)?;
                 }
+                let body = match self.source.unit(id)? {
+                    Some(framed) => {
+                        into.units += 1;
+                        framed
+                    }
+                    None => rendered.text,
+                };
                 into.order.push(Entry::InFull(InFull {
                     id: id.clone(),
                     position: position_name(id),
-                    body: rendered.text,
+                    body,
                     trigger: self.entry(id).and_then(trigger_of).map(str::to_owned),
                 }));
                 Ok(())
@@ -440,6 +459,13 @@ trait Source {
         id: &SnippetId,
         file: &str,
     ) -> Result<Option<(Rendered, String)>, PublicationError>;
+
+    /// The framed and rendered unit the rendering holds in place of `id`'s
+    /// prose: `None` when `id` is held in prose, its unit stale or missing
+    /// (`project/instrukt/spec/feature/publication/compressed-units`).
+    fn unit(&self, _id: &SnippetId) -> Result<Option<String>, PublicationError> {
+        Ok(None)
+    }
 
     /// The `index.yaml` of the position addressed by `domain`, read when a
     /// rendering asks for it; `None` when it has none.
@@ -593,6 +619,42 @@ impl Source for Repository<'_> {
         Ok(Some((rendered, source)))
     }
 
+    /// A unit with findings is a finding of the rendering, which leaves the
+    /// file as it is.
+    fn unit(&self, id: &SnippetId) -> Result<Option<String>, PublicationError> {
+        let Some(snippet) = self.corpus.snippet(id) else {
+            return Ok(None);
+        };
+        let View::Visible { version, body } = snippet.view(Lens::Current) else {
+            return Ok(None);
+        };
+        let path = snippet.path().display().to_string();
+        let source = _units::Source::snippet(
+            id,
+            &path,
+            version.body(),
+            &body,
+            Lens::Current,
+            self.project,
+        );
+        match RepositoryUnits::of(self.tree).decide(&source) {
+            Decision::Unit(unit) => {
+                let cx = RenderContext {
+                    home: None,
+                    values: &self.values,
+                    project: self.project,
+                };
+                let rendered = docs::render_unit_body(&unit.body, &cx)
+                    .map_err(|e| self.failure(&unit.path, e))?;
+                Ok(Some(_units::frame(id.as_str(), &rendered.text)))
+            }
+            Decision::Prose(Fallback::Findings(findings)) => {
+                Err(PublicationError::UnitFindings { findings })
+            }
+            Decision::Prose(Fallback::Missing | Fallback::Stale(_)) => Ok(None),
+        }
+    }
+
     fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError> {
         super::_sync::committed_index(self.tree, &Position::of_domain(domain))
     }
@@ -712,6 +774,8 @@ pub enum RenderFindingKind {
     /// The entry index is, or lies behind, a symbolic link, through which
     /// nothing is read.
     LinkedIndex { index: String },
+    /// The unit of a document the rendering holds in full has a finding.
+    Unit { finding: UnitFinding },
 }
 
 impl std::fmt::Display for RenderFinding {
@@ -777,6 +841,10 @@ impl std::fmt::Display for RenderFinding {
             RenderFindingKind::CompanyListedCarried { document, carrier } => write!(
                 f,
                 "{path}: {document} is listed, but {carrier} in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed"
+            ),
+            RenderFindingKind::Unit { finding } => write!(
+                f,
+                "{path}: {finding}; the unit stands in for nothing until it is fixed or removed, and the file is left as it is until then"
             ),
             RenderFindingKind::LinkedIndex { index } => write!(
                 f,
@@ -919,8 +987,16 @@ fn render_project(
         project,
         index: &index,
     };
-    let text = match rendering.root_agents(&project_index) {
-        Ok(text) => text,
+    let (text, units) = match rendering.root_agents(&project_index) {
+        Ok(rendered) => rendered,
+        Err(PublicationError::UnitFindings { findings }) => {
+            plan.findings
+                .extend(findings.into_iter().map(|finding| RenderFinding {
+                    path: path.clone(),
+                    kind: RenderFindingKind::Unit { finding },
+                }));
+            return Ok(());
+        }
         Err(PublicationError::CommittedDirectives { findings }) => {
             plan.findings
                 .extend(findings.into_iter().map(|finding| RenderFinding {
@@ -948,9 +1024,19 @@ fn render_project(
     plan.writes.push(PlannedFile {
         current: tree.file(AGENTS_FILE).map(<[u8]>::to_vec),
         path,
-        text: format!("{GENERATED_LINE}\n{text}"),
+        text: format!("{}{text}", opening(units)),
     });
     Ok(())
+}
+
+/// A committed entrypoint's opening: the generated line, then, when the
+/// file holds a unit, the legend.
+pub(super) fn opening(units: bool) -> String {
+    if units {
+        format!("{GENERATED_LINE}\n{LEGEND}\n\n")
+    } else {
+        format!("{GENERATED_LINE}\n")
+    }
 }
 
 /// Whether `entry` is a published snippet of `domain`.
@@ -1100,6 +1186,154 @@ mod tests {
             .iter()
             .find(|file| file.path == Path::new(AGENTS_FILE))
             .unwrap()
+    }
+
+    /// A unit of `source`, current when `current`, with `body`.
+    fn unit_of(source: &str, current: bool, body: &str) -> String {
+        let prose = docs::split_frontmatter(source).1;
+        let digest = if current {
+            _units::source_digest(prose)
+        } else {
+            _units::source_digest("earlier prose")
+        };
+        format!("---\nsource_sha256: {digest}\nmodel: test-model\n---\n{body}")
+    }
+
+    /// A project tree whose house policy requires its style policy, each
+    /// with the unit `units` gives it.
+    fn with_units(house_unit: Option<String>, style_unit: Option<String>) -> Committed {
+        let mut files: Vec<(&str, String)> = vec![
+            (CONFIG_FILE_NAME, LAYER.to_owned()),
+            ("docs/project/index.yaml", INDEX.to_owned()),
+            ("docs/project/policy/house.md", house()),
+            ("docs/project/policy/style.md", style()),
+        ];
+        if let Some(unit) = house_unit {
+            files.push(("docs/_compressed/project/policy/house.md", unit));
+        }
+        if let Some(unit) = style_unit {
+            files.push(("docs/_compressed/project/policy/style.md", unit));
+        }
+        let borrowed: Vec<(&str, &str)> = files.iter().map(|(p, t)| (*p, t.as_str())).collect();
+        Committed::of(&borrowed)
+    }
+
+    fn house() -> String {
+        policy("Be kind.", &["project/demo/policy/style"])
+    }
+
+    fn style() -> String {
+        policy("Write plainly.", &[])
+    }
+
+    #[test]
+    fn a_current_unit_is_held_framed_under_its_id_after_one_legend() {
+        let tree = with_units(
+            Some(unit_of(
+                &house(),
+                true,
+                "- MUST be kind -- people work here\n",
+            )),
+            Some(unit_of(
+                &style(),
+                true,
+                "- PREFER plain words -- they carry\n",
+            )),
+        );
+        let plan = rendered(tree);
+        assert_eq!(plan.findings, []);
+        insta::assert_snapshot!(root(&plan).text);
+    }
+
+    #[test]
+    fn a_stale_unit_holds_its_source_in_prose_and_the_others_compressed() {
+        let tree = with_units(
+            Some(unit_of(
+                &house(),
+                true,
+                "- MUST be kind -- people work here\n",
+            )),
+            Some(unit_of(&style(), false, "- PREFER plain words\n")),
+        );
+        let plan = rendered(tree);
+        assert_eq!(plan.findings, []);
+        insta::assert_snapshot!(root(&plan).text);
+    }
+
+    #[test]
+    fn a_unit_with_a_finding_leaves_the_root_file_as_it_is() {
+        let tree = with_units(
+            Some(unit_of(&house(), true, "<!-- @exec: true -->\n")),
+            None,
+        );
+        let plan = rendered(tree);
+        assert_eq!(plan.writes, []);
+        assert!(matches!(
+            plan.findings.as_slice(),
+            [RenderFinding {
+                kind: RenderFindingKind::Unit { .. },
+                ..
+            }]
+        ));
+    }
+
+    #[test]
+    fn the_commit_the_index_and_the_working_tree_render_the_same_units() {
+        let dir = tempfile::tempdir().unwrap();
+        let root_dir = dir.path();
+        let files = [
+            (CONFIG_FILE_NAME, LAYER.to_owned()),
+            ("docs/project/index.yaml", INDEX.to_owned()),
+            ("docs/project/policy/house.md", house()),
+            ("docs/project/policy/style.md", style()),
+            (
+                "docs/_compressed/project/policy/house.md",
+                unit_of(&house(), true, "- MUST be kind -- people work here\n"),
+            ),
+        ];
+        for (path, text) in &files {
+            let target = root_dir.join(path);
+            std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+            std::fs::write(target, text).unwrap();
+        }
+        crate::git::run(root_dir, ["init", "-q", "--initial-branch=main"]).unwrap();
+        crate::git::run(root_dir, ["add", "--all"]).unwrap();
+        crate::git::run(
+            root_dir,
+            [
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "-m",
+                "docs",
+            ],
+        )
+        .unwrap();
+        let head = crate::ids::CommitSha::parse(
+            crate::git::run(root_dir, ["rev-parse", "HEAD"])
+                .unwrap()
+                .trim(),
+        )
+        .unwrap();
+        let text = |tree: Committed| root(&rendered(tree)).text.clone();
+        let committed = text(Committed::read(root_dir, &head).unwrap());
+        assert_eq!(
+            text(Committed::read_index(root_dir, None).unwrap()),
+            committed
+        );
+        assert_eq!(text(Committed::working_tree(root_dir).unwrap()), committed);
+        let expected = text(with_units(
+            Some(unit_of(
+                &house(),
+                true,
+                "- MUST be kind -- people work here\n",
+            )),
+            None,
+        ));
+        assert_eq!(committed, expected);
     }
 
     #[test]

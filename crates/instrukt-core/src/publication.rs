@@ -337,6 +337,10 @@ pub enum PublicationError {
     /// format does not support.
     #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     CommittedDirectives { findings: Vec<crate::docs::Finding> },
+    /// The unit of a source a committed rendering holds in full has
+    /// findings, which are the rendering's.
+    #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    UnitFindings { findings: Vec<UnitFinding> },
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,

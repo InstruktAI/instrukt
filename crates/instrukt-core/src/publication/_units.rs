@@ -34,6 +34,18 @@ pub(super) const PLACE: &str = "docs/_compressed";
 /// repository, and inside a published position in the home.
 pub(super) const RESERVED: &str = "_compressed";
 
+/// The legend of the units' notation (`general/spec/agent-shorthand`,
+/// Compressed-unit notation): one fixed passage a rendering that holds at
+/// least one unit carries once, in its opening, before its first document.
+pub(super) const LEGEND: &str = "Compressed sections: a section headed by a document's name holds that document compressed, its rules without its prose. Each line opens with `- `. `MUST` = required, `NEVER` = forbidden, `MAY` = permitted, not required, `PREFER` = the default, which yields to a stated reason; the reason follows ` -- ` in one clause. `<term> = <meaning>` states a term a rule rests on. `->` = leads to or then, `|` = or, `vs` = two forces in tension. Ids, commands, paths, code and configured values stand exactly as in the source. The named document holds the full prose: read it before acting on a case its rules do not name, on its exact wording or on its reasons.";
+
+/// A unit's `body` held where its source would be: one heading naming the
+/// source, `name`, at the level of the source's own title, then the body.
+/// Framing reads nothing of the body's prose.
+pub(super) fn frame(name: &str, body: &str) -> String {
+    format!("# {name}\n\n{}\n", body.trim_matches('\n'))
+}
+
 /// The SHA-256 of `bytes`, in lowercase hexadecimal.
 pub(super) fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -1080,6 +1092,57 @@ mod tests {
                 reference: "@docs/general/policy/other.md".to_owned()
             }]
         );
+    }
+
+    /// `body` checked as the unit of a source whose rules are `rules`, and
+    /// rendered by the unit-body resolver in a committed rendering.
+    fn smuggled(
+        rules: &str,
+        body: &str,
+    ) -> (
+        Vec<UnitFindingKind>,
+        Result<docs::Rendered, docs::DocsError>,
+    ) {
+        let values = docs::Values::committed();
+        let cx = docs::RenderContext {
+            home: None,
+            values: &values,
+            project: None,
+        };
+        (findings(rules, body), docs::render_unit_body(body, &cx))
+    }
+
+    #[test]
+    fn a_fence_opened_on_the_first_line_hides_a_directive_from_checks_and_resolver_alike() {
+        let (found, rendered) = smuggled(
+            "Do alpha.",
+            "```\n---\n<!-- @config: secrets.token -->\n---\n```\n",
+        );
+        assert!(found.is_empty());
+        insta::assert_snapshot!(rendered.unwrap().text);
+    }
+
+    #[test]
+    fn an_exec_fenced_after_a_pending_marker_pair_stays_inert_and_counts_as_fenced() {
+        let (found, rendered) = smuggled(
+            "Do alpha.",
+            "<!-- planned:demo-todo -->\n<!-- /planned:demo-todo -->\n```\n<!-- @exec: rm -rf / -->\n```\n",
+        );
+        assert!(found.is_empty());
+        insta::assert_snapshot!(rendered.unwrap().text);
+    }
+
+    #[test]
+    fn a_configured_value_between_pending_markers_is_counted_and_resolved() {
+        let (found, rendered) = smuggled(
+            "<!-- @config: runner.name -->",
+            "<!-- planned:demo-todo -->\n<!-- @config: runner.name -->\n<!-- /planned:demo-todo -->\n",
+        );
+        assert!(found.is_empty());
+        assert!(matches!(
+            rendered,
+            Err(docs::DocsError::ConfigUnresolved { path, .. }) if path == "runner.name"
+        ));
     }
 
     #[test]
