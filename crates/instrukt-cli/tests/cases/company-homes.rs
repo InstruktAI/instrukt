@@ -635,4 +635,65 @@ fn another_computer_gets_an_existing_companys_home() {
     // Nothing of the repository on GitHub is changed.
     assert_eq!(writes(&github), Vec::<String>::new());
     assert_eq!(env.git(&remote, ["for-each-ref"]), refs);
+
+    // Another company's repository was made before generation: it holds a
+    // README and no project layer.
+    let made = env.path("made-before-generation");
+    std::fs::create_dir_all(&made).unwrap();
+    env.git(&made, ["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(made.join("README.md"), "# Globex\n").unwrap();
+    env.git(&made, ["add", "README.md"]);
+    env.git(&made, ["commit", "--quiet", "-m", "Globex"]);
+    let globex_remote = remotes.join("homes/company-globex.git");
+    env.git(
+        &made,
+        [
+            std::ffi::OsStr::new("clone"),
+            std::ffi::OsStr::new("--quiet"),
+            std::ffi::OsStr::new("--bare"),
+            made.as_os_str(),
+            globex_remote.as_os_str(),
+        ],
+    );
+    let globex_refs = env.git(&globex_remote, ["for-each-ref"]);
+    // Their agent adds that company by its key: the home is its checkout,
+    // and the report names what does not apply there and the way to it.
+    let added = env
+        .run(&env.path(""), ["init", "--company", "globex"])
+        .success();
+    insta::assert_snapshot!(
+        "company-without-project-layer",
+        scrubbed(&env, &stdout(&added))
+    );
+    let globex = env.instrukt_home().join("companies/globex");
+    assert_eq!(
+        env.git(&globex, ["rev-parse", "HEAD"]),
+        env.git(&globex_remote, ["rev-parse", "main"])
+    );
+    assert_eq!(writes(&github), Vec::<String>::new());
+    assert_eq!(env.git(&globex_remote, ["for-each-ref"]), globex_refs);
+    // The door it names publishes the home once the repository's default
+    // branch holds a project layer declaring it a company's.
+    std::fs::write(
+        globex.join("instrukt.yaml"),
+        "schema_version: 6\nproject: company-globex\ncompany_repository: true\n",
+    )
+    .unwrap();
+    env.git(&globex, ["add", "instrukt.yaml"]);
+    env.git(
+        &globex,
+        [
+            "commit",
+            "--quiet",
+            "-m",
+            "Declare the company's repository",
+        ],
+    );
+    env.git(&globex, ["push", "--quiet", "origin", "main"]);
+    env.run(&globex, ["sync"]).success();
+    assert!(
+        env.instrukt_home()
+            .join("state/publication/company-globex.yaml")
+            .is_file()
+    );
 }

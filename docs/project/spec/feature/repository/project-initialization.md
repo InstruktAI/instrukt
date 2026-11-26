@@ -121,6 +121,11 @@ who may run it is
   `--admin` were not used and that nothing on GitHub changed.
 - It reports what keeps automatic review from the home on this computer, as
   configuration validation names it, without failing.
+- Where the repository it checked out holds no project layer, it reports that
+  neither publication nor automatic review applies to the home, and that once
+  the repository's default branch holds a project layer declaring it a
+  company's repository, `instrukt sync` in the home publishes it. It does not
+  fail.
 - A command interrupted while creating the repository is completed by running
   it again with the same key: the organisation, the repository, the name and
   the administrator come from the creation it recorded, and flags given again

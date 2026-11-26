@@ -81,6 +81,9 @@ pub enum CompanySync {
     Unchanged,
     /// The sync refused or failed: why. The home stays.
     NotPublished(String),
+    /// The repository holds no project layer, so the home is no project to
+    /// publish and nothing was synced. The home stays.
+    NoProjectLayer,
 }
 
 /// What `instrukt init --company` did.
@@ -234,33 +237,39 @@ pub fn adopt_company(
         None => CompanyOrigin::ByContract,
     };
     let (settings_written, hooks) = check_out(home, key, &staging, &remote, &home_dir)?;
-    let sync = match publication::sync(&publication::SyncRequest {
-        home,
-        cwd: &home_dir,
-        wiring: ports.wiring,
-        now: ports.now,
-    }) {
-        Ok(report) => match report.outcome {
-            publication::SyncOutcome::Published { .. } => CompanySync::Published,
-            publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
-            publication::SyncOutcome::Refused { refusal, .. } => {
+    // A repository checked out by contract may hold no project layer: the
+    // home stays, and there is nothing to publish.
+    let sync = if !present(&home_dir.join(config::CONFIG_FILE_NAME))? {
+        CompanySync::NoProjectLayer
+    } else {
+        match publication::sync(&publication::SyncRequest {
+            home,
+            cwd: &home_dir,
+            wiring: ports.wiring,
+            now: ports.now,
+        }) {
+            Ok(report) => match report.outcome {
+                publication::SyncOutcome::Published { .. } => CompanySync::Published,
+                publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
+                publication::SyncOutcome::Refused { refusal, .. } => {
+                    tracing::warn!(
+                        event = "company_home_publication_refused",
+                        company = %key,
+                        reason = %refusal,
+                        "{}", NOT_PUBLISHED
+                    );
+                    CompanySync::NotPublished(refusal.to_string())
+                }
+            },
+            Err(error) => {
                 tracing::warn!(
-                    event = "company_home_publication_refused",
+                    event = "company_home_publication_failed",
                     company = %key,
-                    reason = %refusal,
+                    error = %error,
                     "{}", NOT_PUBLISHED
                 );
-                CompanySync::NotPublished(refusal.to_string())
+                CompanySync::NotPublished(error.to_string())
             }
-        },
-        Err(error) => {
-            tracing::warn!(
-                event = "company_home_publication_failed",
-                company = %key,
-                error = %error,
-                "{}", NOT_PUBLISHED
-            );
-            CompanySync::NotPublished(error.to_string())
         }
     };
     tracing::info!(

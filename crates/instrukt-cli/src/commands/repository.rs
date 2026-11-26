@@ -151,8 +151,15 @@ fn run_init_company(args: InitArgs, key: ProjectSlug, ctx: &mut Ctx) -> anyhow::
         repository::CompanySync::NotPublished(why) => {
             format!("not published: {why}; the home stays, and `instrukt sync` in it publishes it")
         }
+        repository::CompanySync::NoProjectLayer => format!(
+            "does not apply: the repository holds no project layer ({}), so neither publication nor automatic review applies to the home; once its default branch holds one declaring the repository a company's, `instrukt sync` in the home publishes it",
+            instrukt_core::config::CONFIG_FILE_NAME
+        ),
     };
     ctx.out.line(&format!("publication: {published}"))?;
+    if report.sync == repository::CompanySync::NoProjectLayer {
+        return Ok(ExitCode::SUCCESS);
+    }
     // What keeps automatic review from the home is reported, never failed.
     let layer = instrukt_core::config::Layer::Project(report.home.clone());
     let inspection = ctx.home.for_inspection();
