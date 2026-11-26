@@ -57,6 +57,12 @@ require todo autostart. A flavor declares its module requirements through
 fingerprint; reporting uses `instrukt eval report` and the flavor's report
 procedure. There is reportable work only where work passes through the record.
 
+<!-- planned:fleet-eval-aggregation -->
+A report covering other computers reaches them through the runner's fleet query
+over the cluster connection each computer already has, whether or not history
+is on there; it adds no module, switch or connection.
+<!-- /planned:fleet-eval-aggregation -->
+
 ### Context relationships
 
 Customer / Supplier rows name the supplier first and the customer second.
@@ -124,6 +130,18 @@ Fleet attention adds these crossings
 | work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an attention episode |
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 
+<!-- planned:fleet-eval-aggregation -->
+The evaluation report across computers adds these crossings
+(`project/instrukt/spec/feature/work/eval-report`). The runner owns the fleet
+query and the fleet membership record (`project/instrukt/spec/domain/runner`);
+work owns what a computer answers, which computers a report covers and how
+their answers pool.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
+| work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
+<!-- /planned:fleet-eval-aggregation -->
 
 A requested review (`project/instrukt/spec/feature/runner/requested-review`)
 adds one crossing and is no part of the review gate: it emits no event and the
