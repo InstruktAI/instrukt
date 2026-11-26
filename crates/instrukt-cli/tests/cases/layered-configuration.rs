@@ -137,7 +137,7 @@ fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL8
 #[test]
-fn thread_finishing_resolves_from_the_machine_entry_and_the_removed_retirement_is_refused() {
+fn thread_finishing_resolves_from_the_machine_entry() {
     let mut env = TestEnv::new();
     let fake = t3::FakeT3::create(&env);
     write_global(&env, MACHINE);
@@ -194,16 +194,20 @@ fn thread_finishing_resolves_from_the_machine_entry_and_the_removed_retirement_i
     );
     assert_eq!(rendered(), shipped);
 
+    // A current machine layer naming an action the runtime entry does not
+    // define; an older one would be converted instead.
     write_global(
         &env,
-        &format!("{MACHINE}runtimes:\n  t3:\n    retire_thread: Archive the finished thread.\n"),
+        &format!(
+            "schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nruntimes:\n  t3:\n    retire_thread: Archive the finished thread.\n"
+        ),
     );
-    let retired = env
+    let undefined = env
         .run(env.path("").as_path(), ["config", "validate", "--global"])
         .failure();
     // Only the machine layer's own finding; the agents file's findings are not this scenario's.
-    let retired = stdout(&env, &retired);
-    let layer: Vec<_> = retired
+    let undefined = stdout(&env, &undefined);
+    let layer: Vec<_> = undefined
         .lines()
         .filter(|line| line.contains("instrukt.yaml"))
         .collect();
