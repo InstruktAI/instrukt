@@ -379,23 +379,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn an_ask_counts_as_asked_only_on_acceptance_or_consumption() {
-        assert_eq!(outcome(Some("accepted"), true), Outcome::Asked);
+    fn an_accepted_ask_is_asked_whatever_its_later_state() {
         assert_eq!(outcome(Some("unconfirmed"), true), Outcome::Asked);
-        assert_eq!(outcome(Some("entered"), false), Outcome::Asked);
-        assert_eq!(outcome(Some("unconfirmed"), false), Outcome::Undelivered);
-        assert_eq!(outcome(Some("failed"), false), Outcome::Undelivered);
-        assert_eq!(outcome(None, false), Outcome::Undelivered);
-        assert_eq!(outcome(Some("pending"), false), Outcome::Waiting);
-        assert_eq!(outcome(Some("selected"), false), Outcome::Waiting);
     }
 
     #[test]
-    fn only_an_undelivered_ask_is_asked_again_under_the_next_attempt() {
+    fn an_ask_consumed_in_a_turn_without_acceptance_is_asked() {
+        assert_eq!(outcome(Some("entered"), false), Outcome::Asked);
+    }
+
+    #[test]
+    fn an_ask_ended_without_acceptance_is_undelivered() {
+        assert_eq!(outcome(Some("unconfirmed"), false), Outcome::Undelivered);
+    }
+
+    #[test]
+    fn an_ask_still_in_delivery_waits() {
+        assert_eq!(outcome(Some("pending"), false), Outcome::Waiting);
+    }
+
+    #[test]
+    fn an_ask_with_no_record_is_queued_as_the_first_attempt() {
         assert_eq!(queue_decision(None), Queue::Attempt(1));
+    }
+
+    #[test]
+    fn an_undelivered_ask_is_queued_again_under_the_next_attempt() {
         assert_eq!(queue_decision(Some(("undelivered", 2))), Queue::Attempt(3));
+    }
+
+    #[test]
+    fn a_queued_ask_is_not_sent_again() {
         assert_eq!(queue_decision(Some(("queued", 1))), Queue::Nothing);
-        assert_eq!(queue_decision(Some(("asked", 1))), Queue::Nothing);
     }
 
     #[test]

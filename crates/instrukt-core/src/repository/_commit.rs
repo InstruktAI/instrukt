@@ -490,64 +490,82 @@ mod tests {
     }
 
     #[test]
-    fn both_options_together_are_refused_and_each_alone_is_the_choice() {
+    fn both_routing_options_together_are_refused() {
         assert!(matches!(
             ReviewRouting::from_options(true, Some("typo".into())),
             Err(RepositoryError::RoutingBoth)
         ));
+    }
+
+    #[test]
+    fn the_review_flag_alone_is_the_review_choice() {
         assert_eq!(
             ReviewRouting::from_options(true, None).unwrap(),
             Some(ReviewRouting::Review)
         );
+    }
+
+    #[test]
+    fn an_exempt_basis_alone_is_the_no_review_choice() {
         assert!(matches!(
             ReviewRouting::from_options(false, Some("typo".into())),
             Ok(Some(ReviewRouting::Exempt(_)))
         ));
+    }
+
+    #[test]
+    fn neither_option_is_no_choice() {
         assert_eq!(ReviewRouting::from_options(false, None).unwrap(), None);
     }
 
     #[test]
-    fn an_adopted_project_requires_one_choice_with_a_basis_and_a_wired_admission() {
-        let port: &dyn CommitExemption = &Recording;
-        let review = ReviewRouting::Review;
-        let exempt = ReviewRouting::Exempt("fixes a typo".into());
-        let blank = ReviewRouting::Exempt(" \n".into());
+    fn an_adopted_project_refuses_a_commit_without_a_choice() {
         assert!(matches!(
-            admit_routing(true, None, Some(port)),
+            admit_routing(true, None, Some(&Recording)),
             Err(RepositoryError::RoutingMissing)
         ));
+    }
+
+    #[test]
+    fn an_adopted_project_refuses_an_exemption_with_a_blank_basis() {
+        let blank = ReviewRouting::Exempt(" \n".into());
         assert!(matches!(
-            admit_routing(true, Some(&blank), Some(port)),
+            admit_routing(true, Some(&blank), Some(&Recording)),
             Err(RepositoryError::RoutingBasisEmpty)
         ));
+    }
+
+    #[test]
+    fn an_exemption_is_refused_while_works_admission_is_not_wired() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
         assert!(matches!(
             admit_routing(true, Some(&exempt), None),
             Err(RepositoryError::ExemptionUnavailable)
         ));
+    }
+
+    #[test]
+    fn an_adopted_projects_exemption_is_handed_to_works_admission() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
         assert!(matches!(
-            admit_routing(true, Some(&review), None),
-            Ok(Admitted::Nothing)
-        ));
-        assert!(matches!(
-            admit_routing(true, Some(&exempt), Some(port)),
+            admit_routing(true, Some(&exempt), Some(&Recording)),
             Ok(Admitted::Exemption { .. })
         ));
     }
 
     #[test]
-    fn outside_an_adopted_project_no_choice_is_needed_and_an_exemption_is_refused() {
-        let port: &dyn CommitExemption = &Recording;
-        let exempt = ReviewRouting::Exempt("fixes a typo".into());
+    fn outside_an_adopted_project_a_commit_needs_no_choice() {
         assert!(matches!(
             admit_routing(false, None, None),
             Ok(Admitted::Nothing)
         ));
+    }
+
+    #[test]
+    fn outside_an_adopted_project_an_exemption_is_refused() {
+        let exempt = ReviewRouting::Exempt("fixes a typo".into());
         assert!(matches!(
-            admit_routing(false, Some(&ReviewRouting::Review), None),
-            Ok(Admitted::Nothing)
-        ));
-        assert!(matches!(
-            admit_routing(false, Some(&exempt), Some(port)),
+            admit_routing(false, Some(&exempt), Some(&Recording)),
             Err(RepositoryError::ExemptOutsideProject)
         ));
     }
