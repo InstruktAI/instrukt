@@ -133,19 +133,12 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 
 ### Terminal Child Cleanup
 
-<!-- planned-change:delegator-reply-checks -->
-At handoff, execute `instrukt todo update <slug> --unclaim` and confirm its
-outcome. The next owner waits on claim release, not on the end of this
-session. An unfinished human conversation retains the session, never the
-claim. A refused release remains unresolved.
-<!-- change:delegator-reply-checks -->
 At handoff, clear your scheduled reply check
 (`general/procedure/ai-to-ai-operations`), then execute
 `instrukt todo update <slug> --unclaim` and confirm its outcome. The next
 owner waits on claim release, not on the end of this session. An unfinished
 human conversation retains the session, never the claim. A refused release
 remains unresolved.
-<!-- /planned-change:delegator-reply-checks -->
 
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
@@ -191,14 +184,6 @@ departure in the todo `log`. A status or a worker's justification widens no brie
 | `ended failed` | Read the failure and record evidence; keep the step pending unless its evidence establishes completion. |
 | `gone` | Keep the step pending, inspect confirmed absence and select recovery under the retained attempt. |
 
-<!-- planned-change:delegator-reply-checks -->
-A failed native status observation remains unknown; the governing parent
-retains its unresolved attempt. For a child ending without required evidence, read the
-reported closing message and current record, then send the bounded recovery
-to its retained session when it can continue. Preserve an unavailable attempt
-and route its grounded failure under the recovery contract. The runtime delivers
-child endings to this parent; this parent owns the recovery decision.
-<!-- change:delegator-reply-checks -->
 A failed native status observation remains unknown; the governing parent
 retains its unresolved attempt. For a child ending without required evidence, read the
 reported closing message and current record, then send the bounded recovery
@@ -206,24 +191,9 @@ to its retained session when it can continue. Preserve an unavailable attempt
 and route its grounded failure under the recovery contract. The runtime delivers
 child endings to this parent, and its scheduled reply check finds an ending
 that never arrives; this parent owns the recovery decision.
-<!-- /planned-change:delegator-reply-checks -->
 
 ### When Attention Arrives
 
-<!-- planned-change:delegator-reply-checks -->
-1. Read the native result's child id, then its role/attempt binding and report.
-   Keep finished-turn, failed-turn and input-wait accounts distinct; a missing
-   message is an evidence gap. Read later human input before using the observation. Apply current steering
-   and preserve any explicit boundary; stale dispatch assumptions supply no authority.
-2. Read native evidence, the session conversation and work artifacts under
-   `general/procedure/ai-to-ai-operations`. Distinguish reported-time evidence
-   from current evidence. An unchanged conversation does not dismiss a failure.
-3. For an obstruction, use When Worker Needs Help. For apparent completion,
-   verify the required report and stamp before re-deriving the next action.
-4. Yield while valid work continues. Native results restore parent attention;
-   this procedure adds no timer or terminal polling loop.
-5. Send substantive next work or recovery, never acknowledgement-only guidance.
-<!-- change:delegator-reply-checks -->
 1. Read the native result's child id, then its role/attempt binding and report.
    Keep finished-turn, failed-turn and input-wait accounts distinct; a missing
    message is an evidence gap. Read later human input before using the observation. Apply current steering
@@ -237,7 +207,6 @@ that never arrives; this parent owns the recovery decision.
    check of `general/procedure/ai-to-ai-operations` restore parent attention;
    this procedure adds no terminal polling loop.
 5. Send substantive next work or recovery, never acknowledgement-only guidance.
-<!-- /planned-change:delegator-reply-checks -->
 
 ### When Worker Needs Help
 
@@ -273,19 +242,6 @@ step. Read the failure evidence before selecting recovery. A failed send proves
 only a delivery failure; silence proves neither failed startup nor an unusable
 session. Preserve the recorded session and any work already produced.
 
-<!-- planned-change:delegator-reply-checks -->
-Inspect through configured runtime status/conversation reads and work records.
-Recover an executing worker within its brief through native child messaging. Availability selection belongs
-to the runtime checks and ordered dispatch contract; it supplies no manual
-provider-status mutation, restart or quota timer. Distinguish a start failure
-from a failed observation and from execution that began and remains incomplete.
-When evidence establishes rejection before any session was created, retry
-through the native runtime's supported availability selection. An ambiguous start
-retains its identity and pending work for reconciliation; apart from finishing
-completed todo orchestrator threads, session ending and cleanup belong to the
-runtime. If
-recovery cannot complete, preserve the pending step and report the anomaly.
-<!-- change:delegator-reply-checks -->
 Inspect through configured runtime status/conversation reads and work records.
 Recover an executing worker within its brief through native child messaging. Availability selection belongs
 to the runtime checks and ordered dispatch contract; it supplies no manual
@@ -299,7 +255,6 @@ retains its identity and pending work for reconciliation; apart from finishing
 completed todo orchestrator threads, session ending and cleanup belong to the
 runtime. If
 recovery cannot complete, preserve the pending step and report the anomaly.
-<!-- /planned-change:delegator-reply-checks -->
 
 ### Review Threshold Handling (Orchestrator-Owned)
 

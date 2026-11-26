@@ -126,7 +126,6 @@ lifecycle contract.
    `instrukt todo update <slug> --unclaim`. Conclude a completed discussion through the configured runtime discussion
    instruction and record the contribution's handoff. Apart from finishing completed todo orchestrator threads, the runtime owns session ending and cleanup.
 
-<!-- planned:delegator-reply-checks -->
 **Scheduled reply check** (`general/principle/parallel-work`). While a reply
 you expect is still outstanding when your turn yields — from a child or helper
 you dispatched, or to a message you sent that awaits an answer — keep one
@@ -143,7 +142,6 @@ An awaited item that is itself an execution the runner started is the
 runner's to recover, not this check's. Where the runtime has no scheduler,
 its value says so: report that gap with your outcome and rely on native
 delivery.
-<!-- /planned:delegator-reply-checks -->
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
 It messages or links other sessions only where its brief authorizes that

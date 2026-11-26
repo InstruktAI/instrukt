@@ -955,4 +955,26 @@ mod tests {
         ));
         assert_eq!(cfg.runner_runtime().unwrap(), Runtime::COMPILED);
     }
+
+    #[test]
+    fn every_agent_action_resolves_beneath_a_partial_machine_entry() {
+        let env = Env::default();
+        let shipped = config("schema_version: 1\nrunner: {runtime: t3}\n", None);
+        let machine = config(
+            "schema_version: 1\nrunner: {runtime: t3}\n\
+             runtimes: {t3: {inspect_thread: Inspect the child natively.}}\n",
+            None,
+        );
+        for (name, _) in super::super::_runtime::ACTIONS {
+            let path = format!("runtime.{name}");
+            let instruction = shipped.get_str(&path, &env).unwrap();
+            assert!(!instruction.trim().is_empty(), "{name}");
+            let resolved = machine.get_str(&path, &env).unwrap();
+            if name == "inspect_thread" {
+                assert_ne!(resolved, instruction, "{name}");
+            } else {
+                assert_eq!(resolved, instruction, "{name}");
+            }
+        }
+    }
 }
