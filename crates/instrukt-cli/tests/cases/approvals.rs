@@ -375,7 +375,7 @@ fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation
     );
 }
 
-// spec: project/instrukt/spec/feature/work/approvals UC-AP2
+// spec: project/instrukt/spec/feature/work/approvals UC-AP5
 #[test]
 fn unchanged_intent_recorded_from_its_conversation_opens_the_intent_check() {
     let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
