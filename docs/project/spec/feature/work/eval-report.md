@@ -14,18 +14,36 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 
 ### Evidence source
 
+<!-- planned-change:fleet-eval-aggregation -->
 `instrukt eval report` produces HTML from this computer's work record. The
 report uses recorded evidence rather than a separate eval log. There is only
 something to evaluate where work passes through the record.
+<!-- change:fleet-eval-aggregation -->
+`instrukt eval report` produces HTML from the work record of this computer and
+of each other computer the request names. The report uses recorded evidence
+rather than a separate eval log. There is only something to evaluate where
+work passes through the record.
+<!-- /planned-change:fleet-eval-aggregation -->
 
 `--since <date>` selects the history range. `--out <path>` selects the HTML
 destination, defaulting to the current project’s `scratchpad/eval/index.html`.
 With no recorded work, the report says so.
 
+<!-- planned-change:fleet-eval-aggregation -->
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is
 read from this computer's work record; the report reads nothing from GitHub.
 The report takes no options beyond `--since` and `--out`.
+<!-- change:fleet-eval-aggregation -->
+One report covers every project known to the publication state of each
+contributing computer, grouped by project, with the current project first. A
+project recorded on several computers under the same project slug is one
+project in the report. Each computer's part of a project's record is read
+from that computer's own work record; the report reads nothing from GitHub,
+from an agent runtime's own state or from history. Beyond `--since` and
+`--out`, the report takes only the other computers to include, named by their
+instrukt computer identities.
+<!-- /planned-change:fleet-eval-aggregation -->
 
 Model identity, version and eval fingerprint come from the stamps owned by
 `project/instrukt/spec/feature/work/stamps`. Report generation does not
@@ -75,6 +93,41 @@ separate logging service.
 - **Human intervention:** stamps marked `human_involved`, human approvals,
   change requests, and acts whose actor is a person or a GitHub actor.
 
+<!-- planned:fleet-eval-aggregation -->
+### Computers in a report
+
+A report that names no other computer is this computer's alone: it reads as
+described above and needs no cluster Redis.
+
+A named computer contributes when its `instrukt run` is running and reaches
+the cluster store; requests and answers travel through the runner's bounded
+fleet query (`project/instrukt/spec/domain/runner`). It answers from its own
+work record and publication state, applying the requested range, whether or
+not history is switched on there. Its answer holds, per project, window and
+model, only the outcome measures, each window's eval set with its first and
+last stamp times and the commits that computer records setting it, and the
+limitations it found. No stamp, artifact, findings report or conversation
+leaves the computer, and no computer but the requesting one writes a report.
+
+Each contributing computer forms its windows as this spec describes. In the
+report, a project's windows from every contributing computer follow one
+another in the order of their first stamps, and a window that follows one
+holding the same eval set joins it: the joined window spans the first and last
+times of both, its outcome measures add per model and in the human row, and
+the commits named setting its eval set are those either names. A todo's
+record is held on one computer only
+(`project/instrukt/spec/feature/work/state-database`); measures from different
+computers are added. A report of one computer shows exactly that computer's
+windows.
+
+The report names every computer whose answer it holds, and each limitation a
+computer reports appears under that computer's identity. The report waits a
+bounded time for answers. A named computer that does not answer in that time,
+cannot be reached through the cluster store, or answers in a form this
+computer cannot read is named as a limitation of the report with that reason,
+and the report is written from the answers it has.
+<!-- /planned:fleet-eval-aggregation -->
+
 ## Use cases
 
 ### UC-ER1: Compare delivery quality across process changes
@@ -85,6 +138,20 @@ separate logging service.
   Then they receive a readable report comparing the available outcomes over time
   And can distinguish process-document changes from changes in the model used
 ```
+
+<!-- planned:fleet-eval-aggregation -->
+### UC-ER2: Compare delivery quality across a developer's computers
+
+```gherkin
+  Given a developer records work on several of their computers
+  When they request an evaluation report that includes those computers
+  Then they receive one report combining the outcomes every answering computer recorded, project by project and window by window
+  And the report names the computers whose outcomes it holds
+  But when an included computer does not answer
+  Then the report is still written from the computers that answered
+  And it names the computer that did not answer as a limitation of the comparison
+```
+<!-- /planned:fleet-eval-aggregation -->
 
 ## See Also
 - [project/instrukt/spec/domain/work](../../domain/work.md)
