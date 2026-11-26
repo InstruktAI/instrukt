@@ -1729,25 +1729,35 @@ fn keep(
     let wanted = wanted(connector, unfinished);
     let now = Instant::now();
     let pass = status_pass(&wanted, attempted, now, connector.limits().working_refresh);
+    // A call the outside gate answered with a wait stays owed, so the next
+    // tick makes it once the wait is over.
     for (place, status) in pass.set {
-        call(connector, company, key, &place, Some(&status));
-        attempted.insert(place, (now, status));
+        if !call(connector, company, key, &place, Some(&status)) {
+            attempted.insert(place, (now, status));
+        }
     }
     for place in pass.clear {
-        attempted.remove(&place);
-        call(connector, company, key, &place, None);
+        if !call(connector, company, key, &place, None) {
+            attempted.remove(&place);
+        }
     }
 }
 
+/// Show `status` at `place`, best effort; whether the outside gate answered
+/// with a wait, which leaves the call owed.
 fn call(
     connector: &dyn Connector,
     company: &ProjectSlug,
     key: &str,
     place: &Place,
     status: Option<&Status>,
-) {
-    if let Err(error) = connector.status(place, status) {
-        tracing::debug!(target: LOG_TARGET, event = "connector_status_skipped", company = %company, connector = key, error = %error);
+) -> bool {
+    match connector.status(place, status) {
+        Ok(()) => false,
+        Err(error) => {
+            tracing::debug!(target: LOG_TARGET, event = "connector_status_skipped", company = %company, connector = key, error = %error);
+            error.wait.is_some()
+        }
     }
 }
 
