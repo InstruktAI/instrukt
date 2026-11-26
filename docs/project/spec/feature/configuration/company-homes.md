@@ -26,7 +26,10 @@ and changes nothing on GitHub. Nothing about a company is customised: two
 companies' homes differ only where each company's identity enters them. A
 company's repository is also a project like any other adopted on the computer,
 one whose documentation is the company's knowledge alone, so everything an
-adopted project receives works for it from the moment its home exists.
+adopted project receives works for it from the moment its home exists. Where
+the runtime is T3, the home's runtime project is created titled with the
+repository's name, `company-<name>`, while the folder keeps the company's name
+(`project/instrukt/spec/feature/runner/t3-contract`).
 
 ## Canonical fields
 
