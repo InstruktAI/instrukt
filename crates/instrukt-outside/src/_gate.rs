@@ -39,7 +39,7 @@ pub struct Backoff {
 }
 
 impl Backoff {
-    /// The gate's default: one second doubling to a minute.
+    /// The gate's backoff for a part that brings none of its own.
     pub const DEFAULT: Self = Self {
         first: Duration::from_secs(1),
         longest: Duration::from_secs(60),
@@ -462,9 +462,13 @@ mod tests {
             *now += jiff::SignedDuration::from_secs(seconds);
         }
 
+        /// One attempt under the fixture's own backoff ([`backoff`]).
         fn attempt(&self, key: &Key, outcome: Outcome) -> Attempted<(), ()> {
-            self.gate
-                .attempt(key, &Settings::default(), || outcome.tried())
+            let settings = Settings {
+                backoff: backoff(),
+                ..Settings::default()
+            };
+            self.gate.attempt(key, &settings, || outcome.tried())
         }
     }
 
@@ -488,6 +492,11 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// The fixture's backoff: three seconds doubling to twenty.
+    fn backoff() -> Backoff {
+        Backoff::new(Duration::from_secs(3), Duration::from_secs(20)).unwrap()
     }
 
     fn scope() -> Key {
@@ -548,7 +557,7 @@ mod tests {
         let Attempted::Wait { wait, .. } = f.attempt(&a, Outcome::Down(Extent::Call, None)) else {
             panic!("a wait");
         };
-        assert_eq!(wait.until() - start, Backoff::DEFAULT.first);
+        assert_eq!(wait.until() - start, backoff().first);
         for key in [&a, &b] {
             let mut tried = false;
             let answer = f.gate.attempt(key, &Settings::default(), || {
@@ -576,7 +585,7 @@ mod tests {
             key: "acme/one a".into(),
             extent: Extent::Call,
             reason: Reason::Unavailable { status: None },
-            next_try: start + jiff::SignedDuration::from_secs(1),
+            next_try: start + jiff::SignedDuration::from_secs(3),
         };
         let ended = Record {
             episode: Episode::Ended {
@@ -635,7 +644,9 @@ mod tests {
     fn a_call_answers_a_wait_past_its_bound_without_pausing() {
         let f = Fixture::new();
         let mut tries = 0;
-        let started = Instant::now();
+        // Pausing asks whether to stop; a stop that answers yes ends any
+        // pause at once, so a call that would pause is seen without waiting.
+        let asked = std::cell::Cell::new(0);
         let named = Named::After {
             delay: Duration::from_secs(3_600),
             received_at: f.wall(),
@@ -644,7 +655,10 @@ mod tests {
             &scope().item("a"),
             &Settings::default(),
             CallerWait::Within(Duration::from_secs(5)),
-            &|| false,
+            &|| {
+                asked.set(asked.get() + 1);
+                true
+            },
             || {
                 tries += 1;
                 Outcome::Down(Extent::Key, Some(named)).tried()
@@ -658,7 +672,7 @@ mod tests {
             }
         ));
         assert_eq!(tries, 1);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        assert_eq!(asked.get(), 0);
     }
 
     #[test]
@@ -702,13 +716,13 @@ mod tests {
             key: "acme/one".into(),
             extent: Extent::Scope,
             reason: Reason::Unavailable { status: None },
-            next_try: start + jiff::SignedDuration::from_secs(1),
+            next_try: start + jiff::SignedDuration::from_secs(3),
         };
         let ended = Record {
             episode: Episode::Ended {
-                waited: Duration::from_secs(1 + 2 + 4),
+                waited: Duration::from_secs(3 + 6 + 12),
             },
-            next_try: start + jiff::SignedDuration::from_secs(4),
+            next_try: start + jiff::SignedDuration::from_secs(12),
             ..started.clone()
         };
         assert_eq!(records, [started, ended]);

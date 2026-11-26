@@ -246,8 +246,10 @@ mod tests {
         "2026-11-20T10:00:00Z".parse().unwrap()
     }
 
+    /// A gate whose clocks stand still, so no wait runs out during a test.
     fn gate() -> Gate {
-        Gate::new(Arc::new(now), Arc::new(Instant::now), Report::to(|_| {}))
+        let base = Instant::now();
+        Gate::new(Arc::new(now), Arc::new(move || base), Report::to(|_| {}))
     }
 
     fn refused(method: &str, code: &str) -> Tried<super::Answered, SlackError> {
