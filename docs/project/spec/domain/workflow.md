@@ -55,6 +55,7 @@ workflow stores it nowhere. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
 request.
+
 <!-- planned:company-home-integration -->
 A rendering of the repository's agent material is reproduced by asking
 publication's one rendering operation to render the parent commit's tree and
@@ -66,7 +67,6 @@ is stated by the integration gate's rule
 (`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
 a candidate).
 <!-- /planned:company-home-integration -->
-
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -117,6 +117,7 @@ there, never by reading through delivered work.
 - **Work → workflow:** work supplies `WorkEvidence` and invokes workflow's gate checks on attempt reservation, completion stamps, and `--finalize-ready`.
 - **Runner → workflow:** runner calls `WorkflowAssignments::assignment` on each tick, tracks progress via the factual progress fingerprint, and routes `workflow.finalized` and `runner.ci_completed` to the standing `integrator`.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
+
 <!-- planned:company-home-integration -->
 - **Runner → workflow (knowledge proposals):** runner routes `runner.proposal_approved` to a company home's standing `integrator`, naming the exact approved head to compose.
 - **Publication → workflow (review coverage):** publication supplies its one operation rendering a tree's agent material, from which coverage reproduces a rendering commit.

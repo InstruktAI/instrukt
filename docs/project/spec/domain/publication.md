@@ -5,6 +5,7 @@ description: Publication — a project publishes its general, domain and project
 
 ## What it is
 
+<!-- planned-change:company-home-integration -->
 The publication context turns a project's committed documentation into what
 agents on this computer read. `instrukt sync` publishes the project the caller
 stands in, and only that project: from the committed state of its canonical
@@ -18,11 +19,7 @@ computer, and sets the one settings key each needs to load project
 instruction files. A repository carries one rendered instruction file, its root
 `AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
 the `pre-commit` hook section and by `instrukt docs render`, never by a sync. A company's repository also carries the company's plugin,
-<!-- planned-change:company-home-integration -->
 which `instrukt docs plugin` renders on request from the same company index, with the plugin's one entry in the repository's plugin catalog.
-<!-- change:company-home-integration -->
-which `instrukt docs plugin` renders on request from the same company index, under the company identity the repository's project layer declares, with the plugin's one entry in the repository's plugin catalog; `instrukt docs render --plugin` renders the repository's whole agent material, its entrypoints and its plugin, as one operation.
-<!-- /planned-change:company-home-integration -->
 Every sync that publishes recomputes the eval fingerprint
 and regenerates the editor schemas and modelines in the project's primary
 worktree, which `instrukt init` also writes through the same operation.
@@ -31,6 +28,30 @@ projects, and after configuration migration converges: it writes only what is
 missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
+<!-- change:company-home-integration -->
+The publication context turns a project's committed documentation into what
+agents on this computer read. `instrukt sync` publishes the project the caller
+stands in, and only that project: from the committed state of its canonical
+main it publishes the project's general, domain and project positions
+into the home, claims each of them for the project, patches the
+global index so that exactly the project's own entries change, and records
+the commit it published beside the project's checkout path. The project that
+owns `docs/general/` also renders a global agent file for each agent runtime
+the selected runtime reports as configured, from what is published on the
+computer, and sets the one settings key each needs to load project
+instruction files. A repository carries one rendered instruction file, its root
+`AGENTS.md`, which is committed: it is rendered from the repository's committed content alone at each commit, by
+the `pre-commit` hook section and by `instrukt docs render`, never by a sync. A company's repository also carries the company's plugin,
+which `instrukt docs plugin` renders on request from the same company index, under the company identity the repository's project layer declares, with the plugin's one entry in the repository's plugin catalog; `instrukt docs render --plugin` renders the repository's whole agent material, its entrypoints and its plugin, as one operation.
+Every sync that publishes recomputes the eval fingerprint
+and regenerates the editor schemas and modelines in the project's primary
+worktree, which `instrukt init` also writes through the same operation.
+Publication never reads another project's repository, keeps no registry of
+projects, and after configuration migration converges: it writes only what is
+missing or different, whether or not main has moved. It
+does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
+retrieval, the configuration it reads, or the git hooks that trigger it.
+<!-- /planned-change:company-home-integration -->
 
 A company repository (`project/instrukt/spec/domain/configuration`) is a
 project like any other to publication, except that its documentation is the
@@ -312,6 +333,8 @@ text, calls a model or judges whether a unit means what its source means.
   entry but the company plugin's (the company's repository); committing and
   pushing what a rendering changed (its caller); whether and when a Claude
   client takes a new copy of a plugin (Claude).
+
+<!-- planned-change:company-home-integration -->
 - **Published contracts** — `instrukt sync`; the home's published tree
   (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
   `index.yaml` and `schema.yaml` when the position has them); the global
@@ -322,17 +345,9 @@ text, calls a model or judges whether a unit means what its source means.
   of a repository and `instrukt docs render [--check]`; a company's skill
   under `skills/<key>/` with its plugin's entry in
   `.claude-plugin/marketplace.json`,
-  <!-- planned-change:company-home-integration -->
   and `instrukt docs plugin --key <key> --name <name>`, which asks for a
   rendering, with `--check` for a check and with `--validate` for a
   validation, the two flags excluding each other
-  <!-- change:company-home-integration -->
-  and `instrukt docs plugin`, which asks for a rendering under the company
-  identity the repository's project layer declares, with `--check` for a
-  check and with `--validate` for a validation, the two flags excluding each
-  other; `instrukt docs render --plugin [--check]`, which renders or checks the
-  repository's agent material as one operation
-  <!-- /planned-change:company-home-integration -->
   (`project/instrukt/spec/feature/publication/company-plugin`); whether a
   repository is a company's, which docs validation asks before reading
   anything under its `docs/`; the global
@@ -340,6 +355,31 @@ text, calls a model or judges whether a unit means what its source means.
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
   (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- change:company-home-integration -->
+- **Published contracts** — `instrukt sync`; the home's published tree
+  (`~/.instrukt/docs/general/…`, `~/.instrukt/docs/<x>/…`, each with its
+  `index.yaml` and `schema.yaml` when the position has them); the global
+  index `~/.instrukt/state/index.yaml`; the ownership record, published
+  commits and checkout paths under
+  `~/.instrukt/state/publication/`; the eval fingerprint per published commit
+  under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
+  of a repository and `instrukt docs render [--check]`; a company's skill
+  under `skills/<key>/` with its plugin's entry in
+  `.claude-plugin/marketplace.json`,
+  and `instrukt docs plugin`, which asks for a rendering under the company
+  identity the repository's project layer declares, with `--check` for a
+  check and with `--validate` for a validation, the two flags excluding each
+  other; `instrukt docs render --plugin [--check]`, which renders or checks the
+  repository's agent material as one operation
+  (`project/instrukt/spec/feature/publication/company-plugin`); whether a
+  repository is a company's, which docs validation asks before reading
+  anything under its `docs/`; the global
+  agent files; `.instrukt/schemas/` and the modeline
+  form (`project/instrukt/spec/feature/publication/editor-schemas`);
+  `instrukt status [--json]` and its report
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:company-home-integration -->
+
 - **Allowed dependencies** — docs (snippet model, `index.yaml` and
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
@@ -518,27 +558,38 @@ Compressed units extend each part of that boundary:
   document's prose; the plugin's entry in the repository's plugin catalog,
   which is the plugin's manifest and carries its version.
 - **Invariants:**
-  <!-- planned-change:company-home-integration -->
+
+<!-- planned-change:company-home-integration -->
   - A function of the repository's company index, documents and units, the
     key and the name its caller gives, the version the catalog entry holds and the
     rendering instrukt release: nothing published on the computer, no
     configuration layer and no environment enters it.
-  <!-- change:company-home-integration -->
+<!-- change:company-home-integration -->
   - A function of the repository's company index, documents and units, the
     company identity its committed project layer declares, the version the
     catalog entry holds and the rendering instrukt release: nothing published
     on the computer, no configuration layer of the computer, no caller's
     argument and no environment enters it.
-  <!-- /planned-change:company-home-integration -->
+<!-- /planned-change:company-home-integration -->
+
   - It holds the selection the company index makes, as the repository's
     committed `AGENTS.md` does, and carries every document it names.
   - The version is the one thing a rendering takes from the plugin the
     repository holds. Its last number is raised by one exactly when the
     rendering differs from what `skills/<key>/` holds; instrukt never changes
     the first two.
+
+<!-- planned-change:company-home-integration -->
   - Changes only in the working tree, through `instrukt docs plugin` or the
     company skeleton's rendering; no commit, sync, checkout, start or tick
     writes it, and rendering a repository's `AGENTS.md` writes none.
+<!-- change:company-home-integration -->
+  - Changes only in the working tree, through `instrukt docs plugin`,
+    `instrukt docs render --plugin` or the company skeleton's rendering; no
+    commit, sync, checkout, start or tick writes it, and rendering a
+    repository's `AGENTS.md` without `--plugin` writes none.
+<!-- /planned-change:company-home-integration -->
+
   - The folder is written whole, whatever it held, and never removed.
     Nothing is read, written or removed through a symbolic link, and nothing
     outside the folder and the catalog is read, written or removed, a
@@ -552,18 +603,19 @@ Compressed units extend each part of that boundary:
   - It has no published commit, no claim and no index entry, and belongs to
     no project's published part.
 - **Identifier:** the company's key, in its repository.
+
 <!-- planned-change:company-home-integration -->
 - **Lifecycle:** rendered with the company skeleton and whenever a caller
   asks for it; committed by that caller; left as it is where the repository
   holds no company index
+  (`project/instrukt/spec/feature/publication/company-plugin`).
 <!-- change:company-home-integration -->
 - **Lifecycle:** rendered with the company skeleton and whenever a caller
   asks for it, through `instrukt docs plugin` or `instrukt docs render
   --plugin`; committed by that caller; left as it is where the repository
   holds no company index
-<!-- /planned-change:company-home-integration -->
   (`project/instrukt/spec/feature/publication/company-plugin`).
-
+<!-- /planned-change:company-home-integration -->
 
 #### Compressed units of a repository (aggregate)
 
@@ -663,6 +715,7 @@ This context emits no events.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.
+
 <!-- planned:company-home-integration -->
 - **configuration** (company identity) — Customer / Supplier. Configuration
   supplies the company identity a company repository's committed project layer
@@ -671,6 +724,7 @@ This context emits no events.
   its one operation rendering a tree's agent material, from which workflow
   reproduces a candidate's rendering commit.
 <!-- /planned:company-home-integration -->
+
 - **repository** — Customer / Supplier. Repository's hook sections run
   `instrukt sync`; publication decides what a run does. Publication supplies
   `instrukt init` the ownership record its claims report reads, the published

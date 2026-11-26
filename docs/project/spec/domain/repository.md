@@ -171,26 +171,14 @@ Company home adoption extends this boundary:
   author).
 
 <!-- planned:company-home-integration -->
-The `post-commit` hook run also hands each commit to the company context's
-proposal recording, through an interface core declares and the CLI wires, in
-the session and the repository the commit was made in. The run decides
-nothing about it: whether the commit is a knowledge proposal is the company
-context's (`project/instrukt/spec/domain/company`). Unlike the sync this run
-starts detached, the handing waits for the recording, because the speaker it
-records exists only while the session's turn is in progress and a detached
-run can outlive the turn. The commit therefore waits for:
-
-- one read of the session's turn in progress, retried within a few seconds'
-  bound while the runtime or the state database does not answer;
-- the retirement checks of the company's standing entries, one containment
-  and one ref check each, computed before any write and bounded by the
-  administrator-asked commits on branches the remote still holds;
-- one short write transaction of the company's proposal store, and at most a
-  concurrent recording's transaction on the same store.
-
-A recording that could not be completed is recorded in the hook run's outcome
-(`project/instrukt/spec/feature/repository/hook-sections`), and the run never
-fails the commit, as no section does.
+The `post-commit` hook run also invokes the company context's proposal
+recording, through an interface core declares and the CLI wires, in the
+session and the repository the commit was made in, and waits for it. The run
+decides nothing about it, and what the commit waits for is the recording's
+(`project/instrukt/spec/domain/company`, Knowledge proposal). Unlike the sync
+this run starts detached, it waits, because the speaker the recording reads
+exists only while the session's turn is in progress. The run never fails the
+commit, as no section does.
 <!-- /planned:company-home-integration -->
 
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
@@ -373,6 +361,7 @@ This context emits no events.
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+
 <!-- planned:company-home-integration -->
 - **company** — Customer / Supplier. The `post-commit` hook run invokes the
   company context's proposal recording, declared by core and wired by the CLI.

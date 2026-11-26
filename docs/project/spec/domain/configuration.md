@@ -38,13 +38,13 @@ own and is no layer.
 company's repository, `company-<name>` in the owning organisation, whose
 documentation is the company's knowledge. It is a project like any other in
 every other respect.
+
 <!-- planned:company-home-integration -->
 **Company identity**
 : The company a company repository belongs to, declared in its committed
 project layer: the key its `project` carries after `company-`, and the name
 people write the company by, `company_name`.
 <!-- /planned:company-home-integration -->
-
 
 **Owning organisation**
 : The GitHub organisation the global key `github.org` names, which owns every
@@ -150,12 +150,14 @@ Adding a company extends this boundary
   takes; the content of the skeleton's project layer and ignore lines; the
   project layer's `company_repository` declaration; and the conversion of a
   home's settings document to `company.yaml`.
+
 <!-- planned:company-home-integration -->
 - **Owns** (company identity) — the company identity a company repository's
-  project layer declares, its keys' grammar, its finding with the admission it
-  withholds, and the operation that reads it from a project-layer document,
+  project layer declares, its keys' grammar, its finding against the events
+  module, and the operation that reads it from a project-layer document,
   which publication takes.
 <!-- /planned:company-home-integration -->
+
 - **Does not own** — creating the repository, composing its first commit,
   checking it out and installing its hook sections (repository,
   `project/instrukt/spec/domain/repository`); the rendered `AGENTS.md`, the
@@ -238,6 +240,7 @@ JSON.
   - A patch applies only against the revision it was made from.
 - **Identifier:** its layer — the machine for the global layer, the
   repository root for a project layer.
+
 <!-- planned-change:company-home-integration -->
 - **Lifecycle:** created by `instrukt config init` (or `instrukt init`, which
   writes the project layer with the same defaults); a company repository's
@@ -255,9 +258,11 @@ JSON.
   changed by `patch`; migrated before refusal or skip on every entry path when
   an older schema is found; never deleted by instrukt.
 <!-- /planned-change:company-home-integration -->
+
 - **The `company_repository` declaration:** `true` makes the repository a
   company's; `false`, `null` or no key leaves it an ordinary project; any other
   value is a finding naming the key.
+
 <!-- planned:company-home-integration -->
 - **The company identity:** a company repository's project layer declares
   which company it is. The key is its `project` without the `company-`
@@ -268,14 +273,15 @@ JSON.
   `project` does not have the form `company-<key>` with a key of a company
   key's grammar, or whose layer holds no valid `company_name`, has no company
   identity. That is a finding naming the key and its repair, an `instrukt
-  config patch` of the project layer; it is reported by `instrukt config
-  validate`, a patch that would leave it is refused, and it withholds the
-  company home's automatic-review admission (Automatic review enablement,
-  `project/instrukt/spec/feature/configuration/layered-configuration`), so no
-  proposal, review or candidate of the home runs without an identity. The
-  identity is read from the committed document, so a clone and a candidate
-  read what the home reads, and it is the only source of the key and the name
-  a company plugin rendering takes (`project/instrukt/spec/domain/publication`).
+  config patch` of the project layer. It is a finding against the project's
+  `modules.events`: `instrukt config validate` reports it, a patch that would
+  leave it is refused, and a layer that arrives with it withholds the home's
+  event responses, as a project layer's finding against a module withholds
+  that module's work (`project/instrukt/spec/feature/runner/work-dispatch`,
+  Admitted configuration). The identity is read from the committed document,
+  so a clone and a candidate read what the home reads, and it is the only
+  source of the key and the name a company plugin rendering takes
+  (`project/instrukt/spec/domain/publication`).
 <!-- /planned:company-home-integration -->
 
 ### Domain events emitted

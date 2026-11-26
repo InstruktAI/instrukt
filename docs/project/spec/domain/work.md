@@ -171,15 +171,20 @@ core imports nothing of this crate.
 For a company's knowledge proposals the GitHub boundary also answers whether
 any pull request of the repository, open or closed, has a commit as its head,
 and opens a pull request for a branch into the canonical branch as the
-identity its caller names. It opens one only after answering that none exists
-for that head, so a crash between the two leaves GitHub as the record and a
-repeated ask opens no second one. The pull request's title is the head
-commit's subject; its body states in fixed words that the change was asked of
-the company's agent, followed by the commits' messages inside a fenced block,
-so nothing in them mentions anyone or renders as markup. The credential it
-uses is verified with automatic-review readiness for a company repository
-(`project/instrukt/spec/feature/work/github-apps`, Company repositories).
-When to open one, and as which role's identity, is the runner's decision.
+identity its caller names.
+- **Idempotency:** it opens one only after answering that no open pull
+  request of that branch exists. A crash between the two leaves GitHub as the
+  record, and a repeated ask opens no second one.
+- **Content:** the title is fixed wording naming the branch. The body states
+  in fixed words that the change was asked of the company's agent, followed
+  by the commits' messages inside a fence longer than any run of backticks in
+  them, so nothing in them mentions anyone or renders as markup.
+- **Credential:** verified with automatic-review readiness for a company
+  repository (`project/instrukt/spec/feature/work/github-apps`, Company
+  repositories).
+
+When to open one, under which role's identity, and whether a closed pull
+request rules a head out, are the runner's decisions.
 <!-- /planned:company-home-integration -->
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
@@ -391,14 +396,13 @@ owning design snippet or decision record is declared.
   consults this when it admits a requested review
   (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
   requested reviewer's verdict under its own rules.
+
 <!-- planned:company-home-integration -->
 - **Work → runner (knowledge proposals)** — customer-supplier. Through its
   GitHub boundary work answers whether any pull request has a commit as its
   head and opens a proposal's pull request as the identity the runner names;
   the runner decides when.
 <!-- /planned:company-home-integration -->
-
-
 
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
   evidence is current for a commit and whether a candidate's derived
