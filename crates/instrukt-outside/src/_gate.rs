@@ -371,8 +371,11 @@ impl Gate {
         wait
     }
 
-    /// A try at `key` succeeded: its wait and its scope's end.
+    /// A try at `key` succeeded: its wait and its scope's end once they no
+    /// longer hold. A wait that still holds was recorded after this try was
+    /// admitted, by a call that ran beside it, and keeps its moment.
     fn succeeded(&self, key: &Key) {
+        let now = (self.inner.clock)();
         let monotonic = (self.inner.monotonic)();
         let scope = key.scope_key();
         let ended: Vec<Record> = {
@@ -380,6 +383,9 @@ impl Gate {
             [scope, key.clone()]
                 .into_iter()
                 .filter_map(|level| {
+                    if entries.get(&level)?.holds(now, monotonic) {
+                        return None;
+                    }
                     let entry = entries.remove(&level)?;
                     Some(entry.record(
                         &level,
@@ -508,6 +514,30 @@ mod tests {
             f.attempt(&scope().item("c"), Outcome::Done),
             Attempted::Wait { error: None, .. }
         ));
+    }
+
+    #[test]
+    fn a_success_admitted_before_a_named_wait_does_not_end_it() {
+        let f = Fixture::new();
+        let key = scope().item("a");
+        let named = Named::After {
+            delay: Duration::from_secs(30),
+            received_at: f.wall(),
+        };
+        // A call beside this one is answered with a named wait while this
+        // one is in flight; this one then succeeds.
+        let answer = f.gate.attempt(&key, &Settings::default(), || {
+            f.attempt(&key, Outcome::Down(Extent::Key, Some(named)));
+            Tried::<(), ()>::Done(())
+        });
+        assert!(matches!(answer, Attempted::Done(())));
+        let mut tried = false;
+        let next = f.gate.attempt(&key, &Settings::default(), || {
+            tried = true;
+            Tried::<(), ()>::Done(())
+        });
+        assert!(!tried);
+        assert!(matches!(next, Attempted::Wait { error: None, .. }));
     }
 
     #[test]
