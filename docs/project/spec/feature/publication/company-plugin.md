@@ -121,6 +121,7 @@ With a finding, no file is written or removed.
 
 ### What the rendering is a function of
 
+<!-- planned-change:company-home-integration -->
 The plugin and its catalog entry are a function of the repository's index,
 documents and compressed units, the company's key, the name people write the
 company by, the plugin the repository already holds, and the rendering
@@ -139,6 +140,27 @@ name, the folder it lies in, a settings document or the environment.
   holds, each file that carries it stays valid in its format.
 - A request without one of them, or with one that breaks its form, is a usage
   error: nothing is read.
+<!-- change:company-home-integration -->
+The plugin and its catalog entry are a function of the repository's index,
+documents and compressed units, the company identity its committed project
+layer declares, the plugin the repository already holds, and the rendering
+instrukt release.
+Nothing else from the computer enters: no home, no publication, no
+configuration layer of the computer, no caller's argument and no environment.
+A fresh clone and the binary are enough, and a home and a clone of the
+repository render the same bytes.
+
+The company identity, the company's key and the name people write the
+company by, is read from the repository's committed project layer
+(`project/instrukt/spec/domain/configuration`, The company identity). No
+caller gives either, and instrukt takes neither from the repository's name,
+the folder it lies in, a settings document or the environment. Whatever
+characters the name holds, each file that carries it stays valid in its
+format. A repository without a company identity has configuration's finding,
+and a rendering, a check and a validation refuse with it and write nothing,
+as a missing prerequisite is refused where it enters
+(`project/instrukt/policy/checks-and-guards`).
+<!-- /planned-change:company-home-integration -->
 
 ### The catalog entry
 
@@ -192,9 +214,19 @@ read, written or removed through a symbolic link: one at or above
 naming it. The command that asks for each of the three is the publication
 context's (`project/instrukt/spec/domain/publication`).
 
+<!-- planned-change:company-home-integration -->
 The `pre-commit` section, a sync, a start and a tick render no plugin, and
 rendering a repository's `AGENTS.md` renders none. A commit on a branch
 carries the plugin its base held.
+<!-- change:company-home-integration -->
+The `pre-commit` section, a sync, a start and a tick render no plugin, and
+rendering a repository's `AGENTS.md` without `--plugin` renders none.
+`instrukt docs render --plugin` renders the repository's whole agent
+material, its entrypoints and this plugin, as one operation, and with
+`--check` checks it as a check does
+(`project/instrukt/spec/domain/publication`). A commit on a branch carries the
+plugin its base held.
+<!-- /planned-change:company-home-integration -->
 
 ## Use cases
 
@@ -248,6 +280,7 @@ And no file is changed
 
 ## Known caveats
 
+<!-- planned-change:company-home-integration -->
 - One plugin is rendered, and it holds every document: a document's
   `visibility` selects nothing.
 - A version is raised against what the working tree holds. Two branches that
@@ -273,6 +306,39 @@ And no file is changed
 - Whether Claude accepts a plugin under the company's key is Claude's (See
   Also): the key is held to the grammar of a company's key and to nothing
   else.
+<!-- change:company-home-integration -->
+- One plugin is rendered, and it holds every document: a document's
+  `visibility` selects nothing.
+- A version is raised against what the working tree holds. Two branches that
+  each render the plugin and are then merged can carry one version for
+  different content. Where the company's standing integrator renders each
+  candidate (`project/instrukt/spec/feature/workflow/integration-gate`, A
+  company home's candidate), the catalog serves the rendering the promoted
+  candidate carries; elsewhere a rendering is asked for where the catalog is
+  installed from, the repository's default branch.
+- In a repository whose default branch no integrator renders, between the
+  merge of a change to the knowledge and the rendering asked for on the
+  default branch, the catalog serves the previous plugin.
+- The rendering depends on the instrukt release that renders it. A release
+  that renders a plugin differently raises that plugin's version at its next
+  rendering although no document changed.
+- The shared workflows repository's publisher
+  (`project/instrukt/policy/shared-workflows`) writes the company's plugin in
+  a layout of its own under `plugins/<key>/` and sets the same catalog entry;
+  in a repository both render, the entry holds what the last renderer set.
+  Where the company's integrator renders each candidate, that publisher is a
+  second writer of the default branch beside it (`general/policy/commits`).
+- When and whether a Claude client takes a new copy of an installed plugin is
+  Claude's (See Also).
+- What Claude does with a skill's main file before an agent reads it, and how
+  much of it Claude keeps in an agent's context, is Claude's (See Also).
+  Text of an `expanded` document in a form Claude replaces or runs there is
+  not delivered as written. A document the index lists stays out of the main
+  file.
+- Whether Claude accepts a plugin under the company's key is Claude's (See
+  Also): the key is held to the grammar of a company's key and to nothing
+  else.
+<!-- /planned-change:company-home-integration -->
 
 ## See Also
 

@@ -132,7 +132,7 @@ each of them must be one of these.
 | A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
-| A rendering of a company's knowledge | In a company home, its tree is what rendering the home's agent instructions and the company's skill with its catalog entry, from the knowledge its parent holds, produces from its parent's tree. | The rendering reproduced from its parent (`project/instrukt/spec/feature/publication/agent-entrypoints`; `project/instrukt/spec/feature/publication/company-plugin`). |
+| A rendering of the repository's agent material | In a company home, its tree is what rendering the repository's agent material from its parent's tree produces. | The rendering reproduced from its parent by publication's one rendering operation (`project/instrukt/spec/domain/publication`). |
 | A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
 <!-- /planned-change:company-home-integration -->
 
@@ -227,25 +227,27 @@ hooks and CI retain their own checks.
 <!-- planned:company-home-integration -->
 ### A company home's candidate
 
-Every candidate of a company home carries the home's rendered `AGENTS.md`
+Every candidate of a company home carries the repository's agent material,
+the home's rendered `AGENTS.md`
 (`project/instrukt/spec/feature/publication/agent-entrypoints`) and the
 company's skill with its plugin catalog entry
-(`project/instrukt/spec/feature/publication/company-plugin`), rendered from the
-knowledge that candidate holds and committed in it before it is verified. Once
-the repository exists, the integrator is the only writer that renders them onto
-its default branch (`general/policy/commits`).
+(`project/instrukt/spec/feature/publication/company-plugin`), rendered by
+`instrukt docs render --plugin` from the knowledge that candidate holds and
+committed in it before it is verified. Once the repository exists, the
+integrator is the only writer that renders them onto its default branch
+(`general/policy/commits`).
 
-A candidate whose knowledge the rendering refuses, or whose committed
-`AGENTS.md` or skill differs from what its knowledge renders, holds no
-admission: it stays unpromoted and its failure stays with the integrator under
-the remediation routes above. For a company home without CI that comparison is
-the local admission evidence for the exact candidate.
+A candidate whose rendering is refused, or whose committed agent material
+differs from what its knowledge renders, holds no admission: it stays
+unpromoted and its failure stays with the integrator under the remediation
+routes above. For a company home without CI, `instrukt docs render --plugin
+--check` passing on the exact candidate is the local admission evidence.
 
 The commit that carries the rendering is covered by reproduction (Review
 coverage of a candidate) and owes no review of its own, as a mechanical change
 owes none (`general/policy/commits`).
-<!-- /planned:company-home-integration -->
 
+<!-- /planned:company-home-integration -->
 ### Recovery of a red canonical branch
 
 If the canonical branch becomes red despite admission, the integrator reverts

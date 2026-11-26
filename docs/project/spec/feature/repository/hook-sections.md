@@ -20,6 +20,7 @@ projects keep their own tooling.
 
 ### Hooks used
 
+<!-- planned-change:company-home-integration -->
 | Hook | When instrukt installs it | What the hook run does |
 | --- | --- | --- |
 | `pre-commit` | always | converts an older project layer to the current schema, inserts or corrects the editor modelines of the files being committed, renders the repository's root `AGENTS.md` from the content being committed and removes renderings instrukt left below the root, staging all of them into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`, `project/instrukt/spec/feature/publication/agent-entrypoints`) |
@@ -28,6 +29,16 @@ projects keep their own tooling.
 | `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
 | `post-checkout` | always | in the primary checkout, starts `instrukt sync` detached; in a linked worktree, does nothing |
 | `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
+<!-- change:company-home-integration -->
+| Hook | When instrukt installs it | What the hook run does |
+| --- | --- | --- |
+| `pre-commit` | always | converts an older project layer to the current schema, inserts or corrects the editor modelines of the files being committed, renders the repository's root `AGENTS.md` from the content being committed and removes renderings instrukt left below the root, staging all of them into the commit being made (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/publication/editor-schemas`, `project/instrukt/spec/feature/publication/agent-entrypoints`) |
+| `post-commit` | always | starts `instrukt sync` detached; after a partial commit, returns an index entry the pre-commit conversion left in its unconverted form to the committed version, leaving every other staging choice as it is; invokes the company context's proposal recording in the session and the repository the commit was made in and waits for it, deciding nothing about it, and what the commit waits for is the recording's (`project/instrukt/spec/domain/company`, Knowledge proposal); the recording never fails the commit |
+| `post-merge` | always | starts `instrukt sync` detached; when a pull or runner fast-forward advances main to its fetched upstream head and blueprint is enabled, hands the revision to blueprint |
+| `post-rewrite` | always | starts `instrukt sync` detached; when a pull through rebase advances main and blueprint is enabled, hands the revision to blueprint |
+| `post-checkout` | always | in the primary checkout, starts `instrukt sync` detached; in a linked worktree, does nothing |
+| `pre-push` | the blueprint module is on | hands a push to main to the blueprint, which starts generation detached (`project/instrukt/spec/domain/blueprint`) |
+<!-- /planned-change:company-home-integration -->
 
 - Graph-generation policy belongs to
   `project/instrukt/spec/feature/blueprint/graph-generation`; each

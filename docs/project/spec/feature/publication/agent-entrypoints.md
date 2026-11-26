@@ -187,18 +187,32 @@ same content with the same instrukt release write the same bytes.
   (`project/instrukt/spec/feature/repository/hook-sections`). A finding
   leaves that file as it is in the commit and is reported in the hook-run
   outcome; the commit proceeds.
+<!-- planned-change:company-home-integration -->
 - **`instrukt docs render`** renders every entrypoint of the repository from
   its working tree and writes them; it stages nothing.
   `instrukt docs render --check` writes nothing and exits non-zero naming each
   entrypoint whose file differs from its rendering, each missing one, and
   each finding. Neither needs a home, a publication or a configuration: a
   fresh clone and the binary are enough.
+<!-- change:company-home-integration -->
+- **`instrukt docs render`** renders every entrypoint of the repository from
+  its working tree and writes them; it stages nothing.
+  `instrukt docs render --check` writes nothing and exits non-zero naming each
+  entrypoint whose file differs from its rendering, each missing one, and
+  each finding. Neither needs a home, a publication or a configuration: a
+  fresh clone and the binary are enough.
+  `instrukt docs render --plugin`, with or without `--check`, does the same
+  for the repository's whole agent material as one operation: in a company's
+  repository, its entrypoints and the company's plugin
+  (`project/instrukt/spec/feature/publication/company-plugin`).
+<!-- /planned-change:company-home-integration -->
 - **Never by sync or checkout.** A sync writes no entrypoint, and no hook
   renders one after a checkout
   (`project/instrukt/spec/feature/repository/hook-sections`).
 
 ### A commit made without the hook
 
+<!-- planned-change:company-home-integration -->
 A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
 section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
@@ -209,6 +223,22 @@ also writes the repository's `AGENTS.md` on main, with the shared workflows
 repository's own renderer, and commits to main only when what it rendered
 differs from what main holds; that workflow and its renderer belong to the
 shared workflows repository (`project/instrukt/policy/shared-workflows`).
+<!-- change:company-home-integration -->
+A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
+section is not installed leaves its entrypoints as they were. The
+repository's own CI runs `instrukt docs render --check`, which fails such a
+commit naming each stale entrypoint; the repair is `instrukt docs render` and
+a commit, or a commit through the hook. In a company's repository that
+carries the shared workflows repository's publishing workflow, that workflow
+also writes the repository's `AGENTS.md` on main, with the shared workflows
+repository's own renderer, and commits to main only when what it rendered
+differs from what main holds; that workflow and its renderer belong to the
+shared workflows repository (`project/instrukt/policy/shared-workflows`).
+Where the company's standing integrator renders each candidate
+(`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+candidate), that workflow is a second writer of the default branch beside the
+integrator (`general/policy/commits`).
+<!-- /planned-change:company-home-integration -->
 
 ### Company home entrypoint
 
@@ -346,6 +376,7 @@ the home and leaves any other there as it is.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report every finding of the index and of the documents, and a
   home with a finding is not rendered.
+<!-- planned-change:company-home-integration -->
 - **Who renders it.** instrukt renders it in two places: the `pre-commit`
   section where it is installed in the home, and `instrukt docs render` run
   in the home or in a clone of the repository. The block order above and the
@@ -362,6 +393,28 @@ the home and leaves any other there as it is.
   whose index is gone are stated in this spec of the file instrukt writes,
   and none of them of that file. The runner starts sessions in the home as it
   stands and renders nothing there.
+<!-- change:company-home-integration -->
+- **Who renders it.** instrukt renders it in three places: the `pre-commit`
+  section where it is installed in the home; `instrukt docs render` run in the
+  home or in a clone of the repository; and `instrukt docs render --plugin`,
+  which renders it with the company's plugin as one operation and which the
+  company's integrator runs on each candidate
+  (`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+  candidate). The block order above and the
+  same bytes in a home and in a clone hold for instrukt's rendering, and
+  `instrukt docs render --check` compares the working file with that
+  rendering. A company repository that carries the shared workflows
+  repository's publishing workflow has an `AGENTS.md` committed on main by it
+  as well, rendered by that publisher with its own renderer; what that file
+  holds, and what that publisher reads, is that repository's contract
+  (`project/instrukt/policy/shared-workflows`). It
+  opens with that publisher's own first line and holds its blocks in that
+  publisher's own order, so it is not instrukt's rendering: the generated
+  line, the block order, the company passage and the removal of a rendering
+  whose index is gone are stated in this spec of the file instrukt writes,
+  and none of them of that file. The runner starts sessions in the home as it
+  stands and renders nothing there.
+<!-- /planned-change:company-home-integration -->
 - **Without `docs/index.yaml`**, the home has no rendering, and a rendering
   of instrukt's left there is removed. An `AGENTS.md` there that opens with
   any other line, the publisher's included, stays as it is: the hook section
@@ -696,6 +749,7 @@ And no agent runtime loads it
 - The rendering depends on the instrukt release that renders it. A CI check
   running another release than the developer's hook may report a difference
   the developer's commit did not cause; CI pins the release it installs.
+<!-- planned-change:company-home-integration -->
 - instrukt and the shared workflows repository's publisher each write a
   company repository's `AGENTS.md` whole, and no contract makes the two
   renderings the same bytes. The publisher
@@ -708,6 +762,22 @@ And no agent runtime loads it
   the file there, the check reports no difference for `AGENTS.md` while the
   commit still holds the publisher's file; it exits zero only where it also
   names no other entrypoint and no finding.
+<!-- change:company-home-integration -->
+- In a company repository that carries the shared workflows repository's
+  publisher, instrukt and that publisher each write its `AGENTS.md` whole,
+  and no contract makes the two renderings the same bytes. The publisher
+  commits its rendering to main; the hook section stages instrukt's into the
+  commit being made; `instrukt docs render` writes instrukt's to the working
+  file, and `instrukt docs render --check` compares the working file with
+  it. In a checkout whose working file is the one the publisher committed,
+  the check names `AGENTS.md` as differing wherever the two renderings
+  differ, although no document changed. After `instrukt docs render` writes
+  the file there, the check reports no difference for `AGENTS.md` while the
+  commit still holds the publisher's file; it exits zero only where it also
+  names no other entrypoint and no finding. Where the company's integrator
+  renders each candidate, the publisher's commits are a second writer's
+  beside it (`general/policy/commits`).
+<!-- /planned-change:company-home-integration -->
 - What the shared workflows repository's publisher reads is that
   repository's contract. A release of it that renders a company's knowledge
   from an `AGENTS.master.md` renders nothing from a repository that holds

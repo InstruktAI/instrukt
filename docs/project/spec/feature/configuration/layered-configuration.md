@@ -162,6 +162,22 @@ and rendered as a company's
 `project/instrukt/spec/feature/publication/agent-entrypoints`, What makes a
 repository a company home).
 
+<!-- planned:company-home-integration -->
+`company_name` (one line of text that is not blank) is project only and
+valid only beside `company_repository: true`. With a `project` of the form
+`company-<key>`, it declares the repository's company identity: the company's
+key and the name people write the company by
+(`project/instrukt/spec/domain/configuration`, The company identity). A
+company repository without a company identity has a finding naming the key,
+repaired by an `instrukt config patch` of the project layer. It is a finding
+against the project's `modules.events`: `instrukt config validate` reports
+it, a patch that would leave it is refused, and a layer that arrives with it
+withholds the home's event responses, as a module finding withholds its
+module's work (`project/instrukt/spec/feature/runner/work-dispatch`, Admitted
+configuration), since a prerequisite is checked where it enters
+(`project/instrukt/policy/checks-and-guards`).
+
+<!-- /planned:company-home-integration -->
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
 there is no project-layer `actions` key. CI required checks remain the merge gate.

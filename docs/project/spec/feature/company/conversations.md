@@ -155,6 +155,19 @@ path is the same for every connector, whichever channel it speaks to
   which includes filing and coordinating project todos) while keeping the
   connector's admission, company, speaker-envelope and administrator-DM
   boundaries intact.
+<!-- planned:company-home-integration -->
+- A commit the agent makes in the company's repository, in a turn whose
+  speaker the connector recorded as an administrator of the company, in a
+  direct message or a channel alike, is recorded as a knowledge proposal. A
+  head the company context admits as a proposal
+  (`project/instrukt/spec/domain/company`, Knowledge proposal) is carried to
+  review and integration with no person moving it
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Knowledge
+  proposals in a company home); every other change the agent commits waits
+  for a person, as the company's knowledge is changed only by its
+  administrators (`general/principle/trust-and-guardrails`: the gate reads
+  the object, the commit's recorded speaker, never text the agent writes).
+<!-- /planned:company-home-integration -->
 - Its role is the connector's `role` (default `company-agent`), stored on the
   session's `connected_conversations` binding so caller assignment lookup
   grants that role's class, capabilities, and model selection from `agents.yaml`
@@ -673,6 +686,20 @@ Then the command outputs only the queued reply summary without the reply text
 And the connector posts the explicit reply to that conversation through the durable answer outbox exactly as the agent wrote it, without searching for or replacing any secret value
 ```
 
+<!-- planned:company-home-integration -->
+### UC-CV25: Change the company's knowledge by asking its agent
+
+```gherkin
+Given a workspace administrator asks the company's agent to change the company's knowledge
+When the agent commits the change to the company's documents in the company's repository
+Then the change is admitted to reach review and integration with no person moving it
+But when a member who is not an administrator asks for the change
+Then that change is not admitted and waits for a person
+But when the administrator's change also touches a file outside the company's knowledge
+Then that change is not admitted and waits for a person
+```
+
+<!-- /planned:company-home-integration -->
 ## Known caveats
 
 - An old unmatched-input finding from an automatically adopted source cannot

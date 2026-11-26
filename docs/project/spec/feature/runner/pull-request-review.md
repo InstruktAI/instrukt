@@ -19,15 +19,6 @@ build review is reflected on them by
 `project/instrukt/spec/feature/work/github-record`, and their content reaches the
 canonical branch through the integration candidate.
 
-<!-- planned:company-home-integration -->
-In a company home (`project/instrukt/spec/feature/configuration/company-homes`),
-a pull request carrying a knowledge change proposed through the company's
-agent, whose proposer the company admits to change its knowledge, is handed to
-the company's standing integrator once its current head holds an approving
-verdict. No person merges it: the integrator is the one writer of the
-company's default branch (`general/policy/commits`).
-<!-- /planned:company-home-integration -->
-
 ## Canonical fields
 
 ### Observation
@@ -247,6 +238,61 @@ workflow's decision
 (`project/instrukt/spec/feature/workflow/integration-gate`); its requests take
 the standings and dispositions above and repeat as above.
 
+<!-- planned:company-home-integration -->
+### Knowledge proposals in a company home
+
+In a company home admitted for automatic review, instrukt carries the
+company's knowledge proposals to review and integration. The observation's
+fetch of the home prunes remote-tracking branches the remote no longer holds,
+and instrukt considers only the heads of the home's remote-tracking branches,
+never a branch that exists only on the computer. Whether a head is an
+admitted proposal is the company context's answer
+(`project/instrukt/spec/domain/company`, Knowledge proposal).
+
+- **Opening.** For each such head that is an admitted proposal, is not
+  contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, instrukt opens a pull request for
+  its branch as the identity the `company-agent` role selects
+  (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+  The pull request is then reviewed as every eligible pull request is.
+- **Handoff.** When an open pull request's current head is an admitted
+  proposal, holds an approving verdict work answers is current and covers the
+  canonical branch, and is not contained in the remote-tracking canonical
+  branch, instrukt emits `runner.proposal_approved`, which wakes the
+  company's standing integrator to integrate that exact head. No person
+  merges it: the integrator is the one writer of the company's default branch
+  (`general/policy/commits`).
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's lookups each
+  time it runs, and raises each as an anomaly
+  (`project/instrukt/spec/feature/runner/anomaly-notification`).
+
+Opening proposal pull requests, and nothing else, needs the proposal
+pull-request credential, whose readiness work answers: met, unmet with a
+finding, or GitHub cannot be asked
+(`project/instrukt/spec/feature/work/github-apps`, Company repositories). It is
+checked where it enters (`project/instrukt/policy/checks-and-guards`):
+
+- **At entry.** `instrukt install` and `instrukt install --check` ask it for
+  each company home admitted for automatic review, beside automatic review's
+  readiness, and report an unmet answer or one GitHub cannot give as a
+  finding with its repair door.
+- **On each pass.** The review observation of a company home asks it once.
+  Met opens pull requests as above. Unmet withholds only the opening of
+  proposal pull requests, with a warning naming the finding and its door.
+  GitHub cannot be asked withholds only the opening for that pass; the
+  source's cause is recorded and a warning is logged, as for automatic
+  review's readiness, and the next tick asks again.
+
+Automatic review of the home's other pull requests, the handoff of heads
+already approved and CI observation never wait on this credential. An opening
+GitHub or the runtime cannot answer is warned and tried again on the next tick
+(Availability). An opening GitHub refuses while the credential is met is a
+defect of the part (`project/instrukt/policy/checks-and-guards`): a warning
+carries GitHub's answer. Neither writes any state.
+
+<!-- /planned:company-home-integration -->
 ### Enablement
 
 The capability is enabled per project with the project-layer setting
