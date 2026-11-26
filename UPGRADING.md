@@ -16,9 +16,12 @@ one that holds the settings and remove the other.
 `instrukt docs plugin` now renders the company's skill at `skills/<key>/` and
 makes its entry in `.claude-plugin/marketplace.json` the plugin's manifest,
 creating the catalog where the repository holds none. It no longer renders a
-`plugins/<key>/` folder or a `plugin.json`, and it never touches one: once
-`skills/<key>/` is rendered and committed, remove `plugins/<key>/` from the
-company's repository unless another publisher still renders it.
+`plugins/<key>/` folder or a `plugin.json`, and it never writes or removes
+one. A repository it rendered before keeps its release series: the first
+rendering reads the version of `plugins/<key>/.claude-plugin/plugin.json` and
+carries it, raised by one, into the catalog entry. Once `skills/<key>/` is
+rendered and committed, remove `plugins/<key>/` from the company's repository
+unless another publisher still renders it.
 
 New companies are added with `instrukt init --company <key>`, after declaring
 the owning GitHub organisation once with `instrukt config patch --global` and

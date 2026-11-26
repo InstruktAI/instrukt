@@ -353,7 +353,9 @@ impl Committed {
             files.insert(path, bytes);
         }
         if let Some(places) = places {
-            links.extend(links_at_or_above(root, places.file)?);
+            for file in places.files {
+                links.extend(links_at_or_above(root, file)?);
+            }
             let above = links_at_or_above(root, places.folder)?;
             // Behind a link nothing is looked at, so the folder is walked
             // only when no link stands at or above it.
@@ -463,20 +465,20 @@ impl Committed {
     }
 }
 
-/// One folder and one file of a working tree, by repository-relative path,
-/// that a view holds beside what publication reads
+/// One folder and some files of a working tree, by repository-relative
+/// path, that a view holds beside what publication reads
 /// ([`Committed::working_tree_places`]).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Places<'a> {
     /// The folder, without a trailing `/`.
     pub folder: &'a str,
-    pub file: &'a str,
+    pub files: &'a [&'a str],
 }
 
 impl Places<'_> {
     /// Whether `path` is the file, or lies inside the folder.
     fn holds(&self, path: &str) -> bool {
-        path == self.file
+        self.files.contains(&path)
             || path
                 .strip_prefix(self.folder)
                 .is_some_and(|rest| rest.starts_with('/'))
@@ -634,7 +636,7 @@ mod tests {
             &root,
             Places {
                 folder: "plugins/acme",
-                file: ".claude-plugin/marketplace.json",
+                files: &[".claude-plugin/marketplace.json"],
             },
         )
         .unwrap();

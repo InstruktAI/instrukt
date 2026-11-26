@@ -228,6 +228,12 @@ pub(super) enum Rendered {
     Findings(Vec<PluginFinding>),
 }
 
+/// The manifest an earlier rendering of the plugin of `key` wrote, from the
+/// repository's root: read for its version alone, never written or removed.
+pub(super) fn earlier_manifest(key: &ProjectSlug) -> String {
+    format!("plugins/{key}/.claude-plugin/plugin.json")
+}
+
 /// The folder of the skill of `key`, from the repository's root.
 pub(super) fn folder(key: &ProjectSlug) -> String {
     format!("{SKILLS}/{key}")
@@ -672,7 +678,7 @@ fn assess<'t>(
     let held = match &catalog {
         Catalog::Missing => Held::Absent,
         Catalog::Unknown => Held::Unknown,
-        Catalog::Read(document, _) => match held_version(document, key) {
+        Catalog::Read(document, _) => match held_version(tree, document, key) {
             Ok(None) => Held::Absent,
             Ok(Some(version)) => Held::Version(version),
             Err(finding) => {
@@ -808,8 +814,12 @@ fn same(files: &BTreeMap<String, String>, holds: &BTreeMap<String, &[u8]>) -> bo
 
 /// The version the catalog `document`'s entry for `key` holds: `None` when
 /// it lists no entry of that name, or the finding that the entry's version
-/// is not three numbers.
+/// is not three numbers. An entry an earlier rendering wrote holds no
+/// version: the version of the manifest that rendering left in `tree`
+/// ([`earlier_manifest`]) is the one held, and without one that is three
+/// numbers the entry's missing version is the finding.
 fn held_version(
+    tree: &Committed,
     document: &Json,
     key: &ProjectSlug,
 ) -> Result<Option<PluginVersion>, PluginFinding> {
@@ -832,7 +842,13 @@ fn held_version(
         Some(other) => Err(PluginFinding::EntryVersion {
             version: Some(other.to_string()),
         }),
-        None => Err(PluginFinding::EntryVersion { version: None }),
+        None => tree
+            .file(&earlier_manifest(key))
+            .and_then(|bytes| serde_json::from_slice::<Json>(bytes).ok())
+            .and_then(|manifest| manifest.get("version")?.as_str().map(PluginVersion::parse))
+            .flatten()
+            .map(Some)
+            .ok_or(PluginFinding::EntryVersion { version: None }),
     }
 }
 
@@ -1385,12 +1401,83 @@ mod tests {
         }
     }
 
+    /// The output of the renderer before the skill moved to the root: its
+    /// manifest held the version, and its catalog entry none.
+    const EARLIER_MANIFEST: &str = "{\n  \"name\": \"acme\",\n  \"version\": \"0.3.7\",\n  \"description\": \"The knowledge of Acme, as the company keeps it in its own repository.\",\n  \"author\": {\n    \"name\": \"Acme\"\n  }\n}\n";
+    const EARLIER_CATALOG: &str = "{\n  \"name\": \"acme-tools\",\n  \"owner\": {\n    \"name\": \"Acme\"\n  },\n  \"plugins\": [\n    {\n      \"name\": \"acme\",\n      \"source\": \"./plugins/acme\",\n      \"description\": \"The knowledge of Acme, as the company keeps it in its own repository.\"\n    }\n  ]\n}\n";
+
+    #[test]
+    fn an_earlier_renderings_output_upgrades_with_its_version_and_then_converges() {
+        let earlier = files_of(&[
+            (INDEX, "expanded: [company.md]\n"),
+            ("docs/company.md", "# Company\n\nWe make things.\n"),
+            (CATALOG, EARLIER_CATALOG),
+            ("plugins/acme/.claude-plugin/plugin.json", EARLIER_MANIFEST),
+            (
+                "plugins/acme/skills/acme/SKILL.md",
+                "an earlier rendering\n",
+            ),
+        ]);
+        let upgrade = plan(&view(&earlier), &key(), &name()).unwrap();
+        assert_eq!(upgrade.findings, []);
+        // The skill is written at the root, a step above the version the
+        // earlier manifest held; its folder is left as it is.
+        let drift = upgrade.drift.clone().unwrap();
+        assert_eq!(drift.version.to_string(), "0.3.8");
+        assert!(drift.removals.is_empty());
+        assert!(
+            drift
+                .writes
+                .iter()
+                .all(|file| file.path.starts_with("skills/acme"))
+        );
+        let upgraded = applied_plan(&earlier, &upgrade);
+        let catalog: Json =
+            serde_json::from_str(&upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1)
+                .unwrap();
+        assert_eq!(catalog["plugins"][0]["version"], "0.3.8");
+        assert_eq!(catalog["plugins"][0]["source"], "./");
+        assert_eq!(
+            upgraded
+                .iter()
+                .find(|(path, _)| path == "plugins/acme/skills/acme/SKILL.md")
+                .map(|(_, text)| text.as_str()),
+            Some("an earlier rendering\n")
+        );
+        // Rendering again changes nothing.
+        let again = plan(&view(&upgraded), &key(), &name()).unwrap();
+        assert_eq!(again.findings, []);
+        assert_eq!(again.catalog, None);
+        let again = again.drift.unwrap();
+        assert!(again.writes.is_empty() && again.removals.is_empty());
+        assert_eq!(again.version.to_string(), "0.3.8");
+    }
+
+    #[test]
+    fn a_versionless_entry_without_an_earlier_manifest_of_three_numbers_is_a_finding() {
+        for manifest in [None, Some("{\"version\": \"1.0\"}\n"), Some("{")] {
+            let mut files = vec![
+                (INDEX, "expanded: [company.md]\n"),
+                ("docs/company.md", "# Company\n"),
+                (CATALOG, EARLIER_CATALOG),
+            ];
+            files.extend(manifest.map(|text| ("plugins/acme/.claude-plugin/plugin.json", text)));
+            assert_eq!(
+                plan(&Committed::of(&files), &key(), &name())
+                    .unwrap()
+                    .findings,
+                [PluginFinding::EntryVersion { version: None }],
+                "{manifest:?}"
+            );
+        }
+    }
+
     #[test]
     fn an_entry_whose_version_is_not_three_numbers_is_a_finding_naming_it() {
         let held = |entry: &str| {
             let document: Json =
                 serde_json::from_str(&format!("{{\"plugins\": [{entry}]}}")).unwrap();
-            held_version(&document, &key())
+            held_version(&Committed::of(&[]), &document, &key())
         };
         assert_eq!(
             held(r#"{"name": "acme", "version": "1.0"}"#),

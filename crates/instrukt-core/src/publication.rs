@@ -202,14 +202,17 @@ pub fn validate_plugin(
 }
 
 /// The view of the working tree whose root is `root` that the plugin of
-/// `key` is rendered from: the plugin's folder and the catalog included.
+/// `key` is rendered from: the skill's folder, the catalog and the manifest
+/// an earlier rendering left, whose version a versionless entry carries
+/// forward.
 fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, PublicationError> {
     let folder = _plugin::folder(key);
+    let earlier = _plugin::earlier_manifest(key);
     _source::Committed::working_tree_places(
         root,
         _source::Places {
             folder: &folder,
-            file: _plugin::CATALOG,
+            files: &[_plugin::CATALOG, &earlier],
         },
     )
 }

@@ -133,7 +133,11 @@ With a finding, no file is written or removed.
   raised by one otherwise. instrukt changes only the last number: the first
   two are whatever the entry in the repository holds.
 - Rendering twice in a row changes nothing the second time.
-- An entry whose version is not three numbers is a finding naming it.
+- An entry an earlier rendering wrote holds no version; the version of the
+  manifest that rendering left at `plugins/<key>/.claude-plugin/plugin.json`
+  is the one the entry holds.
+- An entry whose version is not three numbers, or that holds none without
+  such a manifest of three numbers, is a finding naming it.
 - A file git ignores is no part of what `skills/<key>/` holds: it is neither
   compared nor removed.
 <!-- /planned-change:company-home-generation -->
@@ -229,7 +233,8 @@ A caller asks for one of three things in a company's repository:
   and sets the catalog entry. It reports the plugin's version and each file
   it changed. The folder is instrukt's: it is written whole, whatever it
   held. Nothing else in the repository, a `plugins/<key>/` folder included,
-  is read, written or removed. A rendering stages and commits nothing;
+  is written or removed, and nothing else is read but the version of that
+  earlier manifest. A rendering stages and commits nothing;
   committing what it changed is its caller's.
 <!-- /planned-change:company-home-generation -->
 - **A check** writes nothing. It names each file whose content in the working
