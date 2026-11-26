@@ -258,6 +258,3 @@ every coordination move in the shared git-backed `docs/` and live target-repo
 - [general/procedure/company-assistance](company-assistance.md)
 - [general/procedure/company-onboarding/overview](company-onboarding/overview.md)
 - [general/procedure/company-onboarding/service-connection](company-onboarding/service-connection.md)
-- [sdlc/procedure/greenfield-intake](../../domain/sdlc/procedure/greenfield-intake.md)
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
-- [sdlc/procedure/lifecycle/work/review-commits](../../domain/sdlc/procedure/lifecycle/work/review-commits.md)
