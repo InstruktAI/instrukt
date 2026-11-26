@@ -231,11 +231,12 @@ admitted value and its validation, owned by configuration
 The runner also owns carrying a company's knowledge proposals to review and
 integration, and what of them reaches the operator. It carries them in a
 company home admitted for automatic review whose proposal pull-request
-credential work answers is ready (`project/instrukt/spec/domain/work`),
-consulted with each admitted configuration; a credential that is not ready
+credential work answers is ready (`project/instrukt/spec/domain/work`). The
+runner asks that readiness when it starts, when it admits a new
+configuration and after a refused opening; a credential that is not ready
 withholds only the carrying, leaves automatic review of the home's other pull
-requests admitted, and is listed in `instrukt events status` with its repair
-door. Its review observation's fetch of a company home prunes
+requests admitted, and is recorded as the home's proposal deferral below.
+Its review observation's fetch of a company home prunes
 remote-tracking branches the remote no longer holds. On each review
 observation's tick it considers only the heads of the home's remote-tracking
 branches, never a branch that exists only on the computer, and asks the
@@ -258,20 +259,27 @@ company context's proposal lookups (`project/instrukt/spec/domain/company`):
   `project/instrukt/spec/feature/runner/anomaly-notification` as that
   contract stands, once per running process.
 
-An opening or emission GitHub or the runtime cannot answer is retried and
-reported under `project/instrukt/spec/feature/runner/pull-request-review`,
-Availability. An opening GitHub refuses makes the runner consult the
-proposal pull-request credential's readiness again: a credential that is not
-ready withholds the carrying, as above, and `instrukt events status` shows it
-among the admission findings it derives. A refusal for any other cause is a
-defect of the part (`project/instrukt/policy/checks-and-guards`): it is
-written to the runner's log with GitHub's answer, and the opening is tried
-again at an interval that grows, up to a bound, for as long as the head
-stays admitted. The interval is held in the running process's memory and
-starts again at a restart, which costs one more request GitHub refuses and
-changes nothing there. Nothing of either is kept: the opening is driven by a
-live admitted head, so a repaired permission or branch heals it with no
-replay.
+Emitting `runner.proposal_approved` while the runtime cannot answer is
+retried under `project/instrukt/spec/feature/runner/pull-request-review`,
+Availability. What withholds or fails opening is kept as the home's proposal
+deferral, on the pattern of the CI source's poll deferral:
+
+- **Record.** One row per company home's project in the runner's
+  `proposal_deferrals` table of the state database: its cause, the time
+  before which no opening is tried, and the span that deferral lasted.
+- **Written** when the proposal credential is found not ready, when GitHub
+  refuses an opening (the cause is GitHub's answer), and when GitHub cannot be
+  reached. Each new deferral doubles the span, from one tick up to an hour.
+  A successful opening, or the credential found ready, deletes the row.
+- **Read** by the runner before it tries an opening, and by `instrukt events
+  status`, which lists it with its cause and door beside the other runner
+  state it reports and sends no GitHub request for it.
+- **Classified** (`sdlc/policy/state-storage`): external bookkeeping, owned
+  and written by the runner alone; losing it costs one more GitHub request
+  and the listing until the next attempt; a runner table in the state
+  database, under its writer lock as the poll deferral is; scoped to the
+  machine; bounded by one row per company project, deleted on recovery.
+
 The verdict is work's, and what the integrator does with the head is
 workflow's integrator's.
 
