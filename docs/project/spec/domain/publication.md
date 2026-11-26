@@ -641,8 +641,8 @@ What each reader does with a finding:
 | --- | --- |
 | `instrukt docs units` | reports every finding and exits 1 |
 | the committed `AGENTS.md`, a project's or a company's, and the company plugin | a finding on a unit of a source the rendering holds in full is a finding of the rendering, handled as a finding of that source: the file is left as it is and the check fails |
-| the sync of the project that publishes the unit's position | every finding on a unit of a position it publishes refuses the sync with its findings, and the previous publication stays (`project/instrukt/spec/feature/publication/docs-repositories`); the units a sync publishes therefore carry none |
-| a global agent file holding a unit another project published, read from the home | the sync goes on: that source is held in its prose and the sync reports the finding, as for a reference left in a snippet another project published (`project/instrukt/spec/feature/publication/agent-entrypoints`); a unit that is absent is missing, not a finding |
+| the sync of the project that publishes the unit's position | an unreadable, link, reserved-folder, forbidden-directive, configured-values or references finding on a unit of a position it publishes refuses the sync with its findings, and the previous publication stays (`project/instrukt/spec/feature/publication/docs-repositories`) |
+| a global agent file, rendered by the sync of the `docs/general/` owner | a rendering-rule finding on any unit, this sync's own or another project's, and any finding on a unit another project published, read from the home, never fails the sync: the file holds that source's prose in the unit's place and the sync reports the finding (`project/instrukt/spec/feature/publication/project-publication`, `project/instrukt/spec/feature/publication/agent-entrypoints`); a unit that is absent is missing, not a finding |
 | the eval fingerprint | a unit with a finding counts as no unit |
 <!-- /planned:compressed-global-entrypoints -->
 
