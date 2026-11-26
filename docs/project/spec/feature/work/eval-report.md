@@ -102,13 +102,17 @@ window of its own, and needs no cluster Redis.
 
 Requests and answers travel through the runner's bounded fleet query
 (`project/instrukt/spec/domain/runner`), which decides which named computers
-answer. A computer answers from its own work record and publication state,
-applying the requested range, whether or not history is switched on there.
+answer. A computer answers over the cluster connection it already has, from
+its own work record and publication state, applying the requested range,
+whether or not history is switched on there; a named computer without a
+cluster connection of its own is named as a limitation of the report with that
+reason.
 For each project it counts its outcomes per eval set and model across all of
 its stamps under that eval set, counting each todo, review and findings report
-once per eval set, and its answer holds only those measures, the earliest and
-latest stamp time under each eval set, the commits that computer records
-setting each eval set, and the limitations it found. No stamp, artifact,
+once per eval set. Its answer holds only the project slugs, eval sets and
+model identities, those measures, the earliest and latest stamp time of each
+project, eval set and model, the commits that computer records setting each
+eval set, and the limitations it found. No stamp, artifact,
 findings report or conversation leaves the computer, and no computer but the
 requesting one writes a report.
 
@@ -117,7 +121,9 @@ named computer answers. Within each project it shows one window per eval set,
 holding the outcomes of every answering computer, this one included: the
 window spans the earliest to the latest stamp under that eval set across
 those computers, its measures add per model and in the human row, and it
-names the commits those computers record setting that eval set. A todo's
+names the commits those computers record setting that eval set; where none
+records one, the window carries the limitation that the commit setting it is
+unknown. A todo's
 record is held on one computer only
 (`project/instrukt/spec/feature/work/state-database`); no todo, review or
 findings report is counted twice. Stamps that copied no eval fingerprint form
