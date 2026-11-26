@@ -127,8 +127,9 @@ All Committizen types are allowed.
   on the same head, are asked for by their coordinates only (`head`, prior
   report path, and any disposition file path) and reach the continuing
   reviewer, the session that recorded the earlier verdict; no free-text
-  narrative or constraints travel with them
-  (`sdlc/procedure/lifecycle/work/review-commits`). The author
+  narrative or constraints travel with them, and the reviewer records its
+  judgment of a dispute as a new verdict version whether or not the verdict
+  changes (`sdlc/procedure/lifecycle/work/review-commits`). The author
   retains commit and review-routing responsibilities; the reviewer alone
   determines the verdict. What cannot proceed — a genuine human-owned decision,
   a safety gate, or a disagreement author and reviewer cannot resolve — is
