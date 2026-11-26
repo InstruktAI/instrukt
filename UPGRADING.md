@@ -658,8 +658,18 @@ upgraded. Upgrade instrukt on each computer that serves this repository.
 
 The runtime action `retire_thread` is gone; `finish_thread` is now the only
 action that ends a thread, for a resting conversation and for the orchestrator
-of a delivered or withdrawn todo alike. An unknown runtime action key fails
-`instrukt config validate`, so before installing this build remove any
-`runtimes.<runtime>.retire_thread` override from the machine layer, such as a
-temporary `runtimes.t3.retire_thread` in `~/.instrukt/instrukt.yaml`. A
-machine layer without one needs nothing done.
+of a delivered or withdrawn todo alike.
+
+The machine layer, `~/.instrukt/instrukt.yaml`, moves to global schema 7. The
+first writing command of this release on a computer converts it: any
+`runtimes.<runtime>.retire_thread` override is dropped, a runtime entry or a
+`runtimes` map left empty by that goes with it, and every other setting is
+kept. Read-only commands convert it in memory until then. Nothing needs doing
+by hand.
+
+Project layers and company homes keep their schema version, so no
+repository, this one included, needs a commit for this change.
+
+Once an instrukt of this release has written a computer's machine layer, an
+instrukt from before it on the same computer refuses that layer as newer
+than it supports. Upgrade every instrukt on a computer together.
