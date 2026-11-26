@@ -608,6 +608,11 @@ impl Work {
             WorkError::refused(format!("`{slug}` has no stored record to withdraw"))
         })?;
         let id = base.record.id.clone();
+        // The withdrawal acts from the project's primary checkout: it holds
+        // the project's workspace and HEAD, and is never one of the linked
+        // worktrees the release moves away, which the command may run in.
+        let checkout = instrukt_core::repository::primary_worktree(&project.root)
+            .map_err(|err| WorkError::refused(err.to_string()))?;
         let withdrawing = WithdrawalLock::acquire(&self.home)?;
         let (intent, fresh) = match store.withdrawal_intent(&id)? {
             None if resuming.is_some() => {
@@ -626,7 +631,7 @@ impl Work {
                 (intent, false)
             }
             None => {
-                let checked = plan_release(&project.root, &base.record)?;
+                let checked = plan_release(&checkout, &base.record)?;
                 let intent = WithdrawalIntent {
                     todo: id.clone(),
                     branch: checked.branch,
@@ -643,7 +648,7 @@ impl Work {
                 (intent, true)
             }
         };
-        let released = release(&project.root, slug, &store, intent, fresh)?;
+        let released = release(&checkout, slug, &store, intent, fresh)?;
         match store.complete_withdrawal(&id, s.now, released.branch, released.worktrees)? {
             Completed::Withdrawn(row) => s.take_written(index, *row, "removed"),
             Completed::NotLive(row) => {

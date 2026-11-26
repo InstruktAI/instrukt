@@ -84,16 +84,26 @@ fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_
         .assert()
         .success();
 
+    // The developer withdraws from inside the todo's own working copy, which
+    // has its branch checked out: the copy, the project's workspace and the
+    // branch are still the ones released.
+    let remove = || {
+        project
+            .env
+            .instrukt(&copy)
+            .args(["todo", "remove", "nested-lists"])
+            .assert()
+    };
     std::fs::write(copy.join("draft.rs"), "// unfinished\n").unwrap();
-    let uncommitted = project.todo(["remove", "nested-lists"]).failure();
+    let uncommitted = remove().failure();
     std::fs::remove_file(copy.join("draft.rs")).unwrap();
     let workspace = project.repo.path().join("workspace/nested-lists");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join("report.md"), "results\n").unwrap();
-    let busy = project.todo(["remove", "nested-lists"]).failure();
+    let busy = remove().failure();
     std::fs::remove_file(workspace.join("report.md")).unwrap();
 
-    let withdrawn = project.ok(["remove", "nested-lists"]);
+    let withdrawn = stdout(&remove().success());
     let shown = project.ok(["show", &format!("nested-lists@{}", &id[..8])]);
 
     let base = project.env.path("").display().to_string();
