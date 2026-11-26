@@ -231,14 +231,15 @@ admitted value and its validation, owned by configuration
 The runner also owns carrying a company's knowledge proposals to review and
 integration, and what of them reaches the operator. It carries them in a
 company home admitted for automatic review whose proposal pull-request
-credential work answers is ready (`project/instrukt/spec/domain/work`); a
-credential that is not ready withholds only the carrying, and is listed in
-`instrukt events status` with its repair door. Its review observation's
-fetch of a company home prunes remote-tracking branches the remote no longer
-holds. On each review observation's tick it considers only the heads of the
-home's remote-tracking branches, never a branch that exists only on the
-computer, and asks the company context's proposal lookups
-(`project/instrukt/spec/domain/company`):
+credential work answers is ready (`project/instrukt/spec/domain/work`),
+consulted with each admitted configuration; a credential that is not ready
+withholds only the carrying, leaves automatic review of the home's other pull
+requests admitted, and is listed in `instrukt events status` with its repair
+door. Its review observation's fetch of a company home prunes
+remote-tracking branches the remote no longer holds. On each review
+observation's tick it considers only the heads of the home's remote-tracking
+branches, never a branch that exists only on the computer, and asks the
+company context's proposal lookups (`project/instrukt/spec/domain/company`):
 
 - **Opens pull requests.** For each such head that is an admitted proposal,
   is not contained in the remote-tracking canonical branch, and that no pull
@@ -248,21 +249,23 @@ computer, and asks the company context's proposal lookups
   eligible pull request is.
 - **Hands off.** When an open pull request's current head is an admitted
   proposal, holds an approving verdict that work answers is current and covers
-  the canonical branch, and is not contained in the canonical branch, the
+  the remote-tracking canonical branch, and is not contained in it, the
   runner emits `runner.proposal_approved`.
 - **Reports.** It lists in `instrukt events status`, with their doors, the
-  unestablished entries the company context names and a proposal store whose
-  condition is not usable. Each is current state, derived again on every
-  tick. It raises each as an anomaly through
+  unestablished entries the company context names, a proposal store whose
+  condition is not usable, and an opening GitHub refused, with GitHub's
+  answer. Each is current state, derived again on every tick. It raises each
+  as an anomaly through
   `project/instrukt/spec/feature/runner/anomaly-notification` as that
   contract stands, once per running process.
 
-An opening or emission GitHub or the runtime does not complete, whether it is
-unavailable or refuses, is tried again on the next tick and reported as the
-rest of the review observation is
-(`project/instrukt/spec/feature/runner/pull-request-review`, Availability);
-nothing of it is kept. The verdict is work's, and what the integrator does
-with the head is workflow's integrator's.
+An opening or emission GitHub or the runtime cannot answer is retried and
+reported under `project/instrukt/spec/feature/runner/pull-request-review`,
+Availability. An opening GitHub refuses is reported as above and tried again
+on the next tick. Nothing of either is kept: the opening is driven by a live
+admitted head, so a repaired permission or branch heals it with no replay.
+The verdict is work's, and what the integrator does with the head is
+workflow's integrator's.
 
 <!-- /planned:company-home-integration -->
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
@@ -529,7 +532,7 @@ commit stays in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.proposal_approved` | In a company home admitted for automatic review and for carrying proposals, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
+| `runner.proposal_approved` | In a company home admitted for automatic review and for carrying proposals, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the remote-tracking canonical branch, and is not contained in it | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
 
 <!-- /planned:company-home-integration -->
 Fleet attention's conditions are occurrences with a todo subject in their
