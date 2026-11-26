@@ -57,10 +57,11 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                     root,
                     shown["thread"]["projectId"].as_str().unwrap(),
                 )?;
+                let retention = release::retention(&root.join("project"))?;
                 let projects = release::project_boundary(root, &root.join("project"))?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"projects":projects}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -145,6 +146,14 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             "messages",
             real["fixture"]["messages"].clone(),
         );
+        // The retention fixture thread: settled long enough ago and opened
+        // since, through the fake's controls for what the release reaches
+        // with management commands.
+        fake.migrate_projection();
+        fake.next_thread_id(release::RETENTION_THREAD);
+        let retained = fake.developer_starts_in(project.path());
+        fake.settle_at(&retained, "2026-11-10T12:00:00Z");
+        fake.opened_at(&retained, "2026-11-10T12:30:00Z");
         manifest["operation"] =
             json!("fake readiness, queued input, transcript and steering boundaries");
         release::worker(&fake_env, "fake", &fake_env.path("")).unwrap();
@@ -173,6 +182,15 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         manifest["websocket_dispatch"] = real["websocket_dispatch"].clone();
         manifest["fake_operations"]["WebSocket dispatch"] = json!(
             "compared queued acceptance, duplicate suppression and rejection of omitted provenance"
+        );
+        manifest["operation"] = json!("thread archiving through finished threads and archive");
+        assert_eq!(real["retention"], emulated["retention"]);
+        manifest["retention"] = real["retention"].clone();
+        manifest["fake_operations"]["thread archiving"] = json!(
+            "compared the finished, quiet, pinned and opening facts the listing and projection decode to, the archive with its table re-read, the listing afterwards, and the refused second archive with the archived row"
+        );
+        manifest["fake_operations"]["settle/pin/open"] = json!(
+            "fixture controls for what the release reaches with thread.settle, thread.pin and thread.visit; their projection is compared through the archiving check"
         );
         let mut observed = real["adapter"].clone();
         let mut fake_observed = emulated["adapter"].clone();

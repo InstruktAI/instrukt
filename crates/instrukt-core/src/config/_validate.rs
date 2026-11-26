@@ -666,6 +666,7 @@ pub(crate) fn judge(
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);
             event_transport(&effective, &mut found);
+            found.extend(thread_retention_unavailable(&effective));
         }
         LayerKind::Company => {
             super::_mcp::check_company_cross_refs(value, global, &mut found);
@@ -702,18 +703,10 @@ pub(crate) fn judge(
 /// machine's chosen runtime must carry (`session-continuity`, "Verb-gated
 /// features").
 fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
-    let name = effective
-        .get("runner")
-        .and_then(|r| r.get("runtime"))
-        .and_then(Value::as_str);
     // An unset runtime is the compiled one; one naming no entry is its own
     // finding and is not judged again here.
-    let chosen = match name {
-        Some(name) => match Runtime::named(name) {
-            Some(runtime) => runtime,
-            None => return,
-        },
-        None => Runtime::COMPILED,
+    let Some(chosen) = chosen_runtime(effective) else {
+        return;
     };
     let features = &[Feature::Conversations];
     let Some(unavailable) = availability(chosen, features) else {
@@ -724,6 +717,37 @@ fn connector_capabilities(effective: &Value, out: &mut Vec<KeyFinding>) {
         FindingKind::RuntimeCapabilityMissing,
         unavailable.describe(features),
     ));
+}
+
+/// A retention window set while the chosen runtime cannot archive threads:
+/// a finding at the window naming the runtime and the missing capability
+/// (`project/instrukt/spec/feature/configuration/layered-configuration`).
+/// Judged on the effective global document, so choosing such a runtime
+/// while a window is set finds it too.
+pub(super) fn thread_retention_unavailable(effective: &Value) -> Option<KeyFinding> {
+    super::_thread_retention::admitted(Some(effective))?;
+    let chosen = chosen_runtime(effective)?;
+    let features = &[Feature::ThreadRetention];
+    let unavailable = availability(chosen, features)?;
+    Some(KeyFinding::new(
+        super::_thread_retention::ARCHIVE_FINISHED_AFTER_KEY,
+        FindingKind::RuntimeCapabilityMissing,
+        unavailable.describe(features),
+    ))
+}
+
+/// The runtime the effective document `effective` chooses: the compiled
+/// one when `runner.runtime` is unset; `None` when it names no compiled
+/// runtime, which is its own finding.
+fn chosen_runtime(effective: &Value) -> Option<Runtime> {
+    match effective
+        .get("runner")
+        .and_then(|r| r.get("runtime"))
+        .and_then(Value::as_str)
+    {
+        Some(name) => Runtime::named(name),
+        None => Some(Runtime::COMPILED),
+    }
 }
 
 /// A module switch this layer turns on whose features the chosen runtime
@@ -737,18 +761,10 @@ fn feature_capabilities(
     this: Option<&crate::machine::MachineId>,
     out: &mut Vec<KeyFinding>,
 ) {
-    let name = effective
-        .get("runner")
-        .and_then(|r| r.get("runtime"))
-        .and_then(Value::as_str);
     // An unset runtime is the compiled one; one naming no entry is its own
     // finding and is not judged again here.
-    let chosen = match name {
-        Some(name) => match Runtime::named(name) {
-            Some(runtime) => runtime,
-            None => return,
-        },
-        None => Runtime::COMPILED,
+    let Some(chosen) = chosen_runtime(effective) else {
+        return;
     };
     for module in ["events", "todos"] {
         let on = value

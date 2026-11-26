@@ -41,7 +41,11 @@ module withholds only that module's own work: with a `modules.todos` finding (fo
 example, a project whose code is not on GitHub) the project gets no todo dispatch.
 Whether the runner considers the project, and its canonical checkout
 synchronization (the `main` fast-forward that feeds the blueprint), still follow
-its switches; its other work is unaffected. No part
+its switches; its other work is unaffected.
+A machine layer whose retention window the selected runtime cannot carry is
+admitted with thread retention withheld, as
+`project/instrukt/spec/feature/configuration/layered-configuration` decides.
+No part
 of the runner reads those files on its own
 (`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
 enters; nothing running handles a missing one).
@@ -95,7 +99,9 @@ computer the holder is a session bound to the todo, or the session that claimed
 it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
 it. The dispatcher records the handoff and retains conversations needed for
-later rounds or human questions. The runtime owns session ending and cleanup.
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
 Every tick also polls GitHub for the todos this computer has an interest in,
 with conditional requests: the todos it holds claims on, one pickup listing per
 project with `todos` on, and the prerequisites its own work is blocked on

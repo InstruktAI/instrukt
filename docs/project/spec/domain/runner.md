@@ -153,7 +153,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
-  live transcripts and lifecycle cleanup, owned by the runtime; connectors,
+  live transcripts and lifecycle cleanup, owned by the runtime, which also
+  performs the archives thread retention decides; connectors,
   conversations, the speaker of a conversation turn and the conversation tables,
   owned by company (`project/instrukt/spec/domain/company`); instrukt's
   extracted searchable history is a separate contract. instrukt calls only the adapter's
@@ -209,6 +210,14 @@ standing, owned by workflow; the attempt lock and the release of a delivered
 todo's worktree and work branch, owned by work; or the declaration of
 regenerable output and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+The runner also owns thread retention: which finished runtime threads of the
+registered projects on a computer are archived, and when, under the computer's
+retention window. The selected runtime performs each archive through the
+adapter and owns everything else in the thread's lifecycle. It does not own
+whether a todo has reached a terminal outcome, owned by work, or the window's
+admitted value and its validation, owned by configuration
+(`project/instrukt/spec/feature/runner/thread-retention`).
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
@@ -381,6 +390,46 @@ no session, emits no event and keeps no state of its own. It reaches only the
 worktrees the work record assigns to todos; every other checkout stays with
 its creator.
 
+### Mechanical thread retention
+
+While the computer's retention window is set, each runner invocation, after
+its dispatch and event work, archives finished runtime threads of every
+registered project whose checkout is on the computer, whatever modules that
+project switches on. The contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+A pass reads, for each such project, the finished threads the selected runtime
+lists for it through the adapter's finished-thread listing
+(`project/instrukt/spec/feature/runner/session-continuity`). It keeps every thread a standing responsibility holds — the
+session of its current binding, of its standing runtime binding, or of its
+manual reservation, observed or bound — and every thread work associates with
+one of the project's todos without a terminal outcome. When the standing
+bindings or work's answers cannot be read, the pass archives nothing. A
+project whose listing or whose work answer cannot be read in a pass is left
+whole for a later pass: nothing is archived on a partial answer. Of the
+remaining eligible threads across projects, the pass attempts the longest
+quiet first, up to its bound on archive attempts whatever their outcome, each
+archived only while the adapter finds the observation it was chosen from still
+holds.
+
+No pickup, event reaction or other command waits on a pass; only the
+`instrukt tick` that runs one returns after it. In `instrukt run` it
+runs on a thread of its own, started after a wake once the one an earlier wake
+started has ended; in `instrukt tick` it runs after the tick has released the
+runner and runtime-invocation locks, before the tick returns. Passes that
+overlap converge. A pass
+keeps no durable state: it reads the window from the admitted configuration
+and eligibility from the runtime, work and the runner's standing bindings
+every time. Each archive is a structured log event. A failed archive, a
+finished thread whose latest activity the runtime does not report, a project
+left for later and a pass that archived nothing for want of an answer
+are logged with their cause when that cause appears or changes for its thread,
+project or pass, as worktree reclamation reports what stays owed
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+Retention runs where the runner already runs: the window adds no wake-up
+demand (`project/instrukt/spec/feature/runner/module-installation`).
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -534,6 +583,9 @@ related references.
 - **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
   — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
 
+- **Thread retention** — [project/instrukt/spec/feature/runner/thread-retention](../feature/runner/thread-retention.md)
+  — have long-quiet finished threads leave the thread list without anyone archiving them.
+
 ## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
@@ -615,6 +667,12 @@ regenerable output, workflow each todo worktree's standing and what a
 delivered todo still owes, and work the section of its record in which no
 role attempt opens, together with the release of a delivered todo's worktree
 and work branch (`project/instrukt/spec/domain/context-map`).
+
+For thread retention the runner asks its suppliers and derives none of their
+answers: configuration supplies the computer's admitted retention window, and
+work the native sessions bound to, or holding the execution claim of, a
+project's todos that have not reached a terminal outcome. The runtime adapter lists finished threads and archives them
+(`project/instrukt/spec/domain/context-map`).
 
 ## Known caveats
 

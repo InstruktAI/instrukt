@@ -225,6 +225,11 @@ This context emits no events.
   that it stays inside the project's checkout
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
+- **Runner (thread retention)** — customer / supplier: configuration supplies
+  the computer's admitted retention window and refuses, where configuration
+  enters, a window the selected runtime cannot carry
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except
 the connector declarations, which it consumes.

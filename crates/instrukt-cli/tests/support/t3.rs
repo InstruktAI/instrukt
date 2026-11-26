@@ -171,6 +171,7 @@ class Thread(TypedDict, total=False):
     status: str
     activeRunId: str | None
     commandId: str
+    settled: bool
     messages: list[Input]
 # Projects every thread, `updated` in place of its file when given. Callers
 # hold `state_lock`.
@@ -213,7 +214,9 @@ def sync_inputs(updated: Thread | None = None) -> None:
                     entered=not queued and thread['status'] not in ['preparing','queued']
                     status='queued' if queued else (thread['status'] if thread['status'] in ['preparing','queued'] else 'running')
                     completed=None
-                    if lifecycle and status=='running' and not (run==thread.get('activeRunId') and thread['status']=='running'):
+                    # A settled thread's runs have ended, as T3 settles only then.
+                    ended=lifecycle or thread.get('settled')
+                    if ended and status=='running' and not (run==thread.get('activeRunId') and thread['status']=='running'):
                         status='completed'; completed=at
                     native={'id':run,'threadId':thread['threadId'],'userMessageId':identity,'status':status,'startedAt':at if entered else None,'requestedAt':at,'completedAt':completed}
                     if lifecycle: native['ordinal']=len(runs)
@@ -241,7 +244,8 @@ def create_worktree(t,folder,base,branch):
     subprocess.run(['git','-C',t['checkout'],'worktree','add','--quiet']+(['-b',branch] if branch is not None else [])+[str(folder),base],check=True)
     t['worktreePath']=str(folder); t['branch']=base if branch is None else branch; t['base']=base
 if command=='list':
-    threads=all_threads()
+    # As T3 lists a project's threads: archived ones are left out.
+    threads=[t for t in all_threads() if not t.get('archived')]
     if '--project' in flags:
         project=project_for(flags['--project'])
         threads=[t for t in threads if project is not None and (t.get('projectId') or project_for(t['checkout']))==project]
@@ -790,6 +794,127 @@ impl FakeT3 {
             self.state.join(format!("{id}.deleted")),
         )
         .unwrap();
+    }
+    /// Brings T3's store to the projection tables the release migrates for
+    /// what thread retention reads: runs with their status and times,
+    /// runtime requests and delegated tasks with their status. Projections
+    /// written from then on fill them.
+    pub fn migrate_projection(&self) {
+        let db = self.store();
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS orchestration_v2_projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,created_at TEXT,updated_at TEXT,archived_at TEXT,deleted_at TEXT,payload_json TEXT);
+             CREATE TABLE IF NOT EXISTS orchestration_v2_projection_runs(run_id TEXT,thread_id TEXT,payload_json TEXT,PRIMARY KEY(thread_id,run_id));
+             CREATE TABLE IF NOT EXISTS orchestration_v2_projection_runtime_requests(runtime_request_id TEXT PRIMARY KEY,thread_id TEXT NOT NULL,status TEXT NOT NULL,payload_json TEXT NOT NULL);
+             CREATE TABLE IF NOT EXISTS orchestration_v2_projection_subagents(subagent_id TEXT PRIMARY KEY,thread_id TEXT,child_thread_id TEXT,status TEXT,updated_at TEXT,payload_json TEXT);",
+        )
+        .unwrap();
+        let columns: Vec<String> = db
+            .prepare("SELECT name FROM pragma_table_info('orchestration_v2_projection_runs')")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        for column in ["status", "requested_at", "completed_at"] {
+            if !columns.iter().any(|found| found == column) {
+                db.execute_batch(&format!(
+                    "ALTER TABLE orchestration_v2_projection_runs ADD COLUMN {column} TEXT"
+                ))
+                .unwrap();
+            }
+        }
+    }
+    /// T3's store, as the fake's server writes it.
+    fn store(&self) -> instrukt_core::state_db::rusqlite::Connection {
+        instrukt_core::state_db::rusqlite::Connection::open(
+            Path::new(&self.environment["T3CODE_HOME"]).join("userdata/statev2.sqlite"),
+        )
+        .unwrap()
+    }
+    /// Edits thread `id`'s projection row with `json_set` arguments `edits`.
+    fn project_payload(
+        &self,
+        id: &str,
+        edits: &str,
+        value: &dyn instrukt_core::state_db::rusqlite::ToSql,
+    ) {
+        let changed = self
+            .store()
+            .execute(
+                &format!(
+                    "UPDATE orchestration_v2_projection_threads SET payload_json=json_set(payload_json,{edits}) WHERE thread_id=?1"
+                ),
+                instrukt_core::state_db::rusqlite::params![id, value],
+            )
+            .unwrap();
+        assert_eq!(changed, 1, "thread {id} has a projection row");
+    }
+    /// Thread `id`'s turn ends and it settles at `at`, as T3's `thread.settle`
+    /// leaves it: idle, settled with its settling time, its runs projected
+    /// ended. The settling is its latest update.
+    pub fn settle_at(&self, id: &str, at: &str) {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.set_status(id, "idle");
+        self.change(id, "activeRunId", serde_json::Value::Null);
+        self.change(id, "settled", true.into());
+        self.change(id, "settledAt", at.into());
+        self.change(id, "updatedAt", at.into());
+        let status = std::process::Command::new(&self.script)
+            .envs(&self.environment)
+            .args(["thread", "show", id, "--messages", "1"])
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        self.store()
+            .execute(
+                "UPDATE orchestration_v2_projection_threads SET updated_at=?2 WHERE thread_id=?1",
+                [id, at],
+            )
+            .unwrap();
+        self.project_payload(
+            id,
+            "'$.settledOverride','settled','$.settledAt',?2,'$.updatedAt',?2",
+            &at,
+        );
+    }
+    /// A person pins thread `id` at `at`.
+    pub fn pin_at(&self, id: &str, at: &str) {
+        let resolved = self.native_id(id);
+        self.project_payload(&resolved, "'$.pinnedAt',?2", &at);
+    }
+    /// A person opens thread `id` at `at`, as T3 records the visit: its open
+    /// statistics' `openedAt` in epoch milliseconds, the thread itself not
+    /// updated.
+    pub fn opened_at(&self, id: &str, at: &str) {
+        let resolved = self.native_id(id);
+        let millis = at.parse::<jiff::Timestamp>().unwrap().as_millisecond();
+        self.project_payload(
+            &resolved,
+            "'$.opens',json_object('openedAt',?2,'score',1,'picks',json_array())",
+            &millis,
+        );
+    }
+    /// The native ids `t3 thread list --project <checkout> --json` lists.
+    pub fn listed(&self, checkout: &std::path::Path) -> Vec<String> {
+        let out = std::process::Command::new(&self.script)
+            .envs(&self.environment)
+            .args([
+                "thread",
+                "list",
+                "--project",
+                checkout.to_str().unwrap(),
+                "--json",
+            ])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        let listed: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+        listed
+            .iter()
+            .map(|thread| thread["threadId"].as_str().unwrap().to_owned())
+            .collect()
     }
     pub fn archive(&self, id: &str) {
         let resolved = self.native_id(id);

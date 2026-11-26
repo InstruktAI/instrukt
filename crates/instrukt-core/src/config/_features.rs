@@ -14,6 +14,9 @@ pub enum Feature {
     /// Conversations through company connectors: a company home's declared
     /// connector gives them.
     Conversations,
+    /// Archiving long-quiet finished threads: a global retention window
+    /// gives it.
+    ThreadRetention,
 }
 impl Feature {
     pub fn name(self) -> &'static str {
@@ -27,6 +30,7 @@ impl Feature {
             Self::LinkedSessionInput => "linked-session input",
             Self::WorktreeAttachment => "worktree attachment",
             Self::Conversations => "conversations",
+            Self::ThreadRetention => "thread retention",
         }
     }
     pub(crate) fn switched_on_by(module: &str) -> &'static [Self] {
@@ -77,6 +81,7 @@ pub fn availability(runtime: Runtime, features: &[Feature]) -> Option<Unavailabl
             {
                 Some("worktree attachment")
             }
+            Feature::ThreadRetention if !runtime.archives_threads() => Some("thread archiving"),
             _ => None,
         };
         if let Some(missing) = missing

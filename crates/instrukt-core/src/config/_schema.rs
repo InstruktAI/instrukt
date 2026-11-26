@@ -181,6 +181,8 @@ enum Shape {
     Identity,
     /// Paths inside a checkout (`regenerable`).
     Regenerable,
+    /// `off` or a retention window (`runner.archive_finished_after`).
+    RetentionWindow,
 }
 
 enum Node {
@@ -291,6 +293,10 @@ fn schema() -> Node {
                 ("notify", Leaf(GlobalOnly, Shape::Str)),
                 ("runtime", Leaf(GlobalOnly, Shape::Str)),
                 ("autostart", Leaf(Both, Shape::Autostart)),
+                (
+                    "archive_finished_after",
+                    Leaf(GlobalOnly, Shape::RetentionWindow),
+                ),
             ]),
         ),
         (
@@ -634,6 +640,7 @@ fn check_shape(
         },
 
         Shape::Regenerable => super::_regenerable::check(value, path, out),
+        Shape::RetentionWindow => super::_thread_retention::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -1166,6 +1173,14 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         Shape::Regenerable => {
             json!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
         }
+        Shape::RetentionWindow => described(
+            json!({
+                "type": "string",
+                "pattern": super::_thread_retention::WINDOW_PATTERN,
+                "default": super::_thread_retention::OFF,
+            }),
+            super::_thread_retention::WINDOW_CONTRACT,
+        ),
     }
 }
 
@@ -1189,6 +1204,11 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 text(DEFAULT_GITHUB_API_URL),
             );
             insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+            insert_at(
+                &mut root,
+                &["runner", "archive_finished_after"],
+                text(super::_thread_retention::OFF),
+            );
         }
         LayerKind::Project => {
             insert_at(&mut root, &["board"], Value::Bool(false));
@@ -1236,7 +1256,7 @@ mod tests {
     }
 
     const GLOBAL_ONLY: &str = "agents: {claude: {git_author: 'A <a@x>'}}\n\
-        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true, archive_finished_after: 7d}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\n\
@@ -1402,6 +1422,56 @@ mod tests {
             );
             assert_eq!(fits(&schema, &json), valid, "{action:?}");
         }
+    }
+
+    /// Whether validation and the published global schema each admit
+    /// `window` as the retention window.
+    fn window_admitted(window: &str) -> (bool, bool) {
+        let doc = format!("schema_version: 1\nrunner: {{archive_finished_after: {window}}}\n");
+        (
+            check(&yaml(&doc), LayerKind::Global).is_empty(),
+            fits(&layer_json_schema(LayerKind::Global), &as_json(&doc)),
+        )
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_admit_a_counted_window() {
+        assert_eq!(window_admitted("7d"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_admit_an_off_window() {
+        assert_eq!(window_admitted("off"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_zero_count() {
+        assert_eq!(window_admitted("0d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_leading_zero() {
+        assert_eq!(window_admitted("07d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_count_without_a_unit() {
+        assert_eq!(window_admitted("7"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_an_unknown_unit() {
+        assert_eq!(window_admitted("7y"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_unit_without_a_count() {
+        assert_eq!(window_admitted("d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_window_that_is_not_text() {
+        assert_eq!(window_admitted("true"), (false, false));
     }
 
     /// Read as ECMA-262, each published action pattern admits a value exactly
@@ -1584,6 +1654,7 @@ mod tests {
                 ("ticks", N),
                 ("runner.notify", N),
                 ("runner.runtime", N),
+                ("runner.archive_finished_after", N),
                 ("github.api_url", N),
             ]
         );

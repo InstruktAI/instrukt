@@ -294,6 +294,7 @@ fn features(runtime: Option<Runtime>, unreadable: bool) -> Value {
         ("session_status", Feature::SessionStatus),
         ("linked_session_input", Feature::LinkedSessionInput),
         ("worktree_attachment", Feature::WorktreeAttachment),
+        ("thread_retention", Feature::ThreadRetention),
     ] {
         let (false, Some(runtime)) = (unreadable, runtime) else {
             result.insert(key.into(),json!({"available":null,"missing":[],"errors":["runtime configuration could not be read"]}));

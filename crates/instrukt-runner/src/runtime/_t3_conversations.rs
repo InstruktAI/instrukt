@@ -241,6 +241,12 @@ fn latest_update(path: &Path, thread: &str) -> Result<Option<String>, SourceErro
     Ok(newest.map(|(_, text)| text))
 }
 
+/// The condition that thread `?1` has no run T3 projects as not ended: every
+/// run's status is one of the terminal ones.
+const NO_UNENDED_RUN: &str = "NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs \
+     WHERE thread_id=?1 AND (status IS NULL OR status NOT IN \
+     ('completed','failed','interrupted','cancelled','rolled_back')))";
+
 /// Read exact acceptance and quiescence from one projection snapshot.
 pub(super) fn send_evidence(
     home: &Home,
@@ -251,20 +257,194 @@ pub(super) fn send_evidence(
 ) -> Result<(bool, bool, bool), SourceError> {
     let db = open(&T3Home::discover(home, env).database())?;
     Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
                        WHERE thread_id=?1 AND role='user'
                          AND json_extract(payload_json,'$.text')=?2),
                 EXISTS(SELECT 1 FROM orchestration_v2_projection_threads
                        WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL)
-                AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs
-                       WHERE thread_id=?1
-                         AND (status IS NULL OR status NOT IN ('completed','failed','interrupted','cancelled','rolled_back'))),
+                AND {NO_UNENDED_RUN},
                 EXISTS(SELECT 1 FROM orchestration_command_receipts
                        WHERE command_id=?3 AND aggregate_kind='thread' AND aggregate_id=?1
-                         AND command_type='message.dispatch' AND status='rejected')",
+                         AND command_type='message.dispatch' AND status='rejected')"
+        ),
         params![thread, text, command_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?)
+}
+
+/// What thread retention reads of a listed thread from its projection row.
+pub(super) struct RetentionRow {
+    /// The row records a pin, or cannot be read: a pin is assumed.
+    pub pinned: bool,
+    /// The latest opening the row records, `None` when it records none;
+    /// `Err` when the row's opening record cannot be read.
+    pub opened_at: Result<Option<jiff::Timestamp>, ()>,
+}
+
+/// The projection rows of `threads`, by thread id: their pin and latest
+/// opening (`opens.openedAt`, epoch milliseconds). A thread without a row is
+/// absent from the answer.
+pub(super) fn retention_rows(
+    home: &Home,
+    env: &Env,
+    threads: &[&str],
+) -> Result<BTreeMap<String, RetentionRow>, SourceError> {
+    let location = T3Home::discover(home, env);
+    let path = location.database();
+    validate(&path, &location, &[Projection::Threads])?;
+    let db = open(&path)?;
+    let ids = serde_json::to_string(threads)?;
+    let mut statement = db.prepare(
+        "SELECT thread_id,payload_json FROM orchestration_v2_projection_threads \
+         WHERE thread_id IN (SELECT value FROM json_each(?1))",
+    )?;
+    let rows = statement
+        .query_map(params![ids], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, payload)| {
+            let payload = payload
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+                .filter(|payload| payload["id"] == id.as_str());
+            let row = match payload {
+                Some(payload) => RetentionRow {
+                    pinned: !payload["pinnedAt"].is_null(),
+                    opened_at: opened_at(&payload),
+                },
+                None => RetentionRow {
+                    pinned: true,
+                    opened_at: Err(()),
+                },
+            };
+            (id, row)
+        })
+        .collect())
+}
+
+/// The latest opening a thread payload records: `None` when it records none
+/// (T3 writes an unreadable opening record as none); `Err` when the record is
+/// there but its time is no epoch-millisecond instant.
+fn opened_at(payload: &Value) -> Result<Option<jiff::Timestamp>, ()> {
+    let opens = &payload["opens"];
+    if opens.is_null() {
+        return Ok(None);
+    }
+    let millis = opens["openedAt"]
+        .as_f64()
+        .filter(|ms| ms.is_finite())
+        .ok_or(())?;
+    // A finite count; `as` saturates and the instant's range is checked next.
+    let millis = millis.round() as i64;
+    jiff::Timestamp::from_millisecond(millis)
+        .map(Some)
+        .map_err(|_| ())
+}
+
+/// The tables and columns the archive re-read consumes, each validated before
+/// it reads them.
+const ARCHIVE_READ: &[(&str, &[(&str, &str)])] = &[
+    (
+        "orchestration_v2_projection_threads",
+        &[
+            ("thread_id", "TEXT"),
+            ("payload_json", "TEXT"),
+            ("updated_at", "TEXT"),
+            ("archived_at", "TEXT"),
+            ("deleted_at", "TEXT"),
+        ],
+    ),
+    (
+        "orchestration_v2_projection_runs",
+        &[("thread_id", "TEXT"), ("status", "TEXT")],
+    ),
+    (
+        "orchestration_v2_projection_runtime_requests",
+        &[("thread_id", "TEXT"), ("status", "TEXT")],
+    ),
+    (
+        "orchestration_v2_projection_subagents",
+        &[("thread_id", "TEXT"), ("status", "TEXT")],
+    ),
+];
+
+/// Whether `thread` still stands as it was observed for archiving, at the
+/// caller's `now`: its row present and neither archived nor deleted, settled
+/// with a settling time, not pinned, not snoozed past `now`, with no update
+/// or opening after `latest_activity`; no run that has not ended, no pending
+/// runtime request and no delegated task that has not settled. An unreadable
+/// or mismatched table is an error.
+pub(super) fn archive_holds(
+    home: &Home,
+    env: &Env,
+    thread: &str,
+    latest_activity: jiff::Timestamp,
+    now: jiff::Timestamp,
+) -> Result<bool, SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    for (table, required) in ARCHIVE_READ {
+        let found = columns(&db, table)?;
+        if required
+            .iter()
+            .any(|(name, kind)| found.get(*name).map(String::as_str) != Some(*kind))
+        {
+            return Err(source_error(
+                "required projection column or type is incompatible",
+            ));
+        }
+    }
+    let row: Option<(String, String, bool)> = db
+        .query_row(
+            &format!(
+                "SELECT payload_json,updated_at,{NO_UNENDED_RUN} \
+                AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runtime_requests \
+                       WHERE thread_id=?1 AND status='pending') \
+                AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_subagents \
+                       WHERE thread_id=?1 AND (status IS NULL OR status NOT IN \
+                       ('completed','failed','interrupted','cancelled','idle'))) \
+             FROM orchestration_v2_projection_threads \
+             WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL"
+            ),
+            params![thread],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?;
+    let Some((payload, updated_at, quiet)) = row else {
+        return Ok(false);
+    };
+    let payload: Value = serde_json::from_str(&payload)?;
+    let instant = |value: &Value| {
+        value
+            .as_str()
+            .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+    };
+    let not_after = |at: Option<jiff::Timestamp>| at.is_some_and(|at| at <= latest_activity);
+    Ok(quiet
+        && payload["id"] == thread
+        && payload["settledOverride"] == "settled"
+        && instant(&payload["settledAt"]).is_some()
+        && payload["pinnedAt"].is_null()
+        && (payload["snoozedUntil"].is_null()
+            || instant(&payload["snoozedUntil"]).is_some_and(|until| until <= now))
+        && not_after(updated_at.parse().ok())
+        && opened_at(&payload).is_ok_and(|opened| opened.is_none_or(|at| at <= latest_activity)))
+}
+
+/// Whether `thread`'s projection row shows it archived.
+pub(super) fn archived(home: &Home, env: &Env, thread: &str) -> Result<bool, SourceError> {
+    let db = open(&T3Home::discover(home, env).database())?;
+    Ok(db
+        .query_row(
+            "SELECT archived_at IS NOT NULL FROM orchestration_v2_projection_threads \
+             WHERE thread_id=?1",
+            params![thread],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
 }
 
 /// Run allocation precedes entry: queued/preparing inputs already have run IDs.
