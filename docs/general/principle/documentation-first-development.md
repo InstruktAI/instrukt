@@ -31,10 +31,9 @@ This is the same shape as TDD, schema-first API design, and ADRs. The discipline
 
 ## Implications
 
-The **enforceable rules** of this principle — doc-only work is never a todo,
-functionality work authors its snippets first, every behavioral delta is
-reflected, a stale current snippet is a defect, delivery resolves pending material —
-live in `general/policy/documentation-discipline`. The **authoring mechanics** —
+The **enforceable rules** of this principle — functionality work authors its
+snippets first, every behavioral delta is reflected, a stale current snippet is
+a defect — live in `general/policy/documentation-discipline`. The **authoring mechanics** —
 planned sections, companions, frontmatter, the publication pipeline — live in
 `general/procedure/doc-snippet-authoring`, and the **field shapes** in
 `general/spec/snippet-authoring-schema`. This section states the conceptual
