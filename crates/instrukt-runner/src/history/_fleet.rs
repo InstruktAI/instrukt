@@ -3,7 +3,7 @@
 //! computer's missing answer is worded.
 use super::{Failure, HistoryError, Operation, SearchResult, local_search};
 use crate::computer_fleet::{
-    self, Answering, Outcome, Responder, ResponderSpec, StartError, Unopened,
+    self, Answering, Outcome, Responder, ResponderSpec, StartError, Unopened, WorkerRow,
 };
 use crate::transport::{ScopedTransport, TransportError};
 use instrukt_core::{
@@ -132,6 +132,10 @@ pub(crate) fn search_worker(
             home: home.clone(),
             env: env.clone(),
             current,
+        },
+        WorkerRow {
+            home: home.clone(),
+            worker: SEARCH,
         },
     )
 }

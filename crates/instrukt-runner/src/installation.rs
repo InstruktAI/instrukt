@@ -950,12 +950,15 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
         Ok(serde_json::json!({"count":count,"recent":recent}))
     })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
-    // The history workers' current failures, while they last.
-    let workers = state.read(|conn, path| {
+    // The runner workers' current failures, while they last: the rows in
+    // runner_workers and the computer fleet's failure file.
+    let mut workers = state.read(|conn, path| {
         let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
         let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
+    workers.extend(crate::computer_fleet::failure_status(request.home));
+    workers.sort_by(|a, b| a["worker"].as_str().cmp(&b["worker"].as_str()));
     // The run loop's last skipped wake, until a wake is not skipped.
     let skipped_wake = state.read(|conn, path| {
         conn.query_row("SELECT at,cause FROM runner_skipped_wake WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"cause":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))

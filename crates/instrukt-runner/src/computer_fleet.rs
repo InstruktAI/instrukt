@@ -12,11 +12,13 @@
 //! a project's active todos and their sessions.
 
 mod _evaluation;
+mod _failure;
 mod _members;
 mod _query;
 mod _responder;
 
 pub(crate) use _evaluation::{EvaluationHost, tick_step};
+pub(crate) use _failure::{WorkerRow, status as failure_status};
 
 pub use _members::{LastSeen, Member, Members, MembersUnread};
 

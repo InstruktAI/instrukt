@@ -13,6 +13,7 @@ use instrukt_core::home::Home;
 use instrukt_core::machine::{self, MachineId};
 use serde_json::{Map, Value};
 
+use super::_failure::FailureRecorder;
 use super::_query::{Envelope, Kind, REQUEST_LIFETIME};
 use crate::transport::{Endpoint, EventScope, ScopedTransport, TransportError};
 
@@ -43,7 +44,8 @@ pub(crate) trait Answering: Send + 'static {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ResponderSpec {
     pub kind: Kind,
-    /// Its name in `runner_workers`, and its thread's name.
+    /// Its name where its failure is recorded and in logs, and its thread's
+    /// name.
     pub worker: &'static str,
     /// Whether it publishes the kind's short-lived readiness key on each poll.
     pub ready: bool,
@@ -123,7 +125,7 @@ pub(crate) enum StartError {
 
 /// One kind's responder thread in the long-lived runner. Cluster Redis is
 /// retried inside the thread after a growing delay, and its failure is
-/// recorded in `runner_workers` while it lasts.
+/// recorded, where its host says, while it lasts.
 pub(crate) struct Responder {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
@@ -135,9 +137,9 @@ impl Responder {
         spec: ResponderSpec,
         transport: &ScopedTransport,
         mut answering: impl Answering,
+        mut recorder: impl FailureRecorder,
     ) -> Result<Self, StartError> {
         let computer = machine::machine_id(home)?;
-        let home = home.clone();
         let transport = transport.clone();
         let stop = Arc::new(AtomicBool::new(false));
         let stopping = stop.clone();
@@ -164,8 +166,7 @@ impl Responder {
                                 tracing::info!(event = "fleet_responder_recovered", worker, cause = %cause);
                             }
                             if !shown_healthy {
-                                crate::state::worker_state(&home, worker, None);
-                                shown_healthy = true;
+                                shown_healthy = recorder.record(None);
                             }
                             delay = Duration::from_secs(1);
                         }
@@ -175,8 +176,9 @@ impl Responder {
                             shown_healthy = false;
                             if failing.as_deref() != Some(cause.as_str()) {
                                 tracing::warn!(event = "fleet_responder_failing", worker, error = %error);
-                                crate::state::worker_state(&home, worker, Some(&cause));
-                                failing = Some(cause);
+                                if recorder.record(Some(&cause)) {
+                                    failing = Some(cause);
+                                }
                             }
                             if !stopping.load(Ordering::Relaxed) {
                                 std::thread::park_timeout(delay);
@@ -189,7 +191,7 @@ impl Responder {
                     }
                 }
                 // A worker that ends leaves no record of an earlier failure.
-                crate::state::worker_state(&home, worker, None);
+                recorder.record(None);
             })
             .map_err(|source| StartError::Thread { worker, source })?;
         Ok(Self {

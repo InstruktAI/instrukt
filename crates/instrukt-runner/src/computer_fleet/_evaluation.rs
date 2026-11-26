@@ -16,21 +16,15 @@ use instrukt_core::machine::{self, MachineId};
 use jiff::Timestamp;
 use serde_json::{Map, Value};
 
+use super::_failure::{Clock, FailureFile, FailureRecorder, WORKER};
 use super::_members;
 use super::_query::{EVALUATION, Unopened, open};
 use super::_responder::{Answering, PollError, Responder, ResponderSpec, answer_request};
 use crate::interfaces::{EvaluationAnswers, RunnerWiring};
 use crate::transport::{Endpoint, EventScope, Reachability, TransportError};
 
-/// The row the evaluation responder and the tick's fleet step record their
-/// failure under in `runner_workers`.
-pub(crate) const WORKER: &str = "computer-fleet";
-
 /// How often a running responder writes its membership entry again.
 const MEMBERSHIP_INTERVAL: Duration = Duration::from_secs(30);
-
-/// The operator clock the runner reads.
-pub(crate) type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
 
 /// The evaluation kind's answering on this computer.
 pub(super) struct Evaluating {
@@ -77,9 +71,9 @@ impl Answering for Evaluating {
 /// cluster connection is configured and work's answering is wired, it sets
 /// this computer's membership entry and answers every unexpired evaluation
 /// request waiting for it when the step starts; later arrivals wait for the
-/// next tick. A failure is recorded in the `computer-fleet` row and ends the
-/// step, and the tick goes on; a successful step clears the row, as does
-/// having no cluster connection configured.
+/// next tick. A failure is recorded in the computer fleet's failure file and
+/// ends the step, and the tick goes on; a successful step removes the file,
+/// as does having no cluster connection configured.
 pub(crate) fn tick_step(
     home: &Home,
     config: &Configuration,
@@ -89,15 +83,16 @@ pub(crate) fn tick_step(
     let Some(answers) = &wiring.evaluation else {
         return;
     };
+    let mut failure = FailureFile::new(home, Arc::new(move || now));
     let fleet = match open(config, home, Reachability::Unrecorded) {
         Ok(fleet) => fleet,
         Err(Unopened::NotConfigured) => {
-            crate::state::worker_state(home, WORKER, None);
+            failure.record(None);
             return;
         }
         Err(Unopened::Unusable(error)) => {
             tracing::warn!(event = "computer_fleet_unusable", worker = WORKER, %error);
-            crate::state::worker_state(home, WORKER, Some(&error.to_string()));
+            failure.record(Some(&error.to_string()));
             return;
         }
     };
@@ -105,7 +100,7 @@ pub(crate) fn tick_step(
         Ok(computer) => computer,
         Err(error) => {
             tracing::error!(event = "fleet_step_failed", worker = WORKER, %error);
-            crate::state::worker_state(home, WORKER, Some(&error.to_string()));
+            failure.record(Some(&error.to_string()));
             return;
         }
     };
@@ -134,10 +129,12 @@ pub(crate) fn tick_step(
         Ok(())
     };
     match step() {
-        Ok(()) => crate::state::worker_state(home, WORKER, None),
+        Ok(()) => {
+            failure.record(None);
+        }
         Err(error) => {
             tracing::warn!(event = "fleet_step_failed", worker = WORKER, %error);
-            crate::state::worker_state(home, WORKER, Some(&error.to_string()));
+            failure.record(Some(&error.to_string()));
         }
     }
 }
@@ -155,8 +152,9 @@ impl EvaluationHost {
     /// Starts the responder where a cluster connection is configured and
     /// work's answering is wired, independently of `modules.history`; starts
     /// it again when the cluster settings change or its thread ended. A
-    /// configured connection that cannot be used is recorded and retried on
-    /// the next wake; with none configured the row is cleared.
+    /// configured connection that cannot be used is recorded in the failure
+    /// file and retried on the next wake; with none configured the file is
+    /// removed.
     pub(crate) fn refresh(
         &mut self,
         home: &Home,
@@ -186,15 +184,18 @@ impl EvaluationHost {
         if self.responder.is_some() {
             return;
         }
+        // The host's own record, apart from the responder's: what it knows
+        // it recorded starts unknown on each wake.
+        let mut failure = FailureFile::new(home, Arc::clone(clock));
         let fleet = match open(admitted.global(), home, Reachability::Unrecorded) {
             Ok(fleet) => fleet,
             Err(Unopened::NotConfigured) => {
-                crate::state::worker_state(home, WORKER, None);
+                failure.record(None);
                 return;
             }
             Err(Unopened::Unusable(error)) => {
                 tracing::warn!(event = "computer_fleet_unusable", worker = WORKER, %error);
-                crate::state::worker_state(home, WORKER, Some(&error.to_string()));
+                failure.record(Some(&error.to_string()));
                 return;
             }
         };
@@ -217,6 +218,7 @@ impl EvaluationHost {
                             kept: None,
                         }),
                     },
+                    FailureFile::new(home, Arc::clone(clock)),
                 )
             });
         match started {
@@ -226,7 +228,7 @@ impl EvaluationHost {
             }
             Err(error) => {
                 tracing::error!(event = "fleet_responder_unstarted", worker = WORKER, %error);
-                crate::state::worker_state(home, WORKER, Some(&error.to_string()));
+                failure.record(Some(&error.to_string()));
             }
         }
     }
