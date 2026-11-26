@@ -45,6 +45,11 @@ pub fn todo_key(project: &str, slug: &str, role: &str, attempt: u64) -> String {
         encode(role)
     )
 }
+/// The requested reviewer's start key for `head` of `project`
+/// (`session-continuity`, Start keys and locks).
+pub fn review_key(project: &str, head: &str) -> String {
+    format!("instrukt:review:{}:{}", encode(project), encode(head))
+}
 pub fn task_key(project: &str, slug: &str, occurrence: Timestamp) -> String {
     format!(
         "instrukt:task:{}/{}:{}",
@@ -335,7 +340,7 @@ fn start_with_work(
         if recorded.project_id.is_none()
             || (input.launch_modes.is_none() && recorded.legacy_modes.is_none())
         {
-            capture_legacy(adapter, guard, input, &recorded, session)?;
+            capture_legacy(adapter, guard, input, &recorded, &thread)?;
         }
         verify_recorded_project(&guard.state, &assignment.request.key, &thread)?;
         adapter.verify_placement(input, &thread)?;
@@ -347,7 +352,7 @@ fn start_with_work(
     {
         let thread = adapter.read_state(session)?;
         if thread.presence == Presence::Present {
-            capture_legacy(adapter, guard, input, &recorded, session)?;
+            capture_legacy(adapter, guard, input, &recorded, &thread)?;
             adapter.verify_placement(input, &thread)?;
             if adapter
                 .observe_input(session, &input.brief, assignment.now)?
@@ -375,7 +380,22 @@ fn start_with_work(
         && input.native_launch.is_some()
     {
         let thread = adapter.read_state(session)?;
-        if thread.presence != Presence::Present && adapter.accepted_start(input)? {
+        // A created thread that is gone, or idle in a runtime project other
+        // than its checkout's own, is succeeded: launching the retained
+        // request again would only replay its project. A misplaced thread
+        // that is not idle keeps the start pending until it is.
+        let succeed = if thread.presence == Presence::Present {
+            match adapter.verify_thread_project(&input.checkout, &thread, Some(&input.key)) {
+                Ok(()) => false,
+                Err(SessionsError::ThreadMisplaced { idle: true, .. }) => {
+                    adapter.accepted_start(input)?
+                }
+                Err(error) => return Err(error),
+            }
+        } else {
+            adapter.accepted_start(input)?
+        };
+        if succeed {
             return succeed_claimed(
                 assignment.invocation,
                 adapter,
@@ -520,13 +540,18 @@ fn capture_legacy(
     guard: &KeyGuard,
     input: &RuntimeStart,
     recorded: &Recorded,
-    session: &SessionRef,
+    thread: &Thread,
 ) -> Result<(), SessionsError> {
+    // The recorded project is no proof of placement: the thread must run in
+    // its checkout's own project before anything is persisted, and the
+    // project captured is the one resolved for the checkout now.
+    adapter.verify_thread_project(&input.checkout, thread, Some(&input.key))?;
+    let session = &thread.session;
     let mut realized = input.clone();
     realized.native_launch = Some(crate::runtime::NativeLaunch {
         command_id: String::new(),
         thread_id: session.id.to_string(),
-        project_id: recorded.project_id.clone().unwrap_or_default(),
+        project_id: String::new(),
         existing_worktree: None,
     });
     realized.launch_modes = realized
@@ -581,10 +606,12 @@ pub(crate) fn recover_binding(
     }
     adapter.verify_placement(assignment.request, thread)?;
     let mut input = assignment.request.clone();
+    // The project recorded is the one resolved for the checkout now, never
+    // an earlier recorded one.
     input.native_launch = Some(crate::runtime::NativeLaunch {
         command_id: String::new(),
         thread_id: thread.session.id.to_string(),
-        project_id: recorded.project_id.clone().unwrap_or_default(),
+        project_id: String::new(),
         existing_worktree: None,
     });
     input = adapter.resolve_launch(&input, Some(&thread.session))?;
@@ -602,7 +629,8 @@ pub(crate) fn recover_binding(
     Ok(())
 }
 
-/// Called only for outstanding owner-admitted work after confirmed native terminal presence.
+/// Called only for outstanding owner-admitted work after confirmed native terminal presence,
+/// or once an idle thread is confirmed to run in another runtime project than its checkout's own.
 pub fn succeed(
     adapter: &dyn RuntimeAdapter,
     assignment: &crate::runtime::FollowupAssignment<'_>,
@@ -617,7 +645,11 @@ pub fn succeed(
         }
         let mut thread = adapter.read_state(assignment.session)?;
         let source = assignment.original_request.unwrap_or(assignment.request);
-        if thread.presence == Presence::Present {
+        // An idle thread in another project retires like a terminal one; a
+        // present thread in its own project is adopted.
+        if thread.presence == Presence::Present
+            && !idle_misplaced(adapter, &source.checkout, &thread, Some(key))?
+        {
             recover_binding(
                 &guard,
                 adapter,
@@ -650,6 +682,34 @@ pub fn succeed(
         assignment.bindings,
         &guard,
         Some(assignment.request),
+    );
+    note(
+        &guard.state,
+        adapter.runtime(),
+        key,
+        now,
+        result.as_ref().map(|_| ()),
+    );
+    result
+}
+/// Succeeds the generation of `key` under the `guard` its caller already
+/// holds, from `replacement`, after confirmed native terminal presence.
+pub(crate) fn succeed_owned(
+    guard: &KeyGuard,
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    replacement: &RuntimeStart,
+    now: Timestamp,
+) -> Result<Thread, SessionsError> {
+    let key = &replacement.key;
+    let result = succeed_claimed(
+        invocation,
+        adapter,
+        key,
+        now,
+        None,
+        guard,
+        Some(replacement),
     );
     note(
         &guard.state,
@@ -701,7 +761,20 @@ fn succeed_claimed(
     } else {
         true
     };
-    if thread.presence == Presence::Present || !created {
+    // Besides terminal presence, an idle thread confirmed in another runtime
+    // project than its checkout's own is succeeded.
+    let checkout = recorded
+        .request
+        .as_ref()
+        .or(replacement_request)
+        .map(|request| request.checkout.clone());
+    let misplaced = thread.presence == Presence::Present
+        && created
+        && match &checkout {
+            Some(checkout) => idle_misplaced(adapter, checkout, &thread, Some(key))?,
+            None => false,
+        };
+    if (thread.presence == Presence::Present && !misplaced) || !created {
         return start_with_work(
             adapter,
             &RuntimeAssignment {
@@ -758,14 +831,20 @@ fn succeed_claimed(
     }
     if let Some(replacement) = replacement_request {
         request.title = replacement.title.clone();
+        // A requested reviewer's successor opens with the ask that starts
+        // it, not the rendering its predecessor opened with.
+        if kind(key) == "review" {
+            request.brief = replacement.brief.clone();
+        }
     }
     request.launch_modes = None;
     let generation = recorded
         .generation
         .checked_add(1)
         .ok_or_else(|| SessionsError::Refused("generation exhausted".into()))?;
+    // A successor never inherits the retired generation's project: it
+    // resolves its checkout's own project afresh.
     let mut native = native_identity(invocation.home(), adapter, &request, generation)?;
-    native.project_id = recorded.project_id.clone().unwrap_or_default();
     let retained_path = guard
         .state
         .read(|conn, path| {
@@ -778,7 +857,42 @@ fn succeed_claimed(
         })?
         .flatten()
         .map(Into::into);
-    native.existing_worktree = thread.worktree.clone().or(retained_path);
+    // A worktree is kept only when it is a registered worktree of the
+    // checkout on its branch; a misplaced thread's worktree belongs to another
+    // repository and is left untouched.
+    let candidate: Option<std::path::PathBuf> = thread.worktree.clone().or(retained_path);
+    let mut dropped = None;
+    native.existing_worktree = match candidate {
+        Some(path) => {
+            let branch = match &request.worktree {
+                Some(worktree) => Some(worktree.branch.clone()),
+                None => instrukt_core::git::run(&path, ["branch", "--show-current"])
+                    .ok()
+                    .map(|branch| branch.trim().to_owned()),
+            };
+            let registered = match &branch {
+                Some(branch) => registered_worktree(&request.checkout, &path, branch)?,
+                None => false,
+            };
+            if registered {
+                Some(path)
+            } else {
+                dropped = Some(path);
+                None
+            }
+        }
+        None => None,
+    };
+    if let Some(path) = &dropped
+        && kind(key) == "todo"
+        && request.worktree.is_none()
+    {
+        return Err(SessionsError::Refused(format!(
+            "`{key}` has no captured worktree request and its worktree {} is not a registered worktree of {}",
+            path.display(),
+            request.checkout.display()
+        )));
+    }
     if request.worktree.is_none()
         && let Some(path) = native.existing_worktree.as_ref()
     {
@@ -799,7 +913,12 @@ fn succeed_claimed(
     guard.state.write::<_,SessionsError>(|tx| {
         retire_in(tx,&guard.runtime,key)?;
         persist_in(tx,guard,&request,recorded.project.as_deref(),generation,Some(original))?;
-        tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure='native terminal target; outstanding owner work retained for successor' WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![session.runtime.as_str(),session.id.as_str()]).map_err(state::sql(&state::db_path(tx)))?;
+        let failure = if misplaced {
+            "misplaced target; outstanding owner work retained for successor"
+        } else {
+            "native terminal target; outstanding owner work retained for successor"
+        };
+        tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure=?3 WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![session.runtime.as_str(),session.id.as_str(),failure]).map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })?;
     start_with_work(
@@ -872,6 +991,151 @@ pub(crate) fn unverified_project(key: &str, session: &SessionRef) -> SessionsErr
     }
 }
 
+/// What owns a thread the input pump delivers to, and where it runs.
+enum DeliveryOwner {
+    /// A runtime binding of any kind, with its recorded project and checkout.
+    Binding {
+        key: String,
+        recorded_project: bool,
+        checkout: Option<std::path::PathBuf>,
+    },
+    /// A standing responsibility without a runtime binding.
+    Standing {
+        key: String,
+        checkout: std::path::PathBuf,
+    },
+    /// An unreleased todo session without a runtime binding.
+    Todo {
+        key: String,
+        checkout: Option<std::path::PathBuf>,
+    },
+}
+
+fn delivery_owner(
+    state: &RunnerState,
+    runtime: &str,
+    session: &SessionRef,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
+) -> Result<Option<DeliveryOwner>, SessionsError> {
+    let session_text = session.to_string();
+    let binding = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT semantic_key,project_id,request,checkout FROM runtime_bindings WHERE runtime=?1 AND session=?2",
+            params![runtime, session_text],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, Option<String>>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(state::sql(path))
+    })?;
+    if let Some((key, project_id, request, checkout)) = binding.flatten() {
+        let requested = request
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<RuntimeStart>(text).ok())
+            .map(|request| request.checkout);
+        let checkout = requested.or_else(|| (!checkout.is_empty()).then(|| checkout.into()));
+        return Ok(Some(DeliveryOwner::Binding {
+            key,
+            recorded_project: project_id.is_some(),
+            checkout,
+        }));
+    }
+    let standing = state.read(|conn, path| {
+        conn.query_row(
+            "SELECT semantic_key,checkout FROM procedure_responsibilities WHERE session=?1",
+            [&session_text],
+            |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)),
+        )
+        .optional()
+        .map_err(state::sql(path))
+    })?;
+    if let Some((key, checkout)) = standing.flatten() {
+        return Ok(Some(DeliveryOwner::Standing {
+            key,
+            checkout: checkout.into(),
+        }));
+    }
+    // A todo session's binding is work's: it is read through work's port,
+    // and without one no todo binding is known here.
+    let Some(owner) = work
+        .map(|work| work.session_owner(session))
+        .transpose()
+        .map_err(|error| SessionsError::Refused(error.to_string()))?
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    let key = owner.key;
+    // The project's published checkout, else the primary worktree of the
+    // session's own worktree, as session starts resolve it.
+    let checkout = instrukt_core::publication::PublishedRecord::load(state.home(), &owner.project)
+        .ok()
+        .flatten()
+        .map(|record| record.checkout)
+        .or_else(|| {
+            owner
+                .worktree
+                .and_then(|worktree| instrukt_core::repository::primary_worktree(&worktree).ok())
+        });
+    Ok(Some(DeliveryOwner::Todo { key, checkout }))
+}
+
+/// Before the input pump hands an input to an instrukt-owned thread, of any
+/// binding kind: a thread that moved away from its recorded project is a
+/// project change, and one not in its checkout's own project is sent
+/// nothing. A thread no instrukt binding owns is not instrukt's to place.
+pub(crate) fn verify_delivery_project(
+    state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
+    thread: &Thread,
+    now: Timestamp,
+) -> Result<(), SessionsError> {
+    let Some(owner) = delivery_owner(state, adapter.runtime().name(), &thread.session, work)?
+    else {
+        return Ok(());
+    };
+    let (key, result) = match owner {
+        DeliveryOwner::Binding {
+            key,
+            recorded_project,
+            checkout,
+        } => {
+            let result = (|| {
+                // A standing binding is verified against its recorded project
+                // even when none is recorded: it is then unverified.
+                if recorded_project || kind(&key) == "standing" {
+                    verify_recorded_project(state, &key, thread)?;
+                }
+                let checkout = checkout.ok_or_else(|| unverified_project(&key, &thread.session))?;
+                adapter.verify_thread_project(&checkout, thread, Some(&key))
+            })();
+            (key, result)
+        }
+        DeliveryOwner::Standing { key, checkout } => {
+            let result = verify_recorded_project(state, &key, thread)
+                .and_then(|()| adapter.verify_thread_project(&checkout, thread, Some(&key)));
+            (key, result)
+        }
+        DeliveryOwner::Todo { key, checkout } => {
+            let result = checkout
+                .ok_or_else(|| unverified_project(&key, &thread.session))
+                .and_then(|checkout| adapter.verify_thread_project(&checkout, thread, Some(&key)));
+            (key, result)
+        }
+    };
+    if let Err(error) = &result {
+        note(state, adapter.runtime(), &key, now, Err(error));
+    }
+    result
+}
+
 pub(crate) fn retained_project(
     state: &RunnerState,
     key: &str,
@@ -904,6 +1168,22 @@ pub(crate) fn verify_bound(
     adapter.verify_placement(request, thread)
 }
 
+/// The session bound to a key and the generation it belongs to.
+pub(crate) struct Bound {
+    pub session: SessionRef,
+    pub generation: u64,
+}
+pub(crate) fn bound(
+    state: &RunnerState,
+    runtime: &str,
+    key: &str,
+) -> Result<Option<Bound>, StateError> {
+    let recorded = record(state, runtime, key)?;
+    Ok(recorded.bound.map(|session| Bound {
+        session,
+        generation: recorded.generation,
+    }))
+}
 pub(crate) fn recorded_session(
     state: &RunnerState,
     runtime: &str,
@@ -922,11 +1202,57 @@ pub(crate) fn replacement_started(
 pub(crate) fn stopped_mismatch(key: &str, stopped: &SessionRef) -> SessionsError {
     SessionsError::Refused(format!("`{key}` is not bound to {stopped}"))
 }
-pub(crate) fn confirm_deleted(
+/// Whether `thread` is idle in a runtime project other than `checkout`'s
+/// own: its owner rolls it over. A busy misplaced thread is left to the
+/// delivery path's refusal.
+pub(crate) fn idle_misplaced(
     adapter: &dyn RuntimeAdapter,
+    checkout: &std::path::Path,
+    thread: &Thread,
+    key: Option<&str>,
+) -> Result<bool, SessionsError> {
+    match adapter.verify_thread_project(checkout, thread, key) {
+        Err(SessionsError::ThreadMisplaced { idle: true, .. }) => Ok(true),
+        Ok(()) | Err(SessionsError::ThreadMisplaced { idle: false, .. }) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
+/// Whether `path` is a worktree `git worktree list --porcelain` lists in
+/// `checkout` on `branch`.
+pub(crate) fn registered_worktree(
+    checkout: &std::path::Path,
+    path: &std::path::Path,
+    branch: &str,
+) -> Result<bool, SessionsError> {
+    let listing = instrukt_core::git::run(checkout, ["worktree", "list", "--porcelain"])
+        .map_err(|e| SessionsError::Refused(e.to_string()))?;
+    Ok(listed_worktree(&listing, path, branch))
+}
+
+fn listed_worktree(listing: &str, path: &std::path::Path, branch: &str) -> bool {
+    listing.split("\n\n").any(|entry| {
+        entry
+            .lines()
+            .any(|line| line == format!("worktree {}", path.display()))
+            && entry
+                .lines()
+                .any(|line| line == format!("branch refs/heads/{branch}"))
+    })
+}
+
+/// A succession may replace `stopped` when it is no longer present, or when
+/// it is idle in a runtime project other than `checkout`'s own.
+pub(crate) fn confirm_succession(
+    adapter: &dyn RuntimeAdapter,
+    checkout: &std::path::Path,
     stopped: &SessionRef,
+    key: &str,
 ) -> Result<(), SessionsError> {
-    if adapter.read_state(stopped)?.presence == Presence::Present {
+    let thread = adapter.read_state(stopped)?;
+    if thread.presence == Presence::Present
+        && !idle_misplaced(adapter, checkout, &thread, Some(key))?
+    {
         return Err(SessionsError::Refused(format!(
             "thread {stopped} is still present"
         )));
@@ -1007,6 +1333,12 @@ pub fn followup(
             assignment.request.key
         )));
     }
+    // A thread that moved away from its recorded project is a project
+    // change; only one still in its recorded project meets the exact
+    // comparison of `verify_bound`.
+    if recorded.bound.is_some() {
+        verify_recorded_project(&guard.state, &assignment.request.key, &thread)?;
+    }
     verify_bound(
         adapter,
         recorded.request.as_ref().unwrap_or(assignment.request),
@@ -1027,8 +1359,8 @@ pub fn followup(
             &thread,
             false,
         )?;
+        verify_recorded_project(&guard.state, &assignment.request.key, &thread)?;
     }
-    verify_recorded_project(&guard.state, &assignment.request.key, &thread)?;
     use sha2::{Digest, Sha256};
     let id = format!(
         "followup:{}:{:x}",
@@ -1038,6 +1370,7 @@ pub fn followup(
     crate::inputs::enqueue(
         assignment.invocation,
         adapter,
+        assignment.bindings,
         session,
         &crate::inputs::Entry {
             id: &id,
@@ -1118,4 +1451,39 @@ pub(crate) fn report_start_finding(
     _error: &SessionsError,
 ) -> bool {
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::listed_worktree;
+    use std::path::Path;
+
+    const LISTING: &str = "worktree /repo\nHEAD abc\nbranch refs/heads/main\n\nworktree /repo/trees/parser\nHEAD def\nbranch refs/heads/parser/work\n";
+
+    #[test]
+    fn a_worktree_listed_on_its_branch_is_registered() {
+        assert!(listed_worktree(
+            LISTING,
+            Path::new("/repo/trees/parser"),
+            "parser/work"
+        ));
+    }
+
+    #[test]
+    fn a_worktree_on_another_branch_is_not_registered() {
+        assert!(!listed_worktree(
+            LISTING,
+            Path::new("/repo/trees/parser"),
+            "main"
+        ));
+    }
+
+    #[test]
+    fn a_worktree_of_another_repository_is_not_registered() {
+        assert!(!listed_worktree(
+            LISTING,
+            Path::new("/home/trees/parser"),
+            "parser/work"
+        ));
+    }
 }

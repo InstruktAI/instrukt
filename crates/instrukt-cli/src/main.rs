@@ -193,9 +193,14 @@ fn run() -> ExitCode {
     let deferred_patch = matches
         .subcommand()
         .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
+    // Adding a company reads no working directory and converges nothing
+    // before its caller is admitted (`project-initialization`, Adding a
+    // company).
+    let company_init = authorization::company_init(&matches);
     let mut ctx = match if let Some(ctx) = activated.take() {
         Ok(ctx)
     } else if deferred_patch
+        || company_init
         || authorization::strict_inspection(&matches)
         || authorization::untraced(&matches)
     {
@@ -270,11 +275,17 @@ fn run() -> ExitCode {
         }
         Err(error) => return report(&error),
     }
-    if deferred_patch {
+    if deferred_patch || company_init {
         ctx.home = ctx.home.for_writing();
         if let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home) {
             return report(&error.into());
         }
+    }
+    // The global layer, which adding a company reads, is brought current as
+    // on any writing entry; no project layer is read.
+    if company_init && let Err(error) = instrukt_core::config::Configuration::load(&ctx.home, None)
+    {
+        return report(&error.into());
     }
     let outcome = match cli.command {
         Command::Bugs(args) => bugs::run(args, &mut ctx),

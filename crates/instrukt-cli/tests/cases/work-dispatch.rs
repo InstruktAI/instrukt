@@ -86,63 +86,21 @@ fn todos_are_picked_up_when_a_projects_event_responses_are_not_admitted() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn work_claimed_while_github_is_unreachable_is_dispatched_once_github_answers() {
+fn work_claimed_while_github_is_unreachable_is_dispatched_at_once() {
     let mut project = Tracked::new(true);
     create_change(&project);
 
     project.github.stop();
     project.tick();
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "{:?}",
-        project.rt.calls()
-    );
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 
     project.github.resume();
     project.tick();
     assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
     insta::assert_snapshot!(
-        "dispatched-after-pending-claim",
+        "dispatched-while-github-unreachable",
         work::redact(&project.todo(["show", "tidy-imports"]))
     );
-}
-
-// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
-#[test]
-fn work_claimed_while_github_was_unreachable_is_dispatched_after_another_command_reflects_the_claim()
- {
-    let mut project = Tracked::new(true);
-    project.todo([
-        "create",
-        "tidy-imports",
-        "Sort the imports of every module.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
-
-    // The runner claims the work but cannot reflect the claim: no session.
-    project.github.stop();
-    project.tick();
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "{:?}",
-        project.rt.calls()
-    );
-
-    // A developer's command reflects the pending claim before the next tick.
-    project.github.resume();
-    project.todo([
-        "artifacts",
-        "write",
-        "tidy-imports",
-        "log",
-        "Noted: imports are grouped std, external, internal.",
-    ]);
-
-    project.tick();
-
-    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
@@ -178,7 +136,7 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     repo.commit("the developer's project");
@@ -254,7 +212,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
         &machine,
         format!(
             "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{todos: true}}\nbogus: 1\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
         ),
     )
     .unwrap();
@@ -267,7 +225,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
     std::fs::write(&machine, valid_machine).unwrap();
     // A company document admission refuses leaves that company out: there is
     // nothing to serve, as the runner would host nothing.
-    let document = env.instrukt_home().join("companies/acme/instrukt.yaml");
+    let document = env.instrukt_home().join("companies/acme/company.yaml");
     let valid = std::fs::read_to_string(&document).unwrap();
     std::fs::write(&document, format!("{valid}bogus: 1\n")).unwrap();
     let refused = env.run(env.home(), ["run"]).failure();

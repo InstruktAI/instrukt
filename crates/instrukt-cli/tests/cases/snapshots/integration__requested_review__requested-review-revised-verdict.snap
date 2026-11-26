@@ -1,0 +1,17 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&stdout(&shown), &commits, &[\"s1\"])"
+---
+head verdict (stands, since [TIME])
+  version 1: needs_work sha256:a7cf6b28533ba1a70386e1b171dc94ed457e1a22d36dd1780de5644bff807bee moment [TIME], recorded [TIME] on [MACHINE] by t3:[SESSION-1]
+    pinned base [BASE]
+    commits naming no authoring session: [HEAD]
+    | # Review
+    | 
+    | Verdict: needs_work
+  version 2: approve sha256:61e2155f593cdd75a7b6a6b450bc1a61e5c1937ae083e70af547750a754e9342 moment [TIME], recorded [TIME] on [MACHINE] by t3:[SESSION-1]
+    pinned base [BASE]
+    commits naming no authoring session: [HEAD]
+    | # Review
+    | 
+    | Verdict: approve

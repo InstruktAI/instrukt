@@ -67,6 +67,13 @@ actor or repair lost identity. The opening loader directs
 `instrukt docs get <procedure-id> --closure` before handling events; continuation
 retains its initialized role, home, subject, attendance and delivery facts.
 
+The thread title names its actor (`sdlc/principle/domain-driven-design`): the
+assignment's effective role alone for home identity, or `{role} · {subject}`
+with the complete typed subject for subject identity. An assignment without an
+effective role is titled by the last segment of its procedure ID in the same
+shape. Automatic activation, manual entry reservation and successors title
+their generation this way.
+
 ### Continuation and successors
 
 Standing T3 threads are settled, never closed. Runner automation never settles a
@@ -369,6 +376,15 @@ And a human may settle it without preventing later messages from waking it
 Given a developer's procedure has malformed entry metadata that cannot supply a usable effective role even after the subscribed-role default applies
 When automatic activation or manual entry reservation is requested for it
 Then entry refuses before creating a session and identifies the unusable effective role
+```
+
+### UC-PSA30: Keep a quiet responsibility's agent out of the active list
+
+```gherkin
+Given a developer's standing agent answers a responsibility whose procedure names when it rests
+When that rest condition holds and the agent's current work is recorded
+Then its thread leaves the active list and stays findable and reachable
+And the next activation wakes that same thread without a new generation
 ```
 
 ## Known caveats

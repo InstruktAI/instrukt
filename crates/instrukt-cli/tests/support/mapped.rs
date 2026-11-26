@@ -289,7 +289,7 @@ pub fn project_with_layer(env: &TestEnv, extra: &str) -> Repo {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\nmodules:\n  blueprint: true\n{extra}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     repo.git([

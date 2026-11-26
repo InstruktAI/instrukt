@@ -84,16 +84,26 @@ fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_
         .assert()
         .success();
 
+    // The developer withdraws from inside the todo's own working copy, which
+    // has its branch checked out: the copy, the project's workspace and the
+    // branch are still the ones released.
+    let remove = || {
+        project
+            .env
+            .instrukt(&copy)
+            .args(["todo", "remove", "nested-lists"])
+            .assert()
+    };
     std::fs::write(copy.join("draft.rs"), "// unfinished\n").unwrap();
-    let uncommitted = project.todo(["remove", "nested-lists"]).failure();
+    let uncommitted = remove().failure();
     std::fs::remove_file(copy.join("draft.rs")).unwrap();
     let workspace = project.repo.path().join("workspace/nested-lists");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join("report.md"), "results\n").unwrap();
-    let busy = project.todo(["remove", "nested-lists"]).failure();
+    let busy = remove().failure();
     std::fs::remove_file(workspace.join("report.md")).unwrap();
 
-    let withdrawn = project.ok(["remove", "nested-lists"]);
+    let withdrawn = stdout(&remove().success());
     let shown = project.ok(["show", &format!("nested-lists@{}", &id[..8])]);
 
     let base = project.env.path("").display().to_string();
@@ -130,72 +140,6 @@ fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity()
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!("recorded", redact(&format!("{filed}---\n{shown}")));
-}
-
-// spec: project/instrukt/spec/feature/work/todos UC-TD2
-#[test]
-fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
-    let project = Project::new();
-    project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    );
-    project.ok([
-        "artifacts",
-        "write",
-        "nested-lists",
-        "prd",
-        "Lists keep their depth through parse and render.",
-    ]);
-    project.ok(["remove", "nested-lists"]);
-
-    let elsewhere = project.other_computer();
-    let restored = elsewhere.ok(["reactivate", "nested-lists"]);
-    let shown = elsewhere.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "restored-elsewhere",
-        redact(&format!("{restored}---\n{shown}"))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/todos UC-TD2
-#[test]
-fn a_name_two_withdrawn_todos_carried_restores_neither_until_one_is_addressed() {
-    let project = Project::new();
-    let here = identity(&project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    ));
-    project.ok(["remove", "nested-lists"]);
-    // Another computer files and withdraws different work under the name.
-    let elsewhere = project.other_computer();
-    let there = identity(&elsewhere.ok([
-        "create",
-        "nested-lists",
-        "Keep the depth of nested tables.",
-        "--kind",
-        "feature",
-        "--approved",
-    ]));
-    elsewhere.ok(["remove", "nested-lists"]);
-
-    let ambiguous = project.todo(["reactivate", "nested-lists"]).failure();
-    let address = format!("nested-lists@{}", &there[..8]);
-    let restored = project.ok(["reactivate", &address]);
-    let shown = project.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "restore-names-each-candidate",
-        redact(&format!(
-            "{}---\n{restored}---\n{shown}",
-            String::from_utf8_lossy(&ambiguous.get_output().stderr)
-        ))
-        .replace(&here[..8], "<here>")
-        .replace(&there[..8], "<there>")
-    );
 }
 
 // spec: project/instrukt/spec/feature/work/todos UC-TD2
@@ -347,7 +291,7 @@ fn a_report_without_approval_shows_the_questions_and_files_nothing() {
     let older = std::fs::read_to_string(&layer).unwrap().replacen(
         &format!(
             "schema_version: {}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
         "schema_version: 5",
         1,
@@ -410,7 +354,7 @@ fn a_faced_report_is_filed_as_a_bug_in_the_project_it_names() {
     insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: this computer records no project `elsewhere`; name the owning project with `--project <slug>`: this computer records demo");
     insta::assert_snapshot!(
         redact(&project.ok(["list"])),
-        @"fix-sync-drops-the-ops-domain · bug · active · unclaimed · last known <time> (less than a minute old)"
+        @"fix-sync-drops-the-ops-domain · bug · active"
     );
 }
 
@@ -452,7 +396,7 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
     let older = current.replacen(
         &format!(
             "schema_version: {}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
         "schema_version: 5",
         1,
@@ -497,9 +441,9 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
     instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
     ");
     insta::assert_snapshot!(filtered.join(""), @r"
-    --iceboxed: fix-index-skips-a-domain · bug · iceboxed · unclaimed · last known <time> (less than a minute old)
-    --removed: fix-hook-waits-forever · bug · withdrawn · unclaimed · last known <time> (less than a minute old)
-    --delivered: fix-status-hides-a-section · bug · delivered · unclaimed · last known <time> (less than a minute old)
+    --iceboxed: fix-index-skips-a-domain · bug · iceboxed
+    --removed: fix-hook-waits-forever · bug · withdrawn
+    --delivered: fix-status-hides-a-section · bug · delivered
     ");
     assert_eq!(std::fs::read_to_string(&layer).unwrap(), older);
 }

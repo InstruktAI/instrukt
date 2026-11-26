@@ -147,9 +147,15 @@ the current contract.
 
 ### Listing lines
 
-A listing line stands for one snippet and carries the command an agent runs to
-read it. Every rendering that lists snippets uses these forms: the domain read
-above, the global agent files and the project root `AGENTS.md`.
+A listing line stands for one snippet and leads an agent to the command that
+reads it, in one of two forms. In the inline form, the domain read's, each
+line carries its command, as in the table below. In the headed form, a
+heading over a run of lines of one kind carries the command once, and each
+line carries the rest: `` - <id>: <description> `` under a heading naming
+`instrukt docs get <id>`, and `` - <id>: <description> — when: <activation_trigger> ``
+under a heading naming `instrukt docs get <id> --closure`. Which form another
+rendering uses is that rendering's
+(`project/instrukt/spec/feature/publication/agent-entrypoints`).
 
 | Stands for | Line |
 | --- | --- |

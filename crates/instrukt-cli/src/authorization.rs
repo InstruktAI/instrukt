@@ -4,7 +4,7 @@ use clap::{ArgMatches, Command};
 use instrukt_core::{
     capabilities::{Action, Assignment, Capabilities, RoleClass, Scope},
     config::{Agents, Configuration},
-    ids::ProjectSlug,
+    ids::{ProjectSlug, SessionRef},
 };
 
 #[derive(Debug)]
@@ -16,12 +16,22 @@ impl std::fmt::Display for PermissionRefused {
 }
 impl std::error::Error for PermissionRefused {}
 
-pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
+/// A recorded assignment with its role's grants.
+pub type Recorded = (Assignment, Capabilities);
+
+pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<Recorded>> {
+    Ok(caller_identity(ctx)?.1)
+}
+
+/// The caller's session as the configured runtime recognizes it, whether or
+/// not an assignment is recorded for it, with its recorded assignment and
+/// that role's grants.
+pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<Recorded>)> {
     let inspection = ctx.home.for_inspection();
     let config = Configuration::load_global(&inspection)?;
     let env = wiring::environment(ctx)?;
     let Some(session) = config.caller(&env)? else {
-        return Ok(None);
+        return Ok((None, None));
     };
     let assignment = instrukt_runner::assignments::resolve(
         &ctx.home,
@@ -29,12 +39,13 @@ pub fn caller(ctx: &Ctx) -> anyhow::Result<Option<(Assignment, Capabilities)>> {
         instrukt_todos::work::recorded_assignment,
         instrukt_company::conversations::conversation_assignment,
     )?;
-    assignment
+    let recorded = assignment
         .map(|assignment| {
             let grants = Agents::load(&ctx.home)?.capabilities(assignment.role.as_str())?;
-            Ok((assignment, grants))
+            Ok::<_, anyhow::Error>((assignment, grants))
         })
-        .transpose()
+        .transpose()?;
+    Ok((Some(session), recorded))
 }
 
 pub fn action(path: &[&str]) -> Option<Action> {
@@ -45,8 +56,8 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["bugs", "report"] => BugReport,
         ["bugs", "suppress" | "unsuppress"] => TodoWrite,
         ["docs", "fold" | "render" | "plugin"] => DocsWrite,
-        ["docs", "index" | "get" | "schema" | "validate"] => DocsRead,
-        ["todo", "list" | "show" | "refresh"] => TodoRead,
+        ["docs", "index" | "get" | "schema" | "validate" | "units"] => DocsRead,
+        ["todo", "list" | "show"] => TodoRead,
         ["todo", "artifacts", "list" | "read" | "diff"] => ArtifactRead,
         ["todo", "artifacts", "write"] => ArtifactWrite,
         ["todo", "stamp"] => Stamp,
@@ -63,6 +74,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ["history", "search" | "show"] => HistoryRead,
         ["history", "extract"] => HistoryRead,
         ["events", "bind"] => StandingBind,
+        ["events", "raise"] => AttentionRaise,
         ["events", "list" | "schema" | "status" | "dead-letters"] => EventsRead,
         ["agents", "list" | "availability"] => AgentsRead,
         ["agents", "status"] => AgentsWrite,
@@ -80,6 +92,7 @@ pub fn action(path: &[&str]) -> Option<Action> {
         ] => CodeCheck,
         ["eval", "report"] => EvalRead,
         ["review", "record" | "exempt"] => Stamp,
+        ["review", "start"] => AssignmentWrite,
         ["review", "show"] => ArtifactRead,
         ["review", "export" | "import"] => InstallationWrite,
         [
@@ -107,9 +120,16 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
     (path, leaf)
 }
 
+/// Whether the command is `instrukt init --company`: adding a company,
+/// which addresses a machine-wide object and reads no working directory.
+pub fn company_init(matches: &ArgMatches) -> bool {
+    let (path, leaf) = command_path(matches);
+    path == ["init"] && leaf.try_get_raw("company").ok().flatten().is_some()
+}
+
 /// The commands that work on the repository the caller stands in and need
 /// nothing else of the computer: `docs render [--check]`, `docs plugin
-/// [--check | --validate]`, `hooks run`, the
+/// [--check | --validate]`, `docs units`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
 /// be read still has its runs recorded and shown; whether the caller is in
@@ -117,7 +137,7 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render" | "plugin"] | ["hooks", "run" | "worker" | "status"]
+        ["docs", "render" | "plugin" | "units"] | ["hooks", "run" | "worker" | "status"]
     )
 }
 
@@ -129,13 +149,13 @@ pub fn state_inspection(matches: &ArgMatches) -> bool {
     action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
-/// The commands that write no log: `docs render [--check]` and `docs plugin
-/// [--check | --validate]`, so a check writes nothing anywhere and errors go
-/// to stderr alone.
+/// The commands that write no log: `docs render [--check]`, `docs plugin
+/// [--check | --validate]` and `docs units`, so a check writes nothing
+/// anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),
-        ["docs", "render" | "plugin"]
+        ["docs", "render" | "plugin" | "units"]
     )
 }
 
@@ -152,7 +172,7 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
     };
     Ok(
         match instrukt_core::config::classify_root(bytes.as_deref()) {
-            instrukt_core::config::RootDocument::ProjectLayer(project) => project,
+            instrukt_core::config::RootDocument::ProjectLayer { slug, .. } => slug,
             _ => None,
         },
     )
@@ -207,7 +227,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
         ["status"]
             | ["bugs", "suppressions" | "list"]
             | ["config", "get" | "show" | "validate" | "schema"]
-            | ["docs", "get" | "index" | "schema" | "validate"]
+            | ["docs", "get" | "index" | "schema" | "validate" | "units"]
             | ["events", "list" | "schema" | "status" | "dead-letters"]
             | ["agents", "list" | "availability"]
             | ["hooks", "status"]
@@ -250,6 +270,21 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     let Some((assignment, grants)) = caller(ctx)? else {
         return Ok(());
     };
+    if company_init(matches) {
+        // Adding a company is the operator's: a session bound to a company
+        // is refused it whatever its class. Its object is the company's
+        // home, machine-wide, which no assignment owns.
+        if let Some(company) = &assignment.company {
+            return Err(PermissionRefused(format!(
+                "adding a company is the operator's: this session's recorded assignment is company `{company}`'s, so `instrukt init --company` is refused whatever its role, and nothing was created; ask the operator to add the company"
+            ))
+            .into());
+        }
+        if grants.class == RoleClass::Focused && !grants.admits(action, false) {
+            return Err(PermissionRefused(grants.refusal(action, "init --company")).into());
+        }
+        return Ok(());
+    }
     if grants.class != RoleClass::Focused {
         return Ok(());
     }
@@ -309,7 +344,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     use Action::*;
     let owned = match action {
         // Review evidence addresses the project the caller stands in.
-        ArtifactRead | Stamp if path.first() == Some(&"review") => in_project,
+        ArtifactRead | Stamp | AssignmentWrite if path.first() == Some(&"review") => in_project,
         ArtifactRead | ArtifactWrite | Stamp | AssignmentWrite | Integration
         | TodoOrchestration => own_todo,
         TodoRead | TodoWrite => {
@@ -331,6 +366,9 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         Publication => in_project,
         SessionObserve | ConversationLink => true,
         CompanyReply => assignment.company.is_some(),
+        // A raise belongs to the project the assignment works in; the
+        // command itself refuses every other project.
+        AttentionRaise => assignment.project.is_some(),
         // `own` reaches the servers of the assignment's own company, which
         // are all that company's sessions see; a machine-wide server that
         // carries a login is a machine-wide object no assignment owns.

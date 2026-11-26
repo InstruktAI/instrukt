@@ -68,6 +68,22 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // History is off, so the conversation relay is the stand-in's only
     // source reader while the runner runs.
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    // The machine's and the company's secrets files hold values that are
+    // also ordinary words of the answer, as a secret value can be an
+    // everyday word: the machine's local Redis username, owned by the Redis
+    // installation step, is one.
+    let here = c.env.path("");
+    for (name, value, company) in [
+        ("INSTRUKT_REDIS_USERNAME", "instrukt", None),
+        ("SUPPORT_LOGIN", "helpdesk-team", Some(COMPANY)),
+    ] {
+        let mut set = c.env.instrukt(&here);
+        set.args(["secrets", "set", name]);
+        if let Some(company) = company {
+            set.args(["--company", company]);
+        }
+        set.write_stdin(value).assert().success();
+    }
     // The operator's clock stands still, so the runner wakes only on its
     // real-time interval.
     c.env.set_env("INSTRUKT_NOW", "2026-11-19T00:00:00Z");
@@ -139,7 +155,8 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
     // Someone types in the session's thread directly, and both turns finish
     // while the runner is down: the typed one comes first in the thread, so
     // it is read before the answer's, and it is not posted. An answer longer
-    // than one Slack message arrives as its pieces.
+    // than one Slack message arrives as its pieces, and the stored secret
+    // values among its words reach the conversation as the agent wrote them.
     c.store.turn(
         &session,
         "direct",
@@ -147,7 +164,10 @@ fn a_members_question_is_answered_in_that_conversation_and_nowhere_else() {
         "A note typed in the thread.",
         "Noted.",
     );
-    let reply = "x".repeat(SLACK_MESSAGE_LIMIT + 1);
+    let reply = format!(
+        "No services are connected for instrukt-ai yet; ask helpdesk-team.\n{}",
+        "x".repeat(SLACK_MESSAGE_LIMIT + 1)
+    );
     c.finish_turn(&session, 0, &reply);
     let issued = c.runtime.issued();
     let started = std::time::Instant::now();
@@ -409,7 +429,7 @@ fn a_conversation_message_activates_no_subscribed_procedure() {
             "instrukt.yaml",
             format!(
                 "schema_version: {}\nproject: fork\n",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         )],
     );
@@ -738,9 +758,10 @@ fn an_outage_before_dispatch_keeps_the_question() {
         conversation_finding(&c, "t3 conversation delivery").is_some()
             && interval(&c, &question).is_some()
     });
-    let before = retained().unwrap();
-    let command_id = before.0.as_deref().unwrap();
-    assert_eq!((before.1, before.2), (None, None));
+    // The thread's placement is checked against the runtime before the send
+    // is attempted: with the runtime unreachable, nothing is attempted and
+    // no command identity is taken.
+    assert_eq!(retained(), Some((None, None, None)));
     let failure = || {
         db.query_row(
             "SELECT failure FROM conversation_messages WHERE message=?1",
@@ -761,15 +782,15 @@ fn an_outage_before_dispatch_keeps_the_question() {
         "the relay persists a fresh failure past the send reconciliation bound",
         || failure().is_some_and(|cause| cause != prior_failure),
     );
-    assert_eq!(retained(), Some((Some(command_id.to_owned()), None, None)));
+    assert_eq!(retained(), Some((None, None, None)));
     assert_eq!(c.runtime.message_count(&session), 1);
     std::fs::rename(&held, &descriptor).unwrap();
-    wait_for_answer_fixture(
-        "dispatch resumes without replacing the command identity",
-        || c.runtime.message_count(&session) == 2,
-    );
+    wait_for_answer_fixture("dispatch resumes once the runtime is back", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let command_id = retained().unwrap().0.unwrap();
     let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
-    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
+    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id.as_str()]);
     c.finish_turn(&session, 1, "The report is in the drive.");
     wait_for_answer_fixture("the saved question is answered once", || {
         c.slack.posts_beginning("The report is in the drive.") == 1
@@ -2559,7 +2580,7 @@ fn prepared_status_company() -> Company {
         let template = Company::on(common::TestEnv::new(), ", history: false", "", "");
         [
             "instrukt.yaml",
-            "companies/acme/instrukt.yaml",
+            "companies/acme/company.yaml",
             "companies/acme/secrets.env",
             "state/index.yaml",
             "docs/assistance/procedure/company-assistance.md",
@@ -2582,6 +2603,8 @@ fn prepared_status_company() -> Company {
         std::fs::write(&path, &file.content).unwrap();
         std::fs::set_permissions(path, file.permissions.clone()).unwrap();
     }
+    // The copied company is onboarded: its home has its runtime project.
+    company.env.place_company_project(COMPANY);
     company
 }
 
@@ -3677,9 +3700,9 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     let late = now + jiff::SignedDuration::from_hours(31 * 24);
     let dormant = c.env.instrukt_home().join("companies/dormant");
     std::fs::create_dir_all(&dormant).unwrap();
-    std::fs::write(dormant.join("instrukt.yaml"), format!(
+    std::fs::write(dormant.join("company.yaml"), format!(
         "schema_version: {}\ncompany: dormant\nconnectors: {{slack: {{app_token: '${{MISSING}}', bot_token: '${{MISSING}}'}}}}\n",
-        instrukt_core::config::CURRENT_SCHEMA_VERSION
+        instrukt_core::config::COMPANY_SCHEMA_VERSION
     )).unwrap();
     let gap = |company: &str, channel: &str, through: jiff::Timestamp| {
         scans.execute(
@@ -3740,7 +3763,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
 fn an_operator_onboards_a_company_while_the_runner_runs() {
     use crate::fixtures::conversing::{MEMBERS, company_home, slack_settings};
     use crate::fixtures::slack::{APP_TOKEN, BOT_TOKEN};
-    use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+    use instrukt_core::config::GLOBAL_SCHEMA_VERSION;
     use instrukt_core::home::Home;
 
     let mut c = Company::with_fakes(common::TestEnv::new());
@@ -3748,7 +3771,7 @@ fn an_operator_onboards_a_company_while_the_runner_runs() {
     std::fs::create_dir_all(home.root()).unwrap();
     std::fs::write(
         home.root().join("instrukt.yaml"),
-        format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false, todos: true}}\n"),
+        format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false, todos: true}}\n"),
     ).unwrap();
     let clock = c.env.path("admission-clock");
     let now: jiff::Timestamp = "2026-11-20T12:00:00Z".parse().unwrap();
@@ -3929,7 +3952,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
             "instrukt.yaml",
             format!(
                 "schema_version: {}\nproject: reacting\nmodules: {{history: false, events: true}}\n",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         )],
     );
@@ -4021,7 +4044,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     let company_document = c
         .env
         .instrukt_home()
-        .join(format!("companies/{COMPANY}/instrukt.yaml"));
+        .join(format!("companies/{COMPANY}/company.yaml"));
     let parseable = std::fs::read_to_string(&company_document).unwrap();
     std::fs::write(&company_document, "schema_version: [\n").unwrap();
     c.runtime.flag("start-failure", false);
@@ -4038,7 +4061,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     // While the runner runs, the company's document is broken by hand and its
     // bot token's secret blanked.
     let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
-    let document = company_dir.join("instrukt.yaml");
+    let document = company_dir.join("company.yaml");
     let mut text = std::fs::read_to_string(&document).unwrap();
     text.push_str("bogus: 1\n");
     std::fs::write(&document, text).unwrap();
@@ -5063,24 +5086,25 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
 
 // spec: project/instrukt/spec/feature/company/conversations UC-CV24
 #[test]
-fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_with_scrubbing() {
+fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_written() {
     use crate::fixtures::conversing::MEMBERS;
 
     let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
     let here = c.env.path("");
-    // Store a real company secret AND a short non-credential flag (< 8 chars)
-    // to verify real credentials are scrubbed while short words are not mangled.
-    for (name, value) in [
-        ("COMPANY_API_KEY", "secret-company-key-987654"),
-        ("SHORT_FLAG", "true"),
-    ] {
-        c.env
-            .instrukt(&here)
-            .args(["secrets", "set", name, "--company", COMPANY])
-            .write_stdin(value)
-            .assert()
-            .success();
-    }
+    // The company's and the machine's secrets files hold values the agent's
+    // reply will carry.
+    c.env
+        .instrukt(&here)
+        .args(["secrets", "set", "COMPANY_API_KEY", "--company", COMPANY])
+        .write_stdin("secret-company-key-987654")
+        .assert()
+        .success();
+    c.env
+        .instrukt(&here)
+        .args(["secrets", "set", "MACHINE_API_KEY"])
+        .write_stdin("secret-machine-key-123456")
+        .assert()
+        .success();
 
     patch_company(
         &c.env,
@@ -5115,7 +5139,7 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_with_sc
         "{input0}"
     );
 
-    // Seed an MCP login token for company `acme` into state DB to verify MCP token scrubbing too.
+    // A stored MCP login of company `acme` holds a token the reply will carry too.
     {
         let db = instrukt_core::state_db::rusqlite::Connection::open(
             c.env.instrukt_home().join("state/instrukt.db"),
@@ -5233,8 +5257,9 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_with_sc
     );
 
     // 4. Fail the first Slack post to verify outbox retry/recovery, then queue an explicit reply
-    //    via `--text -` (stdin) carrying both a company secret, an MCP login token, and a short flag.
+    //    via `--text -` (stdin) carrying a company secret, a machine secret and an MCP login token.
     c.slack.fail_next_post("ratelimited");
+    let reply = "Pipeline green. Key=secret-company-key-987654 Machine=secret-machine-key-123456 Token=mcp-oauth-token-555555";
     let queued = c
         .env
         .instrukt(&here)
@@ -5248,18 +5273,30 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_with_sc
             "-",
             "--json",
         ])
-        .write_stdin(
-            "Pipeline green (flag=true). Key=secret-company-key-987654 Token=mcp-oauth-token-555555",
-        )
+        .write_stdin(reply)
         .assert()
         .success();
+    // The command's output is the queued reply's summary, not the reply text.
+    // The turn is an identifier generated per queued reply, so it is guarded
+    // as produced and then held as a placeholder.
     let stdout = String::from_utf8(queued.get_output().stdout.clone()).unwrap();
-    assert!(!stdout.contains("secret-company-key-987654"), "{stdout}");
-    assert!(!stdout.contains("mcp-oauth-token-555555"), "{stdout}");
-    let summary: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert_eq!(summary["conversation"], "D1");
-    assert_eq!(summary["connector"], "quiet");
-    assert_eq!(summary["pieces"], 1);
+    let mut summary: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        summary["turn"]
+            .as_str()
+            .is_some_and(|turn| !turn.is_empty()),
+        "{stdout}"
+    );
+    summary["turn"] = "<turn>".into();
+    insta::assert_json_snapshot!(summary, @r#"
+    {
+      "company": "acme",
+      "connector": "quiet",
+      "conversation": "D1",
+      "turn": "<turn>",
+      "pieces": 1
+    }
+    "#);
 
     // 5. Finish the turn with raw internal monologue — reply_mode: explicit must NEVER post it!
     c.finish_turn(&session, 0, "INTERNAL MONOLOGUE DO NOT LEAK TO SLACK");
@@ -5283,22 +5320,16 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_with_sc
             .unwrap();
         state == "answered"
     });
-    let posts = c.slack.posts();
-    assert_eq!(
-        posts.len(),
-        1,
-        "raw turn output must not be posted: {posts:?}"
-    );
-    let posted = posts[0].markdown.as_deref().unwrap();
-    assert!(posted.contains("Pipeline green (flag=true)."), "{posted}");
-    assert!(!posted.contains("INTERNAL MONOLOGUE"), "{posted}");
-    assert!(!posted.contains("secret-company-key-987654"), "{posted}");
-    assert!(!posted.contains("mcp-oauth-token-555555"), "{posted}");
-    assert!(
-        posted.contains("[redacted secret:COMPANY_API_KEY]"),
-        "{posted}"
-    );
-    assert!(posted.contains("[redacted mcp-login:erp]"), "{posted}");
+    // The raw turn output is not posted; the explicit reply is posted once,
+    // exactly as the agent wrote it, its stored secret values included.
+    insta::assert_snapshot!(complete_post_bodies(&c), @r#"
+    [
+      [
+        null,
+        "Pipeline green. Key=secret-company-key-987654 Machine=secret-machine-key-123456 Token=mcp-oauth-token-555555"
+      ]
+    ]
+    "#);
     assert!(
         !c.slack
             .status_texts("D1", &dm_ts)

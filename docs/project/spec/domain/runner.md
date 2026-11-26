@@ -106,11 +106,27 @@ Native agent-operation prose is supplied by configuration and rendered through `
 : The login a sign-in yields, kept per company, person and server in the
   state database and renewed by instrukt until it ends.
 
+
+**Review request**
+: The runner's fact `runner.review_needed`: a commit owed a review on
+  instrukt's own initiative, answered by a standing reviewer
+  (`project/instrukt/spec/feature/runner/pull-request-review`).
+
+**Requested review**
+: An independent review of an exact committed worktree head that an authoring
+  session asks for with `instrukt review start`, naming coordinates only; the
+  runner renders the reviewer's assignment and starts the requested reviewer
+  on it. It is no review request and emits no event
+  (`project/instrukt/spec/feature/runner/requested-review`).
+
+
 ## Ownership boundary
+
 
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  activation from events; the admission, rendering and start of requested
+  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
   runtime capability translation, conversation-link membership, identity-envelope
   vocabulary and deterministic turn-end relay;
   unattended event/approval delivery and runner-owned execution observation; time
@@ -128,14 +144,17 @@ Native agent-operation prose is supplied by configuration and rendered through `
   conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
-  import progress (`project/instrukt/spec/feature/runner/history`).
+  import progress (`project/instrukt/spec/feature/runner/history`); the
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
   subscription document validation and delivery, owned by docs and publication; pushed-revision graph generation, owned by
   blueprint;
   session lifecycle, input delivery, restart, revival, handover,
-  live transcripts and lifecycle cleanup, owned by the runtime; connectors,
+  live transcripts and lifecycle cleanup, owned by the runtime, which also
+  performs the archives thread retention decides; connectors,
   conversations, the speaker of a conversation turn and the conversation tables,
   owned by company (`project/instrukt/spec/domain/company`); instrukt's
   extracted searchable history is a separate contract. instrukt calls only the adapter's
@@ -144,7 +163,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
   `instrukt history extract|search|show`,
-  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`, the sign-in return path, and wake-up
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
@@ -172,6 +192,16 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
+Fleet attention is the runner's: which facts of a project's active work are
+attention conditions, the `runner.attention.*` vocabulary, each condition's
+occurrence identity, a project's attention episode, the fleet-attention
+contract work calls inside its record transactions, and the raise through
+`instrukt events raise`
+(`project/instrukt/spec/feature/runner/fleet-attention`). Each underlying fact
+stays with its owner: work passes the facts of its own record changes, and the
+runner decides which of them are conditions and appends their events.
+
+
 The runner also owns worktree reclamation: that and when the disk todo
 worktrees hold is reclaimed on a computer, the removal of a project's declared
 regenerable output, and the reporting of what stays owed. Its published
@@ -180,6 +210,14 @@ standing, owned by workflow; the attempt lock and the release of a delivered
 todo's worktree and work branch, owned by work; or the declaration of
 regenerable output and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+The runner also owns thread retention: which finished runtime threads of the
+registered projects on a computer are archived, and when, under the computer's
+retention window. The selected runtime performs each archive through the
+adapter and owns everything else in the thread's lifecycle. It does not own
+whether a todo has reached a terminal outcome, owned by work, or the window's
+admitted value and its validation, owned by configuration
+(`project/instrukt/spec/feature/runner/thread-retention`).
 
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
@@ -352,6 +390,46 @@ no session, emits no event and keeps no state of its own. It reaches only the
 worktrees the work record assigns to todos; every other checkout stays with
 its creator.
 
+### Mechanical thread retention
+
+While the computer's retention window is set, each runner invocation, after
+its dispatch and event work, archives finished runtime threads of every
+registered project whose checkout is on the computer, whatever modules that
+project switches on. The contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+A pass reads, for each such project, the finished threads the selected runtime
+lists for it through the adapter's finished-thread listing
+(`project/instrukt/spec/feature/runner/session-continuity`). It keeps every thread a standing responsibility holds — the
+session of its current binding, of its standing runtime binding, or of its
+manual reservation, observed or bound — and every thread work associates with
+one of the project's todos without a terminal outcome. When the standing
+bindings or work's answers cannot be read, the pass archives nothing. A
+project whose listing or whose work answer cannot be read in a pass is left
+whole for a later pass: nothing is archived on a partial answer. Of the
+remaining eligible threads across projects, the pass attempts the longest
+quiet first, up to its bound on archive attempts whatever their outcome, each
+archived only while the adapter finds the observation it was chosen from still
+holds.
+
+No pickup, event reaction or other command waits on a pass; only the
+`instrukt tick` that runs one returns after it. In `instrukt run` it
+runs on a thread of its own, started after a wake once the one an earlier wake
+started has ended; in `instrukt tick` it runs after the tick has released the
+runner and runtime-invocation locks, before the tick returns. Passes that
+overlap converge. A pass
+keeps no durable state: it reads the window from the admitted configuration
+and eligibility from the runtime, work and the runner's standing bindings
+every time. Each archive is a structured log event. A failed archive, a
+finished thread whose latest activity the runtime does not report, a project
+left for later and a pass that archived nothing for want of an answer
+are logged with their cause when that cause appears or changes for its thread,
+project or pass, as worktree reclamation reports what stays owed
+(`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+Retention runs where the runner already runs: the window adds no wake-up
+demand (`project/instrukt/spec/feature/runner/module-installation`).
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -397,6 +475,28 @@ in data.
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
 
+Fleet attention's conditions are occurrences with a todo subject in their
+project origin; which facts count, and from what point, is
+`project/instrukt/spec/feature/runner/fleet-attention`'s.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.attention.execution_stalled` | The runner records that the session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or a start for the todo found no model in the order available | Project, todo, session when one existed, the workflow state observed, and whether the session stopped, failed, was gone or never started | Project, todo, session or the start's model order, workflow state | The procedure subscribed to fleet attention in the project |
+| `runner.attention.input_waiting` | The runner observes the session holding a todo's execution claim begin a wait for input while work does not hold the todo waiting on a person | Project, todo, session, workflow state | Project, todo, session and that session's wait number on the todo | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_placed` | A change made on this computer places a dispatch hold on a todo, from any source | Project, todo, the hold's source, reason and time | Project, todo, the hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.hold_released` | A change made on this computer removes a todo's dispatch hold, by release, replacement, group joining or label | Project, todo, the released hold's source and placement time | Project, todo, the released hold's placement time and source | The procedure subscribed to fleet attention in the project |
+| `runner.attention.attempts_failing` | A role's attempt on a todo fails where an earlier attempt of that role on that todo already failed | Project, todo, the todo's identity, role, attempt, failure reason | Project, todo, the todo's identity, role, attempt | The procedure subscribed to fleet attention in the project |
+| `runner.attention.fleet_quiet` | While the project's attention episode is open, its last active todo that is unheld and not a structural holder leaves active work or is held | Project, the todo whose change closed the episode | Project, the event that opened the episode | The procedure subscribed to fleet attention in the project |
+| `runner.attention.raised` | An agent raises a condition about active todos of the project it works in | Project, the todos named, the obligation at stake; the raising session as the caller reference | One identity per raise | The procedure subscribed to fleet attention in the project |
+
+The hold, repeated-failure and episode-end types are appended through the
+fleet-attention contract in the transaction of work's record change. A stopped
+execution's type is appended in the transaction that records the unrecovered
+stop, a wait's in the transaction that records the wait, and an exhausted
+start's in a transaction of its own; `runner.attention.raised` when the raise
+is admitted.
+
+
 ### Event-platform facts emitted
 
 For `instrukt.system.event.dead_lettered`, subject is the failing stream entry,
@@ -427,6 +527,10 @@ their typed subjects (`project/instrukt/spec/feature/runner/event-envelope`).
 `instrukt.system.event.dead_lettered` concerns the failing stream entry and
 has no origin, as declared in Canonical fields.
 
+The `runner.attention.*` events concern a todo in its project origin; a
+condition between todos names the others, and a raise its raising session, as
+related references.
+
 ## Use cases
 
 - **T3 dependency compatibility** — [project/instrukt/spec/feature/runner/t3-contract](../feature/runner/t3-contract.md) — deterministic real-release checks, test-double agreement and nightly warning.
@@ -456,6 +560,11 @@ has no origin, as declared in Canonical fields.
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
   — have trusted authors' pull-request heads reviewed independently without anyone asking.
 
+
+- **Requested review** — [project/instrukt/spec/feature/runner/requested-review](../feature/runner/requested-review.md)
+  — have an exact committed worktree head reviewed independently on an assignment instrukt rendered from its coordinates.
+
+
 - **Event facts and producer declarations** — `project/instrukt/spec/feature/runner/event-envelope`.
 - **Discover declared event shapes** — `project/instrukt/spec/feature/runner/event-discovery`.
 - **Scoped transport and publication recovery** — `project/instrukt/spec/feature/runner/event-transport`.
@@ -468,8 +577,14 @@ has no origin, as declared in Canonical fields.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
+- **Fleet attention** — `project/instrukt/spec/feature/runner/fleet-attention`
+  — have stuck, converging or conflicting work across a project's todos attended to without watching its sessions.
+
 - **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
   — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
+
+- **Thread retention** — [project/instrukt/spec/feature/runner/thread-retention](../feature/runner/thread-retention.md)
+  — have long-quiet finished threads leave the thread list without anyone archiving them.
 
 ## Governing designs and decisions
 
@@ -491,6 +606,15 @@ has no origin, as declared in Canonical fields.
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
 
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries
 a verdict and whether both identities are ready, and workflow says whether the
@@ -502,6 +626,17 @@ session it reached and pinned base, with the input that opened the turn a
 session has in progress when it offers a revision, and with a named session's
 conversation
 (`project/instrukt/spec/domain/context-map`).
+
+
+For a requested review the runner asks work whether the head's verdict stands
+here, with the session that recorded its current version, or was handed off,
+with the export that handed it off, and for the pinned base work admits its
+verdict against; it reads the commit's review requests from its own delivery
+records.
+It starts the requested reviewer through the runtime adapter under its own
+start key; work admits that reviewer's verdict like any other
+(`project/instrukt/spec/feature/runner/requested-review`).
+
 
 The runtime adapter and the event-source boundary form an
 **Anti-corruption layer (ACL)** translating session operations and external
@@ -521,10 +656,11 @@ configuration through `@config`; it is never an adapter command template.
 
 Todo dispatch reads work and workflow through runner-declared interfaces,
 implemented by the todos crate and wired by the CLI. Work’s command contract
-covers every runner mutation: recording and reflecting execution claims,
-flushing pending reflection on ticks, writing last-fired stamps, setting
-automatic holds, purging expired retained records, and reading and writing
-per-role session bindings. Work owns validation and persistence of those writes.
+covers every runner mutation: recording execution claims, flushing pending
+reflection and reading people's controls on ticks, writing last-fired stamps,
+setting automatic holds, purging expired retained records, and reading and
+writing per-role session bindings. Work owns validation and persistence of
+those writes, and what a tick's reflection publishes.
 
 For worktree reclamation the runner asks its suppliers and derives none of
 their answers: configuration supplies the project's admitted declaration of
@@ -533,26 +669,36 @@ delivered todo still owes, and work the section of its record in which no
 role attempt opens, together with the release of a delivered todo's worktree
 and work branch (`project/instrukt/spec/domain/context-map`).
 
+For thread retention the runner asks its suppliers and derives none of their
+answers: configuration supplies the computer's admitted retention window, and
+work the native sessions bound to, or holding the execution claim of, a
+project's todos that have not reached a terminal outcome. The runtime adapter lists finished threads and archives them
+(`project/instrukt/spec/domain/context-map`).
+
 ## Known caveats
 
 - The target delivery contract requires durable acceptance, bounded batch
   selection, procedure-first briefing and untrusted activation provenance. Its
   realization uses the selected runtime's supported input boundary. Missing
   steering degrades ASAP attention to queued input or idle entry without a
-  validation finding. Standing T3 threads remain unsettled under automation
-  and stay reachable after human settling.
+  validation finding. Runner automation never settles a standing T3 thread; a
+  standing procedure may self-settle when parked dormant
+  (`general/procedure/event-handling/overview`), and a settled one stays
+  reachable (`project/instrukt/spec/feature/runner/procedure-standing-agent`).
 - A people registry, person homes, voice and memory, tmux/TUI/chiptunes/person chips,
   one-time layout migrations, experiment matching, dsh upgrades,
   harness-install management and session/work-record migration are outside
-  instrukt. GitHub-backed todos cover work movement without a separate
-  computer-transfer feature.
+  instrukt. Moving a todo between computers is not supported: the runner picks
+  up only the todos of its own computer's work record, and GitHub carries no
+  copy of a todo for another computer to take up.
 - There is no installation inspector or incident-alert subsystem. Module
   infrastructure checks retain their existing contract; anomaly notification
   and the log bug hunter cover unattended failures.
 - Event reactions activate agents under their declared roles. Script-run
   event actions and event-bound maintenance are outside scope. Path-based
   post-commit follow-ups use git hooks, including existing sync hooks.
-- A visible coordinator singleton is a standing-agent responsibility.
+- A project's fleet coordinator is the standing agent of its subscribed
+  procedure in that project, one per computer that works the project.
   Runtime lifecycle remains runtime-owned.
 
 

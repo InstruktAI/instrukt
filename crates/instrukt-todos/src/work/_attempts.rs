@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use instrukt_core::{
     git,
     ids::{CommitSha, RoleName, SessionRef, TodoSlug},
+    machine::MachineId,
 };
 use instrukt_runner::{
     interfaces::{AssignmentKind, ProjectRef},
@@ -11,7 +12,7 @@ use instrukt_runner::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::_session::Session;
+use super::_session::{LockWait, Session};
 use super::{Attempt, Binding, Outcome, TodoRecord, Work, WorkError};
 use crate::evidence::{PreparationReview, TodoStatus, artifact_names};
 
@@ -61,7 +62,7 @@ pub(super) fn phase_base(root: &Path, branch: &str) -> Result<(String, CommitSha
     let base = head(root, &from)?;
     Ok((from, base))
 }
-fn clean(root: &Path) -> Result<(), WorkError> {
+pub(super) fn clean(root: &Path) -> Result<(), WorkError> {
     if !git::run(root, ["status", "--porcelain=v1"])?.is_empty() {
         return Err(WorkError::refused(
             "shared workspace has uncommitted changes; recover the outstanding attempt in place",
@@ -116,12 +117,12 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
 }
 /// Whether `assignment`, just reserved on item `index` and flushed, may be
 /// returned with `dispatch_allowed`: the row the state database holds now,
-/// never the session's copy, must not be conflicted and must still stand on
-/// the calling orchestrator's claim, active and unheld, with the
-/// reservation unbound, and in the same snapshot no withdrawal of the todo
-/// may be open. A flush that found another computer's head, a refresh that
-/// replaced the row meanwhile, or a withdrawal opened meanwhile refuses;
-/// the reservation stays recorded, with nothing started by this call.
+/// never the session's copy, must still stand on the calling
+/// orchestrator's claim, active and unheld, with the reservation unbound,
+/// and in the same snapshot no withdrawal of the todo may be open. A change
+/// another command made meanwhile, or a withdrawal opened meanwhile,
+/// refuses; the reservation stays recorded, with nothing started by this
+/// call.
 fn dispatch_admitted(
     s: &Session<'_>,
     index: usize,
@@ -141,9 +142,6 @@ fn dispatch_admitted(
         return Err(not_admitted(
             "the todo's withdrawal is releasing its working resources",
         ));
-    }
-    if live.reflection.conflicted {
-        return Err(WorkError::conflicted(&live.record));
     }
     let record = &live.record;
     let caller = s.caller_session()?;
@@ -424,9 +422,6 @@ impl Work {
             let mut result = assignment.clone();
             result.dispatch_allowed = active.attempt.no_start_reason.is_some();
             if result.dispatch_allowed {
-                if s.unjudged(index) {
-                    return Err(super::_session::unjudged_refusal(todo));
-                }
                 result.selection = native_selection(&s, record, procedure)?;
                 let key = result.semantic_key.clone();
                 s.commit("native dispatch retry admitted", |s| {
@@ -441,16 +436,13 @@ impl Work {
                     }
                     Ok(())
                 })?;
-                s.flush()?;
+                s.flush(LockWait::No)?;
                 dispatch_admitted(&s, index, &result)?;
             }
             return Ok(ReservedAttempt {
                 assignment: result,
                 prior_session: prior,
             });
-        }
-        if s.unjudged(index) {
-            return Err(super::_session::unjudged_refusal(todo));
         }
         let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
         let (lane, worktree, branch, base, assignment_kind) = if is_task {
@@ -570,7 +562,7 @@ impl Work {
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         dispatch_admitted(&s, index, &assignment)?;
         Ok(ReservedAttempt {
             assignment,
@@ -674,7 +666,7 @@ impl Work {
             b.session = Some(session.clone());
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
     pub fn resolve_native_attempt(
@@ -779,7 +771,7 @@ impl Work {
             s.items[index].record.bindings[pos] = next.clone();
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: next,
             reflection: s.status(index),
@@ -901,103 +893,247 @@ pub(super) fn writer_artifact(role: &str) -> Option<&'static str> {
     }
 }
 
-/// Match completion to the caller's reserved shared workspace.
+/// What a completion stamp request completes: the one place a completion
+/// request's admission facts live (`stamps`, which role completes which
+/// request; `state-database`, completion and release per role). A new
+/// completion request is one arm of [`completion`].
+pub(super) struct Completion {
+    /// How admission finds the attempt the request completes.
+    completes: Completes,
+    /// The attempt only reads the shared workspace, so its head must still
+    /// be the one captured when the attempt began.
+    read_only: bool,
+    /// The caller must be a reviewer independent of the orchestrator and
+    /// the writers.
+    independent: bool,
+    /// What a repeat of the request on an already released attempt does.
+    pub(super) repeat: Repeat,
+}
+
+/// How a completion request finds the attempt it completes.
+enum Completes {
+    /// The caller's latest bound attempt of one of `roles`; `unbound` says
+    /// what a caller without one gets.
+    CallerRole {
+        roles: &'static [&'static str],
+        unbound: Unbound,
+    },
+    /// The active or matching-replay `diagnoser` attempt, settled by the
+    /// driving session ([`diagnosis_settlement_binding`]).
+    Diagnoser,
+    /// The active, or still current released, `drift-analyzer` attempt
+    /// ([`drift_review_binding`]).
+    DriftAnalyzer,
+}
+
+/// What a caller without a matching role binding gets.
+#[derive(Clone, Copy)]
+enum Unbound {
+    /// The record-only path: no attempt completes, and the request's own
+    /// admission judges the caller.
+    RecordOnly,
+    /// Refusal: the request completes the caller's bound attempt or nothing.
+    Refused,
+}
+
+/// What a repeat of a completion request on a released attempt does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Repeat {
+    /// The attempt's retained completion stamp answers it.
+    Retained,
+    /// The request's own admission judges it: a drift review stamps each
+    /// drifted artifact under one attempt, and a disposition replays only an
+    /// exact repeat.
+    Admitted,
+}
+
+/// The completion descriptor of `request`, or `None` when the request
+/// completes no attempt.
+pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
+    use super::StampRequest;
+    let completion = match request {
+        StampRequest::RoleComplete => Completion {
+            completes: Completes::CallerRole {
+                roles: &[
+                    "setup",
+                    "finalizer",
+                    "intaker",
+                    "architect",
+                    "planner",
+                    "task-preparer",
+                ],
+                unbound: Unbound::Refused,
+            },
+            read_only: false,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::BuildComplete => Completion {
+            completes: Completes::CallerRole {
+                roles: &["builder", "fixer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: false,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::BuildVerdict { verdict } => Completion {
+            completes: Completes::CallerRole {
+                roles: &["build-reviewer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: true,
+            independent: matches!(verdict, crate::evidence::BuildVerdict::Approve),
+            repeat: Repeat::Retained,
+        },
+        StampRequest::DeferralsProcessed => Completion {
+            completes: Completes::CallerRole {
+                roles: &["deferrer"],
+                unbound: Unbound::Refused,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        // Deliberately recorded preparation reviews without native dispatch
+        // remain admissible on the record-only path.
+        StampRequest::PreparationVerdict { phase, .. } => Completion {
+            completes: Completes::CallerRole {
+                roles: match phase {
+                    PreparationReview::PrdReview => &["prd-reviewer"],
+                    PreparationReview::ArchitectureReview => &["architecture-reviewer"],
+                    PreparationReview::PlanReview => &["plan-reviewer"],
+                },
+                unbound: Unbound::RecordOnly,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        // A disposition from a caller with no verifier binding takes the
+        // record-only path, where its admission judges the caller.
+        StampRequest::VerificationDisposition { .. } => Completion {
+            completes: Completes::CallerRole {
+                roles: &[crate::workflow::VERIFIER_ROLE],
+                unbound: Unbound::RecordOnly,
+            },
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Admitted,
+        },
+        StampRequest::DiagnosisSettled => Completion {
+            completes: Completes::Diagnoser,
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Retained,
+        },
+        StampRequest::DriftReviewed { .. } => Completion {
+            completes: Completes::DriftAnalyzer,
+            read_only: true,
+            independent: false,
+            repeat: Repeat::Admitted,
+        },
+        StampRequest::Approval { .. }
+        | StampRequest::CarriedApproval { .. }
+        | StampRequest::IntentChecked
+        | StampRequest::Kickback { .. }
+        | StampRequest::ArchitectureSkipped { .. }
+        | StampRequest::DiagnosisUnresolved { .. }
+        | StampRequest::BuildStarted
+        | StampRequest::FinalizeReady
+        | StampRequest::TaskFiringStarted { .. }
+        | StampRequest::TaskOutcome { .. } => return None,
+    };
+    Some(completion)
+}
+
+/// The caller's latest bound attempt of one of `roles`; a caller without
+/// one takes the record-only path or is refused, as `unbound` says.
+fn caller_role_binding(
+    record: &TodoRecord,
+    caller: Option<&SessionRef>,
+    roles: &[&str],
+    unbound: Unbound,
+) -> Result<Option<usize>, WorkError> {
+    let Some(caller) = caller else {
+        return match unbound {
+            Unbound::RecordOnly => Ok(None),
+            Unbound::Refused => Err(WorkError::refused(
+                "completion requires a bound role session",
+            )),
+        };
+    };
+    let found = record
+        .bindings
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, b)| b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str()))
+        .map(|(index, _)| index);
+    match (found, unbound) {
+        (Some(index), _) => Ok(Some(index)),
+        (None, Unbound::RecordOnly) => Ok(None),
+        (None, Unbound::Refused) => Err(WorkError::refused("caller has no bound completion role")),
+    }
+}
+
+/// Match completion to the caller's reserved shared workspace: the index of
+/// the attempt `request` completes, or `None` when it completes none.
 pub(super) fn completion_binding(
     record: &TodoRecord,
     caller: Option<&SessionRef>,
     cwd: &Path,
     request: &super::StampRequest,
-) -> Result<Option<(usize, bool)>, WorkError> {
-    use super::StampRequest;
-    let (index, b) = if matches!(request, StampRequest::DiagnosisSettled) {
-        let Some(index) = diagnosis_settlement_binding(record, caller)? else {
-            return Ok(None);
-        };
-        (index, &record.bindings[index])
-    } else if matches!(request, StampRequest::DriftReviewed { .. }) {
-        let Some(index) = drift_review_binding(record, caller)? else {
-            return Ok(None);
-        };
-        (index, &record.bindings[index])
-    } else {
-        let roles: &[&str] = match request {
-            StampRequest::RoleComplete => &[
-                "setup",
-                "finalizer",
-                "intaker",
-                "architect",
-                "planner",
-                "task-preparer",
-            ],
-            StampRequest::BuildComplete => &["builder", "fixer"],
-            StampRequest::BuildVerdict { .. } => &["build-reviewer"],
-            StampRequest::DeferralsProcessed => &["deferrer"],
-            StampRequest::PreparationVerdict { phase, .. } => match phase {
-                PreparationReview::PrdReview => &["prd-reviewer"],
-                PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-                PreparationReview::PlanReview => &["plan-reviewer"],
-            },
-            _ => return Ok(None),
-        };
-        if caller.is_none() && matches!(request, StampRequest::PreparationVerdict { .. }) {
-            return Ok(None);
+) -> Result<Option<usize>, WorkError> {
+    let Some(completion) = completion(request) else {
+        return Ok(None);
+    };
+    let selected = match completion.completes {
+        Completes::Diagnoser => diagnosis_settlement_binding(record, caller)?,
+        Completes::DriftAnalyzer => drift_review_binding(record, caller)?,
+        Completes::CallerRole { roles, unbound } => {
+            caller_role_binding(record, caller, roles, unbound)?
         }
+    };
+    let Some(index) = selected else {
+        return Ok(None);
+    };
+    let b = &record.bindings[index];
+    if completion.independent {
         let caller =
             caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-        let Some((index, b)) =
-            record.bindings.iter().enumerate().rev().find(|(_, b)| {
-                b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str())
+        let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
+            .bindings
+            .iter()
+            .map(|item| {
+                (
+                    item.role.clone(),
+                    item.attempt.assignment,
+                    item.session.as_ref(),
+                )
             })
-        else {
-            // Existing deliberately recorded preparation reviews without native dispatch remain admissible.
-            if matches!(request, StampRequest::PreparationVerdict { .. }) {
-                return Ok(None);
-            }
-            return Err(WorkError::refused("caller has no bound completion role"));
-        };
-        if matches!(
-            request,
-            StampRequest::BuildVerdict {
-                verdict: crate::evidence::BuildVerdict::Approve
-            }
+            .collect();
+        if !crate::workflow::is_independent_reviewer(
+            record.claim.as_ref().and_then(|c| c.session.as_ref()),
+            &tuples,
+            &crate::evidence::Actor::Session(caller.clone()),
+            None,
         ) {
-            let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
-                .bindings
-                .iter()
-                .map(|item| {
-                    (
-                        item.role.clone(),
-                        item.attempt.assignment,
-                        item.session.as_ref(),
-                    )
-                })
-                .collect();
-            if !crate::workflow::is_independent_reviewer(
-                record.claim.as_ref().and_then(|c| c.session.as_ref()),
-                &tuples,
-                &crate::evidence::Actor::Session(caller.clone()),
-                None,
-            ) {
-                return Err(WorkError::refused(
-                    "build approval requires an independent reviewer distinct from the orchestrator and writers",
-                ));
-            }
+            return Err(WorkError::refused(
+                "build approval requires an independent reviewer distinct from the orchestrator and writers",
+            ));
         }
-        (index, b)
-    };
+    }
     if b.worktree.is_none()
         && record.kind == instrukt_runner::interfaces::TodoKind::Task
         && b.attempt.assignment == AssignmentKind::Child
     {
-        if b.attempt.released_at.is_some() {
-            if b.attempt.completion_sequence.is_none() {
-                return Err(WorkError::refused(
-                    "released attempt has no matching completion",
-                ));
-            }
-            return Ok(Some((index, true)));
+        if b.attempt.released_at.is_some() && b.attempt.completion_sequence.is_none() {
+            return Err(WorkError::refused(
+                "released attempt has no matching completion",
+            ));
         }
-        return Ok(Some((index, true)));
+        return Ok(Some(index));
     }
     let path = b
         .worktree
@@ -1019,15 +1155,7 @@ pub(super) fn completion_binding(
             "completion branch differs from the shared assignment",
         ));
     }
-    let readonly = matches!(
-        request,
-        StampRequest::BuildVerdict { .. }
-            | StampRequest::DeferralsProcessed
-            | StampRequest::DiagnosisSettled
-            | StampRequest::DriftReviewed { .. }
-            | StampRequest::PreparationVerdict { .. }
-    );
-    if readonly && b.attempt.base_head.as_ref() != Some(&current) {
+    if completion.read_only && b.attempt.base_head.as_ref() != Some(&current) {
         return Err(WorkError::refused(
             "read-only attempt changed from its captured head",
         ));
@@ -1040,7 +1168,7 @@ pub(super) fn completion_binding(
                 "released attempt has no matching completion",
             ));
         }
-        return Ok(Some((index, true)));
+        return Ok(Some(index));
     }
     if b.role.as_str() == "finalizer"
         && head(
@@ -1066,7 +1194,62 @@ pub(super) fn completion_binding(
             "writer completion requires a version of its {artifact} artifact"
         )));
     }
-    Ok(Some((index, true)))
+    Ok(Some(index))
+}
+
+/// The caller's live driver binding on the todo: the binding the
+/// orchestrator records a Tier 0 skip or hotfix deferral under, with no
+/// verifier attempt.
+pub(super) fn live_driver(record: &TodoRecord, caller: &SessionRef) -> Option<usize> {
+    record
+        .bindings
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, b)| {
+            b.session.as_ref() == Some(caller)
+                && b.attempt.assignment == AssignmentKind::Driver
+                && b.attempt.released_at.is_none()
+        })
+        .map(|(index, _)| index)
+}
+
+/// The workspace a record-only disposition is written over
+/// (`delivery-cycle`, "Live verification disposition"): no workspace
+/// attempt open on the todo's worktree, whose finding it would race; the
+/// caller in the driver binding's shared worktree; that tree clean, so the
+/// head it binds is the candidate.
+pub(super) fn record_only_workspace(
+    record: &TodoRecord,
+    driver: usize,
+    cwd: &Path,
+) -> Result<(), WorkError> {
+    if let Some(open) = record.bindings.iter().find(|b| b.is_open_role_attempt()) {
+        return Err(WorkError::refused(format!(
+            "the {}/{} attempt is open on the todo's worktree; a disposition is recorded after that attempt's release or its recorded failure",
+            open.role, open.attempt.number
+        )));
+    }
+    let path = record.bindings[driver]
+        .worktree
+        .as_ref()
+        .ok_or_else(|| WorkError::refused("shared workspace missing"))?;
+    if canonical(
+        &git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside worktree"))?,
+    )? != canonical(path)?
+    {
+        return Err(WorkError::refused(
+            "a disposition is recorded from the todo's shared worktree, whose head is the candidate; run it there",
+        ));
+    }
+    // `clean`'s own refusal names an outstanding attempt, which this path
+    // has none of; its other failures pass through unchanged.
+    clean(path).map_err(|err| match err {
+        WorkError::Refused(_) => WorkError::refused(
+            "the shared workspace has uncommitted changes or an unfinished Git operation; commit or restore them before recording a disposition",
+        ),
+        other => other,
+    })
 }
 
 pub(super) fn readiness(
@@ -1139,13 +1322,19 @@ pub(super) fn readiness(
             "readiness requires matching clean shared, local and published candidate",
         ));
     }
-    // Invariant 2: exact-SHA independent reviewer APPROVE stamp.
+    // Invariant 2, the independent exact-SHA handoff gate: an independent
+    // reviewer's APPROVE stamp and a current verification disposition that
+    // admits handoff, both bound to this exact commit SHA.
     if !crate::workflow::readiness_approved(record, root, &candidate, caller) {
         return Err(WorkError::refused(
             "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
         ));
     }
-    Ok(())
+    crate::workflow::handoff_admitted(record, &candidate, caller).map_err(|why| {
+        WorkError::refused(format!(
+            "readiness requires a current verification disposition admitting handoff at this exact commit SHA — an independent verifier's pass, or the claim-holding orchestrator's tier_0_skip or hotfix_deferred: {why}"
+        ))
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1160,9 +1349,284 @@ pub struct WorkspaceEntry {
     pub worktree: Option<PathBuf>,
     pub admitted: bool,
 }
+fn claimed_elsewhere() -> WorkError {
+    WorkError::refused(
+        "work is already claimed; await its verified startup binding or resume its current orchestrator",
+    )
+}
+
+/// The todo's recorded orchestrator: its latest driver binding for `role`
+/// that has not failed, released or not. A later binding, including an
+/// unbound runner reservation, supersedes an earlier session's.
+fn recorded_driver<'a>(record: &'a TodoRecord, role: &RoleName) -> Option<&'a Binding> {
+    record.bindings.iter().rev().find(|b| {
+        super::_ports::matches_driver_role(&b.role, role)
+            && b.attempt.assignment == AssignmentKind::Driver
+            && b.attempt.failed_at.is_none()
+    })
+}
+
+/// Whether `b` is `caller`'s own placement: bound to that session, in the
+/// registered worktree `path` (compared canonically, so a symlinked stored
+/// path matches) on `branch`.
+fn own_placement(
+    b: &Binding,
+    caller: Option<&SessionRef>,
+    path: Option<&Path>,
+    branch: &str,
+) -> Result<bool, WorkError> {
+    let (Some(caller), Some(path), Some(tree)) = (caller, path, b.worktree.as_deref()) else {
+        return Ok(false);
+    };
+    Ok(b.session.as_ref() == Some(caller)
+        && b.attempt.branch.as_deref() == Some(branch)
+        && tree.is_dir()
+        && canonical(tree)? == canonical(path)?)
+}
+
+/// What the record alone decides about an orchestrator's workspace entry,
+/// before any Git inspection: the role's driver bindings, and whether the
+/// caller would take up this computer's unassigned runner claim.
+struct DriverClaim<'a> {
+    record: &'a TodoRecord,
+    role: &'a RoleName,
+    caller: Option<&'a SessionRef>,
+    /// The caller would take up this computer's unassigned runner claim,
+    /// which admits only the todo's recorded orchestrator.
+    takeover: bool,
+    /// The role's latest unreleased driver binding.
+    existing: Option<&'a Binding>,
+    /// The todo's recorded orchestrator, released or not.
+    recorded: Option<&'a Binding>,
+}
+
+impl DriverClaim<'_> {
+    /// The phase branch: the current driver's, else the recorded driver's,
+    /// else the work branch derived from `todo`.
+    fn branch(&self, todo: &TodoSlug) -> String {
+        self.existing
+            .or(self.recorded)
+            .and_then(|b| b.attempt.branch.clone())
+            .unwrap_or_else(|| format!("{todo}/work"))
+    }
+}
+
+/// The claim gate of an orchestrator's workspace entry. A claim admits its
+/// own session on its computer. This computer's unassigned claim — the
+/// runner's pickup — admits only the todo's recorded orchestrator, which
+/// [`admit_driver`] decides once the placement is known.
+fn driver_claim<'a>(
+    record: &'a TodoRecord,
+    role: &'a RoleName,
+    machine: &MachineId,
+    caller: Option<&'a SessionRef>,
+) -> Result<DriverClaim<'a>, WorkError> {
+    let takeover = match &record.claim {
+        None => false,
+        Some(claim) if claim.machine == *machine && caller.is_some() => {
+            if claim.session.as_ref() == caller {
+                false
+            } else if claim.session.is_none() {
+                true
+            } else {
+                return Err(claimed_elsewhere());
+            }
+        }
+        Some(_) => return Err(claimed_elsewhere()),
+    };
+    let existing = record.bindings.iter().rev().find(|b| {
+        super::_ports::matches_driver_role(&b.role, role)
+            && b.attempt.assignment == AssignmentKind::Driver
+            && b.attempt.released_at.is_none()
+    });
+    Ok(DriverClaim {
+        record,
+        role,
+        caller,
+        takeover,
+        existing,
+        recorded: recorded_driver(record, role),
+    })
+}
+
+/// Where the phase branch's registered linked worktree is, relative to the
+/// caller's worktree.
+struct Placement {
+    branch: String,
+    /// The branch's registered linked worktree, if any.
+    path: Option<PathBuf>,
+    /// The caller's worktree root.
+    root: PathBuf,
+    /// The caller stands in the branch's registered worktree.
+    in_workspace: bool,
+}
+
+/// Resolve `branch`'s registered linked worktree in `project_root` and
+/// whether `cwd` stands in it.
+fn placement(project_root: &Path, branch: String, cwd: &Path) -> Result<Placement, WorkError> {
+    let listing = git::run(project_root, ["worktree", "list", "--porcelain"])?;
+    let path = listing
+        .split("\n\n")
+        .find(|entry| {
+            entry
+                .lines()
+                .any(|line| line == format!("branch refs/heads/{branch}"))
+        })
+        .and_then(|entry| {
+            entry
+                .lines()
+                .find_map(|line| line.strip_prefix("worktree "))
+        })
+        .map(PathBuf::from);
+    let root =
+        git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside a worktree"))?;
+    let in_workspace = match &path {
+        Some(path) => canonical(path)? == canonical(&root)?,
+        None => false,
+    };
+    Ok(Placement {
+        branch,
+        path,
+        root,
+        in_workspace,
+    })
+}
+
+/// How an orchestrator's workspace entry is admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    /// Not admitted: the entry describes the phase for native placement.
+    Describe,
+    /// Admitted on native placement evidence; the entry records a new
+    /// driver binding.
+    Place,
+    /// Admitted as the session already bound in its own placement;
+    /// `reopen` reopens the recorded orchestrator's released binding.
+    Bound { reopen: bool },
+}
+
+/// An admission decision with the attempt the entry continues or opens.
+struct EntryAdmission<'a> {
+    admission: Admission,
+    /// The driver binding the entry continues, if any.
+    driver: Option<&'a Binding>,
+    number: u64,
+    key: String,
+}
+
+/// Admit an orchestrator into the phase's placement under `runtime`.
+/// Placement evidence must match the recorded phase assignment. Without
+/// it, a caller in the workspace is admitted only as the session already
+/// bound there or as the todo's recorded orchestrator resuming its own
+/// placement — the one caller that may take up this computer's unassigned
+/// runner claim; a caller outside it is described the phase to place.
+fn admit_driver<'a>(
+    claim: DriverClaim<'a>,
+    placement: &Placement,
+    evidence: Option<&DriverPlacement>,
+    runtime: instrukt_core::config::Runtime,
+    project: &str,
+) -> Result<EntryAdmission<'a>, WorkError> {
+    let DriverClaim {
+        record,
+        role,
+        caller,
+        takeover,
+        existing,
+        recorded,
+    } = claim;
+    let Placement {
+        branch,
+        path,
+        root,
+        in_workspace,
+    } = placement;
+    // The recorded orchestrator resumes in its own placement: its
+    // binding was bound from verified native placement, so the same
+    // session in the same worktree, branch and runtime needs no new proof.
+    let resumable = match recorded {
+        Some(b) if *in_workspace && own_placement(b, caller, path.as_deref(), branch)? => {
+            b.attempt.runtime == Some(runtime)
+        }
+        _ => false,
+    };
+    if takeover && !resumable {
+        return Err(claimed_elsewhere());
+    }
+    // Without evidence, a released recorded binding is reopened rather
+    // than followed by a new attempt, as dispatch resumes a retained driver.
+    let reopen = evidence.is_none() && existing.is_none() && resumable;
+    let driver = if reopen { recorded } else { existing };
+    let number = driver.map(|b| b.attempt.number).unwrap_or_else(|| {
+        record
+            .bindings
+            .iter()
+            .filter(|b| b.role == *role)
+            .map(|b| b.attempt.number)
+            .max()
+            .unwrap_or(0)
+            + 1
+    });
+    let key = driver
+        .map(|b| b.attempt.semantic_key.clone())
+        .unwrap_or_else(|| keyed::todo_key(project, record.id.as_str(), role.as_str(), number));
+    let already_bound = *in_workspace
+        && match driver {
+            Some(b) => own_placement(b, caller, path.as_deref(), branch)?,
+            None => false,
+        };
+    let admission = if let Some(proof) = evidence {
+        let caller = caller.ok_or_else(|| {
+            WorkError::refused(
+                "placement evidence must be recorded from its selected-runtime caller",
+            )
+        })?;
+        if !in_workspace
+            || &proof.session != caller
+            || proof.key != key
+            || proof.branch != *branch
+            || proof.source.trim().is_empty()
+            || path.as_ref().map(|p| canonical(p)).transpose()? != Some(canonical(&proof.worktree)?)
+            || head(root, "HEAD")? != proof.head
+        {
+            return Err(WorkError::refused(
+                "native placement evidence differs from the recorded phase assignment",
+            ));
+        }
+        if driver
+            .and_then(|b| b.session.as_ref())
+            .is_some_and(|bound| bound != caller)
+        {
+            return Err(WorkError::refused("phase is bound to another orchestrator"));
+        }
+        clean(root)?;
+        if already_bound {
+            Admission::Bound { reopen }
+        } else {
+            Admission::Place
+        }
+    } else if already_bound {
+        Admission::Bound { reopen }
+    } else if *in_workspace {
+        return Err(WorkError::refused(
+            "Git cwd alone does not bind an orchestrator; supply --placement-evidence with native session, key, title, recorded worktree, branch, head and source",
+        ));
+    } else {
+        Admission::Describe
+    };
+    Ok(EntryAdmission {
+        admission,
+        driver,
+        number,
+        key,
+    })
+}
+
 impl Work {
     /// Describe a derived phase branch without creating it or switching the canonical checkout. A caller
-    /// is admitted only in that branch's registered linked worktree.
+    /// is admitted only in that branch's registered linked worktree: with native placement evidence,
+    /// as the session already bound there, or as the todo's recorded orchestrator resuming its own
+    /// released binding (which also takes up this computer's unassigned runner claim).
     pub fn workspace_entry(
         &self,
         project: &ProjectRef,
@@ -1184,6 +1648,8 @@ impl Work {
         };
         let machine = s.machine()?;
         let caller = s.caller_session()?;
+        // Resolving the caller already read the runner runtime.
+        let runtime = s.config.runner_runtime()?;
         let record = &s.items[index].record;
         if record.status != TodoStatus::Active
             || record.kind == instrukt_runner::interfaces::TodoKind::Task
@@ -1193,115 +1659,27 @@ impl Work {
         if record.hold.is_some() {
             return Err(WorkError::refused("held work admits no orchestrator entry"));
         }
-        if record.claim.as_ref().is_some_and(|claim| {
-            claim.machine != machine
-                || claim.session.is_none()
-                || caller.is_none()
-                || claim.session != caller
-        }) {
-            return Err(WorkError::refused(
-                "work is already claimed; await its verified startup binding or resume its current orchestrator",
-            ));
-        }
-        let lane = instrukt_runner::interfaces::Lane::Work;
-        let existing = record.bindings.iter().rev().find(|b| {
-            super::_ports::matches_driver_role(&b.role, role)
-                && b.attempt.assignment == AssignmentKind::Driver
-                && b.attempt.released_at.is_none()
-        });
-        let branch = existing
-            .and_then(|b| b.attempt.branch.clone())
-            .unwrap_or_else(|| format!("{todo}/work"));
+        let claim = driver_claim(record, role, &machine, caller.as_ref())?;
+        let branch = claim.branch(todo);
         let default = instrukt_core::github::default_branch(&project.root)?;
-        let listing = git::run(&project.root, ["worktree", "list", "--porcelain"])?;
-        let path = listing
-            .split("\n\n")
-            .find(|entry| {
-                entry
-                    .lines()
-                    .any(|line| line == format!("branch refs/heads/{branch}"))
-            })
-            .and_then(|entry| {
-                entry
-                    .lines()
-                    .find_map(|line| line.strip_prefix("worktree "))
-            })
-            .map(PathBuf::from);
-        let root = git::worktree_root(cwd)?
-            .ok_or_else(|| WorkError::refused("caller outside a worktree"))?;
-        let in_workspace = match &path {
-            Some(path) => canonical(path)? == canonical(&root)?,
-            None => false,
-        };
-        let number = existing.map(|b| b.attempt.number).unwrap_or_else(|| {
-            record
-                .bindings
-                .iter()
-                .filter(|b| b.role == *role)
-                .map(|b| b.attempt.number)
-                .max()
-                .unwrap_or(0)
-                + 1
-        });
-        let key = existing
-            .map(|b| b.attempt.semantic_key.clone())
-            .unwrap_or_else(|| {
-                keyed::todo_key(
-                    project.slug.as_str(),
-                    record.id.as_str(),
-                    role.as_str(),
-                    number,
-                )
-            });
-        let title = existing
+        let placement = placement(&project.root, branch, cwd)?;
+        let entry = admit_driver(claim, &placement, evidence, runtime, project.slug.as_str())?;
+        let title = entry
+            .driver
             .and_then(|b| b.attempt.native_placement.as_ref())
             .map(|p| p.title.clone())
             .unwrap_or_else(|| {
-                instrukt_runner::runtime::thread_title(&format!("{role} · {todo}"), &key)
+                instrukt_runner::runtime::thread_title(&format!("{role} · {todo}"), &entry.key)
             });
-        let already_bound = in_workspace
-            && existing.is_some_and(|b| {
-                b.session.is_some()
-                    && b.session == caller
-                    && b.worktree.as_ref() == path.as_ref()
-                    && b.attempt.branch.as_ref() == Some(&branch)
-            });
-        let admitted = if let Some(proof) = evidence {
-            let caller = caller.as_ref().ok_or_else(|| {
-                WorkError::refused(
-                    "placement evidence must be recorded from its selected-runtime caller",
-                )
-            })?;
-            if !in_workspace
-                || &proof.session != caller
-                || proof.key != key
-                || proof.branch != branch
-                || proof.source.trim().is_empty()
-                || path.as_ref().map(|p| canonical(p)).transpose()?
-                    != Some(canonical(&proof.worktree)?)
-                || head(&root, "HEAD")? != proof.head
-            {
-                return Err(WorkError::refused(
-                    "native placement evidence differs from the recorded phase assignment",
-                ));
-            }
-            if existing
-                .and_then(|b| b.session.as_ref())
-                .is_some_and(|bound| bound != caller)
-            {
-                return Err(WorkError::refused("phase is bound to another orchestrator"));
-            }
-            clean(&root)?;
-            true
-        } else if already_bound {
-            true
-        } else if in_workspace {
-            return Err(WorkError::refused(
-                "Git cwd alone does not bind an orchestrator; supply --placement-evidence with native session, key, title, recorded worktree, branch, head and source",
-            ));
-        } else {
-            false
-        };
+        let EntryAdmission {
+            admission,
+            number,
+            key,
+            ..
+        } = entry;
+        let Placement { branch, path, .. } = placement;
+        let lane = instrukt_runner::interfaces::Lane::Work;
+        let admitted = admission != Admission::Describe;
         if !admitted
             && git::succeeds(
                 &project.root,
@@ -1317,7 +1695,7 @@ impl Work {
                 "branch `{branch}` already exists; resume its recorded orchestrator or resolve its existing worktree before creation"
             )));
         }
-        let (from, base) = if already_bound {
+        let (from, base) = if let Admission::Bound { .. } = admission {
             (format!("origin/{default}"), head(&project.root, &branch)?)
         } else {
             let (from, base) = phase_base(&project.root, &branch)?;
@@ -1330,8 +1708,20 @@ impl Work {
                 },
             )
         };
-        if admitted && !already_bound {
-            let runtime = s.config.runner_runtime()?;
+        if admission == (Admission::Bound { reopen: true }) {
+            s.commit("resume recorded driver", |s| {
+                let binding = s.items[index]
+                    .record
+                    .bindings
+                    .iter_mut()
+                    .find(|b| b.attempt.semantic_key == key)
+                    .ok_or_else(|| WorkError::refused("recorded phase disappeared"))?;
+                binding.attempt.released_at = None;
+                Ok(())
+            })?;
+            s.flush(LockWait::No)?;
+        }
+        if admission == Admission::Place {
             let now = s.now;
             s.commit("todo workspace placement", |s| {
                 let record = &mut s.items[index].record;
@@ -1365,7 +1755,7 @@ impl Work {
                 });
                 Ok(())
             })?;
-            s.flush()?;
+            s.flush(LockWait::No)?;
         }
         let selection = if admitted {
             None
@@ -1779,5 +2169,707 @@ mod tests {
         });
         let prior = prior_session(&[bound], &planner, 2, instrukt_core::config::Runtime::T3);
         assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
+    }
+
+    /// A task record: its child attempts complete without a shared
+    /// worktree, so admission decides before any Git inspection.
+    fn task_record(bindings: Vec<Binding>) -> TodoRecord {
+        TodoRecord {
+            kind: TodoKind::Task,
+            bindings,
+            ..base_record()
+        }
+    }
+
+    fn child_binding(role: &str, number: u64, bound: &str) -> Binding {
+        let mut binding = worker_binding(role, number, Some(session(bound)));
+        binding.attempt.assignment = AssignmentKind::Child;
+        binding
+    }
+
+    fn admit(
+        record: &TodoRecord,
+        caller: Option<&str>,
+        request: &crate::work::StampRequest,
+    ) -> Result<Option<usize>, WorkError> {
+        let caller = caller.map(session);
+        completion_binding(record, caller.as_ref(), Path::new("/nonexistent"), request)
+    }
+
+    fn preparation_verdict(phase: PreparationReview) -> crate::work::StampRequest {
+        crate::work::StampRequest::PreparationVerdict {
+            phase,
+            verdict: crate::evidence::ReviewVerdict::Approve,
+        }
+    }
+
+    fn disposition() -> crate::work::StampRequest {
+        crate::work::StampRequest::VerificationDisposition {
+            disposition: crate::evidence::VerificationDisposition::Pass,
+            follow_up: None,
+        }
+    }
+
+    fn build_verdict(verdict: crate::evidence::BuildVerdict) -> crate::work::StampRequest {
+        crate::work::StampRequest::BuildVerdict { verdict }
+    }
+
+    fn refused(result: Result<Option<usize>, WorkError>) -> bool {
+        matches!(result, Err(WorkError::Refused(_)))
+    }
+
+    #[test]
+    fn a_request_that_completes_no_attempt_binds_none_of_the_callers_attempts() {
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("builder-1"),
+                &crate::work::StampRequest::FinalizeReady
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_completion_without_a_session_is_refused() {
+        let record = task_record(Vec::new());
+        assert!(refused(admit(
+            &record,
+            None,
+            &crate::work::StampRequest::BuildComplete
+        )));
+    }
+
+    #[test]
+    fn a_record_only_completion_without_a_session_binds_no_attempt() {
+        let record = task_record(Vec::new());
+        assert_eq!(admit(&record, None, &disposition()).unwrap(), None);
+    }
+
+    #[test]
+    fn a_session_without_the_requests_role_is_refused() {
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        assert!(refused(admit(
+            &record,
+            Some("builder-1"),
+            &crate::work::StampRequest::DeferralsProcessed
+        )));
+    }
+
+    #[test]
+    fn a_record_only_completion_by_a_session_without_its_role_binds_no_attempt() {
+        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("builder-1"),
+                &preparation_verdict(PreparationReview::PrdReview)
+            )
+            .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_completion_completes_the_callers_latest_attempt_of_its_roles() {
+        let record = task_record(vec![
+            child_binding("builder", 1, "worker"),
+            child_binding("fixer", 2, "worker"),
+            child_binding("fixer", 3, "other"),
+        ]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("worker"),
+                &crate::work::StampRequest::BuildComplete
+            )
+            .unwrap(),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn a_preparation_verdict_completes_the_reviewer_attempt_of_its_phase() {
+        let record = task_record(vec![child_binding("plan-reviewer", 1, "reviewer-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("reviewer-1"),
+                &preparation_verdict(PreparationReview::PlanReview)
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_build_approval_by_the_claim_holder_is_refused() {
+        // `driver-1` holds the todo's claim (`base_record`).
+        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
+        assert!(refused(admit(
+            &record,
+            Some("driver-1"),
+            &build_verdict(crate::evidence::BuildVerdict::Approve)
+        )));
+    }
+
+    #[test]
+    fn a_build_change_request_by_the_claim_holder_completes_its_attempt() {
+        // `driver-1` holds the todo's claim (`base_record`).
+        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("driver-1"),
+                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_build_approval_by_an_independent_reviewer_completes_its_attempt() {
+        let record = task_record(vec![child_binding("build-reviewer", 1, "reviewer-1")]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("reviewer-1"),
+                &build_verdict(crate::evidence::BuildVerdict::Approve)
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    fn released_builder(completion_sequence: Option<u64>) -> Binding {
+        let mut released = child_binding("builder", 1, "builder-1");
+        released.attempt.released_at = Some(jiff::Timestamp::from_second(4).unwrap());
+        released.attempt.completion_sequence = completion_sequence;
+        released
+    }
+
+    #[test]
+    fn a_released_attempt_without_its_recorded_completion_is_refused() {
+        let record = task_record(vec![released_builder(None)]);
+        assert!(refused(admit(
+            &record,
+            Some("builder-1"),
+            &crate::work::StampRequest::BuildComplete
+        )));
+    }
+
+    #[test]
+    fn a_released_attempt_with_its_recorded_completion_completes_again() {
+        let record = task_record(vec![released_builder(Some(2))]);
+        assert_eq!(
+            admit(
+                &record,
+                Some("builder-1"),
+                &crate::work::StampRequest::BuildComplete
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    /// A clean shared worktree on branch `work`: the head an attempt
+    /// captured, and the head one further commit moved it to.
+    fn shared_worktree() -> (tempfile::TempDir, CommitSha, CommitSha) {
+        let repo = tempfile::tempdir().unwrap();
+        let dir = repo.path();
+        for args in [
+            &["init", "-q", "-b", "work"][..],
+            &["config", "user.name", "Test"],
+            &["config", "user.email", "test@example.com"],
+            &["config", "commit.gpgsign", "false"],
+            &["commit", "-q", "--allow-empty", "-m", "captured"],
+        ] {
+            git::run(dir, args.iter().copied()).unwrap();
+        }
+        let captured = head(dir, "HEAD").unwrap();
+        git::run(dir, ["commit", "-q", "--allow-empty", "-m", "moved"]).unwrap();
+        let moved = head(dir, "HEAD").unwrap();
+        (repo, captured, moved)
+    }
+
+    /// A record whose one attempt of `role`, bound to `bound`, shares
+    /// `tree` on branch `work` from the captured head `base`.
+    fn shared_record(role: &str, bound: &str, tree: &Path, base: &CommitSha) -> TodoRecord {
+        let mut binding = worker_binding(role, 1, Some(session(bound)));
+        binding.worktree = Some(tree.to_path_buf());
+        binding.attempt.branch = Some("work".into());
+        binding.attempt.base_head = Some(base.clone());
+        TodoRecord {
+            bindings: vec![binding],
+            ..base_record()
+        }
+    }
+
+    #[test]
+    fn a_read_only_completion_at_its_captured_head_completes_its_attempt() {
+        let (repo, _, moved) = shared_worktree();
+        let tree = repo.path();
+        let record = shared_record("build-reviewer", "reviewer-1", tree, &moved);
+        assert_eq!(
+            completion_binding(
+                &record,
+                Some(&session("reviewer-1")),
+                tree,
+                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_read_only_completion_is_refused_once_the_shared_head_moved_past_its_capture() {
+        let (repo, captured, _) = shared_worktree();
+        let tree = repo.path();
+        let record = shared_record("build-reviewer", "reviewer-1", tree, &captured);
+        assert!(refused(completion_binding(
+            &record,
+            Some(&session("reviewer-1")),
+            tree,
+            &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
+        )));
+    }
+
+    #[test]
+    fn a_writer_completes_at_the_head_its_own_commits_moved_to() {
+        let (repo, captured, _) = shared_worktree();
+        let tree = repo.path();
+        let record = shared_record("builder", "builder-1", tree, &captured);
+        assert_eq!(
+            completion_binding(
+                &record,
+                Some(&session("builder-1")),
+                tree,
+                &crate::work::StampRequest::BuildComplete
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    /// A record holding both a bound `diagnoser` and a bound
+    /// `drift-analyzer` attempt, so each request must reach its own selector.
+    fn diagnoser_and_analyzer_record() -> TodoRecord {
+        task_record(vec![
+            child_binding("diagnoser", 1, "diagnoser-1"),
+            child_binding("drift-analyzer", 2, "analyzer-1"),
+        ])
+    }
+
+    #[test]
+    fn a_diagnosis_settlement_by_the_claimant_completes_the_diagnoser_attempt() {
+        // `driver-1` holds the todo's claim (`base_record`).
+        assert_eq!(
+            admit(
+                &diagnoser_and_analyzer_record(),
+                Some("driver-1"),
+                &crate::work::StampRequest::DiagnosisSettled
+            )
+            .unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn a_drift_review_by_the_bound_analyzer_completes_its_attempt() {
+        let drift = crate::work::StampRequest::DriftReviewed {
+            artifact: ArtifactName::new(artifact_names::PRD),
+            class: crate::evidence::DriftClass::Cosmetic,
+            reason: "wording".into(),
+        };
+        assert_eq!(
+            admit(&diagnoser_and_analyzer_record(), Some("analyzer-1"), &drift).unwrap(),
+            Some(1)
+        );
+    }
+
+    fn this_machine() -> MachineId {
+        // The computer `base_record`'s claim is held on.
+        MachineId::parse("0123456789abcdef").unwrap()
+    }
+
+    fn orchestrator_role() -> RoleName {
+        RoleName::parse("todo-orchestrator").unwrap()
+    }
+
+    /// A todo-orchestrator driver attempt bound to `bound` in `tree` on
+    /// branch `work`, recorded under the T3 runtime.
+    fn driver_binding(bound: &str, tree: &Path, released: bool) -> Binding {
+        Binding {
+            role: orchestrator_role(),
+            session: Some(session(bound)),
+            worktree: Some(tree.to_path_buf()),
+            attempt: Attempt {
+                runtime: Some(instrukt_core::config::Runtime::T3),
+                assignment: AssignmentKind::Driver,
+                number: 1,
+                semantic_key: "demo/bug-fix:todo-orchestrator:1".into(),
+                branch: Some("work".into()),
+                released_at: released.then(|| jiff::Timestamp::from_second(4).unwrap()),
+                ..Default::default()
+            },
+        }
+    }
+
+    /// A record whose claim, when present, is this computer's unassigned
+    /// runner claim.
+    fn runner_claimed(mut record: TodoRecord) -> TodoRecord {
+        if let Some(claim) = record.claim.as_mut() {
+            claim.session = None;
+        }
+        record
+    }
+
+    /// The caller standing in `tree`, the registered worktree of `work`.
+    fn in_workspace(tree: &Path) -> Placement {
+        Placement {
+            branch: "work".into(),
+            path: Some(tree.to_path_buf()),
+            root: tree.to_path_buf(),
+            in_workspace: true,
+        }
+    }
+
+    fn decide<'a>(
+        record: &'a TodoRecord,
+        role: &'a RoleName,
+        caller: Option<&'a SessionRef>,
+        placement: &Placement,
+        evidence: Option<&DriverPlacement>,
+    ) -> Result<EntryAdmission<'a>, WorkError> {
+        let claim = driver_claim(record, role, &this_machine(), caller)?;
+        admit_driver(
+            claim,
+            placement,
+            evidence,
+            instrukt_core::config::Runtime::T3,
+            "demo",
+        )
+    }
+
+    fn admission_of(result: Result<EntryAdmission<'_>, WorkError>) -> Option<Admission> {
+        result.ok().map(|entry| entry.admission)
+    }
+
+    #[test]
+    fn driver_claim_admits_the_claim_holders_own_session_without_takeover() {
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let claim = driver_claim(&record, &role, &this_machine(), Some(&caller)).unwrap();
+        assert!(!claim.takeover);
+    }
+
+    #[test]
+    fn driver_claim_marks_this_computers_unassigned_claim_for_takeover() {
+        let record = runner_claimed(base_record());
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let claim = driver_claim(&record, &role, &this_machine(), Some(&caller)).unwrap();
+        assert!(claim.takeover);
+    }
+
+    #[test]
+    fn driver_claim_refuses_a_claim_held_by_another_session() {
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("other-session");
+        assert!(matches!(
+            driver_claim(&record, &role, &this_machine(), Some(&caller)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn driver_claim_refuses_a_claim_held_on_another_computer() {
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let elsewhere = MachineId::parse("fedcba9876543210").unwrap();
+        assert!(matches!(
+            driver_claim(&record, &role, &elsewhere, Some(&caller)),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn driver_claim_refuses_a_callerless_entry_into_claimed_work() {
+        let record = base_record();
+        let role = orchestrator_role();
+        assert!(matches!(
+            driver_claim(&record, &role, &this_machine(), None),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn driver_claim_branch_continues_the_recorded_drivers_branch() {
+        let tree = tempfile::tempdir().unwrap();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(driver_binding("driver-1", tree.path(), true));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let claim = driver_claim(&record, &role, &this_machine(), Some(&caller)).unwrap();
+        assert_eq!(claim.branch(&record.slug), "work");
+    }
+
+    #[test]
+    fn driver_claim_branch_derives_the_work_branch_without_a_driver() {
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let claim = driver_claim(&record, &role, &this_machine(), Some(&caller)).unwrap();
+        assert_eq!(claim.branch(&record.slug), "bug-fix/work");
+    }
+
+    #[test]
+    fn admission_describes_a_new_attempt_to_a_caller_outside_the_workspace() {
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let outside = Placement {
+            branch: "bug-fix/work".into(),
+            path: None,
+            root: PathBuf::from("/nonexistent"),
+            in_workspace: false,
+        };
+        let entry = decide(&record, &role, Some(&caller), &outside, None).unwrap();
+        assert_eq!(entry.admission, Admission::Describe);
+        assert!(entry.driver.is_none());
+        assert_eq!(entry.number, 1);
+        assert_eq!(
+            entry.key,
+            keyed::todo_key("demo", record.id.as_str(), "todo-orchestrator", 1)
+        );
+    }
+
+    #[test]
+    fn admission_refuses_an_unbound_caller_in_the_workspace_without_evidence() {
+        let (repo, _, _) = shared_worktree();
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                None
+            ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn admission_admits_the_session_already_bound_in_its_placement() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(driver_binding("driver-1", repo.path(), false));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let entry = decide(
+            &record,
+            &role,
+            Some(&caller),
+            &in_workspace(repo.path()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(entry.admission, Admission::Bound { reopen: false });
+        assert_eq!(entry.key, "demo/bug-fix:todo-orchestrator:1");
+    }
+
+    #[test]
+    fn admission_reopens_the_recorded_orchestrators_released_binding() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(driver_binding("driver-1", repo.path(), true));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let entry = decide(
+            &record,
+            &role,
+            Some(&caller),
+            &in_workspace(repo.path()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(entry.admission, Admission::Bound { reopen: true });
+        assert_eq!(entry.number, 1);
+        assert_eq!(entry.key, "demo/bug-fix:todo-orchestrator:1");
+    }
+
+    #[test]
+    fn admission_lets_the_recorded_orchestrator_take_up_the_unassigned_runner_claim() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = runner_claimed(base_record());
+        record
+            .bindings
+            .push(driver_binding("driver-1", repo.path(), true));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        assert_eq!(
+            admission_of(decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                None
+            )),
+            Some(Admission::Bound { reopen: true })
+        );
+    }
+
+    #[test]
+    fn admission_refuses_a_runner_claim_takeover_by_another_session() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = runner_claimed(base_record());
+        record
+            .bindings
+            .push(driver_binding("driver-1", repo.path(), true));
+        let role = orchestrator_role();
+        let caller = session("other-session");
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                None
+            ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn admission_does_not_resume_a_recorded_binding_without_its_runtime() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        let mut legacy = driver_binding("driver-1", repo.path(), true);
+        legacy.attempt.runtime = None;
+        record.bindings.push(legacy);
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                None
+            ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    /// Native placement evidence for `caller` in `tree` at its head, for
+    /// the record's first new todo-orchestrator attempt.
+    fn placement_evidence(record: &TodoRecord, caller: &str, tree: &Path) -> DriverPlacement {
+        let key = keyed::todo_key("demo", record.id.as_str(), "todo-orchestrator", 1);
+        DriverPlacement {
+            title: "todo-orchestrator · bug-fix".into(),
+            session: session(caller),
+            key,
+            worktree: tree.to_path_buf(),
+            branch: "work".into(),
+            head: head(tree, "HEAD").unwrap(),
+            source: "native".into(),
+        }
+    }
+
+    #[test]
+    fn admission_places_a_caller_on_matching_native_evidence() {
+        let (repo, _, _) = shared_worktree();
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let proof = placement_evidence(&record, "driver-1", repo.path());
+        assert_eq!(
+            admission_of(decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                Some(&proof)
+            )),
+            Some(Admission::Place)
+        );
+    }
+
+    #[test]
+    fn admission_refuses_evidence_that_differs_from_the_recorded_assignment() {
+        let (repo, _, _) = shared_worktree();
+        let record = base_record();
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let mut proof = placement_evidence(&record, "driver-1", repo.path());
+        proof.key = "demo/bug-fix:todo-orchestrator:9".into();
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                Some(&proof)
+            ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn admission_refuses_evidence_while_the_phase_is_bound_to_another_orchestrator() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record
+            .bindings
+            .push(driver_binding("other-session", repo.path(), false));
+        let role = orchestrator_role();
+        let caller = session("driver-1");
+        let mut proof = placement_evidence(&record, "driver-1", repo.path());
+        proof.key = "demo/bug-fix:todo-orchestrator:1".into();
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                Some(&proof)
+            ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn admission_refuses_evidence_without_a_caller() {
+        let (repo, _, _) = shared_worktree();
+        let mut record = base_record();
+        record.claim = None;
+        let role = orchestrator_role();
+        let proof = placement_evidence(&record, "driver-1", repo.path());
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                None,
+                &in_workspace(repo.path()),
+                Some(&proof)
+            ),
+            Err(WorkError::Refused(_))
+        ));
     }
 }

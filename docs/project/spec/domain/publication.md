@@ -28,6 +28,37 @@ missing or different, whether or not main has moved. It
 does not own the snippet model, `index.yaml` and `schema.yaml`, validation or
 retrieval, the configuration it reads, or the git hooks that trigger it.
 
+A company repository (`project/instrukt/spec/domain/configuration`) is a
+project like any other to publication, except that its documentation is the
+company's knowledge. Its sync reads none of that knowledge as
+documentation: it runs no snippet validation, stages no position, no
+`docs/project/` and no `docs/third-party/`, writes nothing under
+`~/.instrukt/docs/` and contributes nothing to the global index, whatever
+folders the company's documents sit in. It writes the editor schemas and the
+eval fingerprint and records the checkout and its published commit, as every
+project's sync does. Publication decides from a repository's root whether it
+is a company's, for every rendering, for the company's skill, for docs
+validation's question and for sync.
+
+The company's skill follows Claude's catalog format as its vendor states it
+(`project/instrukt/spec/feature/publication/company-plugin`, See Also): the catalog entry's source is the repository's root, the entry
+is the plugin's manifest and no other manifest is written; it lists the
+company's skill by its folder, only that skill loads with the plugin and
+several entries share one root; and its version is the one a client compares.
+Whatever stands at the
+repository's root in a place that format reads other components from is part
+of the plugin as Claude loads it.
+
+Every entrypoint rendering — the global agent files, a repository's root
+`AGENTS.md` and a company plugin's skill — holds each source it holds in full
+as that source's current compressed unit, and as its prose wherever the unit
+is stale or missing, deciding that per source
+(`project/instrukt/spec/feature/publication/compressed-units`). Publication
+reads units, decides their currency and structural admissibility, renders
+with them, publishes them with their positions, records their lineage and
+reports their state through `instrukt docs units`; it never writes a unit's
+text, calls a model or judges whether a unit means what its source means.
+
 ## Ubiquitous language
 
 **Home**
@@ -100,8 +131,9 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 **Rendering**
 :  Producing one instruction file from documentation: selected snippets in
-   full with their closure, listing lines, triggered-procedure lines, planned
-   material dropped, no import left for an agent program to resolve. A
+   full with their closure, each held as its current compressed unit or in
+   its prose, listing lines, triggered-procedure lines, planned material
+   dropped, no import left for an agent program to resolve. A
    global agent file inlines what is published on the computer and resolves
    `@config`; a committed entrypoint inlines only what its repository holds,
    names other repositories' doctrine by the command that reads it, and
@@ -117,9 +149,11 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    repository has at most one.
 
 **Company plugin**
-:  The Claude plugin a company's repository carries in `plugins/<key>/`,
-   `<key>` being the company's key: the selection the company index makes,
-   held as one skill with a manifest. It is no instruction file
+:  The Claude plugin a company's repository carries: the company's skill in
+   `skills/<key>/` at the repository's root, `<key>` being the company's key,
+   outside any vendor's folder, and the skill's entry in the plugin catalog,
+   which is the plugin's manifest. The skill holds the selection the company
+   index makes. It is no instruction file
    (`project/instrukt/spec/feature/publication/company-plugin`).
 
 **Plugin catalog**
@@ -152,9 +186,86 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
    `AGENTS.md` files.
 
 **Eval fingerprint**
-:  The digest of every published snippet that declares `eval: true`, recorded
-   per published commit; the current digest is available to work
+:  The digest of the doctrine in force on the computer, derived from a prose
+   digest over every published evaluated snippet and always-on source and a
+   units digest over the always-on sources' current units, recorded with both
+   per published commit; the current fingerprint is available to work
    (`project/instrukt/spec/feature/publication/eval-fingerprint`).
+
+**Compressed unit**
+:  A source's dense counterpart, written by an agent and committed in the
+   repository that holds the source, declaring in its frontmatter the source
+   digest it was written from and the model that wrote it
+   (`project/instrukt/spec/feature/publication/compressed-units`). A unit is
+   no snippet and no company document. instrukt reads units and never writes
+   one.
+
+**Place for units**
+:  `docs/_compressed/` in every repository that holds documentation, a unit
+   standing at its source's path relative to `docs/`:
+   `docs/_compressed/general/…`, `docs/_compressed/domain/<x>/…`,
+   `docs/_compressed/project/…`, and a company document's own path below it.
+   It lies outside every position; docs' walks skip it
+   (`project/instrukt/spec/domain/docs`). In the home, a published
+   position's units stand under `_compressed/` inside that position's
+   published directory, at the source's path relative to the position, and
+   only units read from `docs/_compressed/` and checked there stand there.
+   `_compressed` is a reserved folder name inside a position: a position
+   that holds a folder of that name, at any depth, is a finding.
+
+**Source**
+:  What an entrypoint rendering holds in full: a delivered snippet in the
+   closure of the `expanded` ids or of an `agents` list of
+   `docs/general/index.yaml`, a delivered snippet in the closure of the
+   `expanded` ids of `docs/project/index.yaml`, or a company document in the
+   closure of the `expanded` documents of a company's `docs/index.yaml`.
+
+**Delivered prose**
+:  A snippet's current-contract body
+   (`project/instrukt/spec/domain/docs`) with its line endings as line feeds;
+   a company document's body after its frontmatter, required reads included,
+   the same way. Nothing the computer supplies enters it, so it depends on
+   the source's bytes alone.
+
+**Source digest**
+:  The SHA-256 of a source's delivered prose, in lowercase hexadecimal. A
+   unit declares the source digest it was written from.
+
+**Unit state**
+:  Current, stale, missing or orphaned, decided from a repository's content
+   alone by comparing each unit's declared source digest with its source's
+   (`project/instrukt/spec/feature/publication/compressed-units`). A unit
+   with a finding stands in for nothing in a reader that acts on that
+   finding; Unit findings lists which readers act on which findings.
+
+**Unit framing**
+:  How a rendering holds a unit where it would hold its source: one heading
+   naming the source's canonical id, or a company document's path, at the
+   level the source's own title takes there, then the unit's body without
+   its frontmatter, its headings demoted as a source's are. In a company
+   plugin's main file, a line under that heading names the plugin file that
+   carries the document's prose. Framing reads nothing of the unit's prose.
+
+**Legend**
+:  One fixed passage of the release explaining the units' notation. A
+   rendering that holds at least one unit carries it once, in visible text,
+   in the file's opening before its first document: after the generated line
+   (and, in a global agent file, after the line naming the uncompressed
+   copy), and in a company rendering after the company passage. A rendering
+   that holds none carries none. Publication assembles it with the file;
+   the docs context's section rendering and the domain read never carry it.
+
+**Uncompressed copy**
+:  The rendering of one runtime's global agent file with every source in its
+   prose, written into the home's `rendered/` folder under a name no agent
+   runtime loads as an instruction file.
+
+**Lineage facts**
+:  What a sync records per published snippet in the global index:
+   `content_sha256`, the snippet's source digest, on a delivered entry;
+   and, when the snippet has a unit, `compressed_source_sha256`, the source
+   digest the unit declares, and `compressed_content_sha256`, the SHA-256 of
+   the unit's body. Raw facts, never a verdict on currency.
 
 **Docs lock**
 :  The home-wide lock under which every write to the home's publication
@@ -204,14 +315,15 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   commits and checkout paths under
   `~/.instrukt/state/publication/`; the eval fingerprint per published commit
   under `~/.instrukt/state/eval-fingerprint/`; the committed root `AGENTS.md`
-  of a repository and `instrukt docs render [--check]`; a company's plugin
-  under `plugins/<key>/` with its entry in `.claude-plugin/marketplace.json`,
+  of a repository and `instrukt docs render [--check]`; a company's skill
+  under `skills/<key>/` with its plugin's entry in
+  `.claude-plugin/marketplace.json`,
   and `instrukt docs plugin --key <key> --name <name>`, which asks for a
   rendering, with `--check` for a check and with `--validate` for a
   validation, the two flags excluding each other
   (`project/instrukt/spec/feature/publication/company-plugin`); whether a
-  repository's `docs/index.yaml` is its company index, which docs
-  validation asks before reading the file; the global
+  repository is a company's, which docs validation asks before reading
+  anything under its `docs/`; the global
   agent files; `.instrukt/schemas/` and the modeline
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
@@ -227,6 +339,35 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
+Compressed units extend each part of that boundary:
+
+- **Owns** — the place for units and a unit's format; delivered prose's
+  digest and each unit's state; the structural rules a unit entering a
+  rendering is held to, and their findings; holding a unit in place of its
+  source, the per-source fallback and the legend, in every entrypoint
+  rendering; the inspection of a repository's units; publishing units with
+  their positions and retracting them; the lineage facts in the global index;
+  the units digest of the eval fingerprint; the uncompressed copies of the
+  global agent files.
+- **Does not own** — a unit's text, its notation and whether it keeps its
+  source's rules (the agent that writes it, under the general doctrine's
+  notation and procedure); when units are written and committed (the
+  repository's maintainers and the post-merge automation they compose from
+  their shared workflows, `project/instrukt/policy/shared-workflows`); the
+  current-contract lens, the `@config` grammar and the reference forms
+  (docs).
+- **Published contracts** — `docs/_compressed/` and a unit's frontmatter,
+  `source_sha256` and `model`; `instrukt docs units [--json] [--target <slug>]`,
+  which reads the checkout it runs in, with that todo's pending documentation
+  applied when a slug is given, and writes nothing, exiting 0 when there is nothing to
+  compress, 3 when it names only stale, missing or orphaned units, and 1
+  when it names a finding; the lineage facts of the global index; the
+  prose and units digests beside each recorded fingerprint; the uncompressed
+  copies under the home's `rendered/`.
+- **Allowed dependencies** — docs, as customer, also for a source's
+  current-contract body, its `@config` directives and its reference forms,
+  which unit checks compare with the unit's.
+
 ## Canonical fields
 
 ### Aggregates
@@ -235,12 +376,29 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 - **Root:** the home's global index.
 - **Contains:** index entries (id, description, position, owner, published-file
-  location, source checkout provenance and pending ownership).
+  location, source checkout provenance, pending ownership and lineage facts).
 - **Invariants:**
   - An id appears at most once.
   - Every entry names exactly one owner.
   - A published position's entries all have the position's owner.
   - A patch by one project changes only entries that project owns.
+  - A delivered entry carries its source digest, computed from the bytes
+    its owner's sync published; a pending entry carries none. An entry
+    carries the unit's two facts exactly when its owner's sync published a
+    unit for its snippet. These are raw facts of the published bytes: no
+    rendering's finding, configured runtime or later read changes them.
+  - The index is at schema version 3. Every loader, the one sync and
+    validation use and the one reads use, brings an index of version 2
+    forward before anything reads its entries, and drops no entry in doing
+    so: each delivered entry gains its source digest from the file it names
+    under the home's published tree, read through no symbolic link, and no
+    entry gains unit facts. An entry whose published file cannot be read so
+    keeps every other field, carries no source digest, and is named in a
+    warning by the loader and in the output of the sync that persists it;
+    it gains its digest when its owner's sync next publishes it, the
+    invoking project's own entries being replaced by that sync's patch.
+    Publication persists version 3 under its owner lock at its next write;
+    domain code reads only version 3.
 - **Identifier:** one per home.
 - **Lifecycle:** created by the first sync on a computer; patched by every
   sync that publishes; re-created from the projects if the home is deleted.
@@ -258,6 +416,8 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
   - A sync that is refused or fails leaves the previous publication readable
     and records no commit.
   - Nothing the project published before and no longer owns remains.
+  - A company repository's published part holds no position, no claim and
+    no index entry: only its published commit and checkout path.
 - **Identifier:** the project slug from the project's `instrukt.yaml`.
 - **Lifecycle:** created by the project's first sync; replaced by each sync
   whose main differs from the published commit.
@@ -267,12 +427,19 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Root:** the set of user-scope instruction files of the configured agent
   runtimes.
 - **Contains:** one rendered file per configured agent runtime that has a
-  user-scope file, per home its instances run with; one entrypoint-loading key
-  per agent runtime that needs one. Nothing records which files were written.
+  user-scope file, per home its instances run with; one uncompressed copy per
+  such runtime in the home; one entrypoint-loading key per agent runtime that
+  needs one. Nothing records which files were written.
 - **Invariants:**
   - Written only by the sync of the project that owns `docs/general/`.
   - Written whole by every sync that publishes them, whatever the destination
-    held; never removed.
+    held; never removed. An uncompressed copy is written whole with its
+    runtime's file and is never removed either.
+  - A file holds a unit only while the unit is current and has no finding;
+    otherwise it holds that source's prose, and the sync reports any
+    finding.
+  - A file that holds a unit names, before its first section, where its
+    uncompressed copy stands and how to read a named snippet in full.
   - A settings merge changes the entrypoint-loading key and no other key.
   - Targets only the agent runtimes the selected runtime reports as
     configured; when it cannot be asked, nothing in the set changes.
@@ -288,9 +455,9 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 - **Contains:** the rendered file, its generated line and the entry index it
   is rendered from.
 - **Invariants:**
-  - A function of the repository's committed content and the rendering
-    instrukt release: nothing published on the computer, no configuration
-    layer and no environment enters it.
+  - A function of the repository's committed content, its units included,
+    and the rendering instrukt release: nothing published on the computer, no
+    configuration layer and no environment enters it.
   - Changes only in a commit, or in the working tree through
     `instrukt docs render`; no sync, checkout, start or tick writes it.
   - Written over whatever the file holds; removed, when its entry index no
@@ -309,36 +476,98 @@ retrieval, the configuration it reads, or the git hooks that trigger it.
 
 #### Company plugin (aggregate)
 
-- **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
-  being the company's key.
-- **Contains:** the manifest with the plugin's version; the skill's main
-  file; one file for each other document the plugin carries; the plugin's
-  entry in the repository's plugin catalog.
+- **Root:** the folder `skills/<key>/` at the root of a company's repository,
+  `<key>` being the company's key.
+- **Contains:** the skill's main file; one file for each other document the
+  skill carries, and for each document the main file holds as a unit, that
+  document's prose; the plugin's entry in the repository's plugin catalog,
+  which is the plugin's manifest and carries its version.
 - **Invariants:**
-  - A function of the repository's company index and documents, the key and
-    the name its caller gives, the plugin the repository already holds and
-    the rendering instrukt release: nothing published on the computer, no
+  - A function of the repository's company index, documents and units, the
+    key and the name its caller gives, the version the catalog entry holds and the
+    rendering instrukt release: nothing published on the computer, no
     configuration layer and no environment enters it.
   - It holds the selection the company index makes, as the repository's
     committed `AGENTS.md` does, and carries every document it names.
   - The version is the one thing a rendering takes from the plugin the
     repository holds. Its last number is raised by one exactly when the
-    rendering differs from that plugin; instrukt never changes the first
-    two.
-  - Changes only in the working tree, through `instrukt docs plugin`; no
-    commit, sync, checkout, start or tick writes it, and rendering a
-    repository's `AGENTS.md` writes none.
+    rendering differs from what `skills/<key>/` holds; instrukt never changes
+    the first two.
+  - Changes only in the working tree, through `instrukt docs plugin` or the
+    company skeleton's rendering; no commit, sync, checkout, start or tick
+    writes it, and rendering a repository's `AGENTS.md` writes none.
   - The folder is written whole, whatever it held, and never removed.
-    Nothing is read, written or removed through a symbolic link.
+    Nothing is read, written or removed through a symbolic link, and nothing
+    outside the folder and the catalog is read, written or removed, a
+    `plugins/<key>/` folder included.
   - Of the plugin catalog, a rendering changes the plugin's entry and
-    nothing else; it creates no catalog.
+    nothing else; where the repository holds no catalog, it creates one named
+    by the company's key, with the company as its owner.
+  - The repository holds no other manifest for the plugin, so one catalog
+    lists the skills of several plugins, each entry naming its own.
   - With a finding, no file is written or removed.
   - It has no published commit, no claim and no index entry, and belongs to
     no project's published part.
 - **Identifier:** the company's key, in its repository.
-- **Lifecycle:** rendered when a caller asks for it; committed by that
-  caller; left as it is where the repository holds no company index
+- **Lifecycle:** rendered with the company skeleton and whenever a caller
+  asks for it; committed by that caller; left as it is where the repository
+  holds no company index
   (`project/instrukt/spec/feature/publication/company-plugin`).
+
+
+#### Compressed units of a repository (aggregate)
+
+- **Root:** the place for units of one repository, `docs/_compressed/`.
+- **Contains:** one unit per source path, each with its declared source
+  digest, its declared model and its body.
+- **Invariants:**
+  - instrukt never writes, moves or removes a unit; every unit is the
+    repository's own content, committed like its sources.
+  - A unit is read from the place for units alone, and never through a
+    symbolic link at, above or inside it.
+  - A unit's state depends on the repository's content alone, the same on
+    every computer, in every view of it a rendering reads: the commit a sync
+    publishes, the staged index the `pre-commit` section renders and the
+    working tree `instrukt docs render` and `instrukt docs units` read.
+  - Only a current unit with no finding stands in for its source; the
+    findings and what each reader does with them are listed below.
+  - No index entry, required read or reference of a company's knowledge
+    names a path under the place for units: such a name is a finding, as a
+    path not ending in `.md` is.
+- **Identifier:** the source's path relative to `docs/`.
+- **Lifecycle:** written and renewed by an agent — in a change that alters
+  the source, or by the repository's post-merge automation — and committed;
+  published by the owning project's sync with the position its source
+  belongs to, and retracted with it; orphaned units are never rendered and
+  are removed by whoever maintains the repository.
+
+##### Unit findings
+
+Each finding names the unit, or the folder or link it concerns. Content
+findings are established from the bytes of a repository or of the home
+alone, before anything is resolved; the first three apply to every unit, the
+next three to a current unit, compared with its source's delivered prose. A
+rendering-rule finding is established by one rendering:
+
+| Finding | Kind | When |
+| --- | --- | --- |
+| unreadable | content | the unit is not valid UTF-8, its frontmatter is not a mapping, carries a key other than `source_sha256` and `model`, or lacks either or holds a malformed one, or it cannot be read for any reason but absence |
+| link | content | a symbolic link at, above or inside the place the unit is read from: `docs/_compressed/` in a repository, a position's `_compressed/` in the home |
+| reserved folder | content | a position holds a folder named `_compressed` |
+| forbidden directive | content | the unit carries `@exec` or `@include` |
+| configured values | content | the unit's `@config` directives, as a multiset of paths, differ from its source's |
+| references | content | the unit carries a reference its source does not: a reference link, a required read, an `@` reference the docs context finds in text outside code (`project/instrukt/spec/domain/docs`), or, in a company's knowledge, a company document reference in the forms that knowledge admits |
+| rendering rule | rendering | the unit, as that rendering holds it, breaks a rule the rendering applies to its source: in a company's knowledge, the standalone and visibility rules; in a global agent file, a reference left for an agent program |
+
+What each reader does with a finding:
+
+| Reader | Outcome |
+| --- | --- |
+| `instrukt docs units` | reports every finding it can establish from the checkout and exits 1 |
+| the committed `AGENTS.md`, a project's or a company's, and the company plugin | a finding on a unit of a source the rendering holds in full is a finding of the rendering, handled as a finding of that source: the file is left as it is and the check fails |
+| the sync of the project that publishes the unit's position | a content finding on a unit of a position it publishes refuses the sync with its findings, and the previous publication stays (`project/instrukt/spec/feature/publication/docs-repositories`) |
+| a global agent file, rendered by the sync of the `docs/general/` owner | a rendering-rule finding on any unit, and an unreadable or link finding on a unit read from the home, never fails the sync: the file holds that source's prose in the unit's place and the sync reports the finding (`project/instrukt/spec/feature/publication/project-publication`, `project/instrukt/spec/feature/publication/agent-entrypoints`); a unit that is absent is missing, not a finding |
+| the eval fingerprint | from the home's published bytes alone: a unit that is unreadable or behind a link counts as no unit, and every sync that computes the fingerprint reports it, naming the unit and the finding; no rendering-rule finding enters the fingerprint |
 
 ### Domain events emitted
 
@@ -364,6 +593,8 @@ This context emits no events.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
 - **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version changes exactly when the knowledge does.
 
+- **compressed-units** — `project/instrukt/spec/feature/publication/compressed-units` — every agent starts with the whole selection its entrypoint makes, compressed, while a prose change reaches agents at once and a repository's automation learns offline exactly which units to renew.
+
 ## Governing designs and decisions
 
 - **`project/instrukt/design/architecture/overview`** — the publish
@@ -376,8 +607,9 @@ This context emits no events.
   the `index.yaml` and `schema.yaml` model and validation publication renders
   and refuses by; publication supplies the home's published tree and global
   index that retrieval reads, the published commit the behind-main
-  warning compares with, and whether a repository's `docs/index.yaml` is
-  its company index, which validation leaves to publication.
+  warning compares with, and whether a repository is a company's, in which
+  validation reads nothing under `docs/` and leaves the company's knowledge
+  to publication.
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.
@@ -408,6 +640,12 @@ This context emits no events.
   formats as their vendor states them
   (`project/instrukt/spec/feature/publication/company-plugin`). instrukt
   writes files in those formats and runs no Claude program.
+
+For compressed units, the docs relationship also carries a source's
+current-contract body, its `@config` directives and its reference forms,
+which docs supplies; publication keeps units in `docs/_compressed/`, which
+docs' walks skip as they skip every folder whose name begins with an
+underscore.
 
 ## Known caveats
 

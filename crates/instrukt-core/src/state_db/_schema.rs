@@ -49,7 +49,125 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V36),
     Sql(V37),
     Sql(V38),
+    Sql(V39),
+    Step(v40),
 ];
+
+/// Version 40: the shared remote record ends (`state-database`, Version
+/// 40). `listing_copies` and the reflection columns that tracked a record
+/// copy on GitHub go; `reflections` gains the issue read positions, the
+/// published work-branch head and why its publication is outstanding, the
+/// kept refusals, and the reviewed build verdicts by stamp record order in
+/// place of their count; `inbound_commands` gains the command's time. Every
+/// work row is kept, a conflicted row with its pending reflection. Each part
+/// checks what is there first, so the step re-enters its own output.
+fn v40(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+    let has = |table: &str, column: &str| -> rusqlite::Result<bool> {
+        tx.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [column],
+            |row| row.get(0),
+        )
+    };
+    tx.execute_batch("DROP TABLE IF EXISTS listing_copies;")?;
+    for (column, ddl) in [
+        (
+            "comments_since",
+            "ALTER TABLE reflections ADD COLUMN comments_since TEXT;",
+        ),
+        (
+            "events_page",
+            "ALTER TABLE reflections ADD COLUMN events_page INTEGER;",
+        ),
+        (
+            "events_last",
+            "ALTER TABLE reflections ADD COLUMN events_last INTEGER;",
+        ),
+        (
+            "published_head",
+            "ALTER TABLE reflections ADD COLUMN published_head TEXT;",
+        ),
+        (
+            "publication_outstanding",
+            "ALTER TABLE reflections ADD COLUMN publication_outstanding TEXT;",
+        ),
+        (
+            "refusals",
+            "ALTER TABLE reflections ADD COLUMN refusals TEXT NOT NULL DEFAULT '[]';",
+        ),
+        (
+            "reviews",
+            "ALTER TABLE reflections ADD COLUMN reviews TEXT NOT NULL DEFAULT '[]';",
+        ),
+    ] {
+        if !has("reflections", column)? {
+            tx.execute_batch(ddl)?;
+        }
+    }
+    if has("reflections", "reviews_reflected")? {
+        let counted: Vec<(String, u64)> = tx
+            .prepare(
+                "SELECT todo_id, reviews_reflected FROM reflections WHERE reviews_reflected > 0",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (todo, count) in counted {
+            let stamps: Vec<(u64, String)> = tx
+                .prepare("SELECT sequence, fact FROM stamps WHERE todo_id = ?1 ORDER BY sequence")?
+                .query_map([&todo], |row| Ok((row.get(0)?, row.get(1)?)))?
+                .collect::<rusqlite::Result<_>>()?;
+            let reviewed = reviewed_verdicts(count, &stamps);
+            let reviewed = serde_json::to_string(&reviewed)
+                .map_err(|error| rusqlite::Error::ToSqlConversionFailure(Box::new(error)))?;
+            tx.execute(
+                "UPDATE reflections SET reviews = ?1 WHERE todo_id = ?2",
+                rusqlite::params![reviewed, todo],
+            )?;
+        }
+        tx.execute_batch("ALTER TABLE reflections DROP COLUMN reviews_reflected;")?;
+    }
+    for column in ["conflicted", "record_comment"] {
+        if has("reflections", column)? {
+            tx.execute_batch(&format!("ALTER TABLE reflections DROP COLUMN {column};"))?;
+        }
+    }
+    if !has("inbound_commands", "commanded_at")? {
+        tx.execute_batch("ALTER TABLE inbound_commands ADD COLUMN commanded_at TEXT;")?;
+    }
+    Ok(())
+}
+
+/// The record orders of the first `count` build verdicts among `stamps`, a
+/// todo's stamps as (record order, fact kind) in record order: the verdicts
+/// a count of reflected reviews named.
+fn reviewed_verdicts(count: u64, stamps: &[(u64, String)]) -> Vec<u64> {
+    stamps
+        .iter()
+        .filter(|(_, fact)| fact == "build_verdict")
+        .take(usize::try_from(count).unwrap_or(usize::MAX))
+        .map(|(sequence, _)| *sequence)
+        .collect()
+}
+
+/// Version 39: the runner's fleet-attention state (`state-database`,
+/// "Runner tables"). `input_waits` numbers each claim-holding session's waits
+/// for input on a todo and outlives the claim's release; it goes with the
+/// todo's other rows. `attention_episodes` holds a project's open attention
+/// episode and the occurrence that opened it. Both start empty.
+const V39: &str = "
+CREATE TABLE IF NOT EXISTS input_waits (
+    project TEXT NOT NULL,
+    todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    session TEXT NOT NULL,
+    wait    INTEGER NOT NULL,
+    waiting INTEGER NOT NULL,
+    PRIMARY KEY (project, todo_id, session)
+);
+CREATE TABLE IF NOT EXISTS attention_episodes (
+    project   TEXT PRIMARY KEY,
+    opened_by TEXT NOT NULL
+);
+";
 
 /// Version 38: lookups of the todos a worktree path or a work branch names,
 /// and of a todo's hold history and label actions, so worktree standing
@@ -1604,4 +1722,26 @@ fn v29(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
         "UPDATE runtime_bindings SET generation=coalesce((SELECT generation FROM procedure_responsibilities p WHERE p.semantic_key=runtime_bindings.semantic_key),generation) WHERE kind='standing'; DROP TABLE runtime_starts; DELETE FROM runner_workers WHERE worker GLOB 'keyed-start:*';",
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reviewed_verdicts;
+
+    #[test]
+    fn a_count_of_reflected_reviews_names_the_first_build_verdicts_in_record_order() {
+        let stamps: Vec<(u64, String)> = [
+            (1, "approval"),
+            (3, "build_verdict"),
+            (4, "build_started"),
+            (6, "build_verdict"),
+            (9, "build_verdict"),
+        ]
+        .into_iter()
+        .map(|(sequence, fact)| (sequence, fact.to_owned()))
+        .collect();
+        assert_eq!(reviewed_verdicts(2, &stamps), vec![3, 6]);
+        assert_eq!(reviewed_verdicts(5, &stamps), vec![3, 6, 9]);
+        assert!(reviewed_verdicts(0, &stamps).is_empty());
+    }
 }

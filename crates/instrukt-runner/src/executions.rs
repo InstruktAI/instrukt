@@ -21,16 +21,26 @@
 //!   repeated ending without evidence is an anomaly;
 //! - native terminal presence with an eligible keyed assignment: the common
 //!   binding owner starts a successor and moves the work claim atomically.
+//!
+//! The same transaction that saves a tick's observations appends their
+//! fleet-attention conditions (`fleet-attention`, "Attention conditions"):
+//! an execution newly reported as stopped, and a session that begins a wait
+//! for input while its todo does not wait on a person. Each session's waits
+//! on a todo are numbered in `input_waits`, which outlives the claim.
 
 use instrukt_core::config::Configuration;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use serde::{Deserialize, Serialize};
 
 use crate::anomaly;
-use crate::interfaces::{PickupCandidate, ProjectRef, WorkflowAssignments};
+use crate::events::{EmissionContext, Event, EventLogError, StalledCause};
+use crate::fleet_attention;
+use crate::interfaces::{
+    FleetRecord, PickupCandidate, ProjectRef, WorkInterfaceError, WorkflowAssignments,
+};
 use crate::sessions::{Observation, SessionState, Sessions, SessionsError};
 use crate::state::{self, RunnerState, StateError};
-use instrukt_core::state_db::rusqlite::params;
+use instrukt_core::state_db::rusqlite::{Transaction, params};
 
 /// The message a stalled execution's session receives once.
 pub const RECOVERY_MESSAGE: &str = "instrukt: the work this session was started for has no recorded completion. Finish it and record its evidence, or record why it cannot be completed.";
@@ -134,6 +144,62 @@ pub fn replace_session(
     Ok(())
 }
 
+/// A tick's observations could not be saved with their conditions.
+#[derive(Debug, thiserror::Error)]
+pub enum ObserveError {
+    #[error(transparent)]
+    State(#[from] StateError),
+    #[error(transparent)]
+    EventLog(#[from] EventLogError),
+    #[error(transparent)]
+    Work(#[from] WorkInterfaceError),
+}
+
+/// What one tick's look changed about an execution, saved with it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Transition {
+    /// The execution was reported as stopped in this tick.
+    Stalled {
+        execution: Execution,
+        cause: StalledCause,
+    },
+    /// The claim-holding session began a wait for input (`true`) or was
+    /// observed not waiting (`false`).
+    Wait { execution: Execution, waiting: bool },
+    /// The execution was dropped: its claim was released, transferred or
+    /// finished.
+    Released { execution: Execution },
+}
+
+/// What the tick's look says of the session's wait for input: begun,
+/// ended, or not observed either way.
+fn waiting(look: &Look) -> Option<bool> {
+    if look.progressed || look.waits_on_person {
+        return Some(false);
+    }
+    match &look.observed {
+        Observation::State(SessionState::NeedsInput) => Some(true),
+        Observation::State(
+            SessionState::Running
+            | SessionState::InputReady
+            | SessionState::EndedFailed
+            | SessionState::Gone,
+        ) => Some(false),
+        Observation::State(SessionState::Unknown) | Observation::Unobservable(_) => None,
+    }
+}
+
+/// Why an execution reported in this tick stalled: its recovery found the
+/// session gone, or its observed ending.
+fn stalled_cause(observed: &Observation, gone_on_send: bool) -> StalledCause {
+    match observed {
+        _ if gone_on_send => StalledCause::Gone,
+        Observation::State(SessionState::EndedFailed) => StalledCause::Failed,
+        Observation::State(SessionState::Gone) => StalledCause::Gone,
+        _ => StalledCause::Stopped,
+    }
+}
+
 /// The runner's watched executions.
 pub struct Executions<'a> {
     state: &'a RunnerState,
@@ -208,9 +274,15 @@ impl<'a> Executions<'a> {
             .collect())
     }
 
-    /// Replaces every watched execution with `executions`, in one
-    /// transaction.
-    fn save(&self, executions: &[Execution]) -> Result<(), StateError> {
+    /// Replaces every watched execution with `executions` and applies the
+    /// tick's `transitions`, appending their conditions, in one transaction.
+    fn save(
+        &self,
+        executions: &[Execution],
+        transitions: &[Transition],
+        fleet: &dyn FleetRecord,
+        now: jiff::Timestamp,
+    ) -> Result<(), ObserveError> {
         self.state.write(|tx| {
             let path = state::db_path(tx);
             tx.execute("DELETE FROM executions", [])
@@ -218,8 +290,95 @@ impl<'a> Executions<'a> {
             for execution in executions {
                 insert(tx, execution)?;
             }
+            let mut context = None;
+            for transition in transitions {
+                self.apply(tx, &mut context, fleet, now, transition)?;
+            }
             Ok(())
         })
+    }
+
+    /// Applies one transition inside `tx`; `context` is built on the first
+    /// append.
+    fn apply(
+        &self,
+        tx: &Transaction<'_>,
+        context: &mut Option<EmissionContext>,
+        fleet: &dyn FleetRecord,
+        now: jiff::Timestamp,
+        transition: &Transition,
+    ) -> Result<(), ObserveError> {
+        let path = state::db_path(tx);
+        let (Transition::Stalled { execution, .. }
+        | Transition::Wait { execution, .. }
+        | Transition::Released { execution }) = transition;
+        let Some(id) = state::todo_id(tx, execution.project.as_str(), execution.todo.as_str())?
+        else {
+            return Ok(());
+        };
+        let key = params![
+            execution.project.as_str(),
+            id,
+            execution.session.to_string()
+        ];
+        let event = match transition {
+            Transition::Stalled { execution, cause } => Event::AttentionExecutionStalled {
+                project: execution.project.clone(),
+                todo: execution.todo.clone(),
+                session: Some(execution.session.clone()),
+                workflow_state: execution.state.clone(),
+                cause: *cause,
+                model_order: Vec::new(),
+            },
+            Transition::Wait { waiting: false, .. } | Transition::Released { .. } => {
+                tx.execute(
+                    "UPDATE input_waits SET waiting = 0
+                     WHERE project = ?1 AND todo_id = ?2 AND session = ?3",
+                    key,
+                )
+                .map_err(state::sql(&path))?;
+                return Ok(());
+            }
+            Transition::Wait {
+                execution,
+                waiting: true,
+            } => {
+                let begun = tx
+                    .execute(
+                        "INSERT INTO input_waits (project, todo_id, session, wait, waiting)
+                         VALUES (?1, ?2, ?3, 1, 1)
+                         ON CONFLICT (project, todo_id, session)
+                         DO UPDATE SET wait = wait + 1, waiting = 1 WHERE waiting = 0",
+                        key,
+                    )
+                    .map_err(state::sql(&path))?;
+                if begun == 0 {
+                    return Ok(());
+                }
+                let wait: u64 = tx
+                    .query_row(
+                        "SELECT wait FROM input_waits
+                         WHERE project = ?1 AND todo_id = ?2 AND session = ?3",
+                        key,
+                        |row| row.get(0),
+                    )
+                    .map_err(state::sql(&path))?;
+                Event::AttentionInputWaiting {
+                    project: execution.project.clone(),
+                    todo: execution.todo.clone(),
+                    session: execution.session.clone(),
+                    workflow_state: execution.state.clone(),
+                    wait,
+                }
+            }
+        };
+        let context = match context {
+            Some(context) => context,
+            None => context.insert(fleet_attention::context(self.state.home(), now, None)?),
+        };
+        let runnable = fleet.runnable_remains(tx, &execution.project)?;
+        fleet_attention::condition(tx, context, &event, runnable)?;
+        Ok(())
     }
 
     /// Starts watching an execution, replacing any for the same todo.
@@ -241,6 +400,18 @@ impl<'a> Executions<'a> {
                 params![execution.project.as_str(), id],
             )
             .map_err(state::sql(&path))?;
+            // A session taking the todo up again is not waiting yet; its
+            // next wait continues its count.
+            tx.execute(
+                "UPDATE input_waits SET waiting = 0
+                 WHERE project = ?1 AND todo_id = ?2 AND session = ?3",
+                params![
+                    execution.project.as_str(),
+                    id,
+                    execution.session.to_string()
+                ],
+            )
+            .map_err(state::sql(&path))?;
             insert(tx, &execution)
         })
     }
@@ -252,14 +423,16 @@ impl<'a> Executions<'a> {
         cx: &crate::dispatch::DispatchContext<'_>,
         config: &Configuration,
         workflow: &dyn WorkflowAssignments,
-        bindings: &dyn crate::interfaces::SessionBindings,
+        work: &crate::interfaces::WorkPorts,
         project: &ProjectRef,
         offered: &[PickupCandidate],
-    ) -> Result<(), StateError> {
+    ) -> Result<(), ObserveError> {
+        let bindings = work.bindings.as_ref();
         let mut executions = self.load()?;
         let env = cx.env;
         let sessions = Sessions::new(self.state.home(), config, env);
         let mut kept = Vec::with_capacity(executions.len());
+        let mut transitions = Vec::new();
         for mut execution in executions.drain(..) {
             if execution.project != project.slug {
                 kept.push(execution);
@@ -267,12 +440,14 @@ impl<'a> Executions<'a> {
             }
             if offered.iter().any(|c| c.todo == execution.todo) {
                 tracing::debug!(event = "execution_released", todo = %execution.todo, session = %execution.session);
+                transitions.push(Transition::Released { execution });
                 continue;
             }
             let assignment = match workflow.assignment(project, &execution.todo) {
                 Ok(Some(assignment)) => assignment,
                 Ok(None) => {
                     tracing::debug!(event = "execution_finished", todo = %execution.todo, session = %execution.session);
+                    transitions.push(Transition::Released { execution });
                     continue;
                 }
                 Err(err) => {
@@ -283,6 +458,7 @@ impl<'a> Executions<'a> {
             };
             if assignment.holder.as_ref() != Some(&execution.session) {
                 tracing::debug!(event = "execution_released", todo = %execution.todo, session = %execution.session);
+                transitions.push(Transition::Released { execution });
                 continue;
             }
             let current = assignment.state;
@@ -294,46 +470,68 @@ impl<'a> Executions<'a> {
                     .alive(&execution.session)
                     .unwrap_or_else(|err| Observation::Unobservable(err.to_string()))
             };
-            if observed == Observation::State(SessionState::Gone) {
-                let key=self.state.read(|conn,path| {
-                    use instrukt_core::state_db::rusqlite::OptionalExtension;
-                    conn.query_row("SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NULL",[execution.session.to_string()],|row|row.get::<_,String>(0)).optional().map_err(state::sql(path))
-                })?.flatten();
-                if let Some(key) = key {
-                    match sessions.adapter().and_then(|adapter| {
-                        let mut request =
-                            crate::keyed::request(self.state.home(), adapter.as_ref(), &key)?;
-                        request.title = if key.starts_with("instrukt:task:") {
-                            format!("task · {}", execution.todo)
-                        } else {
-                            format!("{} · {}", execution.role, execution.todo)
-                        };
-                        crate::keyed::succeed(
-                            adapter.as_ref(),
-                            &crate::runtime::FollowupAssignment {
-                                bindings: Some(bindings),
-                                original_request: None,
-                                invocation: cx.invocation,
-                                request: &request,
-                                session: &execution.session,
-                                worktree_path: None,
-                                project: Some(project.slug.as_str()),
-                                now: cx.now,
-                            },
-                        )
-                    }) {
-                        Ok(thread) => {
-                            execution.session = thread.session;
-                            execution.recovery_sent = false;
-                            execution.anomaly_raised = false;
-                        }
-                        Err(error) => {
-                            tracing::warn!(event="execution_successor_pending",%key,%error);
-                        }
+            let key=self.state.read(|conn,path| {
+                use instrukt_core::state_db::rusqlite::OptionalExtension;
+                conn.query_row("SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NULL",[execution.session.to_string()],|row|row.get::<_,String>(0)).optional().map_err(state::sql(path))
+            })?.flatten();
+            // Besides a confirmed gone thread, an idle one in another runtime
+            // project than its checkout's own is succeeded.
+            let succeed = observed == Observation::State(SessionState::Gone)
+                || (matches!(
+                    observed,
+                    Observation::State(SessionState::InputReady | SessionState::EndedFailed)
+                ) && key.as_ref().is_some_and(|key| {
+                    sessions.adapter().is_ok_and(|adapter| {
+                        crate::keyed::request(self.state.home(), adapter.as_ref(), key)
+                            .and_then(|request| {
+                                let thread = adapter.read_state(&execution.session)?;
+                                crate::keyed::idle_misplaced(
+                                    adapter.as_ref(),
+                                    &request.checkout,
+                                    &thread,
+                                    Some(key),
+                                )
+                            })
+                            .unwrap_or_else(|error| {
+                                tracing::warn!(event="execution_placement_unverified",%key,%error);
+                                false
+                            })
+                    })
+                }));
+            if succeed && let Some(key) = key {
+                match sessions.adapter().and_then(|adapter| {
+                    let mut request =
+                        crate::keyed::request(self.state.home(), adapter.as_ref(), &key)?;
+                    request.title = if key.starts_with("instrukt:task:") {
+                        format!("task · {}", execution.todo)
+                    } else {
+                        format!("{} · {}", execution.role, execution.todo)
+                    };
+                    crate::keyed::succeed(
+                        adapter.as_ref(),
+                        &crate::runtime::FollowupAssignment {
+                            bindings: Some(bindings),
+                            original_request: None,
+                            invocation: cx.invocation,
+                            request: &request,
+                            session: &execution.session,
+                            worktree_path: None,
+                            project: Some(project.slug.as_str()),
+                            now: cx.now,
+                        },
+                    )
+                }) {
+                    Ok(thread) => {
+                        execution.session = thread.session;
+                        execution.recovery_sent = false;
+                        execution.anomaly_raised = false;
                     }
-                    kept.push(execution);
-                    continue;
+                    Err(error) => {
+                        tracing::warn!(event="execution_successor_pending",%key,%error);
+                    }
                 }
+                kept.push(execution);
+                continue;
             }
             let recovery_id = format!("recovery:{}:{}", execution.session, execution.state);
             // The recovery input's outcome is read only where it can decide
@@ -353,6 +551,8 @@ impl<'a> Executions<'a> {
                 unconfirmed,
                 observed,
             };
+            let reported = execution.anomaly_raised;
+            let mut gone_on_send = false;
             let next = step(&execution, &look);
             match next {
                 Step::Wait | Step::Reported => {}
@@ -363,6 +563,7 @@ impl<'a> Executions<'a> {
                 }
                 Step::Recover => match sessions.send(
                     cx.invocation,
+                    Some(bindings),
                     &execution.session,
                     &crate::inputs::Entry {
                         id: &recovery_id,
@@ -395,6 +596,7 @@ impl<'a> Executions<'a> {
                     }
                     Err(err @ SessionsError::Gone(_)) => {
                         tracing::warn!(event = "execution_recovery_undeliverable", todo = %execution.todo, session = %execution.session, error = %err);
+                        gone_on_send = true;
                         execution.recovery_sent = true;
                         execution.anomaly_raised = true;
                         anomaly::notify(config, env, &execution.session.to_string(), None);
@@ -417,9 +619,21 @@ impl<'a> Executions<'a> {
                     anomaly::notify(config, env, &execution.session.to_string(), None);
                 }
             }
+            if execution.anomaly_raised && !reported {
+                transitions.push(Transition::Stalled {
+                    execution: execution.clone(),
+                    cause: stalled_cause(&look.observed, gone_on_send),
+                });
+            }
+            if let Some(waiting) = waiting(&look) {
+                transitions.push(Transition::Wait {
+                    execution: execution.clone(),
+                    waiting,
+                });
+            }
             kept.push(execution);
         }
-        self.save(&kept)
+        self.save(&kept, &transitions, work.fleet.as_ref(), cx.now)
     }
 }
 
@@ -528,5 +742,176 @@ mod tests {
             ..unconfirmed
         };
         assert_eq!(step(&execution(true, false), &waiting), Step::Wait);
+    }
+
+    /// Work's answer for these tests: runnable work always remains.
+    struct Runnable;
+
+    impl FleetRecord for Runnable {
+        fn runnable_remains(
+            &self,
+            _: &Transaction<'_>,
+            _: &ProjectSlug,
+        ) -> Result<bool, WorkInterfaceError> {
+            Ok(true)
+        }
+
+        fn active_todo(
+            &self,
+            _: &Transaction<'_>,
+            _: &ProjectSlug,
+            _: &TodoSlug,
+        ) -> Result<bool, WorkInterfaceError> {
+            Ok(true)
+        }
+    }
+
+    /// A home whose state database holds `demo`'s todo `weekly`.
+    fn home() -> (tempfile::TempDir, instrukt_core::home::Home) {
+        let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = instrukt_core::home::Home::at_user_home(dir.path().to_path_buf());
+        RunnerState::new(&home)
+            .write(|tx| {
+                tx.execute(
+                    "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence)
+                     VALUES('weekly-id','demo','weekly','task','active','2026-11-03T10:00:00Z','{}',1,'once',1)",
+                    [],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+                Ok::<_, StateError>(())
+            })
+            .unwrap();
+        (dir, home)
+    }
+
+    /// Saves one tick that observed `look` for the watched execution.
+    fn tick(home: &instrukt_core::home::Home, look: &Look) {
+        let watched = execution(false, false);
+        let transitions: Vec<Transition> = waiting(look)
+            .map(|waiting| Transition::Wait {
+                execution: watched.clone(),
+                waiting,
+            })
+            .into_iter()
+            .collect();
+        save(home, &transitions);
+    }
+
+    fn save(home: &instrukt_core::home::Home, transitions: &[Transition]) {
+        let state = RunnerState::new(home);
+        Executions::new(&state)
+            .save(
+                &[execution(false, false)],
+                transitions,
+                &Runnable,
+                "2026-11-25T12:00:00Z".parse().unwrap(),
+            )
+            .unwrap();
+    }
+
+    /// The `data` of each logged event, oldest first.
+    fn logged(home: &instrukt_core::home::Home) -> Vec<serde_json::Value> {
+        RunnerState::new(home)
+            .read(|conn, path| {
+                let mut statement = conn
+                    .prepare("SELECT payload FROM events ORDER BY seq")
+                    .map_err(state::sql(path))?;
+                statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(state::sql(path))?
+                    .map(|row| Ok(serde_json::from_str(&row.map_err(state::sql(path))?).unwrap()))
+                    .collect::<Result<Vec<_>, StateError>>()
+            })
+            .unwrap()
+            .unwrap_or_default()
+    }
+
+    fn waits(home: &instrukt_core::home::Home) -> Vec<u64> {
+        logged(home)
+            .iter()
+            .filter_map(|data| data.get("wait").and_then(serde_json::Value::as_u64))
+            .collect()
+    }
+
+    #[test]
+    fn a_wait_after_the_session_worked_again_is_numbered_next() {
+        let (_dir, home) = home();
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        tick(&home, &seen(Observation::State(SessionState::Running)));
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        assert_eq!(waits(&home), [1, 2]);
+    }
+
+    #[test]
+    fn one_wait_observed_across_ticks_and_transient_looks_is_appended_once() {
+        let (_dir, home) = home();
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        tick(&home, &seen(Observation::Unobservable("timed out".into())));
+        tick(&home, &seen(Observation::State(SessionState::Unknown)));
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        assert_eq!(waits(&home), [1]);
+    }
+
+    #[test]
+    fn a_retained_session_taking_the_todo_up_again_continues_its_count() {
+        let (_dir, home) = home();
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        save(
+            &home,
+            &[Transition::Released {
+                execution: execution(false, false),
+            }],
+        );
+        Executions::new(&RunnerState::new(&home))
+            .record(execution(false, false))
+            .unwrap();
+        tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
+        assert_eq!(waits(&home), [1, 2]);
+    }
+
+    #[test]
+    fn a_session_waiting_while_its_todo_waits_on_a_person_appends_nothing() {
+        let (_dir, home) = home();
+        tick(
+            &home,
+            &Look {
+                waits_on_person: true,
+                ..seen(Observation::State(SessionState::NeedsInput))
+            },
+        );
+        assert!(logged(&home).is_empty());
+    }
+
+    #[test]
+    fn a_stalled_execution_carries_why_it_stalled() {
+        let running = Observation::State(SessionState::Running);
+        assert_eq!(stalled_cause(&running, false), StalledCause::Stopped);
+        assert_eq!(
+            stalled_cause(&Observation::State(SessionState::InputReady), false),
+            StalledCause::Stopped
+        );
+        assert_eq!(
+            stalled_cause(&Observation::State(SessionState::EndedFailed), false),
+            StalledCause::Failed
+        );
+        assert_eq!(
+            stalled_cause(&Observation::State(SessionState::Gone), false),
+            StalledCause::Gone
+        );
+        assert_eq!(stalled_cause(&running, true), StalledCause::Gone);
+    }
+
+    #[test]
+    fn a_stalled_execution_reported_again_appends_once() {
+        let (_dir, home) = home();
+        let stalled = Transition::Stalled {
+            execution: execution(true, true),
+            cause: StalledCause::Failed,
+        };
+        save(&home, std::slice::from_ref(&stalled));
+        save(&home, &[stalled]);
+        let logged = logged(&home);
+        assert_eq!(logged.len(), 1);
+        assert_eq!(logged[0].get("cause"), Some(&serde_json::json!("failed")));
     }
 }

@@ -16,11 +16,15 @@
 //! | [`TaskFirings`] | `task-timing` "Task and schedule" | work | runner task timing |
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
+//! | [`OpenWorkSessions`] | `thread-retention` "Threads that are kept" | work | runner thread retention |
+//! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
+//! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
 //! wiring.rs`); the runner checks `modules.todos` per project before using
-//! them. The event-log
+//! them, except [`OpenWorkSessions`], which thread retention asks for every
+//! registered project whatever its switches. The event-log
 //! append work's finalize-ready stamp uses is the other direction: the
 //! runner implements [`crate::events::EventLog`] and the CLI hands it to
 //! work.
@@ -104,13 +108,6 @@ pub enum WorkInterfaceError {
         project: ProjectSlug,
         todo: TodoSlug,
     },
-    /// The item is conflicted with a newer remote revision; commands on it
-    /// refuse until it is refreshed (`github-record`, "Writer and
-    /// convergence").
-    #[error(
-        "todo `{todo}` is conflicted with GitHub; refresh it with `instrukt todo refresh {todo}`"
-    )]
-    Conflicted { todo: TodoSlug },
     /// Work refused the write for a reason its contract states (a hold,
     /// a delivered item, an invalid resulting record).
     #[error("{reason}")]
@@ -137,10 +134,9 @@ pub struct PickupCandidate {
     /// (`work-dispatch`, "Agent selection and intent checks").
     pub agent: Option<AgentPreference>,
     /// The runner's own claim on this computer already holds the todo and
-    /// no session is bound to it yet: either pending reflection (GitHub was
-    /// unreachable when it was recorded) or reflected since by another
-    /// command. Claiming it again answers `AlreadyHeld` once reflected,
-    /// `NotReflected` while GitHub still cannot be reached (ruling D).
+    /// no session is bound to it yet: a claim recorded by an earlier tick
+    /// whose dispatch did not start. Claiming it again answers
+    /// `AlreadyHeld`, and dispatch goes on.
     pub claimed_here: bool,
 }
 
@@ -161,10 +157,8 @@ pub trait Pickup: Send + Sync {
     /// dispatch hold, no execution claim held. Lane readiness (which flow
     /// is owed and whether prerequisites satisfy it) is workflow's, through
     /// [`WorkflowAssignments`]. Serves `work-dispatch`, "Todo pickup", and
-    /// `dependencies-and-holds`, "Prerequisites". Reads the tick's one
-    /// pickup listing of the project from GitHub, whose result replaces the
-    /// project's listing copies (`github-record`, "Interest-driven
-    /// refresh").
+    /// `dependencies-and-holds`, "Prerequisites". Reads only this
+    /// computer's record of the project; nothing is read from GitHub.
     fn pickup_candidates(
         &self,
         project: &ProjectRef,
@@ -186,19 +180,16 @@ pub enum Claimant {
     Session(SessionRef),
 }
 
-/// The outcome of recording an execution claim and reflecting it.
+/// The outcome of recording an execution claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimOutcome {
-    /// The claim is recorded and reflected: this computer holds it.
+    /// The claim is recorded in this computer's record: this computer holds
+    /// it, whether or not GitHub answered its reflection.
     Claimed,
     /// The claimant already held it; nothing changed.
     AlreadyHeld,
-    /// Reflection met a newer remote revision: another computer claimed
-    /// it first. The local change is not reflected; leave the item.
+    /// Another holder on this computer holds the claim; leave the item.
     ClaimedElsewhere,
-    /// The claim is recorded locally but could not be reflected (GitHub
-    /// unreachable or rate limited); it is pending reflection.
-    NotReflected,
 }
 
 /// Recording the item-level execution claim (`work-dispatch`, "Execution
@@ -206,8 +197,9 @@ pub enum ClaimOutcome {
 /// holds"). Release is `instrukt todo update <slug> --unclaim`, the
 /// session's own command, not a runner write.
 pub trait Claims: Send + Sync {
-    /// Records the claim on `todo` for `claimant` and reflects it to
-    /// GitHub before returning.
+    /// Records the claim on `todo` for `claimant` in this computer's record,
+    /// then flushes its reflection; the outcome never waits on GitHub's
+    /// answer.
     fn record_claim(
         &self,
         project: &ProjectRef,
@@ -271,6 +263,14 @@ pub struct AcceptedDispatch {
     pub occurrence: Option<Timestamp>,
 }
 
+/// The work binding of a session, as work reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionOwner {
+    pub key: String,
+    pub project: ProjectSlug,
+    pub worktree: Option<std::path::PathBuf>,
+}
+
 /// Reading and writing per-todo, per-role session bindings
 /// (`session-continuity`, "Identity and reuse"). Reuse is a lookup of the
 /// binding followed by `alive`; brief similarity is not identity.
@@ -299,6 +299,13 @@ pub trait SessionBindings: Send + Sync {
         todo: &TodoSlug,
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
+
+    /// The unreleased per-role binding work holds for `session`, if any:
+    /// its key, its todo's project and the worktree it recorded.
+    fn session_owner(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<SessionOwner>, WorkInterfaceError>;
 
     /// Check that work still owns the stopped assignment before starting a replacement.
     fn check_dispatch_replacement(
@@ -357,20 +364,15 @@ pub struct ReflectionReport {
     pub reach: GitHubReach,
     /// Local items whose writes still await reflection.
     pub pending: Vec<TodoSlug>,
-    /// Local items marked conflicted by this or an earlier pass.
-    pub conflicted: Vec<TodoSlug>,
 }
 
 /// The tick's reflection pass (`work-dispatch`, "Execution contract";
-/// `github-record`, "Local-leading pull-through" and "Writer and
-/// convergence").
+/// `github-record`, "Reading GitHub" and "Writer and convergence").
 pub trait Reflection: Send + Sync {
-    /// Polls GitHub, with conditional requests, for the todos this
-    /// computer holds claims on and the prerequisites that claimed work is
-    /// blocked on (`github-record`, "Interest-driven refresh"), then flushes
-    /// pending reflection, under the per-computer writer lock. The tick's
-    /// pickup listing is [`Pickup::pickup_candidates`]. An unreachable
-    /// GitHub is a report, not an error.
+    /// Reads people's controls on the issues of this computer's live todos,
+    /// with conditional requests, then flushes pending reflection. What a
+    /// tick's reflection publishes is work's. An unreachable GitHub is a
+    /// report, not an error.
     fn sync_reflection(&self, project: &ProjectRef)
     -> Result<ReflectionReport, WorkInterfaceError>;
 }
@@ -559,6 +561,31 @@ pub trait AutomaticHolds: Send + Sync {
 }
 
 // ---------------------------------------------------------------------
+// Fleet record
+// ---------------------------------------------------------------------
+
+/// What fleet attention reads of a project's active work, inside the
+/// caller's write transaction (`fleet-attention`, "Attention episodes",
+/// "Raised conditions").
+pub trait FleetRecord: Send + Sync {
+    /// Whether `project` has an active todo on this computer that is unheld
+    /// and not a structural holder.
+    fn runnable_remains(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+    ) -> Result<bool, WorkInterfaceError>;
+
+    /// Whether `todo` is active work of `project` on this computer.
+    fn active_todo(
+        &self,
+        tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
+        project: &ProjectSlug,
+        todo: &TodoSlug,
+    ) -> Result<bool, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
 // Retention purge
 // ---------------------------------------------------------------------
 
@@ -569,6 +596,25 @@ pub trait RetentionPurge: Send + Sync {
     /// Purges the project's retained local records whose seven-day window
     /// has expired; returns the purged slugs.
     fn purge_expired(&self, project: &ProjectRef) -> Result<Vec<TodoSlug>, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
+// Thread retention
+// ---------------------------------------------------------------------
+
+/// Work's answer for thread retention (`work` domain, "Work → runner (thread
+/// retention)"). Work owns which outcomes are terminal; the runner keeps the
+/// threads of the sessions it names.
+pub trait OpenWorkSessions: Send + Sync {
+    /// The native sessions work associates with `project`'s todos that have
+    /// not reached a terminal outcome, delivered or withdrawn: every session
+    /// their bindings hold, whatever the state of each role attempt, and
+    /// each one's execution-claim session. Answered from the local record,
+    /// with no provider call and no write; none when there is no record.
+    fn open_work_sessions(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<SessionRef>, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -845,6 +891,8 @@ pub struct WorkPorts {
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
     pub reclamation: Arc<dyn WorktreeReclamation>,
+    pub open_sessions: Arc<dyn OpenWorkSessions>,
+    pub fleet: Arc<dyn FleetRecord>,
 }
 
 impl std::fmt::Debug for WorkPorts {
@@ -982,6 +1030,63 @@ pub enum CandidateFinding {
     Owed,
     /// The repository cannot answer; derived again next tick.
     CannotAnswer(String),
+}
+
+/// A head verdict's value as work answers it at the boundary: the runner
+/// cannot name work's own verdict type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadVerdictValue {
+    Approve,
+    NeedsWork,
+}
+
+impl HeadVerdictValue {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::NeedsWork => "needs_work",
+        }
+    }
+}
+
+/// What this computer holds of a commit's head verdict, as work's
+/// Settlement row reads it (`github-apps`, Admission of review evidence,
+/// Settlement).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerdictStanding {
+    /// No verdict stands here and none was handed off.
+    Nothing,
+    /// A verdict stands here; `recorder` recorded its current version.
+    Stands {
+        verdict: HeadVerdictValue,
+        recorder: SessionRef,
+    },
+    /// The verdict that stood here was handed off by `export`.
+    HandedOff { export: String },
+}
+
+/// A commit's head verdict standing with the pinned base work admits its
+/// verdict against; `None` when the commit shares no history with the
+/// canonical branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadVerdict {
+    pub standing: VerdictStanding,
+    pub pinned_base: Option<instrukt_core::ids::CommitSha>,
+}
+
+/// Work's answers a requested review is admitted on
+/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask,
+/// Coordinates, Requested review records). Read-only: no lock is taken.
+pub trait HeadVerdicts: Send + Sync {
+    /// `head`'s verdict standing on this computer and its pinned base.
+    fn head_verdict(
+        &self,
+        project: &ProjectRef,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<HeadVerdict, String>;
+    /// The moment before which review evidence history retires at `now`.
+    fn history_cutoff(&self, now: Timestamp) -> Timestamp;
 }
 
 /// Work's answers the runner asks for automatic review

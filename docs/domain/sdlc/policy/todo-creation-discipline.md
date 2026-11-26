@@ -32,11 +32,16 @@ Apply these configured action values to the identified assignment and session.
   a concrete next contribution, and an owner able to make it. Judge progress
   by changed evidence, artifacts, or outcomes, not by repeated status checks
   or renewed attempts with the same premise.
-- **Hold for a specific unblock condition.** Record the condition, who owns
-  satisfying it, and the evidence that releases the hold. A named dependency
-  delivery, a scheduled gate, or a specific decision from its responsible
-  person can qualify. Naming an owner for hypothetical future evidence does
-  not make that evidence an actionable dependency.
+- **Hold for a specific unblock condition outside the project's todos.**
+  Record the condition, who owns satisfying it, and the address of the
+  evidence that releases the hold. A delivery outside the project's todos,
+  such as a one-off branch merge or a binary rollout, a scheduled gate, or a
+  specific decision from its responsible person can qualify. Another todo's
+  delivery never does: that wait is a prerequisite (`--after`). Naming an owner
+  for hypothetical future evidence does not make that evidence an actionable
+  dependency. Whoever satisfies the condition releases the hold or tells the
+  project's coordinator, which releases it once it reads the evidence
+  (**Coordinator pauses and retirements**).
 - **Bound investigation by an obtainable next observation.** Missing evidence
   can justify a concrete, bounded acquisition step. When the available inquiry
   is exhausted and no such step or admissible unblock condition remains,
@@ -105,8 +110,14 @@ once, deduplicated, while preserving the existing restoration obligation.
   still expected to change them. Creating a todo without `--icebox` enters it
   into the lifecycle, so it is valid at creation. An idea still forming is
   created with `--icebox` and made valid before it is unfrozen; unfreezing
-  enters it into the lifecycle. Hold is a brake on valid work awaiting an
-  external gate.
+  enters it into the lifecycle.
+- **Place a filing by what it waits on.** Valid work waiting on another todo
+  is created with `--after <slugs>`, and leaves the wait on its own when they
+  deliver. Valid work waiting on a concrete condition outside the project's
+  todos is created with `--hold --reason <text>`, the reason naming that
+  condition under the hold rule above, so it is held from its first revision.
+  `--icebox` is for work that has not converged, never for a dependency or for
+  converged work waiting on a merge or release, and never combined with a hold.
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -201,8 +212,8 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **A filing exists once its command confirms local creation.** Inspect the
   command outcome before preparing it, writing artifacts or releasing a hold.
-  GitHub reflection follows the work-record contract: reflect saved record
-  changes and reconcile remote revisions before retrying a refused write.
+  GitHub reflection follows the work-record contract: saved record changes
+  are reflected from the local record.
 
 - **Failed integration checks stay with the integrator.** A red candidate
   remains unpromoted; the integrator reads the result and chooses remediation
@@ -388,7 +399,9 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   never silence or impatience — permits the observer to set `hold` with the
   grounded reason. That hold is only a brake against future dispatch while
   session recovery resolves the claimant; it neither stops the current agent nor
-  proves that agent stopped. Route claimant recovery as a separate act.
+  proves that agent stopped. Route claimant recovery as a separate act. The
+  project's coordinator pausing work for a settlement is a separate case,
+  governed by **Coordinator pauses and retirements** below.
 - **The flagger does not select or negotiate the exit.** Except for the
   unreachable-claimant dispatch brake above, after the complete
   flag, it may send at most one source-grounded, address-only follow-up when a
@@ -426,10 +439,63 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   `runtime.finish_thread` action under the finishing rule above.
 
 - **Only an agent-originated filing is the filer's to withdraw.** A filing that
-  carries a human's request in their own words is withdrawn only by that human:
-  abandoning an intended outcome is theirs (`general/policy/human-contract`). A
-  human's acknowledgement of the agent's proposal to file does not make the
-  filing theirs.
+  carries a human's request in their own words is withdrawn only by that human,
+  or on a settlement returned through an origin under **Coordinator pauses and
+  retirements** below: abandoning an intended outcome is theirs
+  (`general/policy/human-contract`). A human's acknowledgement of the agent's
+  proposal to file does not make the filing theirs.
+
+### Coordinator pauses and retirements
+
+The project's standing coordinator (`sdlc/procedure/lifecycle/coordinate`)
+acts on todos it does not hold, within these bounds alone.
+
+- **A pause waits for a named settlement.** When work it returned to an origin
+  (`general/principle/origin-routing`) must not advance until that origin
+  answers, the coordinator sets `hold` on the affected todo with a reason that
+  names what releases it, and tells the live claimant, which stops building on
+  the challenged premise at its next safe point. The coordinator releases the
+  hold when the settlement is applied. It pauses only the work the settlement
+  concerns and never parks work without its release.
+- **A stated unblock condition is released once it is met.** A manual hold
+  whose reason names a condition outside the project's todos and the address
+  of the evidence that releases it is the coordinator's to release, whoever
+  placed it. Whenever it is woken, the coordinator reads that address for each
+  such hold and releases the hold with `instrukt todo update <slug> --release`
+  when the evidence shows the condition met, inspecting the outcome. It
+  releases none on age, on a message alone, or on its own judgment that the
+  condition stopped mattering, and a hold whose evidence it cannot read stays
+  as it is.
+- **A redundant agent filing is retired by the coordinator.** A todo that
+  agents filed and that duplicates another carries no person's request. The
+  coordinator writes into the surviving todo's `log` what the redundant filing
+  carried that the survivor lacks, with its source, and then withdraws it on
+  the path below.
+- **A settlement is the origin's record.** A settlement counts when an
+  origin of any todo the return concerns — the session that todo's creation
+  record names — writes the agreed outcome into that todo's `log`. The
+  coordinator reads the version's recorded writer and compares it with the
+  creation record; a message tells it only where to look. Where the platform
+  operator is the origin, because no creating session was reachable, the
+  operator's answer in the coordinator's own thread is the settlement. An
+  outcome from any other session is no settlement.
+- **A settlement is applied as recorded.** The coordinator resumes, changes or
+  withdraws each todo the settlement names, one todo or several, including one
+  that carries a person's request: the origin is where the people concerned
+  decided it. A todo it retires outright, such as one whose requester adopts
+  an existing solution, leaves no survivor. Every other affected origin
+  receives a closure notice from which its person can still steer.
+- **Withdrawal settles running work first.** The coordinator has the live
+  claimant settle its running work and release its claim, and confirms the
+  release; a claimant that cannot answer has its unreachability established as
+  above. Only then does it run `instrukt todo remove <slug>` and inspect the
+  outcome, and once removal and all record writes are confirmed, finish the
+  withdrawn todo's recorded orchestrator thread(s) through the configured
+  `runtime.finish_thread` action under the terminal-finishing rule above. The
+  withdrawn todo's pending markers live in its own `<slug>/work` branch and
+  leave with it; a marker naming it in another live todo's branch is removed by
+  that todo's claimant, to which the coordinator points it.
+
 
 ### Read authorship from the creation record
 
@@ -515,11 +581,42 @@ A failed candidate stays with the standing integrator, which owns the
 verification and recovery decision. The work record preserves its evidence;
 neither a check result nor an automated filing supplies a diagnosis.
 
+Work that converges across separately commissioned todos is visible to no
+claimant; only the project's coordinator sees it. A pause it cannot place
+would let a todo keep building what its origin may yet retire, and a
+settlement only each claimant could apply would leave superseded work behind.
+The coordinator's acts stay bounded to what fleet attention needs: a pause
+names its release, the claimant still stops its own work, and withdrawal still
+settles running work before release and removal, so a claim never outlives
+the work it covers. A person's filing is withdrawn on a settlement because the
+people concerned decided it through an origin; the closure notice and the
+work record's recovery window keep that decision correctable by every other
+person it affected. Only the origin's own record can show it decided:
+messages between agent threads carry no authenticated sender, while the work
+record names the session that wrote each version. A duplicate that agents
+filed is the coordinator's to retire because no claimant sees the other
+filing and no person's intent rests on it; folding its evidence into the
+survivor keeps what it found.
+
+Each placement answers a different question about why work is not moving. A
+prerequisite clears itself when the todo it names delivers, so a hold standing
+for one waits on someone to remember it. A hold is the only record that keeps
+converged work in the lifecycle, paused, with the condition it waits on visible
+to everyone reading the work. The icebox takes work out of the lifecycle and
+records no condition, so converged work parked there drops out of the fleet's
+attention and is found again only by chance. Holding the work as it is created
+leaves no moment in which the runner can pick it up unheld. A hold whose
+evidence has arrived pauses work that is free to move; the coordinator is the
+one standing reader of every todo's hold, and releasing on the evidence the
+hold itself names applies the condition as recorded rather than judging it, so
+no placer's absence keeps the work waiting.
+
 ## Scope
 
 All todo creation and preparation, every kind, every human or agent creator,
-every observer that flags a live claimant, and every filer that withdraws its
-own filing under this policy.
+every observer that flags a live claimant, every filer that withdraws its own
+filing, and the project's coordinator when it pauses or retires work under
+this policy.
 
 ## Enforcement
 
@@ -540,6 +637,13 @@ own filing under this policy.
   filing that carries a human's request, violates this policy.
 - Parking a flagged todo with `instrukt todo update <slug> --hold --reason <text>` without
   the associated todo-log explanation is incomplete reconciliation.
+- Reviewers apply **Coordinator pauses and retirements** to the coordinator's
+  holds, releases, log writes and withdrawals as the work record shows them. A
+  coordinator acting within it is not a flagger.
+- Reviewers and peers reading a filing session apply **Place a filing by what
+  it waits on** to the placement it chose. The project's coordinator, reading a
+  hold under `sdlc/concept/coordination-cases`, points a hold whose reason
+  names another todo's delivery back to the session that recorded it.
 
 ## Exceptions
 

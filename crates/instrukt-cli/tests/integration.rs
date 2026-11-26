@@ -24,6 +24,8 @@ mod blast_radius;
 mod company_homes;
 #[path = "cases/company-plugin.rs"]
 mod company_plugin;
+#[path = "cases/compressed-units.rs"]
+mod compressed_units;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
 #[path = "cases/conversation-links.rs"]
@@ -48,6 +50,8 @@ mod event_consumers;
 mod event_discovery;
 #[path = "cases/event-transport.rs"]
 mod event_transport;
+#[path = "cases/fleet-attention.rs"]
+mod fleet_attention;
 #[path = "cases/github-apps.rs"]
 mod github_apps;
 #[path = "cases/github-record.rs"]
@@ -104,6 +108,8 @@ mod project_publication;
 mod pull_request_review;
 #[path = "cases/release-installer.rs"]
 mod release_installer;
+#[path = "cases/requested-review.rs"]
+mod requested_review;
 #[path = "cases/roles-and-capabilities.rs"]
 mod roles_and_capabilities;
 #[path = "cases/session-continuity.rs"]
@@ -120,6 +126,8 @@ mod snippet_validation;
 mod state_database;
 #[path = "cases/task-timing.rs"]
 mod task_timing;
+#[path = "cases/thread-retention.rs"]
+mod thread_retention;
 #[path = "cases/todos.rs"]
 mod todos;
 #[path = "cases/use-case-coverage.rs"]

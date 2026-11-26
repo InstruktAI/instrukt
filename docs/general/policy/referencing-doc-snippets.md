@@ -90,8 +90,9 @@ visibility: 'public'
 - Reviewers treat a restated rule whose owner is another snippet as a finding and
   replace it with a citation.
 - A change to a snippet extends reference review to the whole of that snippet:
-  the reviewer checks every citation in it, touched or not, and fixes are
-  limited to the citations themselves — never the snippet's own content.
+  its author checks every citation in it before committing, and the reviewer
+  checks them again, touched or not. Fixes are limited to the citations
+  themselves — never the snippet's own content.
 - A change to what a snippet establishes extends reference review to the
   snippets that cite it: its author finds them by its id, and the reviewer
   checks that each citation still holds against the changed owner.

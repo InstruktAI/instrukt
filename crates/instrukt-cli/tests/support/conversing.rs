@@ -164,6 +164,8 @@ pub fn company_home(env: &TestEnv, name: &str, app: &str, bot: &str, settings: &
     let here = env.path("");
     env.run(&here, ["config", "init", "--company", name])
         .success();
+    // An onboarded company's home has its runtime project.
+    env.place_company_project(name);
     for (reference, value) in [("SLACK_APP_TOKEN", app), ("SLACK_BOT_TOKEN", bot)] {
         env.instrukt(&here)
             .args(["secrets", "set", reference, "--company", name])
@@ -218,7 +220,7 @@ pub fn publish_company_procedure(env: &TestEnv) {
                 "instrukt.yaml",
                 format!(
                     "schema_version: {}\nproject: assistance-docs\nmodules: {{history: false, todos: false}}\n",
-                    instrukt_core::config::CURRENT_SCHEMA_VERSION
+                    instrukt_core::config::PROJECT_SCHEMA_VERSION
                 ),
             ),
             (
@@ -266,7 +268,7 @@ impl Company {
             company.env.instrukt_home().join("instrukt.yaml"),
             format!(
                 "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{{}}}\n{machine}",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION,
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION,
                 modules.trim_start_matches(", ")
             ),
         )
@@ -300,7 +302,9 @@ impl Company {
     /// A company with its configuration and published procedure already in
     /// place. The recovery scenarios start after configuration and publication.
     pub fn prepared_for_recovery(env: TestEnv) -> Self {
-        use instrukt_core::config::{CURRENT_SCHEMA_VERSION, SecretSource, set_secret_in};
+        use instrukt_core::config::{
+            COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, SecretSource, set_secret_in,
+        };
         use instrukt_core::home::Home;
         use instrukt_core::index::GlobalIndex;
 
@@ -309,12 +313,13 @@ impl Company {
         let slug = ProjectSlug::parse(COMPANY).unwrap();
         std::fs::write(
             home.root().join("instrukt.yaml"),
-            format!("schema_version: {CURRENT_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false}}\n"),
+            format!("schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nmodules: {{history: false}}\n"),
         ).unwrap();
         let company_path = home.company_dir(&slug);
         std::fs::create_dir_all(&company_path).unwrap();
-        let config = company_path.join("instrukt.yaml");
-        let identity = format!("schema_version: {CURRENT_SCHEMA_VERSION}\ncompany: {COMPANY}\n");
+        company.env.place_company_project(COMPANY);
+        let config = company_path.join("company.yaml");
+        let identity = format!("schema_version: {COMPANY_SCHEMA_VERSION}\ncompany: {COMPANY}\n");
         std::fs::write(&config, &identity).unwrap();
         let source = SecretSource::Company(slug);
         set_secret_in(&home, &source, "SLACK_APP_TOKEN", APP_TOKEN).unwrap();

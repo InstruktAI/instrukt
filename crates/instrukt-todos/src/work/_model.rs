@@ -16,7 +16,7 @@ use crate::evidence::{
 };
 
 /// The record schema this build writes and reads.
-pub(crate) const SCHEMA: u32 = 3;
+pub(crate) const SCHEMA: u32 = 4;
 
 /// How a command addresses a todo (`todos`, "Identity and creation"): a
 /// plain slug means the live item; `<slug>@<identity-prefix>` addresses
@@ -33,20 +33,6 @@ pub(crate) const SHOWN_PREFIX: usize = 8;
 
 impl TodoAddress {
     /// The address of `record`'s exact entry.
-    /// The address an action on `record` takes: its plain slug for a live
-    /// todo, since a plain slug always means the live item, else its exact
-    /// address.
-    pub fn door(record: &TodoRecord) -> Self {
-        if record.is_live() {
-            Self {
-                slug: record.slug.clone(),
-                identity: None,
-            }
-        } else {
-            Self::exact(record)
-        }
-    }
-
     pub fn exact(record: &TodoRecord) -> Self {
         Self {
             slug: record.slug.clone(),
@@ -233,8 +219,8 @@ impl TodoRecord {
         )
     }
 
-    /// Whether implementation has started (a build/review/finalize stamp or
-    /// builder/fixer/finalizer binding exists).
+    /// Whether implementation has started (a build/review/verification/
+    /// finalize stamp or builder/fixer/finalizer binding exists).
     pub fn implementation_started(&self) -> bool {
         self.stamps.iter().any(|s| {
             matches!(
@@ -242,6 +228,7 @@ impl TodoRecord {
                 StampFact::BuildStarted { .. }
                     | StampFact::BuildComplete { .. }
                     | StampFact::BuildVerdict { .. }
+                    | StampFact::VerificationDisposition { .. }
                     | StampFact::FinalizeReady { .. }
             )
         }) || self

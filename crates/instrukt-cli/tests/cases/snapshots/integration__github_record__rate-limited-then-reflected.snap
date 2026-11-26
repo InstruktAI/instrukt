@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}---\\n{}\",\nretained_artifacts(&project)))"
+expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}---\\n{reflected}---\\n{while_reflecting}---\\n{}\",\nretained_artifacts(&project)))"
 ---
 wrote prd of nested-lists: <digest 1>
 reflection: pending: GitHub: GitHub App API deferred requests (rate limited)
@@ -21,3 +21,19 @@ prd
 log
   v1: Started.
   current: Started.
+---
+wrote log of nested-lists: <digest 4>
+reflection: pending: another process on this computer is reflecting; the next reflection reflects this change
+---
+input
+  v1: Keep the depth of nested lists when parsing Markdown.
+  current: Keep the depth of nested lists when parsing Markdown.
+prd
+  v1: Lists keep their depth through parse and render.
+  v2: Lists keep their depth, and numbering restarts per level.
+  current: Lists keep their depth, and numbering restarts per level.
+log
+  v1: Started.
+  v2: Joined the cases.
+  v3: Rendered the depth.
+  current: Rendered the depth.

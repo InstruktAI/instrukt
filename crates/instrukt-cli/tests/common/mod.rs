@@ -413,6 +413,27 @@ impl TestEnv {
         self.base().join(relative)
     }
 
+    /// Routes git's `https://<host of api_url>/` to the test's own
+    /// `remotes/` folder, in the test's own git configuration, so a
+    /// repository the fake GitHub creates there is reached as GitHub's.
+    /// Returns that folder.
+    pub fn route_github_remotes(&self, api_url: &str) -> PathBuf {
+        let remotes = self.path("remotes");
+        std::fs::create_dir_all(&remotes).unwrap();
+        let host = instrukt_core::github::api_host(api_url);
+        let routed = std::process::Command::new("git")
+            .arg("config")
+            .arg("--file")
+            .arg(self.home.join(".gitconfig"))
+            .arg("--add")
+            .arg(format!("url.file://{}/.insteadOf", remotes.display()))
+            .arg(format!("https://{host}/"))
+            .status()
+            .unwrap();
+        assert!(routed.success());
+        remotes
+    }
+
     /// Adds `location` to the write fence every later instrukt process
     /// carries.
     pub fn fence(&mut self, location: &Path) -> &mut Self {
@@ -465,7 +486,8 @@ impl TestEnv {
     }
 
     /// A new git repository at `<test dir>/<name>` on branch `main`, with
-    /// no commits.
+    /// no commits. A developer's repository on this computer is a project T3
+    /// holds, so the fixture places its runtime project too.
     pub fn git_repo(&self, name: &str) -> Repo {
         let path = self.base().join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -474,7 +496,33 @@ impl TestEnv {
             vars: self.vars.clone(),
         };
         repo.git(["init", "--quiet", "--initial-branch=main"]);
+        self.place_runtime_project(&repo.path);
         repo
+    }
+
+    /// Places a live T3 project rooted exactly at `checkout`, as T3 holds
+    /// one for a folder a person added.
+    pub fn place_runtime_project(&self, checkout: &Path) {
+        t3_readiness::place_project(
+            &self.base(),
+            checkout,
+            &t3_readiness::default_project_id(checkout),
+        );
+    }
+
+    /// Places the runtime project of company home `name`, as `instrukt
+    /// install` leaves it for an onboarded company.
+    pub fn place_company_project(&self, name: &str) {
+        let home = instrukt_core::home::Home::at_user_home(self.home().into());
+        let company = home.company_dir(&instrukt_core::ids::ProjectSlug::parse(name).unwrap());
+        std::fs::create_dir_all(&company).unwrap();
+        self.place_runtime_project(&company);
+    }
+
+    /// Removes the T3 project rooted exactly at `checkout`, as `t3 project
+    /// remove` leaves it: deleted.
+    pub fn withdraw_runtime_project(&self, checkout: &Path) {
+        t3_readiness::withdraw_project(&self.base(), checkout);
     }
 
     /// A new bare repository at `<test dir>/<name>.git`, to push to and
@@ -503,6 +551,7 @@ impl TestEnv {
                 path.as_os_str(),
             ],
         );
+        self.place_runtime_project(&path);
         Repo {
             path,
             vars: self.vars.clone(),
@@ -961,4 +1010,25 @@ pub fn tool_executable(program: &str) -> PathBuf {
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| panic!("required test tool {program} is not installed"))
+}
+
+/// Brings back the empty `listing_copies` table Version 40 dropped, on a
+/// current state database a test rewinds below Version 15: the shipped
+/// Version 15, replayed on the next open, reads it.
+pub fn recreate_pre_v40_listing_copies(db: &instrukt_core::state_db::rusqlite::Connection) {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS listing_copies (
+            project         TEXT NOT NULL,
+            issue_number    INTEGER NOT NULL,
+            slug            TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            remote_revision INTEGER NOT NULL,
+            claim_machine   TEXT,
+            record          TEXT NOT NULL,
+            copied_at       TEXT NOT NULL,
+            PRIMARY KEY (project, issue_number)
+        );",
+    )
+    .unwrap();
 }

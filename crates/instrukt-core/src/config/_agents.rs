@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
-pub(super) const VERSION: u64 = 3;
+pub(super) const VERSION: u64 = 4;
 const DEPLOYMENT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +84,12 @@ impl Profile {
 
 /// The role the runner gives a conversation session.
 pub const COMPANY_AGENT_ROLE: &str = "company-agent";
+
+/// The standing role that attends to a project's fleet of active todos.
+pub const SDLC_COORDINATOR_ROLE: &str = "sdlc-coordinator";
+
+/// The name a version-three file gives [`SDLC_COORDINATOR_ROLE`].
+pub const RETIRED_COORDINATOR_ROLE: &str = "coordinator";
 
 /// The role that drives a todo through preparation and work.
 pub const TODO_ORCHESTRATOR_ROLE: &str = "todo-orchestrator";
@@ -197,6 +203,21 @@ impl Agents {
                     });
                 }
             }
+        }
+        // Both names of one role leave no single entry to take; the file is
+        // refused as it is, whatever its version.
+        if value
+            .get("roles")
+            .and_then(Value::as_mapping)
+            .is_some_and(|roles| {
+                roles.contains_key(RETIRED_COORDINATOR_ROLE)
+                    && roles.contains_key(SDLC_COORDINATOR_ROLE)
+            })
+        {
+            return Err(ConfigError::AgentsRoleConflict {
+                retired: RETIRED_COORDINATOR_ROLE,
+                current: SDLC_COORDINATOR_ROLE,
+            });
         }
         super::_agents_migrate::retire_session_recover(&mut value);
         let result: Self =
@@ -365,7 +386,7 @@ impl Agents {
                 if value
                     .get("schema_version")
                     .and_then(Value::as_u64)
-                    .is_some_and(|v| v < super::CURRENT_SCHEMA_VERSION) =>
+                    .is_some_and(|v| v < super::GLOBAL_SCHEMA_VERSION) =>
             {
                 let mut value = value.clone();
                 super::_migrate::selection(home, &super::Layer::Global, &mut value, false)?
@@ -830,15 +851,46 @@ mod tests {
     use super::{Agents, ConfigError, SHIPPED_AGENTS};
     #[test]
     fn a_newer_schema_is_refused_before_interpreting_its_profile_shape() {
-        let newer = "schema_version: 4\nprofiles: {future: {kind: future-harness}}\n";
+        let newer = format!(
+            "schema_version: {}\nprofiles: {{future: {{kind: future-harness}}}}\n",
+            super::VERSION + 1
+        );
         assert!(matches!(
-            Agents::parse(newer),
-            Err(ConfigError::NewerSchema {
-                found: 4,
-                current: 3,
-                ..
+            Agents::parse(&newer),
+            Err(ConfigError::NewerSchema { found, current, .. })
+                if found == super::VERSION + 1 && current == super::VERSION
+        ));
+    }
+
+    #[test]
+    fn a_file_naming_both_coordinator_roles_is_refused() {
+        let both = "schema_version: 4\nroles:\n  coordinator: {tier: light}\n  sdlc-coordinator: {tier: premium}\n";
+        assert!(matches!(
+            Agents::parse(both),
+            Err(ConfigError::AgentsRoleConflict {
+                retired: super::RETIRED_COORDINATOR_ROLE,
+                current: super::SDLC_COORDINATOR_ROLE,
             })
         ));
+    }
+
+    #[test]
+    fn a_file_naming_neither_coordinator_role_resolves_the_shipped_sdlc_coordinator() {
+        let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
+        let kept = Agents::parse("schema_version: 4\nroles: {builder: {tier: light}}\n").unwrap();
+        let role = super::SDLC_COORDINATOR_ROLE;
+        let (kept_grants, shipped_grants) = (
+            kept.capabilities(role).unwrap(),
+            shipped.capabilities(role).unwrap(),
+        );
+        assert_eq!(
+            (kept_grants.class, kept_grants.grants),
+            (shipped_grants.class, shipped_grants.grants)
+        );
+        assert_eq!(
+            (&kept.roles[role].order, kept.roles[role].tier),
+            (&shipped.roles[role].order, shipped.roles[role].tier)
+        );
     }
 
     #[test]
@@ -946,7 +998,7 @@ mod tests {
     #[test]
     fn a_file_naming_one_field_of_a_shipped_role_inherits_its_other_fields() {
         let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
-        let edited = Agents::parse("schema_version: 3\nroles: {builder: {tier: light}}\n").unwrap();
+        let edited = Agents::parse("schema_version: 4\nroles: {builder: {tier: light}}\n").unwrap();
         let (before, after) = (&shipped.roles["builder"], &edited.roles["builder"]);
         assert_eq!(after.tier, Some(super::Tier::Light));
         assert_eq!(after.order, before.order);
@@ -961,7 +1013,7 @@ mod tests {
     #[test]
     fn a_list_the_file_sets_replaces_the_shipped_list_whole() {
         let edited =
-            Agents::parse("schema_version: 3\nroles: {builder: {order: [antigravity]}}\n").unwrap();
+            Agents::parse("schema_version: 4\nroles: {builder: {order: [antigravity]}}\n").unwrap();
         let order: Vec<&str> = edited.roles["builder"]
             .order
             .iter()
@@ -974,7 +1026,7 @@ mod tests {
     #[test]
     fn a_roles_key_with_no_entries_keeps_every_shipped_role() {
         let shipped = Agents::parse(SHIPPED_AGENTS).unwrap();
-        let bare = Agents::parse("schema_version: 3\nroles:\n").unwrap();
+        let bare = Agents::parse("schema_version: 4\nroles:\n").unwrap();
         assert_eq!(
             bare.roles.keys().collect::<Vec<_>>(),
             shipped.roles.keys().collect::<Vec<_>>()

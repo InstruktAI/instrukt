@@ -18,7 +18,9 @@ Only a runtime capability absent natively may use an explicit adapter fallback.
 Native child reports and endings reach the parent through the runtime, without
 an instruction, instrukt child observation or a second parent wake.
 The runtime owns lifecycle, input delivery, restart, revival, handover,
-transcripts and cleanup. instrukt owns its work facts, events and schedules.
+transcripts and cleanup, and performs the archives instrukt's thread retention
+decides (`project/instrukt/spec/feature/runner/thread-retention`). instrukt
+owns its work facts, events and schedules.
 
 ## Canonical fields
 
@@ -38,6 +40,16 @@ creates no replacement session identity.
 | `conversation_source` | Optional durable changes since an opaque source position, through two reads, each returning the next position; also supplies a native change-notification subscription. The turn read returns, for the conversations a caller names, normalized conversations/messages and native records, native ids and parent links, roles, available timestamps and typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text). The text read returns, over every conversation the source holds, each changed conversation by its native id with its own record, where the source holds one, and its finished messages, except a runtime's report of a background command it ran (for T3, a message whose `notification.source.kind` is `command` or `background_command`; a subagent's, a delegated task's or any other notification is returned), with native ids, roles, available timestamps, text and the native record without that text and without the members of its attached context that hold what the runtime captured; for T3, a `terminal` context record's `text`, a `review-comment` record's `diff`, an `element` record's `htmlPreview` and the `htmlPreview` of each of a `preview-annotation` record's `elements`, while every other member of those records, a review comment's `text` and an annotation's `comment` among them, stays. Each read validates, fingerprints and reads only the source tables it returns from; a read's fingerprint covers every row of those tables, the finished rows it leaves out of what it returns included, so a position of one read holds fingerprints the other does not share. | The independent conversation-link relay (turn read) and history extraction (text read), without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
+| `finished_threads` | Registered project checkout; returns each thread the runtime lists for that project and reports finished, with its finishing time, its latest activity (a person reading or writing to it included), whether it is quiet (not running, queued, snoozed or waiting on a person's input or approval) and whether a person pinned it. A time the runtime does not report is unknown, never substituted. Optional capability: thread archiving. | Thread retention (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `archive` | Native session id and the finished-thread observation it was chosen from; archives the thread only while that observation still holds: present, finished, quiet, not pinned and without activity after the observed latest activity. Returns archived, already archived (which is done) or changed (not archived). Optional capability: thread archiving. | Thread retention. |
+
+`execution_root` takes an execution root and a mode, check or ensure. It
+returns whether the selected runtime holds a live project rooted exactly at
+that root, creating one in ensure mode, together with the runtime's own door
+for adding one. It never selects, alters or removes another project; an
+unreachable or refusing runtime returns its cause and no answer. Its released
+consumers are launch, for the root of the work it starts, and installation
+(`project/instrukt/spec/feature/runner/module-installation`).
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
@@ -158,6 +170,7 @@ installed tools or session environment variables. Unknown adapter names are
 validation findings. Runtime instruction entries are configuration prose, not
 adapter verb templates.
 
+
 | Feature | Needs |
 | --- | --- |
 | Standing agents (`modules.events`) | `start_or_wake`, input handover and consumption observation, `read_state`, assignment-evidence recovery, plus the assignment/continuation capabilities required by the subscription. Steering is optional. |
@@ -166,7 +179,10 @@ adapter verb templates.
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration. |
 | Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
+| Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
+| Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
+
 
 Receiving and publishing external facts need no agent runtime. A computer that
 is the ingress and not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`) validates with events
@@ -191,6 +207,9 @@ not an enablement failure. Conversation links read T3's durable projection datab
 native input delivery, not on a CLI link command. Notification remains
 unavailable on T3's published CLI; instrukt does not rebuild it.
 
+How configuration treats a retention window set while the selected runtime
+lacks thread archiving is `project/instrukt/spec/feature/configuration/layered-configuration`'s.
+
 ### Start keys and locks
 
 Every instrukt-owned start has a stable object key independent of its readable
@@ -199,14 +218,17 @@ generations. Each generation has a fixed native command key and thread ID,
 derived from its execution scope, runtime endpoint/home, object key and generation.
 Retries retain both IDs, the native project ID and the entire captured request.
 
+
 | Assignment | Semantic key |
 | --- | --- |
 | Standing procedure | `instrukt:standing:<encoded-procedure>@<encoded-home>[:subject:<encoded-subject>][:generation:<n>]` |
 | Runner-owned todo orchestrator | `instrukt:todo:<encoded-project>/<todo-id>:<encoded-role>:<attempt>` |
 | Native child assignment | The same role-attempt semantic key is supplied to native delegation and retained by work; it is not an adapter-discovery key. |
 | Task occurrence | `instrukt:task:<encoded-project>/<todo-id>:<encoded-occurrence>` |
+| Requested reviewer | `instrukt:review:<encoded-project>:<head>`, the full id of the head commit asked for |
 | Other unattended starts | `instrukt:run:<encoded-project>:<request-id>` |
 | Conversation session | `instrukt:conversation:<encoded-company>:<connector>:<encoded-conversation>` |
+
 
 For standing keys, the canonical home token is `project:<slug>`,
 `company:<name>` or `platform`; a person token retains its kind but cannot execute.
@@ -214,10 +236,13 @@ A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
 subject identity requires it. The object key stays fixed across succession;
 its generation increases once under the object lock after confirmed native
-archive or deletion and only when outstanding or new work needs a session.
-Settled and idle threads remain reusable. Observation/send failures retain their
-target; they never establish terminal presence. Native archive/deletion owns
-provider detachment; the create receipt proves no stronger process-exit guarantee.
+archive or deletion, or after an idle thread is confirmed misplaced (T3
+realization below), and only when outstanding or new work needs a session.
+Settled and idle threads in their checkout's own project remain reusable.
+Observation/send failures retain their target; they never establish terminal
+presence. Native archive/deletion owns provider detachment; neither the create
+receipt nor a misplacement rollover proves a process exit, and a rolled-over
+thread is idle and never sent to again.
 
 Components are UTF-8 percent-encoded, leaving only ASCII letters, digits, `-`,
 `_`, `.`, `~` unescaped; hex digits are uppercase. Occurrences are the scheduled
@@ -243,15 +268,19 @@ second launcher. Elapsed time never changes the generation.
 
 ### Human-facing thread titles
 
+
 Every start captures a readable label without an object-key suffix. Todo roles
 use `<role> · <todo-slug>`, standing procedures use their name and optional typed
-subject, tasks use `task · <task-slug>`, and runs use `run · <procedure-name>`.
+subject, tasks use `task · <task-slug>`, requested reviewers use
+`review · <branch> @ <first 12 characters of the head>`, and runs use
+`run · <procedure-name>`.
 Company owns conversation title formatting from optional connector display facts:
 `<Company> · #<channel> · "<first words>"`, `<Company> · DM with <name>`, or
 `<Company> · Slack thread` without enrichment. The preview uses the first eight
 whitespace-separated words, capped at 80 Unicode characters with an ellipsis
 when shortened. Titles are presentation only, frozen with each launch request.
 Existing native titles are never rewritten by startup or migration.
+
 
 ### Keyed dispatch and recovery
 
@@ -262,8 +291,9 @@ created-then-deleted; that evidence survives projection deletion. A lost launch
 reply replays the same command/thread IDs and opening message receipt. It neither
 allocates another generation nor sends the opening assignment separately.
 
-Confirmed native archive/deletion with outstanding work allocates one successor
-under the object lock. Standing transfers only unconsumed events using its
+Confirmed native archive/deletion, or an idle thread confirmed misplaced, with
+outstanding work allocates one successor under the object lock.
+Standing transfers only unconsumed events using its
 existing generation accounting. Work validates eligible active claims and commits
 its binding/claim, runner acceptance, opening receipt and execution tracking
 together. Company harvests available completed answers before adoption, preserves
@@ -274,15 +304,30 @@ A released or ineligible assignment receives no successor.
 
 The adapter calls authenticated `orchestration.launchThread` over the existing
 WebSocket transport with a fixed `commandId`, `threadId`, `projectId`, supplied
-title (`generateTitle:false`), explicit model/modes and initial message. Scoped
+title (`generateTitle:false`), explicit model/modes and initial message. The
+model selection carries the resolved provider instance and model and, as
+`options`, the selection's effort and extra settings in T3's native option form
+(a list of option `id` and `value`), translated as for native delegation; a
+selection without effort or settings sends none. Scoped
 short-lived tokens are revoked after use. T3 0.1.8 stamps WebSocket launches and
 sends `createdBy:"user"`; that native stamp is accepted.
 
 Before first launch, authenticated `GET /api/projects` supplies registered project
 IDs and roots. Exclude deleted projects, compare canonical paths when available
-and otherwise resolved original paths, and select the deepest containing root
-by path components. No match or malformed/unavailable metadata leaves work
-pending before launch; no implicit project registration occurs.
+and otherwise resolved original paths, and select the one live project whose
+root is exactly the checkout. A project rooted at an ancestor or a descendant of
+the checkout never stands in for it: `root` placement would run the session in
+that other folder and `worktree` placement would branch another repository.
+When no live project has that root, launch adds one through `execution_root` in
+ensure mode and starts in it. The checkout is always the execution root instrukt
+derives from the work's home — a registered project checkout, a company home or
+the platform checkout — so only such a root is ever added. A retry of a
+generation replays its captured project; a successor generation never inherits
+a retired generation's project and resolves its checkout's project afresh. Two
+live projects at one root are contradictory project evidence. An unreachable
+runtime, a refused addition or malformed metadata leaves work pending before
+launch with instrukt's own cause naming the checkout, which reaches operator
+surfaces unchanged and is retried on later passes.
 
 After model preparation, `server.getConfig` supplies normalized settings,
 project overrides, managed limits and selected-provider mode capabilities.
@@ -304,6 +349,45 @@ successor. T3 owns preparation and release; a launch reply can precede completed
 workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
+
+Every placement runs in the checkout's own project. Whenever instrukt adopts,
+wakes or succeeds an instrukt-owned thread, and before every input it delivers
+to one — event, approval, recovery and conversation input alike, for every
+binding kind — it looks up the checkout's project in T3's project snapshot by
+exact root, read-only, and compares it with the thread's native project. The
+comparison never registers a project. The binding's recorded project is not
+proof of a match, and a checkout with no live project of its own never
+matches. A thread that does not match is misplaced: it is not adopted and is
+sent nothing, and the input stays pending.
+
+A misplaced thread reported `input-ready` or `ended failed` is rolled over by
+its owner, at the same succession point and under the same object lock that
+follow confirmed archive or deletion, with the same transfer of outstanding
+work: a standing agent's delivery, a todo or task execution's observation or
+follow-up, and a company conversation's succession. The new generation
+launches as any successor does, adding the checkout's project if it is still
+missing, and the misplaced thread is left as it is, as history; instrukt never
+sends to it again. A todo successor attaches a retained worktree only when it
+is a registered worktree of the checkout on the captured branch; a worktree
+the misplaced thread holds elsewhere is left untouched, and the successor
+starts with `worktree` placement on its captured base and branch. Input
+delivery and approval attention never roll a thread over themselves; their
+pending input waits for the owner's succession, and approval attention keeps
+its own rule: once the claim moves to the successor, the notice is not routed
+to the former holder, and the successor derives the decision from the work
+record. Taking the object lock before any input lock, the owner never rolls
+over from inside input delivery.
+
+A misplaced thread reported `running`, `needs-input` or `unknown` is left
+alone: a turn in progress, a pending request or an unobserved state is never
+cut off. Its work stays pending, and operator surfaces carry instrukt's own
+outcome naming the thread and the checkout, stating that the thread rolls over
+once it is idle or archived.
+
+A manual reservation never adopts a misplaced thread: a candidate a project
+listing returns meets the same comparison and is refused, with no rollover.
+A person writing to a company's agent is told only that the assistant is
+unavailable for a while. No project root is retained beside the binding.
 
 Service failures retain the captured request and actual cause for retry/status.
 No unresolved-start permission state, five-minute start anomaly or operator
@@ -422,8 +506,17 @@ and expiry. Launch-error text supplies no quota evidence or no-start proof.
 The selected adapter supplies the selection-realization report: generic starts,
 standing assignments and generations carry it without declaring native limits.
 Configuration retains neutral effort and extra settings; the T3 boundary maps
-effort to its native option ids for native delegation. Host CLI starts pass
-instance/model and report their inability to express requested effort/options.
+effort to its native option ids for native launch and native delegation alike.
+Before a new launch the adapter checks the native options against the option
+descriptors `server.getConfig` reports for the selected model, by T3's own
+rules for delegated tasks: an option the model does not offer, a value outside
+a choice's ids, a non-boolean for a boolean option, or any value that is
+neither text nor boolean refuses the start before creation, naming the
+profile, model and each rejected option; a start never launches with its
+options dropped. A model T3 reports no descriptors for is launched with its
+options unchecked. A retry replays its captured selection unchecked. Host CLI
+starts pass instance/model and report their inability to express requested
+effort/options.
 
 An unstructured launch failure retains its key and selected inputs for recovery.
 Only proven pre-creation rejection or explicit no-start resolution permits chain
@@ -454,7 +547,7 @@ instruction prose is a separate configuration surface.
 
 | Operation | Native translation and evidence |
 | --- | --- |
-| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
+| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/options/modes, title and opening message. Native acceptance and execution remain separate. |
 | Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
@@ -462,6 +555,16 @@ instruction prose is a separate configuration surface.
 | Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed` false and no `pendingBackgroundTasks`; any other status, `unknown` included, is not quiet. A missing or malformed `status` or `snoozed`, or a malformed `pendingBackgroundTasks`, is not quiet; a listing that omits `pendingBackgroundTasks` reports none. Pinned is the projection row's `pinnedAt`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned pinned, with unknown latest activity. |
+| Archive | Re-reads the projection: the thread row present with no `archivedAt` or `deletedAt`, `settledOverride` `settled` with `settledAt`, no `pinnedAt`, no `snoozedUntil` later than now, and no `updatedAt` or `opens.openedAt` later than observed; no run of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `rolled_back`; no runtime request of the thread `pending`; and no delegated task of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `idle`. Anything else reports changed. A projection that cannot be read, or whose tables lack what the re-read consumes, fails the archive with its cause, and nothing is archived. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, over the scoped-token connection runner-owned queued input uses, with a token issued and revoked for that command. T3's refusal that the thread is already archived is reported as already archived. |
+
+Execution-root readiness reads the authenticated project snapshot and matches
+canonical roots exactly, as launch does. Ensure mode adds a missing root with
+`t3 project add <root>`, titled by T3 from the folder name, then reads the
+snapshot again: the project it finds there is the result. T3's running server
+accepts one active project per root, so a refusal because another addition
+landed first is a reuse confirmed by the same read. The door reported for a
+root that is still missing is `instrukt install`, or `t3 project add <root>`.
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
@@ -471,15 +574,18 @@ by a human or by the standing procedure itself when dormant) is never evidence o
 permission for a second keyed start. Archived or explicitly
 unknown threads report `gone`, a released or terminal assignment receives no successor, and
 archived transcripts remain extractable (`project/instrukt/spec/feature/runner/history`).
-Agent-invoked settling and terminal retirement instructions are governed by
+Agent-invoked settling instructions are governed by
 `project/instrukt/spec/feature/configuration/layered-configuration`. The published CLI omits
 subagent threads from project listing; this surface reports only the threads the runtime
 exposes.
 
 ### One worktree per todo team
 
-Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
+Each repository todo uses one T3-managed `<slug>/work` worktree and branch (agents never choose a bare slug or a role branch; `kind: task` creates no git worktree). The unified `todo-orchestrator` starts from canonical remote main through native keyed launch with `worktree` placement on `<slug>/work` (continuing from `origin/<slug>/work` on another computer, or from a legacy un-integrated `<slug>/prepare` branch during upgrade). Its orchestrator and native shared children — `intaker`, `architect`, `planner`, `builder`, `fixer`, reviewers, `verifier`, `deferrer`, and `finalizer` — all share that one worktree. A terminal successor uses native `existing_worktree` with its retained registered path and branch. A native follow-up never starts a replacement in the project root when it needs a retained worktree.
 Retry or wake uses the retained native assignment and its worktree. Deliberate entry first returns placement and the configured native start instruction; after native startup, `todo work <slug> --placement-evidence <file|->` records supplied native session, key, title, recorded worktree, branch, head and source. The caller must be that native session in the matching registered tree. Git cwd alone never binds an orchestrator. Runner-created bindings instead use its verified adapter result.
+
+A todo's recorded orchestrator resuming in its own placement needs no placement
+evidence (`project/instrukt/spec/feature/work/dependencies-and-holds`).
 
 Only the integrator writes main. Pending documentation authored in `<slug>/work` is folded into current contracts at work delivery, and after confirmed delivery the runner has the clean `<slug>/work` worktree released and `<slug>/work` deleted locally and on `origin`, on each computer that holds them (`project/instrukt/spec/feature/runner/worktree-reclamation`). Failure or dirty/in-use state retains the cleanup obligation and its cause; retained thread records and review evidence stay. The release goes through git's own worktree commands: the published `t3 thread` CLI has no operation that removes a worktree, and a delivered todo's thread keeps naming the path it was attached to. Ad hoc authoring uses its own one-off worktree, reviewed before integration.
 
@@ -500,8 +606,8 @@ GitHub command creates no second attention item.
 
 | State | Runtime observation |
 | --- | --- |
-| `running` | `running`, `preparing`, `starting`, `resuming` or `queued`; this operational state supplies no proof of input consumption. |
-| `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
+| `running` | `running`, `preparing`, `starting`, `resuming`, `queued` or `waiting`; this operational state supplies no proof of input consumption. A thread parked on work it delegated is `running`. |
+| `needs-input` | `waiting_for_input`, `waiting_for_approval` or a reported pending request (`pendingRequestCount` above zero), whatever the status. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
 | `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Outstanding owner-admitted work after confirmed terminal presence uses the automatic succession contract above. |
@@ -810,6 +916,35 @@ And no failed start is reported for it
 And the orchestrator has received its opening brief once
 ```
 
+### UC-SS29: Start and deliver only in the checkout's own runtime project
+
+```gherkin
+Given an execution checkout has no runtime project rooted at itself
+And an ancestor folder is registered as a runtime project
+When the runner starts a session for that checkout
+Then a runtime project is registered at the exact checkout
+And the session starts in that checkout's project
+And no session is started in the ancestor project
+When new work arrives for an idle bound thread whose project is rooted elsewhere
+Then that thread receives none of it
+And a successor starts in the checkout's own project and receives the work
+When new work arrives for a running bound thread whose project is rooted elsewhere
+Then the work stays pending and that thread receives none of it
+And the runner reports the thread and the checkout, and that the thread rolls over once idle
+```
+
+### UC-SS30: A developer's todo pickup moves to the checkout's own project when its created orchestrator idles elsewhere
+
+```gherkin
+Given T3 created a developer's todo orchestrator but the runner never accepted its start
+And that orchestrator's thread is idle in a runtime project rooted elsewhere than the checkout
+When the runner resumes the pickup
+Then a successor orchestrator starts in the checkout's own runtime project, in that todo's managed worktree
+And the todo's orchestrator is the successor
+And the earlier thread receives nothing more
+And no failed start is reported for the pickup
+```
+
 ## Known caveats
 
 - A legacy native admission whose original startup request is unknown remains
@@ -830,14 +965,20 @@ And the orchestrator has received its opening brief once
   all data. Settle it with the old version before upgrade.
 - T3's list JSON carries no worktree path. `show` decoder fields require verified
   runtime evidence; a fixture alone establishes no native response guarantee.
-- T3 receives the resolved provider-instance/model pair. Its CLI has no
-  effort/options flag; instrukt-owned starts get effort only from the T3
-  project default until upstream adds support. No instrukt workaround is
-  built. Native delegation passes supported resolved options; the full
-  selection contract is `project/instrukt/spec/feature/configuration/agent-selection`.
+- T3's CLI has no effort/options flag, so an agent-driven `t3 thread start`
+  gets effort only from the T3 project default until upstream adds support.
+  Runner starts use the native launch, which carries the resolved options, and
+  native delegation passes supported resolved options; the full selection
+  contract is `project/instrukt/spec/feature/configuration/agent-selection`.
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.
+- T3's `thread.archive` takes no condition on the thread's state. A message a
+  person sends between the adapter's re-read and its archive command still
+  reaches an archived thread, whose queued run T3 then cancels; the person
+  unarchives the thread to continue.
+- T3 does not record every opening of a thread in `opens.openedAt`. A reading
+  it leaves unrecorded does not restart the thread's quiet time.
 
 - T3 reports a turn that ended on a plain message, with no pending request, as
   `input-ready`; nothing in the thread tells a session that paused there from
@@ -878,3 +1019,6 @@ And the orchestrator has received its opening brief once
 - [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)
+- https://github.com/pingdotgg/t3code/blob/bf469bb19669671d0df2efda74ed73867a7137c0/packages/shared/src/paletteSearch.ts — T3's `recordThreadOpen`, which decides which openings `opens.openedAt` records.
+- https://github.com/pingdotgg/t3code/blob/bf961f8121c6336915ecf7b3f97ce6e68ab38fd7/apps/server/src/mcp/OrchestratorMcpService.ts — T3's `threadStatus`, which decides when a shown or listed thread reports `waiting`, and the thread detail's `pendingRequestCount`, which counts its pending runtime requests (release `v0.1.13-nightly.20261125.5258`).
+- https://github.com/pingdotgg/t3code/blob/bf961f8121c6336915ecf7b3f97ce6e68ab38fd7/packages/shared/src/orchestrationV2PendingBackgroundWork.ts — T3's `backgroundWorkHoldsCompletion`, which decides which `pendingBackgroundTasks` hold a thread's completion (release `v0.1.13-nightly.20261125.5258`).

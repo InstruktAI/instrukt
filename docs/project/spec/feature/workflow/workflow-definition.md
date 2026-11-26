@@ -48,7 +48,8 @@ persisting a phase or dictating a next step:
 - Active attempts (interference lock status).
 - Recorded artifacts, digests, and drift status.
 - Preparation and build review verdicts, open findings, exact-SHA binding, and reviewer independence.
-- Configured `approvals.prd` / `approvals.task` status and `integrate` review gate readiness.
+- Verification dispositions with their exact-commit and report binding, and whether one is current for the worktree head.
+- Configured `approvals.prd` / `approvals.task` status and `integrate` handoff gate readiness: independent build-review approval and a current admitting verification disposition, both at the exact worktree head.
 - Prerequisite standings.
 
 ## Use cases

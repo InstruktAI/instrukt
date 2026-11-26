@@ -175,6 +175,9 @@ pub mod artifact_names {
     pub const INVESTIGATION: &str = "investigation";
     /// The breadcrumb artifact (`todo-creation-discipline`).
     pub const LOG: &str = "log";
+    /// The live verification's complete report, which a verification
+    /// disposition binds (`stamps`, "Verification dispositions").
+    pub const VERIFICATION_FINDINGS: &str = "verification-findings";
 }
 
 /// A content digest of one artifact version. Its text form is work's to
@@ -418,6 +421,45 @@ pub enum DriftClass {
     Substantive,
 }
 
+/// What is established about a candidate commit's live behavior
+/// (`stamps`, "Verification dispositions"): the closed vocabulary of
+/// `sdlc/policy/live-verification`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VerificationDisposition {
+    Pass,
+    Fail,
+    Blocked,
+    #[serde(rename = "tier_0_skip")]
+    Tier0Skip,
+    HotfixDeferred,
+}
+
+impl VerificationDisposition {
+    /// The disposition's name as `--verification` takes it.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "pass",
+            Self::Fail => "fail",
+            Self::Blocked => "blocked",
+            Self::Tier0Skip => "tier_0_skip",
+            Self::HotfixDeferred => "hotfix_deferred",
+        }
+    }
+
+    /// Whether a current disposition of this kind admits handoff to
+    /// integration (`delivery-cycle`, "Live verification disposition").
+    pub fn admits_handoff(self) -> bool {
+        matches!(self, Self::Pass | Self::Tier0Skip | Self::HotfixDeferred)
+    }
+}
+
+impl std::fmt::Display for VerificationDisposition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A task execution's recorded result.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -517,6 +559,18 @@ pub enum StampFact {
     },
     /// `--deferrals-processed`: the deferrals artifact it covers.
     DeferralsProcessed { deferrals: ContentDigest },
+    /// `--verification <disposition> [--follow-up <slug>]`: the exact
+    /// candidate commit, the complete `verification-findings` report, and a
+    /// hotfix deferral's tracked follow-up todo, kept by its durable
+    /// identity with the slug it had when recorded (`stamps`,
+    /// "Verification dispositions").
+    VerificationDisposition {
+        disposition: VerificationDisposition,
+        commit: CommitSha,
+        report: ContentDigest,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        follow_up: Option<crate::work::TodoRef>,
+    },
     /// `--finalize-ready`: the commit handed to integration.
     FinalizeReady { commit: CommitSha },
     /// `--task-firing-started`: the due occurrence.
@@ -567,6 +621,7 @@ pub enum HoldSource {
     /// An attributable GitHub hold-label action.
     #[serde(rename = "github")]
     GitHub,
+    /// `instrukt todo create <slug> … --hold --reason` or
     /// `instrukt todo update <slug> --hold --reason`.
     Manual,
     /// Set by the runner or by a stamp that establishes one.
@@ -592,4 +647,33 @@ pub enum Prerequisite {
     /// A structural holder with no children: never satisfied by having
     /// none.
     EmptyHolder(TodoSlug),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The disposition names are the record's and the command's wire form:
+    /// a GitHub record written by one computer is read by another.
+    #[test]
+    fn dispositions_keep_their_recorded_names_and_only_three_admit_handoff() {
+        use VerificationDisposition::{Blocked, Fail, HotfixDeferred, Pass, Tier0Skip};
+        for (disposition, name, admits) in [
+            (Pass, "pass", true),
+            (Fail, "fail", false),
+            (Blocked, "blocked", false),
+            (Tier0Skip, "tier_0_skip", true),
+            (HotfixDeferred, "hotfix_deferred", true),
+        ] {
+            let wire = serde_json::to_value(disposition).unwrap();
+            assert_eq!(wire, serde_json::Value::from(name));
+            assert_eq!(disposition.as_str(), name);
+            assert_eq!(
+                serde_json::from_value::<VerificationDisposition>(wire).unwrap(),
+                disposition
+            );
+            assert_eq!(disposition.admits_handoff(), admits, "{name}");
+        }
+        assert!(serde_json::from_value::<VerificationDisposition>("skipped".into()).is_err());
+    }
 }

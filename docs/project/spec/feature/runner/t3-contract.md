@@ -39,11 +39,21 @@ an installed executable never substitutes for it.
 
 The consumed native boundary includes `GET /api/projects`, `server.getConfig`,
 `orchestration.getThreadProjection` and `orchestration.launchThread`. Verify fixed
-command/thread identity and opening-message replay, captured native project and
-resolved modes, and existing-worktree capability where provider-free evidence
-permits. Native launch accepts `createdBy:"user"` on the pinned WebSocket path;
-caller payload provenance does not override it. Grammar or projection shape alone
-proves neither completed workspace preparation nor successful provider execution.
+command/thread identity and opening-message replay, captured native project,
+model-selection options and resolved modes, and existing-worktree capability
+where provider-free evidence permits. Native launch accepts `createdBy:"user"`
+on the pinned WebSocket path; caller payload provenance does not override it.
+Grammar or projection shape alone proves neither completed workspace preparation nor successful provider execution.
+
+Project resolution and registration belong to the same boundary. `t3 project
+add <root>` creates a live project at exactly that root and refuses a root that
+already has an active one; the project snapshot then lists it. A launch for a
+checkout whose only containing project is rooted at an ancestor adds a project
+at the checkout and starts its thread there, never in the ancestor. The fake
+holds its project table as state: a project exists only where the fixture or
+an emulated `t3 project add` placed it, never by deriving it from the folders
+under test, and the agreement check covers its project snapshot and its
+`project add`.
 
 ### Consumed upstream surfaces
 
@@ -92,6 +102,18 @@ Each disposable server start waits for the runtime descriptor to report
 that server's assigned port before connecting, including after a restart.
 
 Company conversation sends use authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and T3's native sender provenance. The release and its fake are compared for queued acceptance, replay without a duplicate, and the native `createdBy:"user"` stamp applied by WebSocket dispatch and launch. A deferred opening run keeps the checks provider-free.
+
+Thread archiving is checked through the adapter's finished-thread listing and
+archive. The listing decodes a fixture thread's finished, quiet and pinned
+facts and its latest activity from the real listing and the projection, a
+recorded opening of the thread included. The archive's re-read validates every table
+and column it consumes, the thread's runs, runtime requests and delegated tasks
+among them, against the migrated database. Authenticated
+`orchestration.dispatchCommand` with `thread.archive` archives a fixture
+thread, and a second `thread.archive` for it is refused while its projection
+row shows it archived. The release and its fake are compared for each of
+these. A fixture
+state the release cannot reach provider-free is reported as an exclusion.
 
 The consumed expectations derive from the owning specs and adapter contract,
 not from copying every field of an upstream response. Additional upstream fields

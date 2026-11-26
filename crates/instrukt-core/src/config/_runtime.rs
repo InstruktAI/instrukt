@@ -93,6 +93,13 @@ impl Runtime {
         env.caller_identity(self.name())
             .map(|caller| caller.session)
     }
+    /// Whether the runtime's adapter archives threads, which thread
+    /// retention needs (`project/instrukt/spec/feature/runner/session-continuity`).
+    pub fn archives_threads(self) -> bool {
+        match self {
+            Self::T3 => true,
+        }
+    }
 }
 
 /// Optional runtime capabilities declared by a workflow, never inferred from prose.
@@ -171,7 +178,11 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     ),
     (
         "inspect_thread",
-        "Inspect an identified thread or own child's state or result.",
+        "Inspect an identified thread or own child's state or result; a scheduled reply check permits inspecting a running child.",
+    ),
+    (
+        "schedule_check",
+        "Set, update or clear this agent's one scheduled reply check through the runtime's scheduler, at the interval the agent supplies.",
     ),
     (
         "look_around",
@@ -195,11 +206,7 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     ),
     (
         "finish_thread",
-        "Dormantly settle a conversation so it stays wakeable in place with full context.",
-    ),
-    (
-        "retire_thread",
-        "Terminally retire a delivered or withdrawn todo's orchestrator thread, retaining its transcript; never a standing agent.",
+        "Dormantly settle an addressed conversation, or this agent's own, so it stays wakeable in place with full context; external agents and runner automation never settle a standing agent, which may self-settle when parked dormant.",
     ),
     (
         "discover_environments",

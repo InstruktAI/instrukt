@@ -22,7 +22,10 @@ use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
 pub use _moment::Moment;
+#[cfg(test)]
+pub(crate) use _publication::BODY_LIMIT;
 pub use _publication::Published;
+pub(crate) use _publication::shortened;
 pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};
 pub use _transfer::Statement;
 
@@ -385,10 +388,7 @@ pub fn record(
     }
     let state = RunnerState::new(home);
     let requests = instrukt_runner::review::requests(&state, &project.slug, &head)?;
-    let held = match _store::reader(home)? {
-        Some(conn) => _store::held(&conn, &project.slug, &head)?,
-        None => Held::Nothing,
-    };
+    let held = held_here(home, &project.slug, &head)?;
     let (offer, check) = _admission::offer(&held, &reviewer, &requests);
     if let Offer::HandedOff(export) = &offer {
         return Err(handed_off(&head, export));
@@ -423,9 +423,8 @@ pub fn record(
         }
         Offer::HandedOff(export) => return Err(handed_off(&head, &export)),
     }
-    let canonical = project.canonical()?;
-    let merge_base = project.merge_base(head.as_str(), &canonical)?;
-    let Some(pinned) = _admission::pinned_base(&held, &requests, merge_base.as_ref()) else {
+    let (canonical, pinned) = pinned_base(project, &head, &held, &requests)?;
+    let Some(pinned) = pinned else {
         return Err(refused(format!(
             "{head} shares no history with the canonical branch {canonical}; there is no pinned base to review it from"
         )));
@@ -563,6 +562,29 @@ fn handed_over(
             .iter()
             .any(|text| _admission::names_commit(text, &base))
     }))
+}
+
+/// What this computer holds of `head`'s verdict, read without a lock.
+fn held_here(home: &Home, project: &ProjectSlug, head: &CommitSha) -> Result<Held, ReviewError> {
+    Ok(match _store::reader(home)? {
+        Some(conn) => _store::held(&conn, project, head)?,
+        None => Held::Nothing,
+    })
+}
+
+/// The canonical branch and the pinned base `head`'s verdict is admitted
+/// against (`github-apps`, Admission of review evidence, Range): `None`
+/// when the head shares no history with the canonical branch.
+fn pinned_base(
+    project: &ReviewProject,
+    head: &CommitSha,
+    held: &Held,
+    requests: &[instrukt_runner::review::Request],
+) -> Result<(String, Option<CommitSha>), ReviewError> {
+    let canonical = project.canonical()?;
+    let merge_base = project.merge_base(head.as_str(), &canonical)?;
+    let pinned = _admission::pinned_base(held, requests, merge_base.as_ref());
+    Ok((canonical, pinned))
 }
 
 fn handed_off(head: &CommitSha, export: &str) -> ReviewError {
@@ -873,6 +895,66 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
             clock,
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+/// Work's answers a requested review is admitted on
+/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask):
+/// a head's verdict standing, its pinned base and the review history
+/// retention cutoff, read from this home alone, without a lock.
+pub struct HeadVerdictWork {
+    home: Home,
+}
+
+impl HeadVerdictWork {
+    pub fn new(home: Home) -> Self {
+        Self { home }
+    }
+
+    fn answer(
+        &self,
+        project: &instrukt_runner::interfaces::ProjectRef,
+        head: &CommitSha,
+    ) -> Result<instrukt_runner::interfaces::HeadVerdict, ReviewError> {
+        use instrukt_runner::interfaces::{HeadVerdict, HeadVerdictValue, VerdictStanding};
+        let state = RunnerState::new(&self.home);
+        let requests = instrukt_runner::review::requests(&state, &project.slug, head)?;
+        let held = held_here(&self.home, &project.slug, head)?;
+        let review_project = ReviewProject {
+            slug: project.slug.clone(),
+            root: project.root.clone(),
+        };
+        let (_, pinned_base) = pinned_base(&review_project, head, &held, &requests)?;
+        let standing = match held {
+            Held::Nothing => VerdictStanding::Nothing,
+            Held::Stands { current, .. } => VerdictStanding::Stands {
+                verdict: match current.verdict {
+                    Verdict::Approve => HeadVerdictValue::Approve,
+                    Verdict::NeedsWork => HeadVerdictValue::NeedsWork,
+                },
+                recorder: current.reviewer.clone(),
+            },
+            Held::HandedOff { export } => VerdictStanding::HandedOff { export },
+        };
+        Ok(HeadVerdict {
+            standing,
+            pinned_base,
+        })
+    }
+}
+
+impl instrukt_runner::interfaces::HeadVerdicts for HeadVerdictWork {
+    fn head_verdict(
+        &self,
+        project: &instrukt_runner::interfaces::ProjectRef,
+        head: &CommitSha,
+    ) -> Result<instrukt_runner::interfaces::HeadVerdict, String> {
+        self.answer(project, head)
+            .map_err(|error| error.to_string())
+    }
+
+    fn history_cutoff(&self, now: Timestamp) -> Timestamp {
+        retention_cutoff(now)
     }
 }
 
@@ -1364,20 +1446,20 @@ impl CoverageReader<'_> {
 struct RecordApproval {
     head: CommitSha,
     report: String,
-    /// For a build-review approval, its place among the todo's build
-    /// verdicts, counted from one: the order they are reflected in on the
-    /// todo's pull request. None for a reviewed preparation head.
-    build: Option<usize>,
+    /// For a build-review approval, its stamp's record order: how the
+    /// todo's reflection names the verdicts reviewed on its pull request.
+    /// None for a reviewed preparation head.
+    build: Option<u64>,
 }
 
 impl RecordApproval {
     /// The pull request this approval cites: for a build-review approval,
-    /// the todo's pull request once `reflected` — the pull request and how
-    /// many build verdicts were reflected there — shows it reflected there as
-    /// a review; never for a reviewed preparation head.
-    fn cited_pull(&self, reflected: Option<(u64, usize)>) -> Option<u64> {
+    /// the todo's pull request once `reflected` — the pull request and the
+    /// build verdicts reviewed there — holds its own verdict, whatever
+    /// became of any other; never for a reviewed preparation head.
+    fn cited_pull(&self, reflected: Option<&(u64, Vec<u64>)>) -> Option<u64> {
         match (self.build, reflected) {
-            (Some(index), Some((pull, reviews))) if index <= reviews => Some(pull),
+            (Some(sequence), Some((pull, reviews))) if reviews.contains(&sequence) => Some(*pull),
             _ => None,
         }
     }
@@ -1388,7 +1470,7 @@ impl RecordApproval {
     fn reference(
         &self,
         todo: &instrukt_core::ids::TodoSlug,
-        reflected: Option<(u64, usize)>,
+        reflected: Option<&(u64, Vec<u64>)>,
     ) -> String {
         let (head, report) = (&self.head, &self.report);
         match (self.build, self.cited_pull(reflected)) {
@@ -1404,27 +1486,23 @@ impl RecordApproval {
 /// The head a todo's record approves last, when the last build verdict or
 /// preparation-head review of that head among `facts` approves it.
 fn record_approval<'a>(
-    facts: impl IntoIterator<Item = &'a crate::evidence::StampFact>,
+    stamps: impl IntoIterator<Item = (u64, &'a crate::evidence::StampFact)>,
     commit: Option<&CommitSha>,
 ) -> Option<RecordApproval> {
     use crate::evidence::{BuildVerdict, ReviewVerdict, StampFact};
     let mut last: Option<(RecordApproval, bool)> = None;
-    let mut builds = 0;
-    for fact in facts {
+    for (sequence, fact) in stamps {
         let (head, report, approves, build) = match fact {
             StampFact::BuildVerdict {
                 verdict,
                 target,
                 report,
-            } => {
-                builds += 1;
-                (
-                    target,
-                    report,
-                    *verdict == BuildVerdict::Approve,
-                    Some(builds),
-                )
-            }
+            } => (
+                target,
+                report,
+                *verdict == BuildVerdict::Approve,
+                Some(sequence),
+            ),
             StampFact::PreparationHeadReviewed {
                 verdict,
                 head,
@@ -1448,9 +1526,9 @@ fn record_approval<'a>(
 }
 
 impl CoverageReader<'_> {
-    /// The todo's pull request with how many build verdicts were reflected
-    /// there as reviews, when it has one.
-    fn reflection(&self, todo: &super::TodoId) -> Result<Option<(u64, usize)>, String> {
+    /// The todo's pull request with the build verdicts reviewed there, by
+    /// their stamps' record order, when it has one.
+    fn reflection(&self, todo: &super::TodoId) -> Result<Option<(u64, Vec<u64>)>, String> {
         use instrukt_core::state_db::rusqlite::OptionalExtension as _;
         let Some(db) = instrukt_core::state_db::StateRead::open(&self.work.home)
             .map_err(|error| error.to_string())?
@@ -1459,13 +1537,19 @@ impl CoverageReader<'_> {
         };
         db.conn()
             .query_row(
-                "SELECT pull_number, reviews_reflected FROM reflections
+                "SELECT pull_number, reviews FROM reflections
                  WHERE todo_id = ?1 AND pull_number IS NOT NULL",
                 [todo.as_str()],
-                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, usize>(1)?)),
+                |row| Ok((row.get::<_, u64>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()
-            .map_err(|error| error.to_string())
+            .map_err(|error| error.to_string())?
+            .map(|(pull, reviews)| {
+                serde_json::from_str::<Vec<u64>>(&reviews)
+                    .map(|reviews| (pull, reviews))
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()
     }
 }
 
@@ -1488,8 +1572,10 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
         let Some(record) = self.todo_of(commit)? else {
             return Ok(None);
         };
-        let Some(approval) = record_approval(record.stamps.iter().map(|s| &s.fact), Some(commit))
-        else {
+        let Some(approval) = record_approval(
+            record.stamps.iter().map(|s| (s.sequence, &s.fact)),
+            Some(commit),
+        ) else {
             return Ok(None);
         };
         let reflected = match approval.build {
@@ -1497,7 +1583,7 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
             None => None,
         };
         Ok(Some(crate::workflow::Approved {
-            reference: approval.reference(&record.slug, reflected),
+            reference: approval.reference(&record.slug, reflected.as_ref()),
             todo: Some(record.slug.clone()),
         }))
     }
@@ -1526,7 +1612,9 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
         Ok(records
             .evidence(self.project, todo)
             .map_err(|e| e.to_string())?
-            .and_then(|record| record_approval(record.stamps.iter().map(|s| &s.fact), None))
+            .and_then(|record| {
+                record_approval(record.stamps.iter().map(|s| (s.sequence, &s.fact)), None)
+            })
             .map(|approval| approval.head))
     }
 
@@ -2085,18 +2173,28 @@ mod tests {
     }
 
     #[test]
-    fn a_finalized_approval_cites_the_todos_pull_request_once_reflected_there() {
+    fn a_finalized_approval_cites_the_todos_pull_request_once_its_own_verdict_is_reflected_there() {
         use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
         let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
-        let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
-        assert_eq!(approval.build, Some(2));
-        assert_eq!(approval.cited_pull(Some((12, 2))), Some(12));
+        let stamps = [(3, &facts[0]), (7, &facts[1])];
+        let approval = record_approval(stamps, Some(&sha('a'))).unwrap();
+        assert_eq!(approval.build, Some(7));
+        assert_eq!(approval.cited_pull(Some(&(12, vec![3, 7]))), Some(12));
         assert_eq!(
-            approval.cited_pull(Some((12, 1))),
+            approval.cited_pull(Some(&(12, vec![3]))),
             None,
             "not yet reflected there"
         );
         assert_eq!(approval.cited_pull(None), None);
+    }
+
+    #[test]
+    fn an_approval_is_cited_when_an_earlier_verdict_is_not_reflected() {
+        use crate::evidence::BuildVerdict::{Approve, ChangesRequested};
+        let facts = [build(ChangesRequested, 'a'), build(Approve, 'a')];
+        let stamps = [(3, &facts[0]), (7, &facts[1])];
+        let approval = record_approval(stamps, Some(&sha('a'))).unwrap();
+        assert_eq!(approval.cited_pull(Some(&(12, vec![7]))), Some(12));
     }
 
     #[test]
@@ -2106,8 +2204,8 @@ mod tests {
             head: sha('a'),
             report: ContentDigest::of("report"),
         }];
-        let approval = record_approval(&facts, Some(&sha('a'))).unwrap();
+        let approval = record_approval([(1, &facts[0])], Some(&sha('a'))).unwrap();
         assert_eq!(approval.build, None);
-        assert_eq!(approval.cited_pull(Some((12, 5))), None);
+        assert_eq!(approval.cited_pull(Some(&(12, vec![1]))), None);
     }
 }

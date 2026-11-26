@@ -8,9 +8,10 @@ use std::time::Instant;
 use serde_yaml_ng::{Mapping, Value};
 use sha2::{Digest, Sha256};
 
+use super::_company_document::{self, CompanyDocument};
 use super::_error::{ConfigError, FindingKind, Findings};
 use super::_merge::merge_patch;
-use super::_schema::{CURRENT_SCHEMA_VERSION, LayerKind};
+use super::_schema::LayerKind;
 use super::_validate::{findings_for, todos_on};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
@@ -19,9 +20,10 @@ use crate::ids::ProjectSlug;
 
 /// How long a layer write waits for another writer of the same document;
 /// writes hold the lock for one read-modify-write only.
-const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(super) const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The file name of both configuration layers.
+/// The file name of both configuration layers (and, in a home made before
+/// `company.yaml`, of its company's settings document).
 pub const CONFIG_FILE_NAME: &str = "instrukt.yaml";
 
 /// One addressable layer document.
@@ -31,7 +33,7 @@ pub enum Layer {
     Global,
     /// The `instrukt.yaml` at the root of the repository at this path.
     Project(PathBuf),
-    /// The `instrukt.yaml` of the company home of this name
+    /// The `company.yaml` of the company home of this name
     /// (`~/.instrukt/companies/<name>/`); a document of its own, no layer.
     Company(ProjectSlug),
 }
@@ -55,13 +57,32 @@ impl Layer {
         }
     }
 
-    /// The document's path.
+    /// The document's canonical path: for a company, its `company.yaml`,
+    /// which a home made before keeps as a root `instrukt.yaml` until
+    /// converted. Reads go through [`read_layer`]; this path keys the
+    /// document's write lock and names it where it is absent.
     pub fn path(&self, home: &Home) -> PathBuf {
         match self {
             Layer::Global => home.global_config(),
             Layer::Project(root) => root.join(CONFIG_FILE_NAME),
-            Layer::Company(name) => home.company_dir(name).join(CONFIG_FILE_NAME),
+            Layer::Company(name) => home
+                .company_dir(name)
+                .join(_company_document::COMPANY_DOCUMENT),
         }
+    }
+
+    /// The path a finding or error names for the document: where it stands
+    /// (a company's legacy `instrukt.yaml` until converted, `company.yaml`
+    /// of two present), otherwise [`Layer::path`]. Nothing is converted.
+    pub fn located(&self, home: &Home) -> PathBuf {
+        if let Layer::Company(name) = self {
+            match _company_document::resolve(home, name) {
+                Ok(CompanyDocument::Present(path) | CompanyDocument::Legacy(path)) => return path,
+                Ok(CompanyDocument::Both { company, .. }) => return company,
+                Ok(CompanyDocument::Absent) | Err(_) => {}
+            }
+        }
+        self.path(home)
     }
 
     pub(crate) fn init_door(&self) -> String {
@@ -122,6 +143,34 @@ pub(crate) fn read(path: &Path) -> Result<Option<Document>, ConfigError> {
     Ok(Some(Document { bytes, value }))
 }
 
+/// Reads `layer`'s document where it stands, with the path it was read
+/// from: a company's resolved document (its legacy `instrukt.yaml` until
+/// converted; both present refused), the project layer unless its file
+/// holds a company's settings, the machine's layer. `None` when there is
+/// none. Nothing is converted; the paths that persist a conversion run
+/// [`converted`](super::_company_document::converted) first.
+pub(crate) fn read_layer(
+    home: &Home,
+    layer: &Layer,
+) -> Result<Option<(PathBuf, Document)>, ConfigError> {
+    let path = match layer {
+        Layer::Company(name) => match _company_document::resolve(home, name)? {
+            CompanyDocument::Present(path) | CompanyDocument::Legacy(path) => path,
+            CompanyDocument::Both { company, legacy } => {
+                return Err(ConfigError::BothCompanyDocuments { company, legacy });
+            }
+            CompanyDocument::Absent => return Ok(None),
+        },
+        Layer::Global | Layer::Project(_) => layer.path(home),
+    };
+    Ok(read(&path)?
+        .filter(|document| {
+            !(matches!(layer, Layer::Project(_))
+                && _company_document::declares_company(&document.value))
+        })
+        .map(|document| (path, document)))
+}
+
 fn parse(path: &Path, bytes: &[u8]) -> Result<Value, ConfigError> {
     let value: Value = serde_yaml_ng::from_slice(bytes).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
@@ -136,7 +185,7 @@ fn parse(path: &Path, bytes: &[u8]) -> Result<Value, ConfigError> {
     }
 }
 
-/// How a document's `schema_version` compares with the current one.
+/// How a document's `schema_version` compares with its kind's current one.
 enum Version {
     Current,
     Older(u64),
@@ -144,11 +193,12 @@ enum Version {
     Unknown,
 }
 
-fn version(value: &Value) -> Version {
+fn version(value: &Value, kind: LayerKind) -> Version {
+    let current = kind.current_schema_version();
     match value.get("schema_version").and_then(Value::as_u64) {
-        Some(v) if v == CURRENT_SCHEMA_VERSION => Version::Current,
-        Some(v) if (1..CURRENT_SCHEMA_VERSION).contains(&v) => Version::Older(v),
-        Some(v) if v > CURRENT_SCHEMA_VERSION => Version::Newer(v),
+        Some(v) if v == current => Version::Current,
+        Some(v) if (1..current).contains(&v) => Version::Older(v),
+        Some(v) if v > current => Version::Newer(v),
         _ => Version::Unknown,
     }
 }
@@ -157,17 +207,18 @@ fn version(value: &Value) -> Version {
 /// use: one of a newer schema (upgrade instrukt) or an older one (migrate
 /// it first). A document without a usable version is left to validation.
 pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Result<(), ConfigError> {
-    match version(value) {
+    let current = layer.kind().current_schema_version();
+    match version(value, layer.kind()) {
         Version::Current | Version::Unknown => Ok(()),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path: path.to_path_buf(),
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current,
         }),
         Version::Older(found) => Err(ConfigError::OlderSchema {
             path: path.to_path_buf(),
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current,
             door: layer.init_door(),
         }),
     }
@@ -180,7 +231,7 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 /// committed; [`migrate`] (the `config` writing verbs and the pre-commit
 /// hook) and [`patch`] are the paths that write it
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
-fn persists_conversion(home: &Home, layer: &Layer) -> bool {
+pub(super) fn persists_conversion(home: &Home, layer: &Layer) -> bool {
     !home.is_inspection() && matches!(layer, Layer::Global | Layer::Company(_))
 }
 
@@ -191,9 +242,8 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
         return Ok(inspect_layer(home, layer)?.value);
     }
     migrate_if_needed(home, layer)?;
-    let path = layer.path(home);
-    match read(&path)? {
-        Some(doc) => {
+    match read_layer(home, layer)? {
+        Some((path, doc)) => {
             require_usable(layer, &path, &doc.value)?;
             Ok(Some(doc.value))
         }
@@ -205,7 +255,9 @@ pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), Config
     if !persists_conversion(home, layer) {
         return Ok(());
     }
-    if read(&layer.path(home))?.is_some_and(|doc| matches!(version(&doc.value), Version::Older(_)))
+    _company_document::converted(home, layer)?;
+    if read_layer(home, layer)?
+        .is_some_and(|(_, doc)| matches!(version(&doc.value, layer.kind()), Version::Older(_)))
     {
         migrate(home, layer)?;
     }
@@ -222,6 +274,12 @@ pub struct LayerInspection {
     pub(crate) value: Option<Value>,
 }
 impl LayerInspection {
+    /// The document as a read command uses it: converted to its kind's
+    /// current version in memory; `None` when absent.
+    pub fn value(&self) -> Option<&Value> {
+        self.value.as_ref()
+    }
+
     pub fn module_setting(&self, module: super::Module) -> Result<Option<bool>, ConfigError> {
         match self
             .value
@@ -250,19 +308,6 @@ impl LayerInspection {
             })
     }
 }
-pub(super) fn current_view(
-    home: &Home,
-    layer: &Layer,
-    path: &Path,
-    mut value: Value,
-) -> Result<Value, ConfigError> {
-    if let Version::Older(from) = version(&value) {
-        super::_migrate::selection(home, layer, &mut value, false)?;
-        value = migrate_value(value, from, layer.kind());
-    }
-    require_usable(layer, path, &value)?;
-    Ok(value)
-}
 /// Why the machine layer cannot be loaded at all: it is unreadable, not
 /// YAML, not a mapping, or its `schema_version` is missing or newer than this
 /// instrukt knows. `None` when it is absent or loads; what validation finds
@@ -274,11 +319,11 @@ pub fn unloadable_machine_layer(home: &Home) -> Option<ConfigError> {
         Ok(None) => return None,
         Err(error) => return Some(error),
     };
-    match version(&document.value) {
+    match version(&document.value, LayerKind::Global) {
         Version::Newer(found) => Some(ConfigError::NewerSchema {
             path,
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current: LayerKind::Global.current_schema_version(),
         }),
         Version::Unknown => Some(ConfigError::UnknownSchema { path }),
         Version::Current | Version::Older(_) => None,
@@ -287,8 +332,10 @@ pub fn unloadable_machine_layer(home: &Home) -> Option<ConfigError> {
 
 /// A current in-memory view, retaining the on-disk version and migration notice.
 pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
-    let path = layer.path(home);
-    let document = read(&path)?;
+    let (path, document) = match read_layer(home, layer)? {
+        Some((path, document)) => (path, Some(document)),
+        None => (layer.path(home), None),
+    };
     let mut view = LayerInspection {
         path: path.clone(),
         present: document.is_some(),
@@ -299,11 +346,11 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
     if let Some(document) = document {
         let value = document.value;
         view.schema_version = value.get("schema_version").and_then(Value::as_u64);
-        if let Version::Older(from) = version(&value) {
+        if let Version::Older(from) = version(&value, layer.kind()) {
             view.migration = Some(format!(
                 "{}: schema_version {from} inspected as {}; file migrates on the next writing command",
                 path.display(),
-                CURRENT_SCHEMA_VERSION
+                layer.kind().current_schema_version()
             ));
         }
         view.value = Some(inspected(home, layer, &path, value)?);
@@ -320,9 +367,9 @@ pub(crate) fn inspected(
     path: &Path,
     mut value: Value,
 ) -> Result<Value, ConfigError> {
-    if let Version::Older(from) = version(&value) {
+    if let Version::Older(from) = version(&value, layer.kind()) {
         super::_migrate::selection(home, layer, &mut value, false)?;
-        value = migrate_value(value, from, layer.kind());
+        value = super::_migrate::upcycle(value, from, layer.kind());
     }
     require_usable(layer, path, &value)?;
     Ok(value)
@@ -336,16 +383,15 @@ pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
     } else {
         inspect_layer(home, layer)?;
     }
-    let path = layer.path(home);
-    match read(&path)? {
-        Some(doc) => {
+    match read_layer(home, layer)? {
+        Some((path, doc)) => {
             if persists {
                 require_usable(layer, &path, &doc.value)?;
             }
             Ok(Revision::of(&doc.bytes))
         }
         None => Err(ConfigError::NoLayer {
-            path,
+            path: layer.path(home),
             door: layer.init_door(),
         }),
     }
@@ -377,12 +423,12 @@ pub fn patch(
     if matches!(layer, Layer::Project(_)) {
         migrate_if_needed(home, &Layer::Global)?;
     }
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
-    let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    let Some(mut doc) = read(&path)? else {
+    let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
+    let Some((path, mut doc)) = read_layer(home, layer)? else {
         return Err(ConfigError::NoLayer {
-            path,
+            path: layer.path(home),
             door: layer.init_door(),
         });
     };
@@ -391,10 +437,10 @@ pub fn patch(
     // refused; a project layer is converted only by the write that applies
     // the patch.
     if matches!(layer, Layer::Global | Layer::Company(_))
-        && let Version::Older(from) = version(&doc.value)
+        && let Version::Older(from) = version(&doc.value, layer.kind())
     {
         super::_migrate::selection(home, layer, &mut doc.value, true)?;
-        doc.value = migrate_value(doc.value, from, layer.kind());
+        doc.value = super::_migrate::upcycle(doc.value, from, layer.kind());
         write(&path, &doc.bytes, &doc.value)?;
         doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
             path: path.clone(),
@@ -455,29 +501,30 @@ fn refused_findings(
             findings.retain(|f| f.key != super::_review::REVIEW_AUTOMATIC_KEY);
         }
     }
-    if layer.kind() == LayerKind::Global
-        && super::_validate::needs_transport(&super::_effective::effective_value(
-            Some(before),
-            None,
-        )?)
-    {
-        findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+    if layer.kind() == LayerKind::Global {
+        let before = super::_effective::effective_value(Some(before), None)?;
+        if super::_validate::needs_transport(&before) {
+            findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+        }
+        if super::_validate::thread_retention_unavailable(&before).is_some() {
+            findings.retain(|f| !super::withholds_thread_retention(f));
+        }
     }
     Ok(findings)
 }
 
-/// The document `doc` of `layer` at `path` as it stands, converted to the
-/// current version in memory when older, and the document `patch` makes of
+/// The document `doc` of `layer` at `path` as it stands, converted to its
+/// kind's current version in memory when older, and the document `patch` makes of
 /// it.
-fn patched(
+pub(super) fn patched(
     layer: &Layer,
     path: &Path,
     doc: &Document,
     patch: &Value,
 ) -> Result<(Value, Value), ConfigError> {
     let mut before = doc.value.clone();
-    if let Version::Older(from) = version(&before) {
-        before = migrate_value(before, from, layer.kind());
+    if let Version::Older(from) = version(&before, layer.kind()) {
+        before = super::_migrate::upcycle(before, from, layer.kind());
     }
     require_usable(layer, path, &before)?;
     let mut next = before.clone();
@@ -500,8 +547,7 @@ pub fn review_switch(
     let Layer::Project(root) = layer else {
         return Ok(None);
     };
-    let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(None);
     };
     if &Revision::of(&doc.bytes) != expected {
@@ -533,7 +579,7 @@ pub fn review_target(home: &Home, layer: &Layer) -> Result<Option<String>, Confi
     super::_review::repository(root, &value, global.as_ref())
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
+pub(super) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -550,13 +596,13 @@ pub enum InitOutcome {
 pub enum MigrationOutcome {
     /// There is no document.
     Absent,
-    /// The document is at the current version; untouched.
+    /// The document is at its kind's current version; untouched.
     AlreadyCurrent,
     /// The document was rewritten from version `from`.
     Migrated { from: u64 },
 }
 
-/// Brings `layer` to the current schema version for a path that is not an
+/// Brings `layer` to its kind's current schema version for a path that is not an
 /// `instrukt config` writing verb — publication, installation, ticks: the
 /// machine's layer is migrated on disk ([`migrate`]); a project layer is
 /// checked and converted in memory only, its file left as committed. Either
@@ -566,75 +612,75 @@ pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
         migrate(home, layer)?;
         return Ok(());
     }
-    let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(());
     };
-    match version(&doc.value) {
+    match version(&doc.value, layer.kind()) {
         Version::Current => Ok(()),
-        Version::Older(_) => current_view(home, layer, &path, doc.value).map(drop),
+        Version::Older(_) => inspected(home, layer, &path, doc.value).map(drop),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path,
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current: layer.kind().current_schema_version(),
         }),
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
     }
 }
 
 /// The project layer document `bytes` of the repository rooted at `root`,
-/// converted to the current schema version and rendered as [`migrate`]
+/// converted to the project layer's current schema version and rendered as [`migrate`]
 /// writes it; `None` when it is already
 /// current. A newer or unknown version is refused. The pre-commit hook
 /// converts the version a commit is being made from with this.
 pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u8>>, ConfigError> {
     let path = root.join(CONFIG_FILE_NAME);
     let value = parse(&path, bytes)?;
-    match version(&value) {
+    match version(&value, LayerKind::Project) {
         Version::Current => Ok(None),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path,
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current: LayerKind::Project.current_schema_version(),
         }),
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
-            let value = migrate_value(value, from, LayerKind::Project);
+            let value = super::_migrate::upcycle(value, from, LayerKind::Project);
             render(&path, bytes, &value).map(Some)
         }
     }
 }
 
-/// Brings `layer` to the current schema version with its settings kept:
+/// Brings `layer` to its kind's current schema version with its settings kept:
 /// an older document is rewritten through the same atomic write as a
 /// patch; a current one is left untouched; a newer one is refused.
 /// `init`, the `config` writing verbs, the pre-commit hook and, for the
 /// machine's layer, [`bring_current`] run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
-    let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    let Some(doc) = read(&path)? else {
+    let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(MigrationOutcome::Absent);
     };
-    match version(&doc.value) {
+    let current = layer.kind().current_schema_version();
+    match version(&doc.value, layer.kind()) {
         Version::Current => Ok(MigrationOutcome::AlreadyCurrent),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path,
             found,
-            current: CURRENT_SCHEMA_VERSION,
+            current,
         }),
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
             let mut migrated = doc.value;
             super::_migrate::selection(home, layer, &mut migrated, true)?;
-            let migrated = migrate_value(migrated, from, layer.kind());
+            let migrated = super::_migrate::upcycle(migrated, from, layer.kind());
             let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(
                 event = "config_migrated",
                 path = %path.display(),
                 from_version = from,
-                to_version = CURRENT_SCHEMA_VERSION,
+                to_version = current,
                 revision = %revision,
                 duration_ms = elapsed_ms(started),
             );
@@ -643,44 +689,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
     }
 }
 
-/// Remove retired settings and stamp the current owned schema version.
-fn migrate_value(mut value: Value, from: u64, layer: LayerKind) -> Value {
-    if let Value::Mapping(map) = &mut value {
-        if from < 3 && layer == LayerKind::Project {
-            map.remove("actions");
-        }
-        if from < 6 && layer == LayerKind::Global {
-            // A declared connector gives a company conversations; the
-            // machine's switch is gone, whatever its value.
-            if let Some(Value::Mapping(modules)) = map.get_mut("modules") {
-                modules.remove(super::_schema::CONVERSATIONS);
-            }
-        }
-        if from < 6 && layer == LayerKind::Company {
-            // A member entry no longer names a connector identity; an entry
-            // left without an email address stays a finding.
-            if let Some(Value::Mapping(members)) = map.get_mut("members") {
-                for (_, entry) in members.iter_mut() {
-                    if let Value::Mapping(fields) = entry {
-                        // The connectors that existed when schema 6 was
-                        // written, whatever this binary supports later.
-                        const V6_CONNECTOR_KEYS: [&str; 1] = ["slack"];
-                        for connector in V6_CONNECTOR_KEYS {
-                            fields.remove(connector);
-                        }
-                    }
-                }
-            }
-        }
-        map.insert(
-            Value::String("schema_version".to_owned()),
-            Value::Number(CURRENT_SCHEMA_VERSION.into()),
-        );
-    }
-    value
-}
-
-/// Creates `layer` with the current schema version (and, for a project,
+/// Creates `layer` with its kind's current schema version (and, for a project,
 /// its slug) when absent; migrates an existing one. The project slug is
 /// `slug` when given, otherwise the primary worktree's folder name
 /// normalized; an empty normalization is refused.
@@ -697,7 +706,9 @@ pub fn init(
             path: dir.clone(),
             source,
         })?;
-        ignore_local_material(&dir)?;
+        _company_document::ignore_local_material(&dir)?;
+        _company_document::convert(home, name)?;
+        return _company_document::init_company(home, layer, name, started);
     }
     if path.exists() {
         return match migrate(home, layer)? {
@@ -710,7 +721,7 @@ pub fn init(
     let mut doc = Mapping::new();
     doc.insert(
         Value::String("schema_version".to_owned()),
-        Value::Number(CURRENT_SCHEMA_VERSION.into()),
+        Value::Number(layer.kind().current_schema_version().into()),
     );
     if let Layer::Project(root) = layer {
         let slug = match slug {
@@ -722,12 +733,6 @@ pub fn init(
             Value::String(slug.to_string()),
         );
     }
-    if let Layer::Company(name) = layer {
-        doc.insert(
-            Value::String("company".to_owned()),
-            Value::String(name.to_string()),
-        );
-    }
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     if path.exists() {
         return Ok(InitOutcome::AlreadyCurrent);
@@ -736,51 +741,11 @@ pub fn init(
     tracing::debug!(
         event = "config_initialized",
         path = %path.display(),
-        schema_version = CURRENT_SCHEMA_VERSION,
+        schema_version = layer.kind().current_schema_version(),
         revision = %revision,
         duration_ms = elapsed_ms(started),
     );
     Ok(InitOutcome::Created)
-}
-
-/// What a company home keeps on the computer and its repository ignores:
-/// the settings document, the secrets file, the other checkouts and
-/// instrukt's local state, as the home's `.gitignore` lines
-/// (`project/instrukt/spec/feature/configuration/company-homes`).
-pub(crate) const COMPANY_IGNORED: [&str; 4] = [
-    "/instrukt.yaml",
-    "/secrets.env",
-    "/projects/",
-    "/.instrukt/",
-];
-
-/// Appends each line of [`COMPANY_IGNORED`] the `.gitignore` of the company
-/// home at `dir` lacks, keeping every other line as it is.
-fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
-    let path = dir.join(".gitignore");
-    let current = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(ConfigError::Read { path, source }),
-    };
-    let present: std::collections::BTreeSet<&str> = current.lines().map(str::trim).collect();
-    let missing: Vec<&str> = COMPANY_IGNORED
-        .into_iter()
-        .filter(|line| !present.contains(line))
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let mut text = current.clone();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    for line in missing {
-        text.push_str(line);
-        text.push('\n');
-    }
-    atomic_write(&path, text.as_bytes())?;
-    Ok(())
 }
 
 /// The primary worktree's folder name, normalized to a slug.
@@ -816,7 +781,7 @@ pub(crate) fn normalize_slug(text: &str) -> String {
 /// Writes `value` at `path`, keeping the editor-schema modeline its
 /// previous bytes `before` open with, if any
 /// (`docs/project/spec/feature/publication/editor-schemas.md`).
-fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
+pub(super) fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
     let bytes = render(path, before, value)?;
     atomic_write(path, &bytes)?;
     Ok(Revision::of(&bytes))
@@ -849,13 +814,16 @@ fn render(path: &Path, before: &[u8], value: &Value) -> Result<Vec<u8>, ConfigEr
     Ok(bytes)
 }
 
-/// The lock serializing writers of the document at `path`. It lives in the
-/// home, never beside a project's document.
-fn lock_path(home: &Home, path: &Path) -> PathBuf {
+/// The lock serializing writers of the document at `path`, keyed by its
+/// folder and its own file name, so a company's `company.yaml` and the
+/// project layer beside it never share one. It lives in the home, never
+/// beside a project's document.
+pub(super) fn lock_path(home: &Home, path: &Path) -> PathBuf {
     let canonical = path
         .parent()
         .and_then(|dir| dir.canonicalize().ok())
-        .map(|dir| dir.join(CONFIG_FILE_NAME))
+        .zip(path.file_name())
+        .map(|(dir, name)| dir.join(name))
         .unwrap_or_else(|| path.to_path_buf());
     let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
     home.locks_dir()
@@ -865,6 +833,7 @@ fn lock_path(home: &Home, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
 
     #[test]
     fn folder_names_normalize_to_valid_slugs() {
@@ -884,12 +853,12 @@ mod tests {
     fn only_a_document_of_the_current_or_an_unknown_version_is_usable() {
         let layer = Layer::Global;
         let path = Path::new("instrukt.yaml");
-        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
+        let newer = format!("schema_version: {}\n", GLOBAL_SCHEMA_VERSION + 1);
         assert!(matches!(
             require_usable(&layer, path, &yaml(&newer)),
             Err(ConfigError::NewerSchema { .. })
         ));
-        let current = format!("schema_version: {CURRENT_SCHEMA_VERSION}\n");
+        let current = format!("schema_version: {GLOBAL_SCHEMA_VERSION}\n");
         assert!(require_usable(&layer, path, &yaml(&current)).is_ok());
         assert!(require_usable(&layer, path, &yaml("project: p\n")).is_ok());
     }
@@ -910,11 +879,11 @@ mod tests {
         let value = yaml(&String::from_utf8(converted.clone()).unwrap());
         assert_eq!(
             value["schema_version"].as_u64(),
-            Some(CURRENT_SCHEMA_VERSION)
+            Some(PROJECT_SCHEMA_VERSION)
         );
         assert!(value.get("actions").is_none());
         assert_eq!(converted_project_layer(root, &converted).unwrap(), None);
-        let newer = format!("schema_version: {}\n", CURRENT_SCHEMA_VERSION + 1);
+        let newer = format!("schema_version: {}\n", PROJECT_SCHEMA_VERSION + 1);
         assert!(matches!(
             converted_project_layer(root, newer.as_bytes()),
             Err(ConfigError::NewerSchema { .. })
@@ -938,7 +907,7 @@ mod tests {
         std::fs::create_dir_all(home.root()).unwrap();
         std::fs::write(
             home.root().join(CONFIG_FILE_NAME),
-            format!("schema_version: {CURRENT_SCHEMA_VERSION}\n"),
+            format!("schema_version: {GLOBAL_SCHEMA_VERSION}\n"),
         )
         .unwrap();
         let root = dir.join("repo");
@@ -948,7 +917,7 @@ mod tests {
         std::fs::write(
             root.join(CONFIG_FILE_NAME),
             format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nreview:\n  automatic: true\n"
+                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nreview:\n  automatic: true\n"
             ),
         )
         .unwrap();
@@ -968,7 +937,7 @@ mod tests {
         // No event transport on this computer.
         std::fs::write(
             home.root().join(CONFIG_FILE_NAME),
-            format!("schema_version: {CURRENT_SCHEMA_VERSION}\n"),
+            format!("schema_version: {GLOBAL_SCHEMA_VERSION}\n"),
         )
         .unwrap();
         std::fs::write(
@@ -988,7 +957,7 @@ mod tests {
         std::fs::write(
             root.join(CONFIG_FILE_NAME),
             format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nmodules:\n  events: true\n"
+                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\ngithub:\n  repository: acme/demo\nmodules:\n  events: true\n"
             ),
         )
         .unwrap();

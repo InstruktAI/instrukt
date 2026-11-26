@@ -370,8 +370,9 @@ fn a_task_failure_committed_before_interrupted_reflection_is_notified_on_the_nex
     project.rt.set_status("s1", "ended failed");
 
     // The first new revision is the automatic hold. Keep GitHub's answer
-    // pending so the runner cannot proceed beyond local commit/reflection.
-    let pause = project.github.pause_once("POST", "/comments");
+    // to its issue update pending so the runner cannot proceed beyond local
+    // commit/reflection.
+    let pause = project.github.pause_once("PATCH", "/issues/1");
     project.env.set_env("INSTRUKT_NOW", "2030-01-06T09:01:20Z");
     let mut tick = project
         .env

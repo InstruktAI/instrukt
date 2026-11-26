@@ -13,9 +13,11 @@
 
 mod _fence;
 
+use std::collections::BTreeSet;
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{PoisonError, RwLock};
 use std::time::{Duration, Instant};
 
 pub use _fence::{
@@ -188,12 +190,16 @@ pub fn temp_dir(builder: &tempfile::Builder<'_, '_>) -> io::Result<tempfile::Tem
 /// memory a reader creates and changes), with those sidecars. Reading a
 /// database that keeps no write-ahead log touches no file and is not
 /// admitted.
+///
+/// The open is recorded first: from then on this process never copies the
+/// file from outside SQLite ([`outside_sqlite`]).
 #[allow(clippy::disallowed_methods, reason = "admitted at the fence")]
 pub fn open_database(
     path: impl AsRef<Path>,
     flags: rusqlite::OpenFlags,
 ) -> rusqlite::Result<rusqlite::Connection> {
     admit_database(path.as_ref(), flags)?;
+    record_sqlite_open(path.as_ref());
     rusqlite::Connection::open_with_flags(path, flags)
 }
 
@@ -209,10 +215,51 @@ pub fn open_database_uri(
         .map_err(|()| rusqlite::Error::InvalidPath(path.to_path_buf()))?;
     uri.set_query(Some(query));
     admit_database(path, flags)?;
+    record_sqlite_open(path);
     rusqlite::Connection::open_with_flags(
         uri.as_str(),
         flags | rusqlite::OpenFlags::SQLITE_OPEN_URI,
     )
+}
+
+/// The files this process has opened through SQLite, each by its resolved
+/// path. Transient: rebuilt as the process opens files, never stored.
+static SQLITE_OPENED: RwLock<BTreeSet<PathBuf>> = RwLock::new(BTreeSet::new());
+
+/// Records that this process opens the file at `path` through SQLite. The
+/// write lock is taken only for a file not yet recorded, so it waits for a
+/// copy of that file in flight ([`outside_sqlite`]) and an open of a
+/// recorded file waits for nothing.
+fn record_sqlite_open(path: &Path) {
+    let key = _fence::resolved(path).path;
+    let recorded = SQLITE_OPENED
+        .read()
+        .unwrap_or_else(PoisonError::into_inner)
+        .contains(&key);
+    if !recorded {
+        SQLITE_OPENED
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(key);
+    }
+}
+
+/// Runs `copy`, which opens the file at `path` outside SQLite, unless this
+/// process has opened that file through SQLite: then `None`, and the file is
+/// read through SQLite instead. A process's `fcntl` locks on a file belong
+/// to the process, and closing any descriptor of the file releases all of
+/// them; SQLite defers that close only for descriptors it opened itself, so
+/// a copy would release the locks this process's connections still count
+/// on. A first SQLite open of `path` waits for the copy to end.
+pub fn outside_sqlite<T>(path: &Path, copy: impl FnOnce() -> T) -> Option<T> {
+    let key = _fence::resolved(path).path;
+    let opened = SQLITE_OPENED.read().unwrap_or_else(PoisonError::into_inner);
+    if opened.contains(&key) {
+        return None;
+    }
+    let copied = copy();
+    drop(opened);
+    Some(copied)
 }
 
 /// Admits what opening the database at `path` with `flags` can write.

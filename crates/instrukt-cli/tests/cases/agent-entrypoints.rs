@@ -1201,3 +1201,52 @@ fn a_companys_knowledge_reaches_every_agent_from_its_repository() {
         )
     );
 }
+
+// spec: project/instrukt/spec/feature/publication/agent-entrypoints UC-AE16
+#[test]
+fn a_developer_reads_in_full_what_their_agents_were_given() {
+    use sha2::{Digest, Sha256};
+    let env = TestEnv::new();
+    crate::fixtures::t3::FakeT3::create(&env);
+    common::t3_readiness::configure(
+        &env,
+        vec![common::t3_readiness::provider(
+            "claudeAgent",
+            "claudeAgent",
+            true,
+        )],
+        serde_json::json!({}),
+    );
+    let care = snippet("policy", "Care", "", &[]);
+    let body = care.split_once("\n---\n").unwrap().1;
+    let digest = hex::encode(Sha256::digest(body.as_bytes()));
+    let platform = env.git_repo("platform");
+    platform
+        .write("instrukt.yaml", &layer("platform"))
+        .write(
+            "docs/general/index.yaml",
+            "expanded:\n  - general/policy/care\n",
+        )
+        .write("docs/general/policy/care.md", &care)
+        .write(
+            "docs/_compressed/general/policy/care.md",
+            &format!("---\nsource_sha256: {digest}\nmodel: test-model\n---\n- MUST take care -- it lasts\n"),
+        );
+    platform.commit("general");
+
+    env.run(platform.path(), ["sync"]).success();
+
+    let global = env.home().join(".claude/CLAUDE.md");
+    let copy = env.instrukt_home().join("rendered/claude.uncompressed.md");
+    assert!(copy.starts_with(env.instrukt_home()));
+    assert!(!copy.starts_with(env.home().join(".claude")));
+    let text = |path: &std::path::Path| shown(&env, &std::fs::read(path).unwrap());
+    insta::assert_snapshot!(
+        "global_file_naming_its_uncompressed_copy",
+        format!(
+            "== global file\n{}\n== uncompressed copy\n{}",
+            text(&global),
+            text(&copy)
+        )
+    );
+}

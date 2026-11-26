@@ -50,13 +50,17 @@ default test commands run without a T3 release or provider.
 Each feature use case is realized by exactly one named test checking its
 complete situation and outcomes (`sdlc/policy/testing`, rule 8).
 
+
 - This repository's pre-commit check runs what the content of the commit
   needs, without services. `.pre-commit-config.yaml` assigns each check the
   pattern of the files it applies to, and a check runs when the commit adds,
   changes, renames or deletes a file its pattern matches: the document
   validation for documents, shellcheck for shell scripts and hook files, the
   lint and the type check for Python scripts, the configuration validation
-  for `instrukt.yaml`, and fmt, clippy and the colocated unit tests for
+  for `instrukt.yaml`, the size and suppression ratchet for Rust, Python and
+  shell files and its baseline
+  (`project/instrukt/policy/size-and-suppression-ratchet`), and fmt, clippy
+  and the colocated unit tests for
   everything a crate is built from and everything its unit tests read: its
   sources and manifests, the files compiled into the program, the unit tests'
   snapshots, and the two inputs that live outside the crates' folders: the
@@ -103,9 +107,11 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
     without the workspace test suite, doctests, macOS, the dependency audit,
     the pinned contracts, or the commit checks whose inputs did not change.
     Among the commit checks, fmt, clippy and the unit tests run when a Rust
-    input changes, shellcheck when a script or a hook file changes, and
-    the Python lint and type check when a Python file or their configuration
-    changes. A contract check runs when a crate on its path, the workspace
+    input changes, shellcheck when a script or a hook file changes, the
+    size and suppression ratchet when a Rust, Python or shell file, a hook
+    file or the ratchet baseline changes, and the Python lint and type check
+    when a Python file or their configuration changes. A change the ratchet
+    reads starts the Linux build job, which runs it. A contract check runs when a crate on its path, the workspace
     manifest or lock, or a pinned tool changes. A moved file counts as both
     the path it left and the path it reached. A path no rule names, a change
     whose files cannot be read, a classification that does not succeed, and
@@ -119,11 +125,12 @@ complete situation and outcomes (`sdlc/policy/testing`, rule 8).
   keeps it behind its own interface. Clippy runs with `-D warnings`, denying
   `dbg_macro` and `print_stdout` outside the command output writer.
 
+
 Subfunctions (pending-doc folding, graph status, tick status and eval
 fingerprint computation) are exercised by the stakeholder use cases that
 reach them; they introduce no separate use cases. Session reuse, availability
-selection, direct-main integration and conflict refresh are exercised within
-the dispatch, integration and record-recovery goals.
+selection and direct-main integration are exercised within the dispatch and
+integration goals.
 
 ### Inherited home and isolated application roots
 

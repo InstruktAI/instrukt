@@ -62,6 +62,15 @@ pub(super) struct State {
     pub(super) active_token: Option<String>,
     /// Each App's installation permissions a test set, by App id.
     pub(super) installation_permissions: BTreeMap<u64, Value>,
+    /// The account type GitHub shows for a login a test named
+    /// (`Organization`, `User`); any other login shows as a user, or a bot
+    /// for a `[bot]` login.
+    pub(super) accounts: BTreeMap<String, String>,
+    /// The organisations the project App is installed on.
+    pub(super) org_installations: std::collections::BTreeSet<String>,
+    /// Where a created repository's bare remote is initialised, as
+    /// `<remotes>/<owner>/<name>.git`.
+    pub(super) remotes: Option<std::path::PathBuf>,
 }
 
 impl State {
@@ -83,6 +92,9 @@ impl State {
             tokens: BTreeMap::new(),
             active_token: None,
             installation_permissions: BTreeMap::new(),
+            accounts: BTreeMap::new(),
+            org_installations: std::collections::BTreeSet::new(),
+            remotes: None,
         }
     }
 
@@ -151,6 +163,7 @@ impl State {
                 blocked_by: Vec::new(),
                 artifacts: BTreeMap::new(),
                 next_artifact: 0,
+                events: Vec::new(),
                 pull: None,
             },
         );
@@ -197,6 +210,13 @@ pub(super) struct Repo {
     pub(super) comments: BTreeMap<u64, Comment>,
     pub(super) labels: BTreeMap<String, Label>,
     pub(super) branches: BTreeMap<String, String>,
+    /// The repository's default branch.
+    pub(super) default_branch: String,
+    /// Each collaborator added, with the permission they were given.
+    pub(super) collaborators: BTreeMap<String, String>,
+    /// A bare repository whose branches GitHub serves, as when pushes to it
+    /// reach GitHub; `branches` answers for the ones it does not hold.
+    pub(super) branch_source: Option<std::path::PathBuf>,
     statuses: BTreeMap<String, Vec<Status>>,
     pub(super) check_runs: BTreeMap<String, Vec<(String, u64, CheckRun)>>,
 }
@@ -219,6 +239,8 @@ pub(super) struct Issue {
     pub(super) artifacts: BTreeMap<u64, Artifact>,
     pub(super) next_artifact: u64,
     pub(super) pull: Option<Pull>,
+    /// The issue's events, oldest first, as GitHub serves them.
+    pub(super) events: Vec<Value>,
 }
 
 pub(super) struct Pull {
@@ -321,6 +343,26 @@ pub(super) fn actor(login: &str) -> Value {
 }
 
 impl Repo {
+    /// The commit branch `name` is at: in the bare repository GitHub serves
+    /// branches from, else as set on the fake.
+    pub(super) fn branch_head(&self, name: &str) -> Option<String> {
+        let pushed = self.branch_source.as_ref().and_then(|source| {
+            let out = std::process::Command::new("git")
+                .arg("--git-dir")
+                .arg(source)
+                .args(["rev-parse", "--verify", "--quiet"])
+                .arg(format!("refs/heads/{name}"))
+                .output()
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+        });
+        pushed.or_else(|| self.branches.get(name).cloned())
+    }
+}
+
+impl Repo {
     pub(super) fn new(id: u64, owner: &str, name: &str) -> Self {
         Self {
             id,
@@ -332,6 +374,9 @@ impl Repo {
             comments: BTreeMap::new(),
             labels: BTreeMap::new(),
             branches: BTreeMap::new(),
+            default_branch: "main".to_owned(),
+            collaborators: BTreeMap::new(),
+            branch_source: None,
             statuses: BTreeMap::new(),
             check_runs: BTreeMap::new(),
         }
@@ -349,7 +394,7 @@ impl Repo {
             "fork": false,
             "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
-            "default_branch": "main",
+            "default_branch": self.default_branch,
             "private": !self.public,
             "visibility": if self.public { "public" } else { "private" },
         })
@@ -428,8 +473,8 @@ impl Repo {
             "user": actor(&issue.login),
             "author_association": pull.association,
             "draft": pull.draft,
-            "head": {"ref": pull.head, "sha": self.branches.get(&pull.head), "repo": head_repo},
-            "base": {"ref": pull.base, "sha": self.branches.get(&pull.base), "repo": self.json()},
+            "head": {"ref": pull.head, "sha": self.branch_head(&pull.head), "repo": head_repo},
+            "base": {"ref": pull.base, "sha": self.branch_head(&pull.base), "repo": self.json()},
             "merged": pull.merged,
             "created_at": issue.created_at,
             "updated_at": issue.updated_at,
@@ -556,10 +601,12 @@ impl Label {
 }
 
 impl Artifact {
-    pub(super) fn json(&self) -> Value {
+    /// The artifact as GitHub serves it, on issue `issue` of `full`.
+    pub(super) fn json(&self, full: &str, issue: u64) -> Value {
         let body = self.versions.last().map(|v| v.body.as_str()).unwrap_or("");
         json!({
             "number": self.number,
+            "html_url": format!("https://github.test/{full}/issues/{issue}/artifacts/{}", self.number),
             "type": self.kind,
             "name": self.name,
             "body": body,

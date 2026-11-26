@@ -340,8 +340,10 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
         Command::ListTools { name, json } => {
             let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
-            let visible = view.server(&name)?.clone();
+            // The speaker comes first: a session whose speaker cannot be
+            // established is refused before its server is resolved.
             speak(ctx, &caller, &mut view)?;
+            let visible = view.server(&name)?.clone();
             let started = std::time::Instant::now();
             let (scrub, tools) = with_sign_in_retry(ctx, &view, &visible, |auth| {
                 mcp::list_tools(&target(&visible, auth))
@@ -378,8 +380,10 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     anyhow::anyhow!("--json takes the tool's arguments as one JSON object")
                 })?;
             let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
-            let visible = view.server(&name)?.clone();
+            // The speaker comes first: a session whose speaker cannot be
+            // established is refused before its server is resolved.
             speak(ctx, &caller, &mut view)?;
+            let visible = view.server(&name)?.clone();
             let started = std::time::Instant::now();
             let (scrub, result) = with_sign_in_retry(ctx, &view, &visible, |auth| {
                 mcp::call(&target(&visible, auth), &tool, arguments.clone())
@@ -393,21 +397,22 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 }
 
 /// Execute an MCP network operation, renewing a `speaker_login: sign-in` Bearer
-/// token at most once if the server answers HTTP 401.
+/// token at most once if the server answers HTTP 401. The retry names the
+/// login the server refused, so a renewal another call already made is reused.
 fn with_sign_in_retry<T>(
     ctx: &Ctx,
     view: &View,
     visible: &Visible,
     mut op: impl FnMut(Option<&str>) -> Result<T, McpError>,
 ) -> anyhow::Result<(Scrub, Result<T, McpError>)> {
-    let (scrub, login) = view.resolve_call_login(&ctx.home, visible, false, Timestamp::now())?;
+    let (scrub, login) = view.resolve_call_login(&ctx.home, visible, None, Timestamp::now())?;
     let outcome = op(login.as_deref());
     if let Err(McpError::Unauthorized { .. }) = &outcome
         && visible.server.speaker_login == SpeakerLogin::SignIn
         && view.speaker.is_some()
     {
         let (scrub2, login2) =
-            view.resolve_call_login(&ctx.home, visible, true, Timestamp::now())?;
+            view.resolve_call_login(&ctx.home, visible, login.as_deref(), Timestamp::now())?;
         let retried = op(login2.as_deref());
         return Ok((scrub2, retried));
     }

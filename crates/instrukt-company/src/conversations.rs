@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use instrukt_connector::{Accompanying, ConversationDisplay, Incoming, RefusalReason, Sender};
 use instrukt_core::config::{
     Admitted, Agents, COMPANY_AGENT_ROLE, ConfigError, Configuration, DeclaredConnector, Env,
-    ReplyMode, SecretSource, SessionScope, connector_declaration, readable_secret_values,
+    ReplyMode, SessionScope, connector_declaration,
 };
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, SnippetId};
@@ -2072,6 +2072,17 @@ fn send(
         .content
         .as_deref()
         .ok_or_else(|| ConversationError::Refused("the message is not framed yet".into()))?;
+    // The bound thread must run in the company home's own runtime project
+    // before anything is attempted: a misplaced one is sent nothing.
+    let thread = adapter.read_state(session)?;
+    if thread.presence != Presence::Present {
+        return Err(SessionsError::Gone(session.clone()).into());
+    }
+    adapter.verify_thread_project(
+        &delivery.home.company_dir(&c.company),
+        &thread,
+        Some(&c.semantic_key),
+    )?;
     if let Some(id) = &next.dispatch_id {
         dispatch_frame(adapter, state, c, next, session, (id, content), delivery)?;
         accepted(
@@ -2313,7 +2324,6 @@ fn message_for_input<'a>(sent: &'a [Message], text: &str) -> Option<&'a Message>
 /// started any other way is not posted. Missing native content leaves the
 /// delivery unresolved with its cause; the position does not move past it.
 fn harvest(
-    home: &Home,
     state: &RunnerState,
     source: &dyn ConversationSource,
     c: &Conversation,
@@ -2431,15 +2441,6 @@ fn harvest(
                 .join("\n\n");
             answers.push((message, turn, output));
         }
-        let scrub = if reply_mode == ReplyMode::TurnOutput
-            && answers
-                .iter()
-                .any(|(_, turn, output)| turn.succeeded && !output.is_empty())
-        {
-            Some(company_scrub(home, &c.company))
-        } else {
-            None
-        };
         let ended = clock();
         state.write::<_, StateError>(|tx| {
             let path = state::db_path(tx);
@@ -2460,10 +2461,7 @@ fn harvest(
                 let turn_id = turn.native_turn.to_string();
                 let has_answer = match reply_mode {
                     ReplyMode::TurnOutput => {
-                        let scrubbed = scrub
-                            .as_ref()
-                            .map_or_else(|| output.clone(), |s| s.text(output));
-                        for (piece, text) in split(&scrubbed, message_chars).iter().enumerate() {
+                        for (piece, text) in split(output, message_chars).iter().enumerate() {
                             tx.execute(
                                 "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,admission_position)
                                  SELECT ?1,?2,?3,?4,?5,?6,admission_position FROM conversation_messages
@@ -2473,7 +2471,7 @@ fn harvest(
                             )
                             .map_err(state::sql(&path))?;
                         }
-                        !scrubbed.is_empty()
+                        !output.is_empty()
                     }
                     ReplyMode::Explicit => false,
                 };
@@ -2590,6 +2588,8 @@ enum CheckedDelivery {
     },
     Dispatching,
     DispatchFailed,
+    /// The dispatch found the bound thread idle in another runtime project.
+    Misplaced,
 }
 
 impl RelayWorkers {
@@ -2678,6 +2678,10 @@ impl RelayWorkers {
                 let result = match reply.try_recv() {
                     Err(TryRecvError::Empty) => return CheckedDelivery::Dispatching,
                     Ok(Ok(())) => CheckedDelivery::Idle,
+                    Ok(Err(ConversationError::Sessions(SessionsError::ThreadMisplaced {
+                        idle: true,
+                        ..
+                    }))) => CheckedDelivery::Misplaced,
                     _ => CheckedDelivery::DispatchFailed,
                 };
                 work.remove(key);
@@ -2700,6 +2704,9 @@ impl RelayWorkers {
         }
     }
 
+    // The check carries every fact its worker thread needs, read by the
+    // pass that starts it; grouping them would only rename the list.
+    #[allow(clippy::too_many_arguments)]
     fn check(
         &self,
         adapter: &dyn RuntimeAdapter,
@@ -2708,8 +2715,10 @@ impl RelayWorkers {
         next: &Message,
         head: Option<&Message>,
         source_presence: Presence,
+        checkout: std::path::PathBuf,
     ) {
         let runtime = adapter.runtime();
+        let key = c.semantic_key.clone();
         let target = session.clone();
         let attempted = next.attempted;
         let command_id = next.dispatch_id.clone();
@@ -2734,16 +2743,22 @@ impl RelayWorkers {
                 );
             }
             let thread = adapter.read_state(&target)?;
-            Ok(if thread.presence != Presence::Present {
-                DeliveryCheck::Presence(thread.presence)
-            } else if matches!(
-                thread.state,
-                SessionState::InputReady | SessionState::EndedFailed
-            ) {
-                DeliveryCheck::Ready
-            } else {
-                DeliveryCheck::Busy
-            })
+            if thread.presence != Presence::Present {
+                return Ok(DeliveryCheck::Presence(thread.presence));
+            }
+            // A thread in another runtime project is never served, busy or
+            // not: its outcome says whether it can roll over now.
+            adapter.verify_thread_project(&checkout, &thread, Some(&key))?;
+            Ok(
+                if matches!(
+                    thread.state,
+                    SessionState::InputReady | SessionState::EndedFailed
+                ) {
+                    DeliveryCheck::Ready
+                } else {
+                    DeliveryCheck::Busy
+                },
+            )
         });
         self.work
             .lock()
@@ -3512,7 +3527,7 @@ fn relay(
         // Intake runs alongside source reads. Only work already captured
         // when the read began may use the presence it observed.
         let before_read = open_messages(&state, &c)?;
-        let observed = answers(home, admitted, &state, source, connectors, receipts, &c)?;
+        let observed = answers(admitted, &state, source, connectors, receipts, &c)?;
         if let Err(error) = require_source(&c, source.identity()) {
             if !open_messages(&state, &c)?.is_empty() {
                 adopt_replacement(home, &state, adapter, source, &mut c)?;
@@ -3710,6 +3725,14 @@ fn relay(
                 continue;
             }
             CheckedDelivery::DispatchFailed => continue,
+            CheckedDelivery::Misplaced => {
+                // Between check and send the thread went idle in another
+                // project: its owner rolls it over.
+                if !open_messages(&state, &c)?.is_empty() {
+                    workers.succeed(home, adapter, c.clone());
+                }
+                continue;
+            }
             _ => None,
         };
         if let Some(session) = &c.session {
@@ -3795,6 +3818,35 @@ fn relay(
                     continue;
                 }
                 Ok(_) => continue,
+                // An idle thread in another project is rolled over by the
+                // conversation's succession.
+                Err(error)
+                    if matches!(*error, SessionsError::ThreadMisplaced { idle: true, .. }) =>
+                {
+                    if !open.is_empty() {
+                        workers.succeed(home, adapter, c.clone());
+                    }
+                    continue;
+                }
+                // A busy one keeps the message pending with its operator
+                // cause; it rolls over once its turn ends. The member hears
+                // nothing beyond what any busy turn produces.
+                Err(error)
+                    if matches!(*error, SessionsError::ThreadMisplaced { idle: false, .. }) =>
+                {
+                    let cause = adapter
+                        .diagnostic("conversation delivery", &error)
+                        .to_string();
+                    tracing::warn!(target: LOG_TARGET, event = "conversation_delivery_failed", company = %c.company, connector = %c.connector, key = %c.semantic_key, error = %cause);
+                    set_message_failure(
+                        &state,
+                        &c,
+                        &next.conversation,
+                        &next.message,
+                        Some(&cause),
+                    )?;
+                    continue;
+                }
                 Err(error) => {
                     if send_reconciliation_due(next, clock()) {
                         let cause = adapter
@@ -3835,7 +3887,15 @@ fn relay(
                     && before_read(m)
             });
             if let Some(candidate) = unconfirmed {
-                workers.check(adapter, &c, session, candidate, next, observed);
+                workers.check(
+                    adapter,
+                    &c,
+                    session,
+                    candidate,
+                    next,
+                    observed,
+                    home.company_dir(&c.company),
+                );
                 continue;
             }
             let next_id = next.map(|m| (m.conversation.as_str(), m.message.as_str()));
@@ -3844,7 +3904,15 @@ fn relay(
                 .map(|(conv, msg)| (conv.as_str(), msg.as_str()));
             if next_id != checked_id || checked_head.is_none() {
                 if let Some(candidate) = next {
-                    workers.check(adapter, &c, session, candidate, next, observed);
+                    workers.check(
+                        adapter,
+                        &c,
+                        session,
+                        candidate,
+                        next,
+                        observed,
+                        home.company_dir(&c.company),
+                    );
                 }
                 continue;
             }
@@ -4014,7 +4082,6 @@ fn observe(
 /// interval of the turns handed over; a turn read as ended whose answer is
 /// not posted opens its message's, and a posted answer closes it.
 fn answers(
-    home: &Home,
     admitted: &Admitted,
     state: &RunnerState,
     source: &dyn ConversationSource,
@@ -4033,7 +4100,6 @@ fn answers(
         .map_err(ConversationError::from)
         .and_then(|connector| {
             harvest(
-                home,
                 state,
                 source,
                 c,
@@ -4345,8 +4411,13 @@ pub fn conversation_assignment(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,semantic_key,NULL,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0",
-            [caller.to_string()],
+            // In this order: the conversation's own session, a generation the
+            // runner recorded, and the binding it writes with the fixed native
+            // thread before the start, so a conversation session is
+            // recognised from its first command. A session that is already
+            // recorded is answered by its record, never by a binding alone.
+            "SELECT company,semantic_key,checkout,role FROM (SELECT 0 AS rank,company,semantic_key,NULL AS checkout,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT 1,c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT 2,c.company,c.semantic_key,b.checkout,c.role FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?2 AND b.session=?1) ORDER BY rank LIMIT 1",
+            instrukt_core::state_db::rusqlite::params![caller.to_string(), caller.runtime.as_str()],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -4450,67 +4521,6 @@ pub fn conversation_binding(
     }))
 }
 
-/// Minimum trimmed length for a secret value to be scrubbed from outbound
-/// text, preventing short configuration values (such as `"1"`, `"true"`, or a
-/// port) from corrupting ordinary prose or leaking secret names.
-const MIN_SCRUB_SECRET_LEN: usize = 8;
-
-/// Build a credential scrubber covering every readable secret of `company`
-/// and the machine, plus stored MCP logins and OAuth client secrets visible
-/// to `company` (at least [`MIN_SCRUB_SECRET_LEN`] characters long), sorted
-/// longest-value-first.
-pub fn company_scrub(home: &Home, company: &ProjectSlug) -> instrukt_runner::mcp::Scrub {
-    let mut items: Vec<instrukt_runner::mcp::Login> = Vec::new();
-    let mut push = |value: String, label: String| {
-        if value.trim().len() >= MIN_SCRUB_SECRET_LEN {
-            items.push(instrukt_runner::mcp::Login { value, label });
-        }
-    };
-    for (name, value) in readable_secret_values(home, &SecretSource::Company(company.clone())) {
-        push(value, format!("[redacted secret:{name}]"));
-    }
-    for (name, value) in readable_secret_values(home, &SecretSource::Machine) {
-        push(value, format!("[redacted secret:{name}]"));
-    }
-    if let Ok(Some(db)) = instrukt_core::state_db::StateRead::open(home) {
-        if let Ok(mut stmt) = db
-            .conn()
-            .prepare("SELECT server, access_token, refresh_token FROM mcp_logins WHERE company=?1")
-            && let Ok(rows) = stmt.query_map([company.as_str()], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                ))
-            })
-        {
-            for (server, access_token, refresh_token) in rows.flatten() {
-                push(access_token, format!("[redacted mcp-login:{server}]"));
-                if let Some(refresh) = refresh_token {
-                    push(refresh, format!("[redacted mcp-login:{server}]"));
-                }
-            }
-        }
-        if let Ok(mut stmt) = db.conn().prepare(
-            "SELECT coalesce(server, host_client, 'client'), client_secret FROM mcp_registrations WHERE client_secret IS NOT NULL AND (company=?1 OR company IS NULL)",
-        ) && let Ok(rows) = stmt.query_map([company.as_str()], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-        }) {
-            for (name, secret) in rows.flatten() {
-                push(secret, format!("[redacted mcp-client:{name}]"));
-            }
-        }
-    }
-    items.sort_by(|a, b| {
-        b.value
-            .len()
-            .cmp(&a.value.len())
-            .then_with(|| a.value.cmp(&b.value))
-    });
-    items.dedup_by(|a, b| a.value == b.value);
-    instrukt_runner::mcp::Scrub::new(items)
-}
-
 /// Summary of an explicit reply queued into `conversation_answers`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedReply {
@@ -4522,20 +4532,19 @@ pub struct QueuedReply {
 }
 
 /// Queue an explicit reply from an active company conversation session into
-/// the durable `conversation_answers` outbox, scrubbing credentials before
-/// persisting and splitting to the connector's declared message character limit.
+/// the durable `conversation_answers` outbox, exactly as the agent wrote it,
+/// split to the connector's declared message character limit.
 pub fn queue_reply(
     home: &Home,
     caller: &SessionRef,
     requested_conversation: Option<&str>,
     text: &str,
-) -> Result<(QueuedReply, instrukt_runner::mcp::Scrub), ConversationError> {
+) -> Result<QueuedReply, ConversationError> {
     let Some(binding) = conversation_binding(home, caller).map_err(StateError::from)? else {
         return Err(ConversationError::Refused(
             "this session is not bound to an active company conversation".into(),
         ));
     };
-    let scrub = company_scrub(home, &binding.company);
     if text.trim().is_empty() {
         return Err(ConversationError::Refused(
             "reply text must not be empty".into(),
@@ -4609,8 +4618,7 @@ pub fn queue_reply(
         ))
     })?;
     let message_chars = declaration.message_chars;
-    let scrubbed = scrub.text(text);
-    let parts = split(&scrubbed, message_chars);
+    let parts = split(text, message_chars);
     if parts.is_empty() {
         return Err(ConversationError::Refused(
             "reply text must not be empty".into(),
@@ -4644,16 +4652,13 @@ pub fn queue_reply(
         }
         Ok(())
     })?;
-    Ok((
-        QueuedReply {
-            company: binding.company.to_string(),
-            connector: binding.connector,
-            conversation: target,
-            turn,
-            pieces: parts.len(),
-        },
-        scrub,
-    ))
+    Ok(QueuedReply {
+        company: binding.company.to_string(),
+        connector: binding.connector,
+        conversation: target,
+        turn,
+        pieces: parts.len(),
+    })
 }
 
 /// The speaker of `session`'s current turn: the sender recorded with the
@@ -4661,7 +4666,10 @@ pub fn queue_reply(
 /// turn is correlated with its stored delivery by the delivery's boundary
 /// token, which the member envelope of the turn's opening input carries. A
 /// session bound to no conversation, and a turn whose opening input carries
-/// no member envelope, have no speaker. Any other uncertainty refuses.
+/// no member envelope, have no speaker. A conversation's session the runner
+/// has bound but not yet recorded as the conversation's is refused as
+/// unbound: it is never a session nobody is asking in. Any other
+/// uncertainty refuses.
 pub fn speaker(
     home: &Home,
     session: &SessionRef,
@@ -4687,7 +4695,22 @@ pub fn speaker(
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
     let Some((company, connector, conversation, session_scope)) = conversation else {
-        return Ok(None);
+        let bound = db
+            .conn()
+            .query_row(
+                "SELECT c.company FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?1 AND b.session=?2 LIMIT 1",
+                instrukt_core::state_db::rusqlite::params![
+                    session.runtime.as_str(),
+                    session.to_string()
+                ],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
+        return match bound {
+            Some(company) => Err(instrukt_runner::mcp::McpError::Unbound { company }),
+            None => Ok(None),
+        };
     };
     let opening = adapter
         .active_turn_input(session)
@@ -4894,224 +4917,4 @@ impl instrukt_runner::interfaces::CompanySupervision for crate::connector_host::
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        Agents, COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage,
-        effective_since, opening_procedure, opening_procedure_for_role, split,
-    };
-    use instrukt_core::config::SHIPPED_AGENTS;
-
-    #[test]
-    fn a_messages_interval_is_its_own_or_the_relays_failure_from_its_admission() {
-        let at = |text: &str| Some(text.parse::<jiff::Timestamp>().unwrap());
-        // Nothing open: no interval.
-        assert_eq!(
-            effective_since(None, at("2026-11-19T10:00:00Z"), None),
-            None
-        );
-        // Its own interval alone.
-        assert_eq!(
-            effective_since(at("2026-11-19T10:05:00Z"), at("2026-11-19T10:00:00Z"), None),
-            at("2026-11-19T10:05:00Z")
-        );
-        // A relay failure that began before the message was admitted counts
-        // from its admission.
-        assert_eq!(
-            effective_since(None, at("2026-11-19T10:00:00Z"), at("2026-11-19T09:00:00Z")),
-            at("2026-11-19T10:00:00Z")
-        );
-        // One that began after it counts from its start.
-        assert_eq!(
-            effective_since(None, at("2026-11-19T10:00:00Z"), at("2026-11-19T10:02:00Z")),
-            at("2026-11-19T10:02:00Z")
-        );
-        // Both open: the earlier one.
-        assert_eq!(
-            effective_since(
-                at("2026-11-19T10:01:00Z"),
-                at("2026-11-19T10:00:00Z"),
-                at("2026-11-19T10:02:00Z")
-            ),
-            at("2026-11-19T10:01:00Z")
-        );
-        // A message admitted before its admission was recorded counts from
-        // the relay failure's start.
-        assert_eq!(
-            effective_since(None, None, at("2026-11-19T09:00:00Z")),
-            at("2026-11-19T09:00:00Z")
-        );
-    }
-
-    /// An index holding the procedure declaring the conversation role,
-    /// pending its delivering todo when `pending`.
-    fn declared(pending: bool) -> instrukt_core::index::GlobalIndex {
-        let delivered_by = if pending {
-            "  delivered_by: [draft-it]\n"
-        } else {
-            ""
-        };
-        serde_yaml_ng::from_str(&format!(
-                "schema_version: 2\nsnippets:\n- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n{delivered_by}"
-            ),
-        )
-        .unwrap()
-    }
-
-    #[test]
-    fn a_conversation_starts_only_from_a_delivered_procedure_declaring_its_role() {
-        let delivered = declared(false);
-        let found = opening_procedure(
-            COMPANY_AGENT_ROLE,
-            delivered
-                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
-                .into_iter()
-                .next(),
-        );
-        assert_eq!(found.unwrap(), &delivered.snippets[0]);
-        let pending = declared(true);
-        let refused = opening_procedure(
-            COMPANY_AGENT_ROLE,
-            pending
-                .procedures_declaring(&RoleName::parse(COMPANY_AGENT_ROLE).unwrap())
-                .into_iter()
-                .next(),
-        );
-        assert!(
-            matches!(
-                refused,
-                Err(ConversationError::NoProcedure { ref role }) if role == "company-agent"
-            ),
-            "{refused:?}"
-        );
-        assert!(matches!(
-            opening_procedure(COMPANY_AGENT_ROLE, None),
-            Err(ConversationError::NoProcedure { ref role }) if role == "company-agent"
-        ));
-    }
-
-    #[test]
-    fn a_technical_coordinator_connector_opens_from_its_own_procedure_not_company_assistance() {
-        let project = instrukt_core::ids::ProjectSlug::parse("instrukt").unwrap();
-        let corpus = instrukt_core::docs::Corpus::from_sources(
-            Some(project.clone()),
-            None,
-            [
-                instrukt_core::docs::SourceFile {
-                    path: "docs/general/procedure/company-assistance.md".to_owned(),
-                    text: include_str!("../../../docs/general/procedure/company-assistance.md")
-                        .to_owned(),
-                },
-                instrukt_core::docs::SourceFile {
-                    path: "docs/general/procedure/technical-coordinator.md".to_owned(),
-                    text: include_str!("../../../docs/general/procedure/technical-coordinator.md")
-                        .to_owned(),
-                },
-            ],
-        );
-        let snippets = corpus
-            .snippets()
-            .iter()
-            .map(|snippet| {
-                let current = snippet.current();
-                let front = current.frontmatter();
-                instrukt_core::index::IndexEntry {
-                    id: snippet.id().clone(),
-                    description: front.description.clone().unwrap_or_default(),
-                    taxonomy: snippet.taxonomy().dir().to_owned(),
-                    scope: instrukt_core::index::IndexScope::Global,
-                    domain: snippet.domain().to_string(),
-                    path: current.path().to_path_buf(),
-                    source_project: project.clone(),
-                    visibility: None,
-                    delivered_by: Vec::new(),
-                    superseded_by: Vec::new(),
-                    activation_trigger: front.entry.activation_trigger.clone(),
-                    role: front.entry.role.clone(),
-                    subscriptions: Vec::new(),
-                    subscription_home: None,
-                    subscription_identity: Default::default(),
-                    subscription_attendance: Default::default(),
-                    required_reads: Vec::new(),
-                    parameters: Vec::new(),
-                    interruptible: false,
-                }
-            })
-            .collect();
-        let index = instrukt_core::index::GlobalIndex {
-            schema_version: 2,
-            snippets,
-            third_party: Vec::new(),
-        };
-        let agents = Agents::parse(SHIPPED_AGENTS).unwrap();
-        let opened = opening_procedure_for_role(
-            &index,
-            &RoleName::parse("technical-coordinator").unwrap(),
-            &agents,
-        )
-        .unwrap();
-        let expected =
-            instrukt_core::ids::SnippetId::parse("general/procedure/technical-coordinator")
-                .unwrap();
-        assert_eq!(opened.id, expected);
-    }
-
-    /// The character count of each part, and whether the parts together
-    /// are the text unchanged.
-    fn cut(text: &str, limit: usize) -> (Vec<usize>, bool) {
-        let parts = split(text, limit);
-        let counts = parts.iter().map(|part| part.chars().count()).collect();
-        (counts, parts.concat() == text)
-    }
-
-    #[test]
-    fn a_part_ends_after_the_last_line_break_in_its_second_half() {
-        // Line breaks at characters 23 and 29 both lie in the second half.
-        let text = format!("{}\n{}\n{}", "a".repeat(22), "b".repeat(5), "c".repeat(30));
-        assert_eq!(cut(&text, 40), (vec![29, 30], true));
-    }
-
-    #[test]
-    fn a_line_break_in_the_first_half_does_not_end_a_part() {
-        let text = format!("{}\n{}", "a".repeat(10), "b".repeat(50));
-        assert_eq!(cut(&text, 40), (vec![40, 21], true));
-    }
-
-    #[test]
-    fn the_remainder_is_the_last_part_and_no_empty_part_follows() {
-        assert_eq!(cut(&"a".repeat(41), 40), (vec![40, 1], true));
-        assert_eq!(cut(&"a".repeat(80), 40), (vec![40, 40], true));
-        assert_eq!(
-            cut(&format!("{}\n  ", "a".repeat(39)), 40),
-            (vec![40, 2], true)
-        );
-        assert_eq!(cut(&"a".repeat(5), 40), (vec![5], true));
-        assert_eq!(cut("", 40), (vec![], true));
-    }
-
-    #[test]
-    fn the_limit_counts_characters_not_bytes() {
-        assert_eq!(cut(&"é".repeat(41), 40), (vec![40, 1], true));
-    }
-
-    #[test]
-    fn stored_states_read_back_as_their_variants() {
-        for state in [
-            ConnectionState::Connecting,
-            ConnectionState::Connected,
-            ConnectionState::Failed,
-            ConnectionState::Stopped,
-        ] {
-            assert_eq!(ConnectionState::parse(state.as_str()), Some(state));
-        }
-        for stage in [
-            Stage::Received,
-            Stage::Refused,
-            Stage::Pending,
-            Stage::Sent,
-            Stage::Failed,
-            Stage::Answered,
-        ] {
-            assert_eq!(Stage::parse(stage.as_str()), Some(stage));
-        }
-    }
-}
+mod tests;

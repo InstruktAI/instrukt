@@ -20,6 +20,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 
 ### Bounded contexts
 
+
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -28,11 +29,12 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
-| work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+
 
 ### Modules
 
@@ -113,6 +115,25 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts; the runner decides the conditions and appends their events |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an attention episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+
+
+A requested review (`project/instrukt/spec/feature/runner/requested-review`)
+adds one crossing and is no part of the review gate: it emits no event and the
+runner holds no review request for it.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+
+
 Worktree reclamation adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/worktree-reclamation`.
 
@@ -121,6 +142,26 @@ Worktree reclamation adds these crossings; its contract is
 | configuration → runner | Customer / Supplier | The project's admitted declaration of regenerable output |
 | workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
 | work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
+
+Adding a company adds these crossings; its contract is
+`project/instrukt/spec/feature/configuration/company-homes` (Generation), and
+repository's company home adoption carries it out.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work GitHub boundary → configuration | Customer / Supplier | Whether a login names an organisation, a personal account or nothing, through an interface configuration declares and the CLI wires |
+| work GitHub boundary → repository | Customer / Supplier | Creating the company's private repository in the owning organisation, making its GitHub administrator an administrator and setting its default branch, through an interface core declares and the CLI wires |
+| configuration → repository | Customer / Supplier | The generation decision for a company's key, the skeleton's project layer and ignore lines, and the operation that writes the home's settings document |
+| publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
+| publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
+
+Thread retention adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
+| work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
 
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
@@ -131,8 +172,9 @@ hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
 External models are translated through **Anti-corruption layer (ACL)**
-relationships: work's GitHub reflection boundary translates issues, artifacts
-and stamps; blueprint's engine adapter translates the engine graph into its
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into

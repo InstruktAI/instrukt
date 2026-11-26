@@ -103,19 +103,20 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 - **Continue (`attempt` → `bind` → configured child-messaging instruction):**
   Record `instrukt todo bind` for the new attempt against `prior_session` and
   the recorded shared placement **before** sending the new brief through the
-  configured child-messaging instruction. Continuation applies only when
-  `prior_session` is present, reachable on the same runtime, matches the
-  resolved selection, and can be continued by the current orchestrator with
-  native result delivery back to this orchestrator (not bound to a former claim
-  holder), and the round is one of:
+  configured child-messaging instruction. A round is continued, never started
+  fresh, whenever `prior_session` is present, reachable on the same runtime,
+  matches the resolved selection, and can be continued by the current
+  orchestrator with native result delivery back to this orchestrator (not bound
+  to a former claim holder), and the round is one of
+  (`general/principle/session-lifecycle`):
   - A follow-up round of a producer (`intaker`, `architect`, `planner`,
     `builder`, `fixer`, `deferrer`, `finalizer`).
   - A finding-closure re-check of a reviewer (`prd-reviewer`,
-    `architecture-reviewer`, `plan-reviewer`, `build-reviewer`) when the
-    configured runtime permits continuing a reviewer session, **all** target
-    changes address only that reviewer's findings (no unrelated changes,
-    substantive scope rewrite, or design rewrite), and the review loop is not
-    deadlocked.
+    `architecture-reviewer`, `plan-reviewer`, `build-reviewer`) where **all**
+    target changes address only that reviewer's findings (no unrelated changes,
+    substantive scope rewrite, or design rewrite) and the review loop is not
+    deadlocked. Its brief carries the re-review coordinates named under
+    Dispatch Rules.
 - **Start fresh (`attempt` → configured delegation instruction → `bind`):**
   Every other admitted new round starts fresh — delegate through the configured
   delegation instruction and immediately record `instrukt todo bind` with the
@@ -123,8 +124,8 @@ workflow policy; the record supplies facts rather than a stored phase machine.
   attempt 1, roles outside the continuation lists above (such as `diagnoser` or
   `drift-analyzer`), a confirmed unusable or former-orchestrator `prior_session`
   (chosen before binding), a changed selection, any reviewer target change that
-  includes unrelated edits or a substantive scope or design rewrite, a
-  deadlocked review loop, or a runtime requiring fresh delegation for that role.
+  includes unrelated edits or a substantive scope or design rewrite, and a
+  deadlocked review loop.
 - **Mid-attempt recovery:** While an attempt is still active (such as a missing
   stamp or bounded recovery on a stopped turn), continue directly on that active
   attempt through the configured child-messaging instruction without reserving a
@@ -132,10 +133,12 @@ workflow policy; the record supplies facts rather than a stored phase machine.
 
 ### Terminal Child Cleanup
 
-At handoff, execute `instrukt todo update <slug> --unclaim` and confirm its
-outcome. The next owner waits on claim release, not on the end of this
-session. An unfinished human conversation retains the session, never the
-claim. A refused release remains unresolved.
+At handoff, clear your scheduled reply check
+(`general/procedure/ai-to-ai-operations`), then execute
+`instrukt todo update <slug> --unclaim` and confirm its outcome. The next
+owner waits on claim release, not on the end of this session. An unfinished
+human conversation retains the session, never the claim. A refused release
+remains unresolved.
 
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
@@ -186,7 +189,8 @@ retains its unresolved attempt. For a child ending without required evidence, re
 reported closing message and current record, then send the bounded recovery
 to its retained session when it can continue. Preserve an unavailable attempt
 and route its grounded failure under the recovery contract. The runtime delivers
-child endings to this parent; this parent owns the recovery decision.
+child endings to this parent, and its scheduled reply check finds an ending
+that never arrives; this parent owns the recovery decision.
 
 ### When Attention Arrives
 
@@ -199,8 +203,9 @@ child endings to this parent; this parent owns the recovery decision.
    from current evidence. An unchanged conversation does not dismiss a failure.
 3. For an obstruction, use When Worker Needs Help. For apparent completion,
    verify the required report and stamp before re-deriving the next action.
-4. Yield while valid work continues. Native results restore parent attention;
-   this procedure adds no timer or terminal polling loop.
+4. Yield while valid work continues. Native results and the scheduled reply
+   check of `general/procedure/ai-to-ai-operations` restore parent attention;
+   this procedure adds no terminal polling loop.
 5. Send substantive next work or recovery, never acknowledgement-only guidance.
 
 ### When Worker Needs Help
@@ -215,7 +220,19 @@ child endings to this parent; this parent owns the recovery decision.
    question and apply the existing mandate. A recorded approval or request-changes
    decision reaches the live claim-holding orchestrator as direct attention;
    re-derive the obligation from the updated record.
-4. An unattended failure is an anomaly. The runner decides notification;
+4. Raise what no session of this todo can settle, instead of waiting on it or
+   asking it in a thread no person reads: a worker's question this
+   orchestrator cannot answer, work of another live todo that converges,
+   overlaps or conflicts with this one, a solution existing outside the
+   project that already provides what this todo builds, or a decision owned by
+   a person who is not reached in this todo's threads, its approval gates
+   aside. Run
+   `instrukt events raise <todo>... --obligation <text>` for the active todos
+   it concerns, naming the obligation at stake and no conversation content.
+   The project's coordinator returns it to the work's origin
+   (`general/principle/origin-routing`); keep working what the condition does
+   not touch, and follow the coordinator's pause when one arrives.
+5. An unattended failure is an anomaly. The runner decides notification;
    only a reference to the anomaly session or dispatch hold may be delivered.
 
 ### Agent Degradation Handling (Orchestrator-Owned)
@@ -228,7 +245,9 @@ session. Preserve the recorded session and any work already produced.
 Inspect through configured runtime status/conversation reads and work records.
 Recover an executing worker within its brief through native child messaging. Availability selection belongs
 to the runtime checks and ordered dispatch contract; it supplies no manual
-provider-status mutation, restart or quota timer. Distinguish a start failure
+provider-status mutation, restart or quota timer. A scheduled reply check
+observes and routes what it finds through this section; elapsed time alone
+retries nothing. Distinguish a start failure
 from a failed observation and from execution that began and remains incomplete.
 When evidence establishes rejection before any session was created, retry
 through the native runtime's supported availability selection. An ambiguous start

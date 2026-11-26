@@ -7,7 +7,8 @@
 //! `docs/general/`, each `docs/domain/<x>/` and `docs/project/`. Each is claimed
 //! in the ownership record in the selected home's publication state.
 //!
-//! Two operations. [`render_repository`] renders a repository's committed
+//! Three operations. [`inspect_units`] reports the state of a repository's
+//! compressed units from its working tree alone. [`render_repository`] renders a repository's committed
 //! entrypoints from one view of it and nothing from the computer, as a
 //! [`RenderPlan`] its caller applies ([`write_rendering`] for the working
 //! tree). [`sync`]: publish the project the caller stands in from
@@ -30,6 +31,8 @@ mod _source;
 mod _sync;
 mod _tree;
 mod _tx;
+mod _units;
+pub(crate) use _units::published_digest;
 
 use std::path::{Path, PathBuf};
 
@@ -57,6 +60,7 @@ pub use _sync::{
     EnsuredLink, GlobalDestination, LinkState, Refusal, SyncError, SyncFinding, SyncOutcome,
     SyncReport, SyncRequest, sync,
 };
+pub use _units::{UnitFinding, UnitFindingKind, UnitWork, UnitsOutcome, UnitsReport};
 
 use crate::config::ConfigError;
 use crate::docs::DocsError;
@@ -108,6 +112,22 @@ pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, Publica
     _render::render_tree(&tree, override_beside_root)
 }
 
+/// The inspection of the units of the repository whose working tree has
+/// its root at `root` (`project/instrukt/spec/feature/publication/compressed-units`,
+/// Inspecting units): each source whose unit is stale or missing, each
+/// orphaned unit and each finding. With `target`, each source is read with
+/// that todo's pending documentation in the checkout applied. Reads the
+/// working tree alone — no home, configuration or network — and writes
+/// nothing.
+pub fn inspect_units(
+    root: &Path,
+    target: Option<&crate::ids::TodoSlug>,
+) -> Result<UnitsReport, PublicationError> {
+    let view = _source::Committed::working_tree(root)?;
+    let lens = target.map_or(crate::docs::Lens::Current, crate::docs::Lens::Target);
+    _units::inspect(&view, lens)
+}
+
 /// Whether `rel`, a path relative to the root of the working tree at `root`,
 /// is that repository's company index, which rendering reads and the
 /// documentation's validation leaves alone
@@ -116,16 +136,26 @@ pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, Publica
 /// rendering decides by, with the root `instrukt.yaml` read as a view of the
 /// tree reads it.
 pub fn is_company_index(root: &Path, rel: &str) -> Result<bool, PublicationStateError> {
-    if rel != _company::COMPANY_INDEX {
-        return Ok(false);
-    }
+    Ok(rel == _company::COMPANY_INDEX && is_company_repository(root)?)
+}
+
+/// Whether the working tree whose root is `root` is a company's repository:
+/// its root `instrukt.yaml` and its `docs/index.yaml` decide it by the rule
+/// rendering decides by — a project layer declaring `company_repository`, a
+/// company's settings document, or no root document beside a
+/// `docs/index.yaml`. A company's documents are its knowledge, never
+/// snippets: docs validation, sync and `init` read none of them as such
+/// (`project/instrukt/spec/domain/publication`).
+pub fn is_company_repository(root: &Path) -> Result<bool, PublicationStateError> {
     let read = |path: &Path| {
         let path = path.to_path_buf();
         move |source| PublicationStateError::Read { path, source }
     };
     let document = _source::root_document_on_disk(root)
         .map_err(read(&root.join(crate::config::CONFIG_FILE_NAME)))?;
-    let absent = _source::entry_index_absent_on_disk(root, rel).map_err(read(&root.join(rel)))?;
+    let index = _company::COMPANY_INDEX;
+    let absent =
+        _source::entry_index_absent_on_disk(root, index).map_err(read(&root.join(index)))?;
     Ok(_render::company_home(
         &crate::config::classify_root(document.as_deref()),
         absent,
@@ -192,14 +222,17 @@ pub fn validate_plugin(
 }
 
 /// The view of the working tree whose root is `root` that the plugin of
-/// `key` is rendered from: the plugin's folder and the catalog included.
+/// `key` is rendered from: the skill's folder, the catalog and the manifest
+/// an earlier rendering left, whose version a versionless entry carries
+/// forward.
 fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, PublicationError> {
     let folder = _plugin::folder(key);
+    let earlier = _plugin::earlier_manifest(key);
     _source::Committed::working_tree_places(
         root,
         _source::Places {
             folder: &folder,
-            file: _plugin::CATALOG,
+            files: &[_plugin::CATALOG, &earlier],
         },
     )
 }
@@ -208,7 +241,8 @@ fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, Pub
 /// while it holds a finding. Each removal comes first, with each folder it
 /// leaves empty inside the plugin's folder, so a new file never meets an
 /// old file or an emptied folder on its way. Then each write follows, one file at a
-/// time: the plugin's other files, then its manifest, then the catalog.
+/// time: the skill's files, then the catalog, whose entry is the plugin's
+/// manifest.
 /// Each write is atomic and nothing passes through a symbolic link. A
 /// rendering cut short leaves exactly the removals and writes made before
 /// the cut; the next rendering compares against what the folder then
@@ -318,6 +352,10 @@ pub enum PublicationError {
     /// format does not support.
     #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     CommittedDirectives { findings: Vec<crate::docs::Finding> },
+    /// The unit of a source a committed rendering holds in full has
+    /// findings, which are the rendering's.
+    #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    UnitFindings { findings: Vec<UnitFinding> },
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,
@@ -512,7 +550,7 @@ mod tests {
         let root = dir.path();
         let key = ProjectSlug::parse("acme").unwrap();
         let name = CompanyName::parse("Acme").unwrap();
-        let references = root.join("plugins/acme/skills/acme/references");
+        let references = root.join("skills/acme/references");
         write(
             root,
             ".claude-plugin/marketplace.json",

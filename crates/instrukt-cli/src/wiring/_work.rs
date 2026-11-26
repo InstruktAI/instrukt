@@ -57,7 +57,9 @@ pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
         firings: work.clone(),
         holds: work.clone(),
         retention: work.clone(),
-        reclamation: work,
+        reclamation: work.clone(),
+        fleet: work.clone(),
+        open_sessions: work,
     }))
 }
 
@@ -71,6 +73,14 @@ pub(super) fn review(
         ctx.github.clone(),
         evidence(ctx)?,
     )))
+}
+
+/// Work's answers a requested review is admitted on: a head's verdict
+/// standing, its pinned base and the history retention cutoff.
+pub(super) fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::HeadVerdicts> {
+    Arc::new(instrukt_todos::work::review::HeadVerdictWork::new(
+        ctx.home.clone(),
+    ))
 }
 
 /// Work's evidence read contract for workflow, wired as the ports are: the

@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-core/src/publication/_plugin.rs
+expression: "files[CARRIED]"
+---
+# Company
+
+We make things. Roles: [roles](roles.md).

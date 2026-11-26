@@ -66,6 +66,27 @@ fn focused_help_and_execution_use_the_recorded_binding() {
     assert_eq!(first_turn, (help.clone(), refusal.clone()));
     insta::assert_snapshot!("focused-role-help", help);
     insta::assert_snapshot!("focused-role-refusal", refusal);
+    // Adding a company is a machine-wide repository write outside the
+    // reviewer's grants: it is refused before anything is created.
+    let company = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "focused")
+        .args([
+            "init",
+            "--company",
+            "acme",
+            "--name",
+            "Acme",
+            "--admin",
+            "acme-admin",
+        ])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "focused-role-company-refusal",
+        String::from_utf8_lossy(&company.get_output().stderr)
+    );
+    assert!(!env.instrukt_home().join("companies/acme").exists());
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
@@ -135,6 +156,65 @@ fn a_bound_reviewer_can_write_its_own_evidence_but_cannot_choose_another_assignm
         "other-todo-refused",
         String::from_utf8_lossy(&refused.get_output().stderr)
     );
+    // The shipped `verifier`, with no local agents entry, is a focused
+    // reviewer: its own evidence and stamp, never a commit or a docs write.
+    let crew = workflow::Crew::new();
+    crew.project
+        .create("verified", "change", "Verify parser depth.");
+    let verifier = crew.worker("verified", "verifier", Some("crew/procedure/verify"));
+    let verifier_session = verifier["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap()
+        .to_owned();
+    let verifier_workspace = std::path::PathBuf::from(verifier["worktree"].as_str().unwrap());
+    let run = |args: &[&str]| {
+        crew.project
+            .env
+            .instrukt(&verifier_workspace)
+            .env("T3CODE_THREAD_ID", &verifier_session)
+            .args(args)
+            .assert()
+    };
+    run(&[
+        "todo",
+        "artifacts",
+        "write",
+        "verified",
+        "verification-findings",
+        "Tier 0: no live surface changed.",
+    ])
+    .success();
+    run(&["todo", "stamp", "verified", "--verification", "tier_0_skip"]).success();
+    let head = crew
+        .project
+        .env
+        .git(&verifier_workspace, ["rev-parse", "HEAD"]);
+    std::fs::write(
+        verifier_workspace.join("probe.txt"),
+        "not the verifier's to commit",
+    )
+    .unwrap();
+    crew.project
+        .env
+        .git(&verifier_workspace, ["add", "probe.txt"]);
+    let commit = run(&["repo", "commit", "-m", "chore: verifier commit"]).failure();
+    let render = run(&["docs", "render"]).failure();
+    assert_eq!(
+        crew.project
+            .env
+            .git(&verifier_workspace, ["rev-parse", "HEAD"]),
+        head
+    );
+    insta::assert_snapshot!(
+        "verifier-commit-refusal",
+        String::from_utf8_lossy(&commit.get_output().stderr)
+    );
+    insta::assert_snapshot!(
+        "verifier-docs-write-refusal",
+        String::from_utf8_lossy(&render.get_output().stderr)
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1
@@ -160,6 +240,7 @@ fn a_retained_baseline_worker_keeps_command_access_with_explicitly_unknown_dispa
     db.execute_batch("ALTER TABLE poll_deferrals DROP COLUMN cause;")
         .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
     let caller = worker["session"]

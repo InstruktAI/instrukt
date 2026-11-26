@@ -16,22 +16,29 @@
 #   graphify  the pinned Graphify contract
 #   t3        the pinned T3 contract
 #   python    the Python lint and type check among the commit checks
-#   validate  the Linux build job builds instrukt and validates (rust or docs):
+#   validate  the Linux build job builds instrukt and validates (rust, docs,
+#             or a file the size and suppression ratchet reads, whose commit
+#             check runs in that job):
 #             with validate true and rust false it validates and no test runs;
 #             with both false neither the Linux build job, the archive job
 #             nor the shard job starts, while the required platform jobs
 #             still start and report
 # and precommit_skip, the commit checks (.pre-commit-config.yaml hook ids) this
 # classification leaves out: the Rust ones unless rust, shellcheck unless
-# shell, the Python ones unless python; empty when every check runs. The
+# shell, the Python ones unless python, the ratchet unless a file it reads
+# changed; empty when every check runs. The
 # workflow applies it only when this job succeeded, and adds to it, always,
 # the hooks whose checks run in other steps and jobs (.github/workflows/ci.yml).
 set -eu
 
 shell=false rust=false docs=false deps=false graphify=false t3=false python=false
+# Not an output: whether the ratchet's commit check runs, which also starts
+# the Linux build job (validate).
+ratchet=false
 
 everything() {
     shell=true rust=true docs=true deps=true graphify=true t3=true python=true
+    ratchet=true
 }
 
 # Each rule names the checks that read the paths it matches; a path takes the
@@ -64,6 +71,12 @@ classify() {
     esac
     case $1 in
     .githooks/* | *.sh) known=true shell=true ;;
+    esac
+    case $1 in
+    # What the size and suppression ratchet reads. This rule alone names no
+    # path as known, except the baseline, which no other check reads.
+    *.rs | *.py | *.sh | scripts/* | .githooks/* | .pre-commit-config.yaml) ratchet=true ;;
+    ratchet-baseline.json) known=true ratchet=true ;;
     esac
     case $1 in
     Cargo.toml | Cargo.lock) known=true rust=true deps=true graphify=true t3=true ;;
@@ -115,13 +128,14 @@ classify() {
 
 emit() {
     validate=false
-    if [ "$rust" = true ] || [ "$docs" = true ]; then
+    if [ "$rust" = true ] || [ "$docs" = true ] || [ "$ratchet" = true ]; then
         validate=true
     fi
     skip=
     [ "$rust" = true ] || skip="$skip,cargo-fmt,cargo-clippy-and-unit-tests"
     [ "$shell" = true ] || skip="$skip,shellcheck"
     [ "$python" = true ] || skip="$skip,ruff-check,mypy"
+    [ "$ratchet" = true ] || skip="$skip,ratchet"
     printf '%s\n' "shell=$shell" "rust=$rust" "docs=$docs" "deps=$deps" \
         "graphify=$graphify" "t3=$t3" "python=$python" \
         "validate=$validate" "precommit_skip=${skip#,}"

@@ -41,6 +41,17 @@ It records observed human involvement and supplies no authorization.
 GitHub reflection is owned by
 `project/instrukt/spec/feature/work/github-record`.
 
+Creation places the todo by what it waits on, and its help and admission
+questions name the three placements apart:
+
+- `--after <slugs>` makes it wait for other todos and leaves it ready once they
+  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`).
+- `--hold --reason <text>` files converged work held for a condition outside
+  the project's todos, the hold committed with the todo
+  (`project/instrukt/spec/feature/work/dependencies-and-holds`).
+- `--icebox` parks work whose outcome has not converged, outside the
+  lifecycle (Parking, withdrawal and delivery, below).
+
 ### Kinds
 
 | Kind | Purpose | Completion evidence |
@@ -132,14 +143,11 @@ attempt bindings (runtime, id, key, attempt, branch, base, returned worktree
 path and release evidence), including released attempts. These bindings form the
 assignment child set exposed as `sessions.bound`; `claim.held` exposes whether
 the execution claim remains held. `instrukt todo list` reads only this
-computer's state database and fetches nothing: todos held elsewhere show as
-last known, labelled with where they run and how old the copy is.
-`instrukt todo show <slug>` refreshes that one todo first. When and what is
-read from GitHub is the interest-driven refresh contract in
+computer's state database and fetches nothing; it shows the todos this
+computer's record holds. `instrukt todo show <slug>` first applies what people
+did on that todo's issue since it was last read. When and what is read from
+GitHub is the contract in
 `project/instrukt/spec/feature/work/github-record`.
-
-`instrukt todo refresh <slug>` resolves a conflicted item: it takes the
-todo as GitHub holds it, and the agent re-applies its change.
 
 `instrukt todo update <slug>` changes supported metadata. A rename preserves
 durable identity and updates references. A kind change reroutes preparation
@@ -212,12 +220,13 @@ gap; resolve that assignment before admitting work.
 
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
 `planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
-`deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
+`verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
 outstanding workspace-role attempt at a time (`task-preparer` runs without a
 worktree on `kind: task`). Completion stamps release writing
-attempts atomically; review verdicts and deferral-processing stamps release their
-read-only attempts. Released bindings remain tracking and evaluation evidence.
-Native parent linkage and child attention remain runtime-owned.
+attempts atomically; review verdicts, verification dispositions and
+deferral-processing stamps release their read-only attempts. Released bindings
+remain tracking and evaluation evidence. Native parent linkage and child
+attention remain runtime-owned.
 
 ### Role completion and failed attempts
 
@@ -290,7 +299,7 @@ for audit and for identifying the todo's recorded orchestrator sessions
 (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
 Work releases a delivered todo's worktree and work branch when the runner
-asks, on each computer that holds any of them
+asks, on the computer whose work record holds the todo
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). The worktree
 goes first, through the release a withdrawal uses
 (`project/instrukt/spec/feature/work/state-database`): read and checked at
@@ -314,7 +323,7 @@ lock without waiting: a release asked for while another holds it does nothing,
 the cleanup stays owed, and the runner asks again on its next invocation. No
 command takes this lock.
 
-Prior slugs are retained with the immutable todo identity through reflection. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
+Prior slugs are retained with the immutable todo identity in the work record. Pending-document target reads use that history and the recorded workspace assignment, preserving original `<slug>/work` (and legacy prepare) branches and ownership across successive renames.
 
 ## Use cases
 

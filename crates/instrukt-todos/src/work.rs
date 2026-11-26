@@ -20,9 +20,11 @@ mod _apps;
 mod _assignment;
 mod _attempts;
 mod _board;
+mod _company_repos;
 mod _diff;
 mod _envelope;
 mod _error;
+mod _fleet;
 mod _github;
 mod _graph;
 pub(crate) mod _grounding;
@@ -30,6 +32,8 @@ mod _inbound;
 mod _model;
 mod _ops;
 pub(crate) mod _ports;
+mod _positions;
+mod _publication;
 mod _reclamation;
 mod _reflect;
 mod _session;
@@ -60,8 +64,8 @@ pub use _model::{
     TodoId, TodoRecord, TodoRef, Version,
 };
 pub use _ops::{
-    CreateRequest, LastKnown, ListEntry, Listing, Outcome, PrerequisiteView, RecordedWork,
-    Selection, TodoView, UpdateReport, UpdateRequest,
+    CreateRequest, ListEntry, Listing, Outcome, PrerequisiteView, RecordedWork, Selection,
+    TodoView, UpdateReport, UpdateRequest,
 };
 pub use _ports::WorkExistence;
 pub(crate) use _ports::waits_on_person;

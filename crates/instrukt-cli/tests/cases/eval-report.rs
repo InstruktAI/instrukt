@@ -21,7 +21,7 @@ use crate::fixtures::work as support;
 use crate::fixtures::workflow;
 use std::path::{Path, PathBuf};
 
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::PROJECT_SCHEMA_VERSION;
 use support::{Project, redact, stdout};
 
 /// The review policy the flows project publishes into the eval set.
@@ -50,7 +50,7 @@ struct Evaluated {
 /// under the `crew` flavor.
 fn tracked(slug: &str, repository: &str) -> String {
     format!(
-        "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: {slug}\nmodules:\n  todos: true\n\
+        "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: {slug}\nmodules:\n  todos: true\n\
          github:\n  repository: {repository}\nworkflow:\n  domain: crew\n"
     )
 }
@@ -290,32 +290,4 @@ fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
 
     insta::assert_snapshot!("checkout-gone-printed", printed);
     insta::assert_snapshot!("checkout-gone-report", page);
-}
-
-// spec: project/instrukt/spec/feature/work/eval-report UC-ER1
-#[test]
-fn evidence_another_computer_recorded_reaches_the_report() {
-    let mut eval = Evaluated::new();
-    let demo = eval.project.repo.path().to_path_buf();
-    eval.uses("claude-opus 4.1");
-    eval.at("2030-01-06T09:00:00Z");
-    eval.reviewed(&demo, "nested-lists", false);
-    // A second computer returns the work for repair.
-    let mut elsewhere = eval.project.other_computer();
-    elsewhere
-        .env
-        .set_env("INSTRUKT_NOW", "2030-01-07T09:00:00Z");
-    elsewhere.ok([
-        "stamp",
-        "nested-lists",
-        "--kickback",
-        "--reason",
-        "the scope grew past one change",
-    ]);
-    eval.at("2030-01-15T09:00:00Z");
-
-    let html = eval.project.env.path("elsewhere/report.html");
-    let (_, page) = eval.report(&["--out", html.to_str().unwrap()], &html);
-
-    insta::assert_snapshot!("evidence-from-elsewhere", page);
 }

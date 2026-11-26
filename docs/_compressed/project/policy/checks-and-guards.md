@@ -1,0 +1,15 @@
+---
+source_sha256: 03620da129758c127db7963ece315d8468303b7b5f53640b393728ededf1a7f0
+model: claude-opus-5-5
+---
+- MUST check a prerequisite (configuration, credential, published procedure, installed service) where it enters: when written, at install, when the runner starts or takes a change; NEVER handle a missing one while running -- what runs uses only what entry admitted.
+- gate = such an entry check refusing with its door; proof of ownership, a version gate on rebuildable state, or refusing instrukt's own files is no gate.
+- instrukt's own places = the files, service units, crontab line, private Redis config and marked hook sections it generates, each named with its home when that is not `~/.instrukt`.
+- MUST write own places whole on converge, consulting no record of earlier writes; NEVER remove anything because it is remembered as written -- a check on a place only instrukt writes protects nothing.
+- MUST make a part depending on an outside service (runtime, Slack, Redis, network, model provider) retry until it returns and report its state to the operator, except best-effort unavailable notices (`project/instrukt/spec/feature/company/conversations`) and dead-letter announcements (`project/instrukt/spec/feature/runner/event-consumers`); any other failure of a part is a code defect -- outages pass, defects do not.
+- MAY tell a person writing to a company's agent about their request and their own world (their service unreachable, the assistant unavailable a while); NEVER about instrukt internals; what instrukt cannot resolve goes to the operator -- a person acts only on their own world.
+- MUST give each object generation a fixed native start key and thread ID that retries replay -- retries stay one generation.
+- MUST start a new generation automatically for outstanding work after confirmed native archive or deletion, or after an idle thread is confirmed in a runtime project other than its checkout's own; NEVER touch a misplaced thread while it is busy -- wait until idle.
+- native lifecycle = owner of provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
+- NEVER discard a record of older or unknown shape unless its spec names the source that rebuilds it; MUST migrate, never discard or expire, a person's stated choices and restrictions and records of external effects -- discarding is safe only when the rebuild source survives.
+- scope = instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.

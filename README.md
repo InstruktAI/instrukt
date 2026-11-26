@@ -1,6 +1,10 @@
-# instrukt
+<p align="center">
+  <img src="assets/logo.png" alt="instrukt logo" width="120">
+</p>
 
-**Give your agents a playbook, not a 2,000-line prompt.**
+<h1 align="center">instrukt</h1>
+
+<p align="center"><strong>Give your agents a playbook, not a 2,000-line prompt.</strong></p>
 
 instrukt turns the documentation in your git repositories into doctrine your coding agents read a piece at a time, right when a task calls for it. On that foundation it adds autonomous software delivery you can step into at any moment, event-driven standing procedures that react to real-world business and operational inputs, and a complete AI workspace for a team — all from one Rust binary, starting with nothing but git.
 
@@ -166,7 +170,7 @@ Git and software delivery do not need inbound events — periodic runner ticks a
 
 The **`events`** module unlocks a completely different capability: **standing agents that wake up in real time when the outside world pushes a signal** — business events from your ERP, a failed payment in your billing system, a Sentry production alert, a CRM update, or any external tool that sends a signed webhook.
 
-Instead of building a separate webhook service or wiring brittle Zapier/n8n workflows, you declare the inbound sources in your company's or project's `instrukt.yaml` (behind your own HTTPS edge terminating TLS in front of the local receiver):
+Instead of building a separate webhook service or wiring brittle Zapier/n8n workflows, you declare the inbound sources in your company's `company.yaml` or your project's `instrukt.yaml` (behind your own HTTPS edge terminating TLS in front of the local receiver):
 
 ```yaml
 webhooks:
@@ -196,7 +200,7 @@ Here is what happens when an outside event arrives — say, your billing system 
 3. **Matched to your published procedures.** Every published procedure whose `subscriptions:` pattern matches is activated durably. (`instrukt events list` shows instrukt's own declared event catalog, while every active procedure subscription appears under "Configured Responsibilities" in the agent's instruction file.)
 4. **A continuing standing agent wakes up.** instrukt starts or wakes the standing T3 thread for that procedure and company (or one thread per subject, such as per customer, order, or pull request, when the procedure declares `subscription_identity: subject`). The agent loads its procedure with `--closure`, inspects the payload, acts through your MCP tools and company docs, and keeps its context across subsequent events.
 
-Adding a new reactive business or operations workflow takes one `webhooks:` entry and secret in `instrukt.yaml` plus one committed markdown procedure. And because every standing agent is a real T3 thread, you can open it anytime to inspect what it did or step in directly.
+Adding a new reactive business or operations workflow takes one `webhooks:` entry and secret in the company's `company.yaml` or the project's `instrukt.yaml` plus one committed markdown procedure. And because every standing agent is a real T3 thread, you can open it anytime to inspect what it did or step in directly.
 
 Internal engineering automations ride the exact same standing-procedure primitive too — for example, [`upstream-watch`](docs/general/procedure/upstream-watch.md) wakes when a watched upstream git ref moves (`runner.upstream_changed`) to assess whether a fork needs action, and [`lifecycle/integrate`](docs/domain/sdlc/procedure/lifecycle/integrate.md) wakes when `main` goes red (`runner.main_failing`) to restore the baseline before repairing the cause. [Inbound webhook framework →](docs/project/spec/feature/runner/inbound-webhook-endpoint-framework.md)
 
@@ -207,23 +211,28 @@ Internal engineering automations ride the exact same standing-procedure primitiv
 If you build AI for small and medium businesses, this is what replaces a one-off custom integration project. A business wants four things from an AI assistant: it should know how the company works, live where the team already talks, operate the company's real software, and act with each person's own permissions. One folder gives it all four.
 
 ```console
-$ instrukt config init --company acme
+$ instrukt init --company acme --name "Acme" --admin <github-login>
 ```
+
+With `github.org` declared once in the machine's settings, this creates Acme's private repository `company-acme` in that GitHub organisation, holding the one company skeleton every company receives, makes Acme's GitHub administrator an administrator of it, and checks it out as Acme's home, ready to use. On another computer, `instrukt init --company acme` checks the existing repository out and changes nothing on GitHub.
 
 ```text
-~/.instrukt/companies/acme/     # a checkout of Acme's own git repository
-├── AGENTS.md                   # generated from docs/index.yaml              (committed)
-├── docs/                       # who Acme is, its procedures and memory      (committed)
-│   └── index.yaml              # which documents load in full, and which as one line
-├── instrukt.yaml               # members, connectors, webhooks, MCP servers (this machine only)
-└── secrets.env                 # company-scoped tokens and secrets          (this machine only)
+~/.instrukt/companies/acme/          # a checkout of Acme's own git repository
+├── AGENTS.md                        # generated from docs/index.yaml              (committed)
+├── docs/                            # who Acme is, its procedures and memory      (committed)
+│   └── index.yaml                   # which documents load in full, and which as one line
+├── skills/acme/                     # Acme's skill, rendered from its documents   (committed)
+├── .claude-plugin/marketplace.json  # the catalog that lists Acme's skill         (committed)
+├── instrukt.yaml                    # the repository's project layer              (committed)
+├── company.yaml                     # members, connectors, webhooks, MCP servers (this machine only)
+└── secrets.env                      # company-scoped tokens and secrets          (this machine only)
 ```
 
-The folder itself is the registration — a company exists wherever a folder carries a valid `instrukt.yaml`. Because `docs/` and its `index.yaml` live in Acme's own git repo, agents working for Acme can update company procedures and commit them, giving you full git history of everything the business has taught its assistant. The index selects which documents every agent starts with in full and which it reads by one line when the work calls for them.
+A company exists wherever a home folder carries a valid `company.yaml`. Because `docs/` and its `index.yaml` live in Acme's own git repo, agents working for Acme can update company procedures and commit them, giving you full git history of everything the business has taught its assistant. The index selects which documents every agent starts with in full and which it reads by one line when the work calls for them. Acme's documents stay Acme's: they are never published to the rest of the computer.
 
 **Strict separation by construction.** Each company has its own folder and docs, its own settings, its own `secrets.env` (`${NAME}` references resolve exclusively from that company's file, never falling back to the host or another company), its own members and per-user logins, its own chat connections, its own agent threads, and its own MCP servers. (OS-level Linux container isolation per company is [coming next](#built-to-be-pluggable-and-what-comes-next).)
 
-Connecting Slack and the company's software takes a few lines in `instrukt.yaml`:
+Connecting Slack and the company's software takes a few lines in `company.yaml`:
 
 ```yaml
 connectors:
@@ -293,6 +302,7 @@ One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.89, `unsafe`
 ```sh
 make hooks          # once per clone: pre-commit runs the checks the staged files need
 make commit-checks  # every commit check over every file, as CI runs it
+make ratchet        # lower the suppression baseline after removing a suppression
 make check          # lint, the whole test suite, coverage and the audit by hand
 ```
 

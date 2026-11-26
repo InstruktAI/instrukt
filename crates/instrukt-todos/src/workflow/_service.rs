@@ -35,13 +35,11 @@ use super::_provider::{
 /// What deliberate pickup did about the execution claim before reading facts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pickup {
-    /// The calling session now holds the claim, recorded and reflected.
+    /// The calling session now holds the claim, recorded in this
+    /// computer's record.
     Claimed,
     /// The calling session already held it.
     AlreadyHeld,
-    /// The claim is recorded locally; GitHub could not be reached, so it is
-    /// pending reflection.
-    NotReflected,
     /// The todo is not active: the call is read-only and records nothing.
     ReadOnly(TodoStatus),
 }
@@ -154,7 +152,6 @@ impl Workflow {
                     }
                     ClaimOutcome::Claimed => Pickup::Claimed,
                     ClaimOutcome::AlreadyHeld => Pickup::AlreadyHeld,
-                    ClaimOutcome::NotReflected => Pickup::NotReflected,
                 }
             }
             status => Pickup::ReadOnly(status),

@@ -71,6 +71,11 @@ pub fn run(_args: SyncArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     ctx.out.line(&finding.to_string())?;
                 }
             }
+            if let Refusal::Units(findings) = &refusal {
+                for finding in findings {
+                    ctx.out.line(&finding.to_string())?;
+                }
+            }
             Some(format!("{project} at {commit} is not published: {refusal}"))
         }
     };
@@ -104,7 +109,7 @@ fn report_leftovers(ctx: &mut Ctx, leftovers: &[PathBuf]) -> anyhow::Result<()> 
 /// One line per global agent file a sync wrote or found current, with its
 /// runtime and the instances it serves; per link it ensured; per link it
 /// replaced at one of its own destinations; and per finding about an agent
-/// file.
+/// file or about the index it persists.
 fn global_lines(
     global_files: &[GlobalDestination],
     links: &[EnsuredLink],
@@ -153,6 +158,15 @@ fn global_lines(
             },
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
+            ),
+            SyncFinding::FingerprintUnitDegraded { finding } => format!(
+                "notice: {finding}; the eval fingerprint counts it as no unit until it is fixed"
+            ),
+            SyncFinding::UnitInProse { finding } => format!(
+                "notice: {finding}; the global files hold its source in prose until the unit is fixed"
+            ),
+            SyncFinding::EntryUndigested { id, owner } => format!(
+                "notice: index entry `{id}` of project `{owner}` is kept without its source digest, because its published file cannot be read; it gains one when `{owner}` next syncs"
             ),
         });
     }

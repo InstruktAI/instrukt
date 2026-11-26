@@ -11,8 +11,7 @@ use serde_json::Value;
 
 use crate::common::{self, Repo, TestEnv};
 
-const SKILL: &str = "plugins/acme/skills/acme/SKILL.md";
-const MANIFEST: &str = "plugins/acme/.claude-plugin/plugin.json";
+const SKILL: &str = "skills/acme/SKILL.md";
 const CATALOG: &str = ".claude-plugin/marketplace.json";
 
 /// The catalog the repository already holds: another plugin, members
@@ -74,10 +73,21 @@ fn untouched(repo: &Repo) -> common::Snapshot {
     common::Snapshot::over(vec![], vec![repo.path().to_path_buf()])
 }
 
-/// The plugin's version, as its manifest holds it: three numbers.
+/// The catalog's entry for Acme's plugin, which is the plugin's manifest.
+fn entry(repo: &Repo) -> Value {
+    let catalog: Value = serde_json::from_str(&repo.read(CATALOG)).unwrap();
+    catalog["plugins"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "acme")
+        .unwrap()
+        .clone()
+}
+
+/// The plugin's version, as its catalog entry holds it: three numbers.
 fn version(repo: &Repo) -> [u64; 3] {
-    let manifest: Value = serde_json::from_str(&repo.read(MANIFEST)).unwrap();
-    let numbers: Vec<u64> = manifest["version"]
+    let numbers: Vec<u64> = entry(repo)["version"]
         .as_str()
         .unwrap()
         .split('.')
@@ -99,11 +109,13 @@ fn an_operator_gives_people_who_work_with_claude_the_companys_own_knowledge() {
     insta::assert_snapshot!("company_plugin_skill", repo.read(SKILL));
     insta::assert_snapshot!(
         "company_plugin_listed_document",
-        repo.read("plugins/acme/skills/acme/references/teams/suppliers.md")
+        repo.read("skills/acme/references/teams/suppliers.md")
     );
-    insta::assert_snapshot!("company_plugin_manifest", repo.read(MANIFEST));
+    // The skill stands at the repository's root: no other folder holds the
+    // plugin and no other manifest defines it.
+    assert!(!repo.path().join("plugins").exists());
 
-    // The catalog lists the plugin by its folder; every other entry and
+    // The catalog lists the plugin with that skill; every other entry and
     // member keeps its value and its place.
     let before: Value = serde_json::from_str(CATALOG_TEXT).unwrap();
     let after: Value = serde_json::from_str(&repo.read(CATALOG)).unwrap();
@@ -116,10 +128,10 @@ fn an_operator_gives_people_who_work_with_claude_the_companys_own_knowledge() {
     let plugins = after["plugins"].as_array().unwrap();
     assert_eq!(plugins.len(), 2);
     assert_eq!(plugins[0], before["plugins"][0]);
-    let manifest: Value = serde_json::from_str(&repo.read(MANIFEST)).unwrap();
-    assert_eq!(plugins[1]["name"], "acme");
-    assert_eq!(plugins[1]["source"], "./plugins/acme");
-    assert_eq!(plugins[1]["description"], manifest["description"]);
+    insta::assert_snapshot!(
+        "company_plugin_entry",
+        serde_json::to_string_pretty(&plugins[1]).unwrap()
+    );
 
     // A document refers to something outside the company's own documents:
     // the rendering names the document and the reference, and changes
@@ -141,14 +153,14 @@ fn an_operator_publishes_a_new_version_exactly_when_the_knowledge_changed() {
     let repo = company(&env);
     plugin(&env, &repo, &[]).success();
     // The repository's plugin is already in a release series of its own,
-    // as one an earlier renderer left: the manifest holds another version.
+    // as one an earlier renderer left: its entry holds another version.
     let rendered = version(&repo);
     let first = [rendered[0] + 2, rendered[1] + 3, rendered[2] + 4];
-    let manifest = repo.read(MANIFEST).replace(
+    let catalog = repo.read(CATALOG).replace(
         &format!("\"{}.{}.{}\"", rendered[0], rendered[1], rendered[2]),
         &format!("\"{}.{}.{}\"", first[0], first[1], first[2]),
     );
-    repo.write(MANIFEST, &manifest);
+    repo.write(CATALOG, &catalog);
     assert_eq!(version(&repo), first);
 
     // Nothing changed: no file is changed and the version is as it was.
@@ -165,7 +177,7 @@ fn an_operator_publishes_a_new_version_exactly_when_the_knowledge_changed() {
     plugin(&env, &repo, &[]).success();
     insta::assert_snapshot!(
         "company_plugin_changed_document",
-        repo.read("plugins/acme/skills/acme/references/systems.md")
+        repo.read("skills/acme/references/systems.md")
     );
     assert_eq!(version(&repo), [first[0], first[1], first[2] + 1]);
 

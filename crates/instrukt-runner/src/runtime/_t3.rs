@@ -72,7 +72,7 @@ impl T3 {
             serde_json::json!({
                 "commandId":launch.command_id, "threadId":launch.thread_id, "projectId":launch.project_id,
                 "title":request.title, "generateTitle":false, "creationSource":"mcp",
-                "modelSelection":{"instanceId":selection.instance,"model":selection.model},
+                "modelSelection":super::_t3_options::model_selection(selection),
                 "runtimeMode":modes.runtime, "interactionMode":modes.interaction, "workspaceStrategy":workspace,
                 "initialMessage":{"messageId":launch.command_id,"text":request.brief,"attachments":[]}
             }),
@@ -187,7 +187,9 @@ impl RuntimeAdapter for T3 {
     }
     fn send_certainly_rejected(&self, session: &SessionRef, error: &SessionsError) -> bool {
         match error {
-            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. }) => true,
+            SessionsError::Process(instrukt_core::process::ProcessError::Spawn { .. })
+            | SessionsError::ExecutionRootUnavailable { .. }
+            | SessionsError::ThreadMisplaced { .. } => true,
             SessionsError::Failed {
                 operation, detail, ..
             } if operation == "send" => {
@@ -259,12 +261,34 @@ impl RuntimeAdapter for T3 {
         request: &RuntimeStart,
         existing: Option<&SessionRef>,
     ) -> Result<RuntimeStart, SessionsError> {
-        super::_t3_readiness::resolve_launch(&self.operation_home()?, &self.env, request, existing)
-            .map_err(|error| failure("launch", error.to_string()))
+        let home = self.operation_home()?;
+        match super::_t3_readiness::resolve_launch(&home, &self.env, request, existing) {
+            // A launch registers its exact checkout when T3 holds no project
+            // there, then resolves again; adopting a present thread never
+            // registers.
+            Err(SessionsError::ExecutionRootUnavailable {
+                cause: crate::sessions::ExecutionRootCause::Missing,
+                ..
+            }) if existing.is_none() => {
+                let project = self
+                    .execution_root(&request.checkout, super::ExecutionRootMode::Ensure)?
+                    .project_id
+                    .ok_or_else(|| SessionsError::ExecutionRootUnavailable {
+                        checkout: request.checkout.clone(),
+                        cause: crate::sessions::ExecutionRootCause::AdditionRefused,
+                    })?;
+                let mut registered = request.clone();
+                if let Some(launch) = registered.native_launch.as_mut() {
+                    launch.project_id = project;
+                }
+                super::_t3_readiness::resolve_launch(&home, &self.env, &registered, existing)
+            }
+            result => result,
+        }
     }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
-            super::SelectionOperation::ThreadStart=>"T3 native launch receives the selected provider/model and captured native modes; the existing start effort/options limitation is retained.".into(),
+            super::SelectionOperation::ThreadStart=>"T3 native launch receives the selected provider/model with its translated native effort/options and captured native modes.".into(),
             super::SelectionOperation::NativeDelegation=>"T3 native delegation receives provider instance/model and translated harness options where the native operation supports them.".into(),
         }
     }
@@ -272,56 +296,89 @@ impl RuntimeAdapter for T3 {
         &self,
         selection: &instrukt_core::config::AgentSelection,
     ) -> instrukt_core::config::AgentSelection {
-        let mut native = selection.clone();
-        if let Some(effort) = selection.effort {
-            let key = match selection.kind {
-                instrukt_core::config::HarnessKind::Codex
-                | instrukt_core::config::HarnessKind::Grok
-                | instrukt_core::config::HarnessKind::Kiro
-                | instrukt_core::config::HarnessKind::Muse => "reasoningEffort",
-                instrukt_core::config::HarnessKind::Antigravity => "thought_level",
-                instrukt_core::config::HarnessKind::Pi => "thinking",
-                instrukt_core::config::HarnessKind::OpenCode => "variant",
-                instrukt_core::config::HarnessKind::Claude
-                | instrukt_core::config::HarnessKind::Cursor
-                | instrukt_core::config::HarnessKind::Fx
-                | instrukt_core::config::HarnessKind::AcpRegistry => "effort",
-            };
-            // Effort remains a closed semantic variant until this native boundary.
-            native.options.insert(
-                key.into(),
-                serde_json::Value::String(
-                    match effort {
-                        instrukt_core::config::Effort::None => "none",
-                        instrukt_core::config::Effort::Minimal => "minimal",
-                        instrukt_core::config::Effort::Low => "low",
-                        instrukt_core::config::Effort::Medium => "medium",
-                        instrukt_core::config::Effort::High => "high",
-                        instrukt_core::config::Effort::Xhigh => "xhigh",
-                        instrukt_core::config::Effort::Max => "max",
-                        instrukt_core::config::Effort::Ultra => "ultra",
-                        instrukt_core::config::Effort::Ultrathink => "ultrathink",
-                        instrukt_core::config::Effort::Off => "off",
-                        instrukt_core::config::Effort::Auto => "auto",
-                    }
-                    .into(),
-                ),
-            );
-        }
-        native
+        super::_t3_options::native(selection)
     }
     fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError> {
         T3::create_thread(self, request)
     }
     fn verify_start(&self, request: &RuntimeStart, thread: &Thread) -> Result<(), SessionsError> {
-        verify_request(request, thread)
+        // Presence and placement first: a thread still being placed keeps
+        // its pending outcome, and the snapshot is read only once placement
+        // verifies.
+        verify_request(request, thread)?;
+        self.verify_thread_project(&request.checkout, thread, Some(&request.key))
     }
     fn verify_placement(
         &self,
         request: &RuntimeStart,
         thread: &Thread,
     ) -> Result<(), SessionsError> {
+        self.verify_thread_project(&request.checkout, thread, Some(&request.key))?;
         verify_placement(request, thread)
+    }
+    fn verify_thread_project(
+        &self,
+        checkout: &Path,
+        thread: &Thread,
+        key: Option<&str>,
+    ) -> Result<(), SessionsError> {
+        let Some(observed) = thread.project_id.as_deref() else {
+            return Err(SessionsError::ProjectUnverified {
+                key: key.unwrap_or_default().into(),
+                session: thread.session.clone(),
+            });
+        };
+        let exact =
+            super::_t3_readiness::exact_project_id(&self.operation_home()?, &self.env, checkout)?;
+        if exact.as_deref() == Some(observed) {
+            return Ok(());
+        }
+        Err(SessionsError::ThreadMisplaced {
+            key: key.map(str::to_owned),
+            session: thread.session.clone(),
+            checkout: checkout.to_path_buf(),
+            idle: matches!(
+                thread.state,
+                SessionState::InputReady | SessionState::EndedFailed
+            ),
+        })
+    }
+    fn execution_root(
+        &self,
+        root: &Path,
+        mode: super::ExecutionRootMode,
+    ) -> Result<super::ExecutionRootStatus, SessionsError> {
+        let home = self.operation_home()?;
+        if let Some(id) = super::_t3_readiness::exact_project_id(&home, &self.env, root)? {
+            return Ok(super::ExecutionRootStatus {
+                project_id: Some(id),
+                created: false,
+            });
+        }
+        if mode == super::ExecutionRootMode::Check {
+            return Ok(super::ExecutionRootStatus {
+                project_id: None,
+                created: false,
+            });
+        }
+        // T3 titles the project from the folder name. A refusal of a root
+        // that already has an active project (a concurrent creator) is a
+        // reuse the snapshot read below confirms; T3's own words are never
+        // kept.
+        let root_text = root.to_string_lossy();
+        let added = self
+            .call(&["project", "add", "--", root_text.as_ref()], None)
+            .is_ok();
+        match super::_t3_readiness::exact_project_id(&home, &self.env, root)? {
+            Some(id) => Ok(super::ExecutionRootStatus {
+                project_id: Some(id),
+                created: added,
+            }),
+            None => Err(SessionsError::ExecutionRootUnavailable {
+                checkout: root.to_path_buf(),
+                cause: crate::sessions::ExecutionRootCause::AdditionRefused,
+            }),
+        }
     }
     fn start_or_wake(
         &self,
@@ -336,16 +393,98 @@ impl RuntimeAdapter for T3 {
         Runtime::T3
     }
     fn supports(&self, capability: Capability) -> bool {
-        matches!(
-            capability,
+        match capability {
+            // The runtime's one archive fact, which configuration admits the
+            // retention window against.
+            Capability::Archive => self.runtime().archives_threads(),
             Capability::ConversationSource
-                | Capability::CreateWorktree
-                | Capability::AttachWorktree
-                | Capability::AgentSelection
-                | Capability::InputConsumption
-                | Capability::AssignmentEvidence
-                | Capability::ConfiguredRuntimes
-        )
+            | Capability::CreateWorktree
+            | Capability::AttachWorktree
+            | Capability::AgentSelection
+            | Capability::InputConsumption
+            | Capability::AssignmentEvidence
+            | Capability::ConfiguredRuntimes => true,
+            Capability::Link | Capability::Notify => false,
+        }
+    }
+    fn finished_threads(
+        &self,
+        checkout: &Path,
+    ) -> Result<Vec<super::FinishedThread>, SessionsError> {
+        let out = self.call(
+            &[
+                "thread",
+                "list",
+                "--project",
+                &checkout.to_string_lossy(),
+                "--json",
+            ],
+            None,
+        )?;
+        let listed: Vec<serde_json::Value> =
+            serde_json::from_str(&out).map_err(|e| failure("list", e.to_string()))?;
+        let finished: Vec<ListedFinished> =
+            listed.iter().filter_map(ListedFinished::read).collect();
+        let ids: Vec<&str> = finished.iter().map(|thread| thread.id.as_str()).collect();
+        let rows =
+            super::_t3_conversations::retention_rows(&self.operation_home()?, &self.env, &ids)
+                .map_err(|error| failure("finished threads", error.to_string()))?;
+        finished
+            .into_iter()
+            .map(|thread| {
+                let row = rows.get(&thread.id);
+                thread.observed(row)
+            })
+            .collect()
+    }
+    fn archive(
+        &self,
+        observed: &super::FinishedThread,
+        now: jiff::Timestamp,
+    ) -> Result<super::ArchiveOutcome, SessionsError> {
+        use super::ArchiveOutcome;
+        let session = &observed.session;
+        if session.runtime.as_str() != "t3" {
+            return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
+        }
+        let Some(latest_activity) = observed.latest_activity else {
+            return Ok(ArchiveOutcome::Changed);
+        };
+        let home = self.operation_home()?;
+        let thread = session.id.as_str();
+        // A re-read that cannot be made archives nothing and is a failure of
+        // its own; only an observed change is `Changed`.
+        let holds =
+            super::_t3_conversations::archive_holds(&home, &self.env, thread, latest_activity, now)
+                .map_err(|error| failure("archive", error.to_string()))?;
+        if !holds {
+            return Ok(ArchiveOutcome::Changed);
+        }
+        let command_id = format!(
+            "instrukt:retention:{}",
+            instrukt_core::machine::random_hex(16)
+                .map_err(|error| failure("archive", error.to_string()))?
+        );
+        let dispatched = super::_t3_readiness::dispatch(
+            &home,
+            &self.env,
+            "instrukt-retention",
+            "archive",
+            serde_json::json!({
+                "type": "thread.archive",
+                "commandId": command_id,
+                "threadId": thread,
+            }),
+            &mut || Ok(()),
+        );
+        match dispatched {
+            Ok(()) => Ok(ArchiveOutcome::Archived),
+            // T3 refuses to archive an archived thread; its row shows which.
+            Err(error) => match super::_t3_conversations::archived(&home, &self.env, thread) {
+                Ok(true) => Ok(ArchiveOutcome::AlreadyArchived),
+                _ => Err(error.into_inner()),
+            },
+        }
     }
     fn observe_send(
         &self,
@@ -506,6 +645,8 @@ impl RuntimeAdapter for T3 {
         super::_t3_readiness::dispatch(
             &home,
             &self.env,
+            "instrukt-conversation-send",
+            "send",
             serde_json::json!({
                 "type": "message.dispatch",
                 "commandId": command_id,
@@ -653,21 +794,13 @@ fn verify_placement(request: &RuntimeStart, thread: &Thread) -> Result<(), Sessi
                 "requested role branch or absolute worktree path is missing",
             ));
         }
-        let listing =
-            instrukt_core::git::run(&request.checkout, ["worktree", "list", "--porcelain"])
-                .map_err(|e| failure("start recovery", e.to_string()))?;
         let expected_path = thread
             .worktree
             .as_ref()
             .ok_or_else(|| failure("start recovery", "missing worktree path"))?;
-        let registered = listing.split("\n\n").any(|entry| {
-            entry
-                .lines()
-                .any(|l| l == format!("worktree {}", expected_path.display()))
-                && entry
-                    .lines()
-                    .any(|l| l == format!("branch refs/heads/{}", worktree.branch))
-        });
+        let registered =
+            crate::keyed::registered_worktree(&request.checkout, expected_path, &worktree.branch)
+                .map_err(|e| failure("start recovery", e.to_string()))?;
         if !registered {
             return Err(failure(
                 "start recovery",
@@ -699,6 +832,9 @@ enum ThreadStatus {
     Starting,
     Resuming,
     Queued,
+    /// Not a wait for input; its translation is owned by
+    /// `project/instrukt/spec/feature/runner/session-continuity`, T3
+    /// observation translation.
     Waiting,
     WaitingForInput,
     WaitingForApproval,
@@ -721,12 +857,13 @@ impl ThreadStatus {
     }
     fn state(self) -> SessionState {
         match self {
-            Self::Running | Self::Preparing | Self::Starting | Self::Resuming | Self::Queued => {
-                SessionState::Running
-            }
-            Self::Waiting | Self::WaitingForInput | Self::WaitingForApproval => {
-                SessionState::NeedsInput
-            }
+            Self::Running
+            | Self::Preparing
+            | Self::Starting
+            | Self::Resuming
+            | Self::Queued
+            | Self::Waiting => SessionState::Running,
+            Self::WaitingForInput | Self::WaitingForApproval => SessionState::NeedsInput,
             Self::Idle | Self::Completed | Self::Stopped => SessionState::InputReady,
             Self::Failed | Self::Interrupted | Self::Cancelled | Self::RolledBack => {
                 SessionState::EndedFailed
@@ -813,6 +950,74 @@ impl NativeThread {
         })
     }
 }
+/// A thread `t3 thread list --json` reports settled with a readable
+/// settling time, read field by field so that one malformed field leaves
+/// only that thread not quiet or its activity unknown.
+struct ListedFinished {
+    id: String,
+    settled_at: jiff::Timestamp,
+    updated_at: Option<jiff::Timestamp>,
+    quiet: bool,
+}
+impl ListedFinished {
+    fn read(item: &serde_json::Value) -> Option<Self> {
+        let id = item["threadId"].as_str().filter(|id| !id.is_empty())?;
+        if item["settled"].as_bool() != Some(true) {
+            return None;
+        }
+        let instant = |value: &serde_json::Value| {
+            value
+                .as_str()
+                .and_then(|text| text.parse::<jiff::Timestamp>().ok())
+        };
+        let settled_at = instant(&item["settledAt"])?;
+        let quiet = item["status"]
+            .as_str()
+            .and_then(ThreadStatus::parse)
+            .is_some_and(|status| {
+                matches!(
+                    status.state(),
+                    SessionState::InputReady | SessionState::EndedFailed
+                )
+            })
+            && item["snoozed"].as_bool() == Some(false)
+            // Releases that predate the field omit it, and report none.
+            && item.get("pendingBackgroundTasks").is_none_or(|tasks| {
+                tasks.as_array().is_some_and(Vec::is_empty)
+            });
+        Some(Self {
+            id: id.to_owned(),
+            settled_at,
+            updated_at: instant(&item["updatedAt"]),
+            quiet,
+        })
+    }
+    /// The observation, with the projection row `row` of the thread: a
+    /// thread without one is pinned, with unknown latest activity.
+    fn observed(
+        self,
+        row: Option<&super::_t3_conversations::RetentionRow>,
+    ) -> Result<super::FinishedThread, SessionsError> {
+        let opened_at = row.map_or(Err(()), |row| row.opened_at);
+        let latest_activity = match (self.updated_at, opened_at) {
+            (Some(updated_at), Ok(opened_at)) => Some(
+                updated_at
+                    .max(self.settled_at)
+                    .max(opened_at.unwrap_or(self.settled_at)),
+            ),
+            _ => None,
+        };
+        Ok(super::FinishedThread {
+            session: SessionRef::parse(&format!("t3:{}", self.id))
+                .map_err(|e| failure("decode", e.to_string()))?,
+            finished_at: Some(self.settled_at),
+            latest_activity,
+            quiet: self.quiet,
+            pinned: row.is_none_or(|row| row.pinned),
+        })
+    }
+}
+
 #[derive(Deserialize)]
 struct Shown {
     thread: NativeThread,

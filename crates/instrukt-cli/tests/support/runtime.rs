@@ -26,20 +26,32 @@ impl FakeRuntime {
         )
         .unwrap();
     }
+    /// A developer's session `id`, opened by hand in `checkout`: it runs in
+    /// the T3 project containing that checkout.
+    pub fn open_session_in(&self, id: &str, checkout: &Path) {
+        self.open_session(id);
+        let project = self.fake.containing_project_id(checkout);
+        self.fake.change(id, "projectId", project.into());
+        self.fake
+            .change(id, "checkout", checkout.to_string_lossy().as_ref().into());
+    }
     pub fn start_without_printing_ids(&self) {
         self.fake.flag("silent-start", true);
     }
     pub fn kill_runner_on_next_start(&self) {
         self.fake.flag("die-after-start", true);
     }
+    /// T3 reports a wait for input as a pending request on a running thread;
+    /// any other state answers it.
     pub fn set_status(&self, id: &str, value: &str) {
-        let native = match value {
-            "ended ok" => "completed",
-            "ended failed" => "failed",
-            "needs-input" => "waiting",
-            other => other,
+        let (native, pending) = match value {
+            "ended ok" => ("completed", 0),
+            "ended failed" => ("failed", 0),
+            "needs-input" => ("running", 1),
+            other => (other, 0),
         };
         self.fake.set_status(id, native);
+        self.fake.set_pending(id, pending);
     }
     pub fn finish(&self, id: &str, status: &str, text: &str) {
         self.fake.finish(id, status, text);

@@ -155,12 +155,18 @@ pub fn init(
     };
     parts.push((InitPart::ProjectLayer, layer));
     let project = project_slug(&root)?;
-    parts.push((InitPart::ProjectDocs, project_docs(&docs)?));
-    parts.push((
-        InitPart::ProjectIndex,
-        create(&index, EMPTY_INDEX.as_bytes())?,
-    ));
-    parts.push((InitPart::ProjectSchema, project_schema(home, &schema)?));
+    // A company's repository keeps its knowledge in its own `docs/`: it is
+    // given no project position and publishes none
+    // (`project/instrukt/spec/feature/repository/project-initialization`).
+    let company = publication::is_company_repository(&root)?;
+    if !company {
+        parts.push((InitPart::ProjectDocs, project_docs(&docs)?));
+        parts.push((
+            InitPart::ProjectIndex,
+            create(&index, EMPTY_INDEX.as_bytes())?,
+        ));
+        parts.push((InitPart::ProjectSchema, project_schema(home, &schema)?));
+    }
     // The copy is kept whenever none has been: on a first adoption, and on
     // the retry of one interrupted before the copy was written. Once a copy
     // exists it is never written again.
@@ -183,8 +189,12 @@ pub fn init(
     parts.push((InitPart::Ignores, ensure_lines(&ignore, &IGNORED)?));
     let hooks = hooks_plan.apply()?;
     parts.push((InitPart::HookSections, hooks_outcome(&hooks)));
-    let claims = publication::preview_claims(home, &root, &project, runtimes)?;
-    let claims = (!claims.is_empty()).then_some(claims);
+    let claims = if company {
+        None
+    } else {
+        let claims = publication::preview_claims(home, &root, &project, runtimes)?;
+        (!claims.is_empty()).then_some(claims)
+    };
     tracing::debug!(
         event = "repository_initialized",
         repo_root = %root.display(),

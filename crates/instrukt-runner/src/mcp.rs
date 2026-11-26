@@ -346,11 +346,15 @@ impl View {
 
     /// Resolve a call's login and scrub list, supporting both stored credentials
     /// and `speaker_login: sign-in` (authorization-code and built-in issuer).
+    ///
+    /// `rejected_authorization` is the `Authorization` value the server just
+    /// refused with HTTP 401, on a retry; a cached sign-in login other than
+    /// that one is used as it is, since another call may already have renewed it.
     pub fn resolve_call_login(
         &self,
         home: &Home,
         visible: &Visible,
-        force_refresh: bool,
+        rejected_authorization: Option<&str>,
         now: Timestamp,
     ) -> Result<(Scrub, Option<String>), McpError> {
         if let (Origin::Company(company), SpeakerLogin::SignIn, Some(speaker)) =
@@ -361,7 +365,7 @@ impl View {
                 company,
                 &visible.server,
                 speaker,
-                force_refresh,
+                rejected_authorization.map(|value| value.strip_prefix("Bearer ").unwrap_or(value)),
                 now,
             )?;
             return Ok((Scrub::new(scrub_items), Some(header.value)));

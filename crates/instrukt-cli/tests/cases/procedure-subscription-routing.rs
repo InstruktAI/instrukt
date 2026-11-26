@@ -824,10 +824,10 @@ fn an_unavailable_execution_home_is_a_visible_failure_and_nothing_substitutes() 
     let misnamed = computer.env.instrukt_home().join("companies/misnamed");
     std::fs::create_dir_all(&misnamed).unwrap();
     std::fs::write(
-        misnamed.join("instrukt.yaml"),
+        misnamed.join("company.yaml"),
         format!(
             "schema_version: {}\ncompany: acme\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     )
     .unwrap();
@@ -835,7 +835,7 @@ fn an_unavailable_execution_home_is_a_visible_failure_and_nothing_substitutes() 
     // home either.
     let unversioned = computer.env.instrukt_home().join("companies/unversioned");
     std::fs::create_dir_all(&unversioned).unwrap();
-    std::fs::write(unversioned.join("instrukt.yaml"), "company: unversioned\n").unwrap();
+    std::fs::write(unversioned.join("company.yaml"), "company: unversioned\n").unwrap();
     for (id, home) in [
         ("unregistered", "project:absent"),
         ("homeless", "company:absent"),

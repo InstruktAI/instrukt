@@ -128,8 +128,7 @@ no separate report line.
 #### Scope verification
 
 **Authority:** the intent basis the invoking procedure resolves. For a lifecycle
-review it is the requirement contract — `prd` (feature) or `input` (change/bug),
-or the `implementation-plan`'s _Intent & scope_ for a `--plan` `change` with no `input`.
+review it is the requirement contract — `prd` (feature) or `input` (change/bug).
 
 The reviewed changes must satisfy the resolved authorized intent within the
 named review target — nothing more, nothing less (for lifecycle work, see
@@ -148,7 +147,7 @@ lifecycle review):
 
 Findings:
 
-- Criterion not delivered by any reviewed change → **Requirement-Violation** (see Severity schema in the review procedure).
+- Criterion not delivered by any reviewed change → **Requirement-Violation** (`sdlc/procedure/lifecycle/review`).
 - Criterion partially delivered — some criteria sub-points addressed, others silently dropped → **Requirement-Violation**. A delivery that narrows a criterion's scope is as broken as one that omits it.
 - In a project that opts into tests, the named test would pass on a broken
   implementation → **Requirement-Violation**.
@@ -470,7 +469,7 @@ Severity guidance:
 - Factually incorrect comments that will mislead future readers → **Important**.
 - Stale comments that describe pre-change behaviour → **Important**.
 - Commented-out code → **Important**.
-- Redundant comments that restate obvious code → **Important** (per Comments policy: comments must earn their place; restating WHAT the code does is forbidden).
+- Redundant comments that restate obvious code → **Important**.
 
 #### Logging review
 
@@ -539,7 +538,7 @@ Missing documentation updates are **Important** findings. Missing config surface
 
 #### Doc-snippet hygiene
 
-**Authority:** `general/principle/intent-first-documentation` + `general/policy/adr-discipline` + `general/policy/snippet-value-contract` (full anti-pattern list, not Narration alone) + `general/policy/referencing-doc-snippets` (citation form) + `general/policy/agent-facing-text` (reader framing) + `sdlc/policy/process-change-authority` + `sdlc/policy/language-policy-ownership`.
+**Authority:** `general/principle/intent-first-documentation` + `general/policy/adr-discipline` + `general/policy/snippet-value-contract` (every anti-pattern it names, not Narration alone) + `general/policy/referencing-doc-snippets` (citation form) + `general/policy/agent-facing-text` (reader framing) + `sdlc/policy/process-change-authority` + `sdlc/policy/language-policy-ownership`.
 
 Conditional lane — fires whenever the diff touches a `docs/**` snippet,
 company home knowledge (any document anywhere under `docs/` in a company
@@ -610,7 +609,8 @@ snippet-body rules — and three checks do:
 **Procedure composition check.** When a changed procedure carries root
 frontmatter, or its subscriptions or Required reads changed, the reviewer reads
 the frontmatter of every other procedure in the corpus, pending ones included,
-and applies the composition step of `general/procedure/doc-snippet-authoring`:
+and applies what `general/procedure/doc-snippet-authoring` requires of a
+procedure a session is started into:
 its role is declared by no other procedure, an event or trigger whose
 responsibility a standing role already carries is a route in that role's entry
 procedure, and none of its own sub-procedures is a Required read. Each finding
@@ -622,7 +622,7 @@ dispatch gate. The reviewer checks frontmatter shape and stale delivered
 relationships against `general/spec/snippet-authoring-schema`:
 a known slug whose todo is already delivered is a finding, because delivery
 should have folded it. A slug absent from the local todo store is not a finding:
-the work record is local-leading and pull-through from GitHub, so a git-carried pending snippet can name work not dispatched to this machine.
+each computer's work record holds only the todos created on it, so a git-carried pending snippet can name work this computer's record does not hold.
 Do not use `instrukt todo show <slug>` 404 as evidence that a pending snippet is
 undeliverable.
 

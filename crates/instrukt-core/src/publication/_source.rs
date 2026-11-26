@@ -352,8 +352,17 @@ impl Committed {
                 .map_err(|source| PublicationError::Io { path: full, source })?;
             files.insert(path, bytes);
         }
+        // The place for units is read only where no link stands at, above
+        // or inside it, whether git ignores the link or not.
+        let units_above = links_at_or_above(root, super::_units::PLACE)?;
+        if units_above.is_empty() {
+            links.extend(links_inside(root, super::_units::PLACE)?);
+        }
+        links.extend(units_above);
         if let Some(places) = places {
-            links.extend(links_at_or_above(root, places.file)?);
+            for file in places.files {
+                links.extend(links_at_or_above(root, file)?);
+            }
             let above = links_at_or_above(root, places.folder)?;
             // Behind a link nothing is looked at, so the folder is walked
             // only when no link stands at or above it.
@@ -463,20 +472,20 @@ impl Committed {
     }
 }
 
-/// One folder and one file of a working tree, by repository-relative path,
-/// that a view holds beside what publication reads
+/// One folder and some files of a working tree, by repository-relative
+/// path, that a view holds beside what publication reads
 /// ([`Committed::working_tree_places`]).
 #[derive(Debug, Clone, Copy)]
 pub(super) struct Places<'a> {
     /// The folder, without a trailing `/`.
     pub folder: &'a str,
-    pub file: &'a str,
+    pub files: &'a [&'a str],
 }
 
 impl Places<'_> {
     /// Whether `path` is the file, or lies inside the folder.
     fn holds(&self, path: &str) -> bool {
-        path == self.file
+        self.files.contains(&path)
             || path
                 .strip_prefix(self.folder)
                 .is_some_and(|rest| rest.starts_with('/'))
@@ -634,12 +643,25 @@ mod tests {
             &root,
             Places {
                 folder: "plugins/acme",
-                file: ".claude-plugin/marketplace.json",
+                files: &[".claude-plugin/marketplace.json"],
             },
         )
         .unwrap();
         let links: Vec<&str> = tree.links().collect();
         assert_eq!(links, ["plugins"]);
+    }
+
+    #[test]
+    fn a_git_ignored_link_inside_the_place_for_units_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(root.join("docs/_compressed")).unwrap();
+        crate::git::run(&root, ["init", "-q"]).unwrap();
+        std::fs::write(root.join(".gitignore"), "docs/_compressed/general\n").unwrap();
+        std::os::unix::fs::symlink(dir.path(), root.join("docs/_compressed/general")).unwrap();
+        let tree = Committed::working_tree(&root).unwrap();
+        let links: Vec<&str> = tree.links().collect();
+        assert_eq!(links, ["docs/_compressed/general"]);
     }
 
     #[test]

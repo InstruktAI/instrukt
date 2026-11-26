@@ -1,7 +1,6 @@
 //! The `instrukt.yaml` schema: which key may live in which layer, each
 //! value's shape, and the defaults reads answer when a key is unset.
 
-use serde_json::json;
 use serde_yaml_ng::{Mapping, Value};
 
 use super::_error::FindingKind;
@@ -9,8 +8,23 @@ use super::_interpolate::{join, key_text, mask_references};
 use super::_module::Module;
 use crate::ids::{DomainName, ProjectSlug};
 
-/// The schema version this instrukt writes. The first is 1.
-pub const CURRENT_SCHEMA_VERSION: u64 = 6;
+mod _json;
+
+pub use _json::{describe_schema, editor_schema, layer_json_schema};
+pub(super) use _json::{non_blank_pattern, secret_reference};
+
+/// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
+/// this instrukt writes. The first is 1.
+pub const GLOBAL_SCHEMA_VERSION: u64 = 7;
+
+/// The schema version of a project layer (`instrukt.yaml` at a repository
+/// root) this instrukt writes. The first is 1.
+pub const PROJECT_SCHEMA_VERSION: u64 = 6;
+
+/// The schema version of a company home's document
+/// (`~/.instrukt/companies/<name>/company.yaml`) this instrukt writes. The
+/// first is 1.
+pub const COMPANY_SCHEMA_VERSION: u64 = 6;
 
 pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 
@@ -35,12 +49,23 @@ pub enum LayerKind {
     Global,
     /// `instrukt.yaml` at a repository root: the project.
     Project,
-    /// `~/.instrukt/companies/<name>/instrukt.yaml`: a company home's own
+    /// `~/.instrukt/companies/<name>/company.yaml`: a company home's own
     /// document, read on its own and combined with no layer.
     Company,
 }
 
 impl LayerKind {
+    /// The schema version of this kind of document this instrukt writes:
+    /// each kind versions its own shape, so a change to one raises only its
+    /// own (`project/instrukt/spec/feature/configuration/layered-configuration`).
+    pub fn current_schema_version(self) -> u64 {
+        match self {
+            LayerKind::Global => GLOBAL_SCHEMA_VERSION,
+            LayerKind::Project => PROJECT_SCHEMA_VERSION,
+            LayerKind::Company => COMPANY_SCHEMA_VERSION,
+        }
+    }
+
     /// The document as a finding names it.
     fn described(self) -> &'static str {
         match self {
@@ -122,7 +147,10 @@ impl Rule {
 
 #[derive(Debug, Clone, Copy)]
 enum Shape {
+    /// A positive integer.
     Version,
+    /// `schema_version`: a [`Shape::Version`] with that key's contract.
+    SchemaVersion,
     RedisTimeout,
     Webhooks,
     Members,
@@ -137,8 +165,14 @@ enum Shape {
     Credential,
     LocalRedisUrl,
     Slug,
+    /// `company`: a [`Shape::Slug`] naming the company home's folder.
+    CompanyName,
     Domain,
     Bool,
+    /// `github.org`: a [`Shape::Str`] with that key's contract.
+    OwningOrganisation,
+    /// `company_repository`: a [`Shape::Bool`] with that key's contract.
+    CompanyRepository,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,
     Apps,
@@ -148,11 +182,15 @@ enum Shape {
     Autostart,
     WatchList,
     StrList,
+    /// `profiles`: a [`Shape::StrList`] of the machine's profile names.
+    Profiles,
     BranchPrefixes,
     ModuleList,
     Identity,
     /// Paths inside a checkout (`regenerable`).
     Regenerable,
+    /// `off` or a retention window (`runner.archive_finished_after`).
+    RetentionWindow,
 }
 
 enum Node {
@@ -175,13 +213,13 @@ fn schema() -> Node {
     use Node::Leaf;
     use Rule::{Both, GlobalOnly, ProjectOnly, ShippedAdapterInProject};
     map(vec![
-        ("schema_version", Leaf(Rule::Every, Shape::Version)),
+        ("schema_version", Leaf(Rule::Every, Shape::SchemaVersion)),
         ("project", Leaf(ProjectOnly, Shape::Slug)),
-        ("company", Leaf(Rule::CompanyOnly, Shape::Slug)),
+        ("company", Leaf(Rule::CompanyOnly, Shape::CompanyName)),
         // Later company-home keys: refused until this instrukt supports them.
         ("members", Leaf(Rule::CompanyOnly, Shape::Members)),
         ("connectors", Leaf(Rule::CompanyOnly, Shape::Connectors)),
-        ("profiles", Leaf(Rule::CompanyOnly, Shape::StrList)),
+        ("profiles", Leaf(Rule::CompanyOnly, Shape::Profiles)),
         ("mcp", Leaf(Rule::GlobalOrCompany, Shape::Mcp)),
         ("mcp_clients", Leaf(GlobalOnly, Shape::McpClients)),
         ("issuer", Leaf(Rule::CompanyOnly, Shape::Issuer)),
@@ -195,6 +233,7 @@ fn schema() -> Node {
                 ("api_url", Leaf(GlobalOnly, Shape::Str)),
                 ("apps", Leaf(GlobalOnly, Shape::Apps)),
                 ("project_app", Leaf(GlobalOnly, Shape::Str)),
+                ("org", Leaf(GlobalOnly, Shape::OwningOrganisation)),
             ]),
         ),
         (
@@ -249,6 +288,10 @@ fn schema() -> Node {
             map(vec![("automatic", Leaf(ProjectOnly, Shape::Bool))]),
         ),
         (
+            "company_repository",
+            Leaf(ProjectOnly, Shape::CompanyRepository),
+        ),
+        (
             super::_regenerable::REGENERABLE_KEY,
             Leaf(ProjectOnly, Shape::Regenerable),
         ),
@@ -263,6 +306,10 @@ fn schema() -> Node {
                 ("notify", Leaf(GlobalOnly, Shape::Str)),
                 ("runtime", Leaf(GlobalOnly, Shape::Str)),
                 ("autostart", Leaf(Both, Shape::Autostart)),
+                (
+                    "archive_finished_after",
+                    Leaf(GlobalOnly, Shape::RetentionWindow),
+                ),
             ]),
         ),
         (
@@ -509,12 +556,12 @@ fn check_shape(
                 out.push(invalid("must outlast the 10 second blocking read"));
             }
         }
-        Shape::Version => {
+        Shape::Version | Shape::SchemaVersion => {
             if value.as_u64().is_none_or(|v| v < 1) {
                 out.push(invalid("expected a positive integer"));
             }
         }
-        Shape::Slug => match value.as_str() {
+        Shape::Slug | Shape::CompanyName => match value.as_str() {
             Some(s) => {
                 if let Err(err) = ProjectSlug::parse(s) {
                     out.push(invalid(&err.to_string()));
@@ -523,7 +570,7 @@ fn check_shape(
             None => out.push(invalid("expected a project slug string")),
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
-        Shape::Bool => check_field(Field::Bool, value, path, out),
+        Shape::Bool | Shape::CompanyRepository => check_field(Field::Bool, value, path, out),
         Shape::Apps => {
             if let Err(error) = crate::github::inventory(value) {
                 out.push(invalid(&error.to_string()));
@@ -539,7 +586,7 @@ fn check_shape(
                 "expected `false` or a GitHub project `<owner>/<number>`",
             )),
         },
-        Shape::Str => check_field(Field::Str, value, path, out),
+        Shape::Str | Shape::OwningOrganisation => check_field(Field::Str, value, path, out),
         Shape::OnOff => {
             if !matches!(value.as_str(), Some("on" | "off")) {
                 out.push(invalid("expected `on` or `off`"));
@@ -581,7 +628,7 @@ fn check_shape(
                 out.push(invalid("expected a list of nonempty branch prefixes"));
             }
         }
-        Shape::StrList => {
+        Shape::StrList | Shape::Profiles => {
             if !value
                 .as_sequence()
                 .is_some_and(|seq| seq.iter().all(Value::is_string))
@@ -606,6 +653,7 @@ fn check_shape(
         },
 
         Shape::Regenerable => super::_regenerable::check(value, path, out),
+        Shape::RetentionWindow => super::_thread_retention::check(value, path, out),
         Shape::WatchList => match value.as_sequence() {
             Some(seq) => {
                 for (i, item) in seq.iter().enumerate() {
@@ -738,363 +786,6 @@ fn filter_node(node: &Node, value: &Value, layer: LayerKind) -> Option<Value> {
     }
 }
 
-/// The JSON Schema of the project layer for the developer's editor,
-/// generated from the same schema [`check`] validates a project layer
-/// with: a key only the global layer may hold is absent, and every map
-/// admits exactly the keys validation admits.
-pub fn editor_schema() -> serde_json::Value {
-    let mut schema = json_node(&schema(), LayerKind::Project).unwrap_or_else(|| json!({}));
-    if let Some(object) = schema.as_object_mut() {
-        object.insert("required".to_owned(), json!(["schema_version"]));
-        let mut head = serde_json::Map::new();
-        head.insert(
-            "$schema".to_owned(),
-            json!("https://json-schema.org/draft/2020-12/schema"),
-        );
-        head.insert("title".to_owned(), json!("instrukt.yaml (project layer)"));
-        head.extend(std::mem::take(object));
-        *object = head;
-    }
-    schema["properties"]["modules"]["properties"]["history"]["default"] = json!(true);
-    schema
-}
-
-/// JSON Schema of `layer` (`Global`, `Project`, or `Company`), generated from
-/// the same schema tree [`check`] validates with.
-pub fn layer_json_schema(layer: LayerKind) -> serde_json::Value {
-    let mut schema = json_node(&schema(), layer).unwrap_or_else(|| json!({}));
-    if let Some(object) = schema.as_object_mut() {
-        let title = match layer {
-            LayerKind::Global => "instrukt.yaml (global layer)",
-            LayerKind::Project => "instrukt.yaml (project layer)",
-            LayerKind::Company => "instrukt.yaml (company home)",
-        };
-        let required = match layer {
-            LayerKind::Company => json!(["schema_version", "company"]),
-            _ => json!(["schema_version"]),
-        };
-        object.insert("required".to_owned(), required);
-        let mut head = serde_json::Map::new();
-        head.insert(
-            "$schema".to_owned(),
-            json!("https://json-schema.org/draft/2020-12/schema"),
-        );
-        head.insert("title".to_owned(), json!(title));
-        head.extend(std::mem::take(object));
-        *object = head;
-    }
-    schema
-}
-
-/// Describe what `layer` can declare at optional dotted `path`, as JSON Schema
-/// (`as_json = true`) or readable field documentation (`as_json = false`).
-pub fn describe_schema(
-    layer: LayerKind,
-    path: Option<&str>,
-    as_json: bool,
-) -> Result<String, super::_error::ConfigError> {
-    let root = layer_json_schema(layer);
-    let mut current = &root;
-    let mut walked = Vec::new();
-    if let Some(path) = path {
-        let trimmed = path.trim();
-        if trimmed.is_empty() {
-            return Err(super::_error::ConfigError::InvalidValue {
-                key: "schema".into(),
-                message: "path must be nonempty".into(),
-            });
-        }
-        for segment in trimmed.split('.') {
-            if let Some(next) = current.get("properties").and_then(|p| p.get(segment)) {
-                current = next;
-                walked.push(segment.to_owned());
-            } else if let Some(next) = current
-                .get("additionalProperties")
-                .filter(|v| v.is_object())
-            {
-                current = next;
-                walked.push(segment.to_owned());
-            } else {
-                let mut available: Vec<&str> = current
-                    .get("properties")
-                    .and_then(|p| p.as_object())
-                    .map(|map| map.keys().map(String::as_str).collect())
-                    .unwrap_or_default();
-                available.sort_unstable();
-                let scope = if walked.is_empty() {
-                    layer.described().to_owned()
-                } else {
-                    format!("`{}` in {}", walked.join("."), layer.described())
-                };
-                let keys = if available.is_empty() {
-                    "none".to_owned()
-                } else {
-                    available.join(", ")
-                };
-                return Err(super::_error::ConfigError::InvalidValue {
-                    key: trimmed.to_owned(),
-                    message: format!(
-                        "`{segment}` cannot be declared under {scope}; declarable keys: {keys}"
-                    ),
-                });
-            }
-        }
-    }
-    if as_json {
-        return serde_json::to_string_pretty(current).map_err(|error| {
-            super::_error::ConfigError::InvalidValue {
-                key: path.unwrap_or("").into(),
-                message: error.to_string(),
-            }
-        });
-    }
-    let prefix = walked.join(".");
-    let mut lines = Vec::new();
-    render_schema_text(&prefix, current, false, &mut lines);
-    Ok(lines.join("\n"))
-}
-
-fn render_schema_text(
-    prefix: &str,
-    schema: &serde_json::Value,
-    required: bool,
-    out: &mut Vec<String>,
-) {
-    let type_desc = schema_type_summary(schema);
-    let req = if required { "required" } else { "optional" };
-    let default = schema
-        .get("default")
-        .map(|d| format!(", default {d}"))
-        .unwrap_or_default();
-    // A description of several lines, such as a connector kind's setup with
-    // its manifest, continues indented under the key it describes.
-    let mut desc_lines = schema
-        .get("description")
-        .and_then(|d| d.as_str())
-        .map(str::lines)
-        .into_iter()
-        .flatten();
-    let desc = desc_lines
-        .next()
-        .map(|d| format!(" — {d}"))
-        .unwrap_or_default();
-    if !prefix.is_empty() {
-        out.push(format!("{prefix} ({type_desc}, {req}{default}){desc}"));
-        out.extend(desc_lines.map(|line| {
-            if line.is_empty() {
-                String::new()
-            } else {
-                format!("    {line}")
-            }
-        }));
-    }
-    let req_list: Vec<&str> = schema
-        .get("required")
-        .and_then(|r| r.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
-        .unwrap_or_default();
-    if let Some(props) = schema.get("properties").and_then(|p| p.as_object()) {
-        let mut keys: Vec<&String> = props.keys().collect();
-        keys.sort();
-        for key in keys {
-            let child_path = if prefix.is_empty() {
-                key.clone()
-            } else {
-                format!("{prefix}.{key}")
-            };
-            render_schema_text(
-                &child_path,
-                &props[key],
-                req_list.contains(&key.as_str()),
-                out,
-            );
-        }
-    }
-    if let Some(extra) = schema.get("additionalProperties").filter(|v| v.is_object()) {
-        let child_path = if prefix.is_empty() {
-            "<name>".to_owned()
-        } else {
-            format!("{prefix}.<name>")
-        };
-        render_schema_text(&child_path, extra, false, out);
-    }
-}
-
-fn schema_type_summary(schema: &serde_json::Value) -> String {
-    if let Some(values) = schema.get("enum").and_then(|e| e.as_array()) {
-        let opts: Vec<String> = values
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| v.to_string())
-            })
-            .collect();
-        return format!("one of: {}", opts.join(" | "));
-    }
-    if let Some(pattern) = schema.get("pattern").and_then(|p| p.as_str())
-        && pattern.contains("\\$\\{")
-    {
-        return "${NAME} secret reference".to_owned();
-    }
-    if let Some(kind) = schema.get("type").and_then(|t| t.as_str()) {
-        if kind == "array" {
-            let item = schema
-                .get("items")
-                .map(schema_type_summary)
-                .unwrap_or_else(|| "any".into());
-            return format!("list of {item}");
-        }
-        return kind.to_owned();
-    }
-    if schema.get("anyOf").is_some() {
-        return "union".to_owned();
-    }
-    "value".to_owned()
-}
-
-/// `node` as JSON Schema for `layer`; `None` when the layer may hold none
-/// of it.
-fn json_node(node: &Node, layer: LayerKind) -> Option<serde_json::Value> {
-    match node {
-        Node::Leaf(Rule::ShippedAdapterInProject, _) if layer == LayerKind::Project => {
-            Some(json!({ "enum": SHIPPED_BLUEPRINT_ENGINES }))
-        }
-        Node::Leaf(rule, shape) => rule.admits(layer).then(|| json_shape(*shape, layer)),
-        Node::Map { children, open } => {
-            let properties: serde_json::Map<String, serde_json::Value> = children
-                .iter()
-                .filter_map(|(name, child)| Some(((*name).to_owned(), json_node(child, layer)?)))
-                .collect();
-            let open = open.as_deref().and_then(|open| json_node(open, layer));
-            if properties.is_empty() && open.is_none() {
-                return None;
-            }
-            Some(json!({
-                "type": "object",
-                "properties": properties,
-                "additionalProperties": open.unwrap_or(json!(false)),
-            }))
-        }
-    }
-}
-
-/// A JSON Schema `pattern` admitting exactly the strings
-/// [`Field::NonEmptyStr`] accepts: those holding a character outside Rust's
-/// `char::is_whitespace`, the set `str::trim` removes. A regex class escape
-/// such as `\S` would not do, because JSON Schema reads patterns as ECMA-262,
-/// whose whitespace differs (it adds U+FEFF and omits U+0085). The pattern is
-/// a complemented class of `\uXXXX` escapes, which ECMA-262 reads as exactly
-/// those code points; a validator using another regex dialect may not accept
-/// the `\uXXXX` escape.
-fn non_blank_pattern() -> String {
-    let mut runs: Vec<(u32, u32)> = Vec::new();
-    for code in (0..=u32::from(char::MAX))
-        .filter(|&code| char::from_u32(code).is_some_and(char::is_whitespace))
-    {
-        match runs.last_mut() {
-            Some((_, end)) if *end + 1 == code => *end = code,
-            _ => runs.push((code, code)),
-        }
-    }
-    let class: String = runs
-        .iter()
-        .map(|&(start, end)| {
-            if start == end {
-                format!("\\u{start:04X}")
-            } else {
-                format!("\\u{start:04X}-\\u{end:04X}")
-            }
-        })
-        .collect();
-    format!("[^{class}]")
-}
-
-fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
-    let strings = |names: &[&str]| json!({ "type": "array", "items": { "enum": names } });
-    let record = |required: &[&str], optional: &[(&str, serde_json::Value)]| {
-        let mut properties: serde_json::Map<String, serde_json::Value> = required
-            .iter()
-            .map(|name| ((*name).to_owned(), json!({ "type": "string" })))
-            .collect();
-        properties.extend(
-            optional
-                .iter()
-                .map(|(name, schema)| ((*name).to_owned(), schema.clone())),
-        );
-        json!({
-            "type": "object",
-            "properties": properties,
-            "required": required,
-            "additionalProperties": false,
-        })
-    };
-    match shape {
-        Shape::Runtimes => {
-            // Each action is an optional, non-blank override, as validation
-            // reads it: an omitted one keeps the shipped instruction.
-            let non_blank = non_blank_pattern();
-            let actions: Vec<_> = super::_runtime::ACTIONS
-                .iter()
-                .map(|(name, contract)| {
-                    let action = json!({
-                        "type": "string",
-                        "pattern": non_blank,
-                        "description": contract,
-                    });
-                    (*name, action)
-                })
-                .collect();
-            let mut entry = record(&[], &actions);
-            entry["description"] = json!(
-                "This machine's agent-action instructions for the named runtime; \
-                 an action left out keeps the runtime's shipped instruction."
-            );
-            json!({ "type": "object", "additionalProperties": entry })
-        }
-        Shape::Webhooks => super::_webhooks::editor_schema(),
-        Shape::Members => json!({ "type": "object" }),
-        Shape::Mcp => super::_mcp::mcp_json_schema(layer),
-        Shape::McpClients => super::_mcp::mcp_clients_json_schema(),
-        Shape::Issuer => super::_mcp::issuer_json_schema(),
-        Shape::IngressUrl => json!({ "type": "string", "format": "uri" }),
-        Shape::Connectors => super::_company::connectors_schema(),
-        Shape::MachineId => json!({"type": "string", "pattern": "^[0-9a-f]{16,64}$"}),
-        Shape::Port => json!({"type": "integer", "minimum": 1, "maximum": 65535}),
-        Shape::Credential | Shape::LocalRedisUrl => json!({ "type": "string" }),
-        Shape::RedisTimeout => json!({ "type": "integer", "minimum": 11 }),
-        Shape::Version => json!({ "type": "integer", "minimum": 1 }),
-        Shape::Slug | Shape::Domain | Shape::Str | Shape::Identity => json!({ "type": "string" }),
-        Shape::Bool => json!({ "type": "boolean" }),
-        Shape::Apps => json!({"type":"object", "additionalProperties":{"type":"object"}}),
-        Shape::Board => json!({
-            "anyOf": [{ "const": false }, { "type": "string", "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$" }],
-        }),
-        Shape::OnOff => json!({ "enum": ["on", "off"] }),
-        Shape::Approver => json!({ "enum": ["human", "peer"] }),
-
-        Shape::Autostart => json!({
-            "anyOf": [
-                { "type": "boolean" },
-                { "type": "object", "additionalProperties": { "type": "boolean" } },
-            ],
-        }),
-        Shape::BranchPrefixes => {
-            json!({ "type": "array", "items": { "type": "string", "minLength": 1, "pattern": "\\S" } })
-        }
-        Shape::StrList => json!({ "type": "array", "items": { "type": "string" } }),
-        Shape::ModuleList => {
-            let names: Vec<&str> = Module::ALL.iter().map(|module| module.key()).collect();
-            strings(&names)
-        }
-
-        Shape::WatchList => json!({ "type": "array", "items": record(&["remote", "ref"], &[]) }),
-        Shape::Regenerable => {
-            json!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
-        }
-    }
-}
-
 /// The values reads answer for unset keys of `layer`'s own keys.
 pub(crate) fn defaults(layer: LayerKind) -> Value {
     let mut root = Mapping::new();
@@ -1115,6 +806,11 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
                 text(DEFAULT_GITHUB_API_URL),
             );
             insert_at(&mut root, &["runner", "autostart"], Value::Bool(false));
+            insert_at(
+                &mut root,
+                &["runner", "archive_finished_after"],
+                text(super::_thread_retention::OFF),
+            );
         }
         LayerKind::Project => {
             insert_at(&mut root, &["board"], Value::Bool(false));
@@ -1162,7 +858,7 @@ mod tests {
     }
 
     const GLOBAL_ONLY: &str = "agents: {claude: {git_author: 'A <a@x>'}}\n\
-        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true}\n\
+        ticks: 'off'\nrunner: {notify: 'off', runtime: host, autostart: true, archive_finished_after: 7d}\n\
         github: {api_url: 'http://x'}\n";
     const PROJECT_ONLY: &str = "project: demo\n\
         requires: [todos]\n\
@@ -1213,19 +909,24 @@ mod tests {
             }),
             Some("object") => value.as_object().is_some_and(|map| {
                 let required = object.get("required").and_then(J::as_array);
-                required.is_none_or(|names| {
-                    names
-                        .iter()
-                        .all(|name| map.contains_key(name.as_str().unwrap()))
-                }) && map.iter().all(|(key, child)| {
-                    match object.get("properties").and_then(|p| p.get(key)) {
-                        Some(property) => fits(property, child),
-                        None => match &object["additionalProperties"] {
-                            J::Bool(open) => *open,
-                            other => fits(other, child),
-                        },
-                    }
-                })
+                let names = object.get("propertyNames");
+                names.is_none_or(|names| map.keys().all(|key| fits(names, &serde_json::json!(key))))
+                    && required.is_none_or(|names| {
+                        names
+                            .iter()
+                            .all(|name| map.contains_key(name.as_str().unwrap()))
+                    })
+                    && map.iter().all(|(key, child)| {
+                        match object.get("properties").and_then(|p| p.get(key)) {
+                            Some(property) => fits(property, child),
+                            // An object without `additionalProperties` is open.
+                            None => match object.get("additionalProperties") {
+                                None => true,
+                                Some(J::Bool(open)) => *open,
+                                Some(other) => fits(other, child),
+                            },
+                        }
+                    })
             }),
             other => panic!("a type the editor schema does not write: {other:?}"),
         }
@@ -1271,18 +972,19 @@ mod tests {
     fn the_global_schema_reads_runtime_actions_as_validation_does() {
         let schema = layer_json_schema(LayerKind::Global);
         let entry = |actions: &str| format!("schema_version: 1\nruntimes:\n  t3:\n{actions}");
-        let earlier: String = super::super::_runtime::ACTIONS
+        let every: String = super::super::_runtime::ACTIONS
             .iter()
-            .filter(|(name, _)| *name != "retire_thread")
             .map(|(name, _)| format!("    {name}: Follow the native {name}.\n"))
             .collect();
         for (doc, valid) in [
-            (entry(&earlier), true),
+            (entry(&every), true),
+            (entry("    finish_thread: Settle the thread.\n"), true),
+            (entry("    finish_thread: '  '\n"), false),
+            // The retired action is an unknown key, not an override.
             (
                 entry("    retire_thread: Archive the finished thread.\n"),
-                true,
+                false,
             ),
-            (entry("    retire_thread: '  '\n"), false),
         ] {
             assert_eq!(
                 check(&yaml(&doc), LayerKind::Global).is_empty(),
@@ -1305,15 +1007,15 @@ mod tests {
                 "\u{A0}\u{1680}\u{2000}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}",
                 false,
             ),
-            ("archive", true),
-            ("\u{85} archive\u{3000}", true),
+            ("settle", true),
+            ("\u{85} settle\u{3000}", true),
             ("\u{1F5C4}", true),
         ] {
             let mut doc = yaml("schema_version: 1\nruntimes: {t3: {}}\n");
             doc["runtimes"]["t3"]
                 .as_mapping_mut()
                 .unwrap()
-                .insert(Value::from("retire_thread"), Value::from(action));
+                .insert(Value::from("finish_thread"), Value::from(action));
             let json = serde_json::to_value(&doc).unwrap();
             assert_eq!(
                 check(&doc, LayerKind::Global).is_empty(),
@@ -1322,6 +1024,56 @@ mod tests {
             );
             assert_eq!(fits(&schema, &json), valid, "{action:?}");
         }
+    }
+
+    /// Whether validation and the published global schema each admit
+    /// `window` as the retention window.
+    fn window_admitted(window: &str) -> (bool, bool) {
+        let doc = format!("schema_version: 1\nrunner: {{archive_finished_after: {window}}}\n");
+        (
+            check(&yaml(&doc), LayerKind::Global).is_empty(),
+            fits(&layer_json_schema(LayerKind::Global), &as_json(&doc)),
+        )
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_admit_a_counted_window() {
+        assert_eq!(window_admitted("7d"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_admit_an_off_window() {
+        assert_eq!(window_admitted("off"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_zero_count() {
+        assert_eq!(window_admitted("0d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_leading_zero() {
+        assert_eq!(window_admitted("07d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_count_without_a_unit() {
+        assert_eq!(window_admitted("7"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_an_unknown_unit() {
+        assert_eq!(window_admitted("7y"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_unit_without_a_count() {
+        assert_eq!(window_admitted("d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_window_that_is_not_text() {
+        assert_eq!(window_admitted("true"), (false, false));
     }
 
     /// Read as ECMA-262, each published action pattern admits a value exactly
@@ -1376,6 +1128,65 @@ mod tests {
         assert_eq!(
             check(&yaml(&format!("{BOTH}{PROJECT_ONLY}")), LayerKind::Project),
             []
+        );
+    }
+
+    /// Whether validation and the company home's JSON Schema each admit a
+    /// company home holding `members`, in that order.
+    fn members_admitted(members: &str) -> (bool, bool) {
+        let doc = format!("schema_version: 1\ncompany: acme\nmembers: {members}\n");
+        (
+            check(&yaml(&doc), LayerKind::Company).is_empty(),
+            fits(&layer_json_schema(LayerKind::Company), &as_json(&doc)),
+        )
+    }
+
+    #[test]
+    fn the_company_schema_admits_a_complete_member_entry_as_validation_does() {
+        let member = "{alex: {name: Alex Example, email: alex@example.com, \
+                      credentials: {erpnext: '${ALEX_ERPNEXT_LOGIN}'}}}";
+        assert_eq!(members_admitted(member), (true, true));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_member_key_outside_the_slug_grammar_as_validation_does() {
+        assert_eq!(
+            members_admitted("{Alex: {email: alex@example.com}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_member_without_an_email_as_validation_does() {
+        assert_eq!(members_admitted("{alex: {name: Alex}}"), (false, false));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_an_email_without_an_address_as_validation_does() {
+        assert_eq!(members_admitted("{alex: {email: alex}}"), (false, false));
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_blank_display_name_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {name: ' ', email: alex@example.com}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_an_unknown_member_field_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {email: alex@example.com, role: admin}}"),
+            (false, false)
+        );
+    }
+
+    #[test]
+    fn the_company_schema_refuses_a_literal_credential_as_validation_does() {
+        assert_eq!(
+            members_admitted("{alex: {email: alex@example.com, credentials: {erpnext: hunter2}}}"),
+            (false, false)
         );
     }
 
@@ -1445,6 +1256,7 @@ mod tests {
                 ("ticks", N),
                 ("runner.notify", N),
                 ("runner.runtime", N),
+                ("runner.archive_finished_after", N),
                 ("github.api_url", N),
             ]
         );

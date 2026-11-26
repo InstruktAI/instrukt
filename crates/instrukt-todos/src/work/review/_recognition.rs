@@ -382,7 +382,7 @@ fn plan(held: &[Delivery], target: &Target, pulls: &[u64]) -> Plan {
 /// reached or has not the commit yet, refused otherwise.
 fn failure_state(error: &GitHubError, status: bool) -> DeliveryState {
     match error {
-        GitHubError::Status { status: 422, .. } if status => DeliveryState::Outstanding,
+        GitHubError::Invalid { status: 422, .. } if status => DeliveryState::Outstanding,
         GitHubError::Status { status, .. } if *status >= 500 => DeliveryState::Outstanding,
         error if error.is_reach() => DeliveryState::Outstanding,
         _ => DeliveryState::Refused,
