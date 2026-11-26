@@ -232,10 +232,11 @@ The runner also owns carrying a company's knowledge proposals to review and
 integration, and what of them reaches the operator. It carries them in a
 company home admitted for automatic review whose proposal pull-request
 credential work answers is ready (`project/instrukt/spec/domain/work`). The
-runner asks that readiness when it starts, when it admits a new
-configuration and after a refused opening; a credential that is not ready
-withholds only the carrying, leaves automatic review of the home's other pull
-requests admitted, and is recorded as the home's proposal deferral below.
+runner asks that readiness where the credential enters, when it starts and
+when it takes a configuration change, and again after a refused opening; a
+credential that is not ready withholds only the carrying, leaves automatic
+review of the home's other pull requests admitted, and is recorded as the
+home's proposal deferral below.
 Its review observation's fetch of a company home prunes
 remote-tracking branches the remote no longer holds. On each review
 observation's tick it considers only the heads of the home's remote-tracking
@@ -265,20 +266,29 @@ Availability. What withholds or fails opening is kept as the home's proposal
 deferral, on the pattern of the CI source's poll deferral:
 
 - **Record.** One row per company home's project in the runner's
-  `proposal_deferrals` table of the state database: its cause, the time
-  before which no opening is tried, and the span that deferral lasted.
-- **Written** when the proposal credential is found not ready, when GitHub
-  refuses an opening (the cause is GitHub's answer), and when GitHub cannot be
-  reached. Each new deferral doubles the span, from one tick up to an hour.
-  A successful opening, or the credential found ready, deletes the row.
-- **Read** by the runner before it tries an opening, and by `instrukt events
-  status`, which lists it with its cause and door beside the other runner
-  state it reports and sends no GitHub request for it.
+  `proposal_deferrals` table of the state database: its kind, its cause, the
+  time before which nothing is tried, and the span that deferral lasted.
+- **Credential kind.** Written when a readiness ask answers not ready, with
+  the credential's repair door as its cause. When its time passes the runner
+  asks readiness again, never an opening; an answer of not ready writes it
+  again with a doubled span, and an answer of ready deletes it.
+- **Opening kind.** Written when GitHub refuses an opening, with GitHub's
+  answer as its cause, or cannot be reached for one, while readiness answers
+  ready. After a refusal the runner asks readiness first and writes the kind
+  that answer gives, so a refusal's row is never deleted by that answer. Each
+  new opening deferral doubles the span. Only a later successful opening, or
+  the home no longer having an admitted head to open, deletes it.
+- **Spans** double from one tick up to an hour.
+- **Read** by the runner before it tries anything for the home, and by
+  `instrukt events status`, which lists it with its kind, cause and door
+  beside the other runner state it reports and sends no GitHub request for
+  it.
 - **Classified** (`sdlc/policy/state-storage`): external bookkeeping, owned
   and written by the runner alone; losing it costs one more GitHub request
   and the listing until the next attempt; a runner table in the state
   database, under its writer lock as the poll deferral is; scoped to the
-  machine; bounded by one row per company project, deleted on recovery.
+  machine; bounded by one row per company project, deleted on the recovery
+  its kind names.
 
 The verdict is work's, and what the integrator does with the head is
 workflow's integrator's.
