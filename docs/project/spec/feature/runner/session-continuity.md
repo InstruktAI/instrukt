@@ -593,8 +593,8 @@ GitHub command creates no second attention item.
 
 | State | Runtime observation |
 | --- | --- |
-| `running` | `running`, `preparing`, `starting`, `resuming` or `queued`; this operational state supplies no proof of input consumption. |
-| `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
+| `running` | `running`, `preparing`, `starting`, `resuming`, `queued` or `waiting`; this operational state supplies no proof of input consumption. A thread parked on work it delegated is `running`. |
+| `needs-input` | `waiting_for_input`, `waiting_for_approval` or a reported pending request (`pendingRequestCount` above zero), whatever the status. |
 | `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
 | `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Outstanding owner-admitted work after confirmed terminal presence uses the automatic succession contract above. |
@@ -1007,3 +1007,5 @@ And no failed start is reported for the pickup
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/configuration/interpolation](../configuration/interpolation.md)
 - https://github.com/pingdotgg/t3code/blob/bf469bb19669671d0df2efda74ed73867a7137c0/packages/shared/src/paletteSearch.ts — T3's `recordThreadOpen`, which decides which openings `opens.openedAt` records.
+- https://github.com/pingdotgg/t3code/blob/bf961f8121c6336915ecf7b3f97ce6e68ab38fd7/apps/server/src/mcp/OrchestratorMcpService.ts — T3's `threadStatus`, which decides when a shown or listed thread reports `waiting`, and the thread detail's `pendingRequestCount`, which counts its pending runtime requests (release `v0.1.13-nightly.20261125.5258`).
+- https://github.com/pingdotgg/t3code/blob/bf961f8121c6336915ecf7b3f97ce6e68ab38fd7/packages/shared/src/orchestrationV2PendingBackgroundWork.ts — T3's `backgroundWorkHoldsCompletion`, which decides which `pendingBackgroundTasks` hold a thread's completion (release `v0.1.13-nightly.20261125.5258`).

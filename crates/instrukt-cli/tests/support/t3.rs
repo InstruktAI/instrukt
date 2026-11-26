@@ -786,6 +786,25 @@ impl FakeT3 {
         let id = resolved.as_str();
         self.change(id, "pendingRequestCount", count.into());
     }
+    /// Thread `id` ended its turn after delegating `worker`, which still
+    /// runs: the shape the installed T3 shows for a parent its worker's
+    /// background task holds, which waits on no input.
+    pub fn park_on_delegate(&self, id: &str, worker: &str) {
+        self.change(id, "status", "waiting".into());
+        self.change(id, "activeRunId", serde_json::Value::Null);
+        self.change(id, "pendingRequestCount", 0.into());
+        self.change(id, "blockedOnThreadWait", false.into());
+        self.change(
+            id,
+            "pendingBackgroundTasks",
+            serde_json::json!([{
+                "taskId": format!("turn-item:delegated-task:{worker}"),
+                "kind": "subagent",
+                "description": worker,
+                "childThreadId": format!("thread:delegated-task:{worker}"),
+            }]),
+        );
+    }
     pub fn delete(&self, id: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
