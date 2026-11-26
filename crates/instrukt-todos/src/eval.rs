@@ -3,11 +3,15 @@
 //! evaluation window, with the model a separate dimension inside each
 //! window and human acts in a row of their own, rendered as HTML.
 //!
-//! Everything here is pure: the CLI hands in each project's records as
-//! work makes them available, the per-commit fingerprint records
-//! publication keeps, and the time range; it writes the HTML where the
-//! developer asked. Nothing is invented: a missing observation is counted
-//! as missing and named as a limitation of the comparison it affects.
+//! What a computer reads, and how it words what limits a read, is
+//! [`read`]'s. The report itself is pure: it is built from each project's
+//! records as work makes them available, the per-commit fingerprint
+//! records publication keeps, and the time range; the CLI writes the HTML
+//! where the developer asked. Nothing is invented: a missing observation is
+//! counted as missing and named as a limitation of the comparison it
+//! affects.
+
+mod _read;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,6 +24,8 @@ use crate::evidence::{
     StampRecord,
 };
 use crate::work::TodoRecord;
+
+pub use _read::{Limitation, ProjectRead, Reading, Stored, Why, read};
 
 /// One project as the report reads it.
 #[derive(Debug, Clone)]

@@ -1,0 +1,43 @@
+---
+source: crates/instrukt-todos/src/eval/_read.rs
+expression: "shown.join(\"\\n\")"
+---
+checkout_missing
+  public: Its checkout is not available on this computer. Only its record on this computer is shown; work reflected only to GitHub is not read. Inspect this computer's logs for the detail.
+  log:    Its checkout at /sentinel/checkout/path is not available. Only its record on this computer is shown; work reflected only to GitHub is not read.
+no_configuration
+  public: Its checkout on this computer has no project configuration, so whether it tracks work cannot be read. Only its record on this computer is shown; work reflected only to GitHub is not read. Inspect this computer's logs for the detail.
+  log:    Its checkout at /sentinel/checkout/path has no project configuration, so whether it tracks work cannot be read. Only its record on this computer is shown; work reflected only to GitHub is not read.
+tracking_off
+  public: Work tracking is switched off in this project now. Only its record on this computer is shown; work reflected only to GitHub is not read.
+  log:    Work tracking is switched off in this project now. Only its record on this computer is shown; work reflected only to GitHub is not read.
+configuration_unreadable
+  public: Its configuration cannot be read on this computer. Only its record on this computer is shown; work reflected only to GitHub is not read. Inspect this computer's logs for the detail.
+  log:    Its configuration cannot be read: sentinel error text. Only its record on this computer is shown; work reflected only to GitHub is not read.
+record_unreadable
+  public: Its work record cannot be read on this computer. Only its record on this computer is shown; work reflected only to GitHub is not read. Inspect this computer's logs for the detail.
+  log:    Its work record cannot be read: remote https://***@host.example/org/repo.git is elsewhere. Only its record on this computer is shown; work reflected only to GitHub is not read.
+checkout_missing
+  public: Its checkout is not available on this computer. Inspect this computer's logs for the detail.
+  log:    Its checkout at /sentinel/checkout/path is not available.
+no_configuration
+  public: Its checkout on this computer has no project configuration, so whether it tracks work cannot be read. Inspect this computer's logs for the detail.
+  log:    Its checkout at /sentinel/checkout/path has no project configuration, so whether it tracks work cannot be read.
+tracking_off
+  public: Work tracking is switched off in this project now.
+  log:    Work tracking is switched off in this project now.
+configuration_unreadable
+  public: Its configuration cannot be read on this computer. Inspect this computer's logs for the detail.
+  log:    Its configuration cannot be read: sentinel error text.
+record_unreadable
+  public: Its work record cannot be read on this computer. Inspect this computer's logs for the detail.
+  log:    Its work record cannot be read: remote https://***@host.example/org/repo.git is elsewhere.
+stored_record_unreadable
+  public: Its record on this computer cannot be read either. Inspect this computer's logs for the detail.
+  log:    Its record on this computer cannot be read either: sentinel error text.
+publication_unreadable
+  public: Which projects this computer publishes cannot be read, so none of its projects is counted. Inspect this computer's logs for the detail.
+  log:    Which projects this home publishes cannot be read: remote https://***@host.example/org/repo.git is elsewhere.
+fingerprints_unreadable
+  public: This computer's recorded eval fingerprints cannot be read, so it names no commit setting an eval set. Inspect this computer's logs for the detail.
+  log:    The recorded eval fingerprints cannot be read: sentinel error text.
