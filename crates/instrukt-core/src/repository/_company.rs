@@ -10,7 +10,8 @@
 //! composed and before anything on GitHub is changed; an adoption that
 //! finds the intent resumes that creation. The root commit is composed in a
 //! staging checkout, and the home's clone is made ready beside it, moved
-//! into place whole and then synced.
+//! into place whole and then synced, unless its repository holds no project
+//! layer.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;

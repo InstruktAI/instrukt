@@ -246,7 +246,8 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
   - The home folder comes into being only as a clone of the company's
     repository, in one step: the clone is made beside the staging checkout,
     given its settings document and its hook sections there, and moved into
-    place whole, after which the home is synced. An interrupted adoption
+    place whole, after which the home is synced when its repository holds a
+    project layer. An interrupted adoption
     leaves no home folder behind, only its staging, which the next adoption
     of that company resumes.
   - Nothing is written into a home folder that exists, and an adoption that
@@ -290,9 +291,12 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
   - Adoptions take turns: one company home adoption runs on a computer at a
     time, holding `~/.instrukt/state/company-generation.lock` for its run.
   - The home is ready when the adoption ends: its settings document names the
-    company, its hook sections are installed and the sync has run. A sync
-    that refuses, as it does for a repository that commits no project layer,
-    is reported, and the home stays.
+    company and its hook sections are installed. A home whose repository
+    holds a project layer has been synced, and a sync that refuses is
+    reported while the home stays. A home whose repository holds no project
+    layer, as one made before generation may, is not synced: the adoption
+    reports that neither publication nor automatic review applies there, and
+    the home stays.
 - **Identifier:** the company's key.
 - **Lifecycle:** started by `instrukt init --company <key>`; the staging
   checkout, its creation intent among it, is removed once the home is in
