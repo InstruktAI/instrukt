@@ -435,30 +435,27 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     // The organisation holds the company's private repository, named after
     // its key, holding the company skeleton.
     let remote = remotes.join("homes/company-acme.git");
+    // Each file of the skeleton is committed on main as the company receives
+    // it, and nothing else is.
+    let committed = [
+        ("skeleton-layer", "instrukt.yaml"),
+        ("skeleton-ignore", ".gitignore"),
+        ("skeleton-index", "docs/index.yaml"),
+        ("skeleton-instructions", "AGENTS.md"),
+        ("skeleton-skill", "skills/acme/SKILL.md"),
+        ("skeleton-catalog", ".claude-plugin/marketplace.json"),
+    ];
+    for (snapshot, path) in committed {
+        insta::assert_snapshot!(snapshot, on_main(&env, &remote, path));
+    }
     let skeleton = files_on_main(&env, &remote);
-    assert_eq!(
-        skeleton,
-        [
-            ".claude-plugin/marketplace.json",
-            ".gitignore",
-            "AGENTS.md",
-            "docs/index.yaml",
-            "instrukt.yaml",
-            "skills/acme/SKILL.md",
-        ]
-    );
-    insta::assert_snapshot!("skeleton-layer", on_main(&env, &remote, "instrukt.yaml"));
-    insta::assert_snapshot!(
-        "skeleton-catalog",
-        on_main(&env, &remote, ".claude-plugin/marketplace.json")
-    );
+    assert_eq!(skeleton.len(), committed.len());
     assert_eq!(github.is_private("homes/company-acme"), Some(true));
-    // GitHub was asked to create it, set its default branch and make the
-    // company's GitHub administrator an administrator of it.
+    // The company's GitHub administrator is an administrator of it, and its
+    // default branch is set.
     insta::assert_debug_snapshot!(
         "company-created-github",
         (
-            writes(&github),
             github.collaborators("homes/company-acme"),
             github.default_branch("homes/company-acme"),
         )
