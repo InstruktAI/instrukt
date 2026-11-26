@@ -56,7 +56,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
-| screening | Capability-free calls to the configured model endpoint, the screening of untrusted text through them, and the requests kept while the endpoint is unavailable or a text is held for a person | `project/instrukt/spec/domain/screening` |
+| screening | Capability-free calls to the configured model endpoint, the screening of untrusted text through them, and the texts it holds for a person | `project/instrukt/spec/domain/screening` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 <!-- /planned-change:capability-free-model-call -->
 
@@ -81,7 +81,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | history | runner's extraction, retained conversations and merged search | On by default; local operations need no Redis; merged search independently demands cluster Redis, with no events dependency |
 | events | runner's event sources and standing-agent dispatch | Independently switchable; runtime adapter required; shares the single runner process |
 | conversations | company | Given by a company home's declared connector; runtime adapter required; served by the long-lived `instrukt run` |
-| screening | screening | Given by the global `screening` settings; a scheduled wake required; its pending pass runs in every runner invocation |
+| screening | screening | Given by the global `screening` settings; an OpenAI-compatible model endpoint required |
 <!-- /planned-change:capability-free-model-call -->
 
 Distribution is in no module: it is release tooling and the skill beside
@@ -195,8 +195,7 @@ Screening adds these crossings; its contract is
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → screening | Customer / Supplier | The global-only `screening` settings and the resolution of `screening.api_key` from the machine's secrets |
-| runner → screening | Customer / Supplier | Caller recognition through core's caller-identity lookup, delivery of one input to a named session under a command identity, and whether this computer's scheduled wake is installed |
-| screening → runner | Customer / Supplier | The pending pass, declared by runner, implemented by screening and wired by the CLI |
+| CLI admission → screening | Customer / Supplier | The caller the CLI recognised through core's caller-identity lookup, passed to screening as a session or a caller outside any session |
 | screening → CLI admission | Published language | The action `screening` in the code-owned catalog |
 <!-- /planned:capability-free-model-call -->
 

@@ -42,7 +42,7 @@ on it, and any other caller uses it the same way.
 | Prompt | The complete text the model receives. It is the call's only input. |
 | Answer shape | The fixed shape the caller declares the answer must have. |
 | Answer | One answer of the declared shape, within the call's size bound. |
-| Outcome | `answered` with the answer, `waiting` while the endpoint is unavailable, or `refused` with its reason. |
+| Outcome | `answered` with the answer, or `refused` with its reason. While the endpoint is unavailable the call is `waiting` and returns no outcome yet. |
 
 The request defines no tools, carries no earlier conversation and no data
 beyond the prompt, and asks only for an answer of the declared shape within its

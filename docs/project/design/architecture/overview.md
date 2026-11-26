@@ -54,7 +54,7 @@ runtime adapter and consumed as facts by publication.
 | `history` | runner history extraction, retained search and merged queries | on by default | runtime conversation source for extraction; cluster Redis for merged search only, independently of events |
 | `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
 | `conversations` | company: connectors, conversation sessions and the answer back | a company home's declared connector | selected runtime adapter; the long-lived runner, kept running by an owned service |
-| `screening` | screening: capability-free calls, untrusted-text screening and their requests | the global `screening` settings | an OpenAI-compatible model endpoint; a scheduled wake for the pending pass |
+| `screening` | screening: capability-free calls, untrusted-text screening and held texts | the global `screening` settings | an OpenAI-compatible model endpoint |
 <!-- /planned-change:capability-free-model-call -->
 
 <!-- planned-change:capability-free-model-call -->
@@ -89,7 +89,7 @@ connector, `instrukt-connector-slack` first. Dependencies point one way:
 `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
 `instrukt-core` and `instrukt-blueprint`; `instrukt-company` →
 `instrukt-runner`, `instrukt-core` and `instrukt-connector`;
-`instrukt-screening` → `instrukt-runner` and `instrukt-core`; a connector crate →
+`instrukt-screening` → `instrukt-core`; a connector crate →
 `instrukt-connector` only; `instrukt-blueprint` → `instrukt-core`;
 `instrukt-core` → `instrukt-connector`, for the declarations configuration
 validates against; `instrukt-connector` → nothing of instrukt. Only
@@ -189,7 +189,7 @@ Deleting the home is not a lossless reset.
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
 | `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
-| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; agent runtimes' model-provider keys remain with T3, and the model endpoint's key is an instrukt secret (`project/instrukt/spec/domain/screening`) |
+| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; agent runtimes' model-provider keys remain with T3, and the model endpoint's key is an instrukt secret (`project/instrukt/spec/feature/configuration/owned-files`) |
 | `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
 | `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, a domain's `workflow/` flavor files, and under `_compressed/` the compressed units the position's sources have, at each source's path relative to the position | the owning project's committed main, by `sync` |
 | `state/index.yaml` | the global index at schema version 3, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts (`project/instrukt/spec/domain/publication`); project entries resolve to the committed project store; every loader brings a version 2 index forward without dropping an entry, each delivered entry's source digest computed from its published file, an entry whose file cannot be read kept without one and named; the next sync persists version 3 | each project's `sync` |
@@ -220,13 +220,14 @@ records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
 
 <!-- planned:capability-free-model-call -->
-`state/screening.db` holds screening's requests: the calls and screenings
-still waiting on an unavailable model endpoint and the texts held for a person
-(`project/instrukt/spec/domain/screening`, Request store).
-`state/screening.lock` is its write-isolation unit, taken by the screening
-commands and by the pending pass for one request at a time, never across a
-request to the endpoint. Nothing re-creates the store: it is the only copy of
-each held text and must be preserved.
+`state/screening.db` holds the texts screening held for a person, and those a
+person discarded until they are purged
+(`project/instrukt/spec/domain/screening`, Held-text store).
+`state/screening.lock` is its write-isolation unit, taken only by the
+`instrukt screening` commands for each of their transactions and never while a
+request to the model endpoint is under way. No background writer takes it.
+Nothing re-creates the store: it is the only copy of each held text and must
+be preserved.
 <!-- /planned:capability-free-model-call -->
 
 The state directory is resolved to its canonical location once, and every path and
@@ -322,7 +323,7 @@ the command-line parser's own text and exit status 2.
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
-| Configured model endpoint | screening | one OpenAI-compatible chat-completions request per capability-free call through the workspace's `ureq` client, defining no tools, with the `screening` settings' address, model and optional key |
+| Configured model endpoint | screening | one OpenAI-compatible chat-completions request per capability-free call, defining no tools, to the address and model of the `screening` settings with their optional key |
 | OS scheduler | runner | `instrukt tick` each minute |
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
@@ -522,17 +523,6 @@ the runtime archive the finished threads of its registered projects that have
 been quiet past it, after dispatch and event work. No pickup, event reaction or
 other command waits on it; the `instrukt tick` that runs it returns once it is
 done (`project/instrukt/spec/feature/runner/thread-retention`).
-
-<!-- planned:capability-free-model-call -->
-Each runner invocation also runs screening's pending pass, as it runs thread
-retention: in `instrukt tick` after the tick has released the runner and
-runtime-invocation locks, and in `instrukt run` on a thread of its own after a
-wake. The pass tries waiting calls and pending screenings again, oldest first,
-and stops at the first one the endpoint cannot serve. It delivers each settled
-outcome to the session that asked under the command identity recorded when the
-request settled. No command waits on it, and passes that overlap converge
-(`project/instrukt/spec/domain/screening`).
-<!-- /planned:capability-free-model-call -->
 
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
@@ -929,8 +919,7 @@ the gate adds no webhook, queue or process.
 
 <!-- planned:capability-free-model-call -->
 - **The model endpoint is unavailable:** a capability-free call or screening
-  returns its reference at once and is neither refused, released nor held;
-  the pending pass tries it again in every runner invocation, `instrukt
-  screening list` shows why it waits, and its outcome is delivered when the
-  endpoint answers.
+  waits inside its command, tries again until the endpoint answers and is
+  neither refused, released nor held meanwhile; its caller and the log show
+  that it waits and why (`project/instrukt/spec/domain/screening`).
 <!-- /planned:capability-free-model-call -->

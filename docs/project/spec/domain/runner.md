@@ -192,17 +192,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `todos`, `events` and `history`, and depends on `instrukt-core` and `instrukt-blueprint`. `instrukt-todos`
   depends on `instrukt-runner`; `instrukt-cli` wires these crates together.
 
-<!-- planned:capability-free-model-call -->
-The runner hosts screening's pending pass
-(`project/instrukt/spec/domain/screening`): it declares the pass, runs it in
-every invocation as it runs thread retention, and sends a settled outcome to
-the session that asked as one runner-authored input under the command identity
-screening recorded for it, which the runtime accepts once
-(`project/instrukt/spec/feature/runner/t3-contract`). Which outcome is
-delivered, to which session and when is screening's; the pass keeps no runner
-state.
-<!-- /planned:capability-free-model-call -->
-
 Fleet attention is the runner's: which facts of a project's active work are
 attention conditions, the `runner.attention.*` vocabulary, each condition's
 occurrence identity, a project's attention episode, the fleet-attention
@@ -647,13 +636,6 @@ records.
 It starts the requested reviewer through the runtime adapter under its own
 start key; work admits that reviewer's verdict like any other
 (`project/instrukt/spec/feature/runner/requested-review`).
-
-<!-- planned:capability-free-model-call -->
-For screening the runner supplies caller recognition, the delivery of one
-input to a named session under a command identity and whether this computer's
-scheduled wake is installed; screening supplies the pending pass the runner
-declares and hosts (`project/instrukt/spec/domain/screening`).
-<!-- /planned:capability-free-model-call -->
 
 
 The runtime adapter and the event-source boundary form an
