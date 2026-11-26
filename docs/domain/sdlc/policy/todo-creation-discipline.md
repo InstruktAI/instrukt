@@ -109,12 +109,9 @@ once, deduplicated, while preserving the existing restoration obligation.
   Neither workflow derivation nor a creation command grades prose or infers
   semantic documentation impact.
 
-- **A todo enters the lifecycle once its outcome has converged; the icebox
-  parks only outcomes that have not.** Creating a todo without `--icebox`
-  enters it into the lifecycle. An idea whose outcome is still forming is
-  created with `--icebox` and unfrozen once it converges. The state of its
-  contracts never decides this: contracts still to be written or reviewed are
-  preparation work (above), not a forming outcome.
+- **A todo enters the lifecycle once its outcome has converged.** Contracts
+  still to be written or reviewed are preparation work (above) and never delay
+  filing. An outcome still forming does not enter the lifecycle.
 - **Place a filing by what it waits on.** Converged work waiting on another
   todo is created with `--after <slugs>`, and leaves the wait on its own when
   they deliver. Converged work waiting on a concrete condition outside the
@@ -122,9 +119,6 @@ once, deduplicated, while preserving the existing restoration obligation.
   contracts included — is created with `--hold --reason <text>`, the reason
   naming that condition under the hold rule above, so it is held from its
   first revision.
-  `--icebox` is for work whose outcome has not converged, never for a
-  dependency, for converged work waiting on a merge or release, or for
-  contracts still to be written, and never combined with a hold.
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -610,12 +604,9 @@ Each placement answers a different question about why work is not moving. A
 prerequisite clears itself when the todo it names delivers, so a hold standing
 for one waits on someone to remember it. A hold is the only record that keeps
 converged work in the lifecycle, paused, with the condition it waits on visible
-to everyone reading the work. The icebox takes work out of the lifecycle and
-records no condition, so converged work parked there drops out of the fleet's
-attention and is found again only by chance. Contracts still to be written are
-work, not a forming outcome. Parked in the icebox, the todo waits on nobody;
-held on the merge of the branch that carries them, it waits visibly on a named
-condition; unheld, its claimant has them written. Pending carriers on main need no
+to everyone reading the work. Contracts still to be written are work, not a
+forming outcome: held on the merge of the branch that carries them, the todo
+waits visibly on a named condition; unheld, its claimant has them written. Pending carriers on main need no
 open worktree: the todo's worktree is created when its orchestrator starts, so
 written-ahead work leaves no checkout waiting for a worker. Holding the work as
 it is created leaves no moment in which the runner can pick it up unheld. A hold whose

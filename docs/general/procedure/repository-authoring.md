@@ -12,8 +12,9 @@ visibility: public
 
 ## Goal
 
-Place, commit and hand off repository work exactly as `general/policy/commits`
-gives it, so no agent invents a worktree, branch name or location.
+Place, commit and hand off repository work as `general/policy/commits` gives
+it: a todo's work in that todo's worktree, everything else ad hoc on a one-off
+branch prefixed with the change's Commitizen type and never a todo's branch.
 
 ## Preconditions
 
