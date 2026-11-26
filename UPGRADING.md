@@ -642,7 +642,7 @@ the board, the native artifacts, the pull request and its reviews show the
 todo one way, and the state database holds the only copy. `instrukt todo
 refresh` is gone, and a computer no longer lists, picks up or reads todos
 another computer created. The state database migrates forward on its own
-(Version 39); existing record comments on issues are left where they are.
+(Version 40); existing record comments on issues are left where they are.
 
 A todo this computer holds can carry artifact versions whose content only
 GitHub has: versions another computer recorded, taken in by an earlier
