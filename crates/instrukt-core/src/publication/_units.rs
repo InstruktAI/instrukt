@@ -824,8 +824,11 @@ pub struct UnitsReport {
     pub stale: Vec<UnitWork>,
     /// Each source without a unit, in traversal order.
     pub missing: Vec<UnitWork>,
-    /// Each unit whose source no longer exists or is inlined by no
-    /// entrypoint index of the repository, by path.
+    /// Each orphaned unit, by path: one whose source no longer exists, or
+    /// whose `general`, project or company source no entrypoint index of
+    /// the repository inlines. A domain snippet's unit is orphaned only
+    /// when the snippet no longer exists, since another repository's
+    /// always-on selection may inline it.
     pub orphaned: Vec<String>,
     /// Each finding the inspection can establish from the checkout, once.
     pub findings: Vec<UnitFinding>,

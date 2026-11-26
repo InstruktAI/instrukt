@@ -8,9 +8,9 @@
 //! Every entry carries a path relative to the published docs store. The
 //! publication record retains source checkout provenance.
 //!
-//! The index is at schema version 3: each delivered entry carries its
-//! source digest, and an entry whose snippet has a published compressed
-//! unit carries that unit's two lineage facts
+//! The index is at the schema version `SCHEMA_VERSION` names: each
+//! delivered entry carries its source digest, and an entry whose snippet has
+//! a published compressed unit carries that unit's two lineage facts
 //! (`docs/project/spec/domain/publication.md`, Lineage facts). Both loaders
 //! bring an older index forward before anything reads its entries, and drop
 //! no entry doing so.
