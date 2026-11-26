@@ -370,7 +370,7 @@ const ARCHIVE_READ: &[(&str, &[(&str, &str)])] = &[
 /// with a settling time, not pinned, not snoozed past `now`, with no update
 /// or opening after `latest_activity`; no run that has not ended, no pending
 /// runtime request and no delegated task that has not settled. An unreadable
-/// or mismatched table is an error, which the caller reads as changed.
+/// or mismatched table is an error.
 pub(super) fn archive_holds(
     home: &Home,
     env: &Env,

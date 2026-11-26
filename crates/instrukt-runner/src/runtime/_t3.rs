@@ -395,19 +395,13 @@ impl RuntimeAdapter for T3 {
         };
         let home = self.operation_home()?;
         let thread = session.id.as_str();
-        match super::_t3_conversations::archive_holds(
-            &home,
-            &self.env,
-            thread,
-            latest_activity,
-            now,
-        ) {
-            Ok(true) => {}
-            Ok(false) => return Ok(ArchiveOutcome::Changed),
-            Err(error) => {
-                tracing::debug!(event = "thread_archive_reread_failed", session = %session, error = %error);
-                return Ok(ArchiveOutcome::Changed);
-            }
+        // A re-read that cannot be made archives nothing and is a failure of
+        // its own; only an observed change is `Changed`.
+        let holds =
+            super::_t3_conversations::archive_holds(&home, &self.env, thread, latest_activity, now)
+                .map_err(|error| failure("archive", error.to_string()))?;
+        if !holds {
+            return Ok(ArchiveOutcome::Changed);
         }
         let command_id = format!(
             "instrukt:retention:{}",
