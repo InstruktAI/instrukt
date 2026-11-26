@@ -11,7 +11,8 @@ delivered_by: [ratchet-file-size-and-suppressions]
 
 - **Size.** A source file above the threshold never grows beyond its baseline
   entry, and a source file without an entry never exceeds the threshold. The
-  threshold is 1,000 lines and is recorded in the baseline. Source files are
+  threshold is the baseline's `threshold`; changing it is a hand edit, and
+  raising it is a rise. Source files are
   the tracked Rust, Python and shell files outside every `tests/` directory;
   shell files are `*.sh` files and the extensionless files directly under
   `scripts/` and `.githooks/`. A file's lines are its newline characters, plus
@@ -66,11 +67,10 @@ delivered_by: [ratchet-file-size-and-suppressions]
 ## Rationale
 
 The Definition of Done's structural ratchet forbids worsening a principle
-violation but leaves size and suppressions to judgment, and each delivery
-added to the largest files and deferred the split: between 2026-11-22 and
-2026-11-26 the source files over 1,000 lines went from 23 to 35 and the
-largest from 4,247 to 5,117 lines. A count a script checks is a fact a
-reviewer need not weigh. Integration test files sit outside the size rule
+violation but leaves size and suppressions to judgment, and judgment defers
+the split one delivery at a time: each addition to an oversized file, and each
+new suppression, looks small beside what is already there. A count a script
+checks is a fact a reviewer need not weigh. Integration test files sit outside the size rule
 because `project/instrukt/policy/testing` keeps one case file per feature
 spec. A baseline that matches the tree exactly makes every shrink permanent
 at once, so no later delivery regrows into slack; a command that only lowers
