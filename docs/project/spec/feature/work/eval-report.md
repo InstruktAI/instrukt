@@ -35,8 +35,9 @@ grouped by project, with the current project first. Each project's record is
 read from this computer's work record; the report reads nothing from GitHub.
 The report takes no options beyond `--since` and `--out`.
 <!-- change:fleet-eval-aggregation -->
-One report covers every project known to the publication state of each
-contributing computer, grouped by project, with the current project first. A
+One report covers every project of the home it is asked from known to the
+publication state of each contributing computer, grouped by project, with the
+current project first; no report holds another home's projects. A
 project recorded on several computers under the same project slug is one
 project in the report. Each computer's part of a project's record is read
 from that computer's own work record; the report reads nothing from GitHub,
@@ -98,11 +99,13 @@ separate logging service.
 
 A report covers the whole fleet unless computers are named: every computer
 on the runner's fleet membership record (`project/instrukt/spec/domain/runner`)
-and this one. Naming computers narrows the report to the named ones. On a
-computer with no cluster connection configured, the report covers only this
-computer and needs no cluster Redis. When the cluster store cannot be reached
-at report time, the report covers only this computer and carries the
-limitation that the fleet could not be reached; it is never refused for that
+and this one. Naming computers narrows the report to exactly the named ones;
+this computer is in a narrowed report only when it is named. With nothing
+named, on a computer with no cluster connection configured, the report covers
+only this computer and needs no cluster Redis; when the cluster store cannot
+be reached at report time, the report covers only this computer and carries
+the limitation that the fleet could not be reached. With computers named, the
+report covers them in both cases. The report is never refused for either
 reason. A report covering only this computer reads as described above, with
 its windows in time order and a restored eval set a window of its own.
 
@@ -121,9 +124,10 @@ eval set, and the limitations it found. No stamp, artifact,
 findings report or conversation leaves the computer, and no computer but the
 requesting one writes a report.
 
-A report covering more than this computer pools by eval set, whether or not
-any other computer answers. Within each project it shows one window per eval set,
-holding the outcomes of every answering computer, this one included: the
+A report covering any other computer pools by eval set, whether or not any
+other computer answers. Within each project it shows one window per eval set,
+holding the outcomes of every answering computer it covers, this one when it
+is covered: the
 window spans the earliest to the latest stamp under that eval set across
 those computers, its measures add per model and in the human row, and it
 names the commits those computers record setting that eval set; where none
@@ -140,7 +144,9 @@ model change stays distinguishable from a process-document change.
 
 Every computer the report covers appears in it, either among the computers
 whose answer it holds or as a limitation of the report with its reason,
-whatever made its answer missing or unusable: one the fleet query reports as
+whatever made its answer missing or unusable, a named computer included when
+no cluster connection is configured here or the cluster store cannot be
+reached: one the fleet query reports as
 not answering carries the reason the fleet query gives, together with when the
 membership record last saw it where the record holds it, and one whose answer
 this computer cannot read
