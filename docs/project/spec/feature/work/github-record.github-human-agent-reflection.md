@@ -228,13 +228,17 @@ pending and the local record continues. Identity/issuance failures retain
 their secret-safe cause and never select a human fallback.
 
 A per-computer reflection lock `~/.instrukt/state/reflection.lock` serializes
-reflection; no separate writer process runs. Every command that writes the
-record and every runner tick flushes pending reflection under that lock,
-held across GitHub requests. The separate writer lock guards only local
+reflection; no separate writer process runs. Every runner tick flushes
+pending reflection under that lock, held across GitHub requests. A command
+that writes the record never waits on that lock: it returns once its local
+write is committed, flushing only when the lock is free. While another
+process holds it, the command reports its reflection as pending, and the
+process that next holds the lock reflects what the command left. The
+separate writer lock guards only local
 state-database write transactions and is released before each network wait. Reflection
 takes it briefly for each local commit of what it learned. Lock order is always
 reflection → writer; commands finish their local write and release the writer
-lock before acquiring the reflection lock. Local readers take neither lock.
+lock before trying the reflection lock. Local readers take neither lock.
 Confirmation records the revision actually reflected; a newer local revision
 remains pending.
 
@@ -333,6 +337,9 @@ version is followed by the artifact's next version as usual.
   But when GitHub refuses the reflected content as invalid
   Then the progress is still recorded locally
   And the refusal is reported with the reason GitHub gave for it
+  But when another process on their computer is reflecting
+  Then the command returns as soon as the progress is recorded locally
+  And the progress is reflected once that reflection is done
 ```
 
 ### UC-GR2: Inspect a delivery's evidence on GitHub
