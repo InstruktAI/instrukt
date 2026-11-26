@@ -127,12 +127,11 @@ lifecycle contract.
    instruction and record the contribution's handoff. Apart from finishing completed todo orchestrator threads, the runtime owns session ending and cleanup.
 
 <!-- planned:delegator-reply-checks -->
-**Scheduled reply check.** The runtime supplies parent attention when it
-delivers a result, and delivery can fail. While a reply you expect is still
-outstanding when your turn yields — from a child or helper you dispatched, or
-to a message you sent that awaits an answer — keep one scheduled reply check,
-at an interval you choose from how long the awaited work should take, and
-update it as what you await changes:
+**Scheduled reply check** (`general/principle/parallel-work`). While a reply
+you expect is still outstanding when your turn yields — from a child or helper
+you dispatched, or to a message you sent that awaits an answer — keep one
+scheduled reply check, at an interval you choose from how long the awaited
+work should take, and update it as what you await changes:
 
 <!-- @config: runtime.schedule_check -->
 
