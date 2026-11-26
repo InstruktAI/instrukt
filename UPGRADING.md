@@ -230,12 +230,13 @@ state database migrates to hold it. In each adopted repository run
 hook manager) so the `pre-commit` section exists.
 
 A commit made without the hook, from a web editor or a bot, keeps an older
-project layer. `instrukt config validate` reports it, exiting non-zero; to catch
-it, add that command to the repository's own CI, run inside the checkout with a
-throwaway machine layer that makes the project's configuration valid, written
-from outside the checkout (`scripts/check-committed-config.sh` is instrukt's
-own). A repository whose project layer still names an older schema needs one
-commit through the hook, or `instrukt config init`, before that check passes.
+project layer. `instrukt config validate` judges it as converted in memory and
+notes its pending conversion on stderr without failing; the next commit through
+the hook, or `instrukt config init`, converts the file. To catch a project
+layer that is invalid, names a newer schema or names none, add that command to
+the repository's own CI, run inside the checkout with a throwaway machine layer
+that makes the project's configuration valid, written from outside the checkout
+(`scripts/check-committed-config.sh` is instrukt's own).
 
 ### Dependency-update CI observation
 
@@ -396,6 +397,24 @@ being sent again. Sessions started earlier keep the opening they started with.
 The agents file converts by itself: its `roles.conversation` entry becomes
 `roles.company-agent` with its settings kept. A file holding both entries is
 refused, and left as it is, until one of them is removed.
+
+### The project coordinator stands and is woken by fleet attention
+
+The project's coordinator is now `sdlc-coordinator`, a standing role woken by
+`runner.attention.*` events, and agents can raise a condition about their
+project's active todos with `instrukt events raise`.
+
+The agents file converts by itself: its `roles.coordinator` entry becomes
+`roles.sdlc-coordinator` with its settings kept. A file holding both entries
+is refused, and left as it is, until one of them is removed.
+
+The shipped `technical-coordinator` role now selects at `tier: strong`. A kept
+agents file that sets its own tier for that role keeps it.
+
+The shipped `orchestrate` bundle grants `attention-raise` at `own`. A kept
+agents file that defines its own `orchestrate` bundle replaces the shipped one
+whole; add `{action: attention-raise, scope: own}` to it so orchestrating
+roles can raise.
 
 ### Protected secrets and owned files
 

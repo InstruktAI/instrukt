@@ -629,7 +629,7 @@ fn init(args: &LayerArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         InitOutcome::AlreadyCurrent => "already at the current schema; kept".to_owned(),
         InitOutcome::Migrated { from } => format!(
             "migrated from schema_version {from} to {}",
-            config::CURRENT_SCHEMA_VERSION
+            layer.kind().current_schema_version()
         ),
     };
     ctx.out.line(&format!("{}: {what}", path.display()))?;

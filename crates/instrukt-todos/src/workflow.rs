@@ -22,11 +22,14 @@ pub use _coverage::{Approved, Coverage, CoverageEvidence, CoveringItem, Covering
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
 pub use _observe::ObservationError;
-pub(crate) use _observe::readiness_approved;
+pub(crate) use _observe::{
+    VERIFIER_ROLE, handoff_admitted, readiness_approved, verification_admission,
+};
 pub use _provider::{
     ApprovalStatus, ArtifactFact, AttemptFact, BuildReviewBinding, BuildReviewFact, DriftStatus,
     GatesFact, IntegrateGateStatus, PrerequisiteFact, PrerequisiteStanding, ReviewFact, TodoLedger,
-    WorkspaceFact, is_independent_reviewer, prd_approval_satisfied, task_approval_satisfied,
+    VerificationBinding, VerificationFact, VerifierLimitFact, WorkspaceFact,
+    is_independent_reviewer, prd_approval_satisfied, task_approval_satisfied,
     waiting_for_human_approval,
 };
 pub use _schema::WorkflowSchema;

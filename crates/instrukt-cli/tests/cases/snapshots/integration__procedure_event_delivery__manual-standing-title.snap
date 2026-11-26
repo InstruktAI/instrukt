@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-event-delivery.rs
+expression: "request[\"title\"].as_str().unwrap()"
+---
+responder

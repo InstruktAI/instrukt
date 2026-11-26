@@ -1,0 +1,101 @@
+---
+source: crates/instrukt-cli/tests/cases/configuration-editing.rs
+expression: whole
+---
+company (string, required) — The company's identity on this computer: the name of its home folder `~/.instrukt/companies/<name>/`, following the grammar of a project slug.
+connectors (object, optional) — The connectors the company's people reach its agent through, one named entry each; an entry under a kind's own key, such as `slack`, is of that kind.
+connectors.slack (object, optional) — Each company's workspace has its own Slack app, named `agent`: Slack shows that name as the sender of every answer and in front of the status line. Create the app from the manifest below and install it to the workspace.
+    The app token is generated in the app's settings as an app-level token with the scope `connections:write`; its reference goes into `app_token`.
+    The bot token is issued when the app is installed to the workspace; its reference goes into `bot_token`.
+    The agent hears a channel only once it has been invited to it.
+    Manifest:
+    display_information:
+      name: agent
+      description: The company's agent. Tag it in a channel or message it directly.
+    features:
+      app_home:
+        home_tab_enabled: false
+        messages_tab_enabled: true
+        messages_tab_read_only_enabled: false
+      bot_user:
+        display_name: agent
+        always_online: true
+    oauth_config:
+      scopes:
+        bot:
+          - app_mentions:read
+          - chat:write
+          - channels:history
+          - channels:read
+          - groups:history
+          - groups:read
+          - im:history
+          - im:read
+          - users:read
+          - users:read.email
+    settings:
+      event_subscriptions:
+        bot_events:
+          - app_mention
+          - message.im
+      interactivity:
+        is_enabled: false
+      org_deploy_enabled: false
+      socket_mode_enabled: true
+      token_rotation_enabled: false
+connectors.slack.admit (one of: members | admins_only, optional, default "members") — who is admitted to address this connector
+connectors.slack.app_token (${NAME} secret reference, required) — the app-level token with the scope `connections:write`, generated in the Slack app's settings; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.slack.bot_token (${NAME} secret reference, required) — the bot token Slack issues when the app is installed to the workspace; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.slack.context_messages (integer, optional, default 30) — the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted
+connectors.slack.kind (one of: slack, optional, default "slack") — registered connector kind; defaults to the map key when omitted
+connectors.slack.reply_mode (one of: turn_output | explicit, optional, default "turn_output") — whether finished turn output posts automatically or only explicit `instrukt company reply` calls post
+connectors.slack.role (string, optional, default "company-agent") — role assigned to this connector's session(s); defaults to company-agent
+connectors.slack.session_scope (one of: conversation | company, optional, default "conversation") — whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)
+connectors.<name> (object, optional) — a further `slack` connector under its own name; set it up as `connectors.slack` shows
+connectors.<name>.admit (one of: members | admins_only, optional, default "members") — who is admitted to address this connector
+connectors.<name>.app_token (${NAME} secret reference, required) — the app-level token with the scope `connections:write`, generated in the Slack app's settings; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.<name>.bot_token (${NAME} secret reference, required) — the bot token Slack issues when the app is installed to the workspace; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.<name>.context_messages (integer, optional, default 30) — the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted
+connectors.<name>.kind (one of: slack, required, default "slack") — registered connector kind; defaults to the map key when omitted
+connectors.<name>.reply_mode (one of: turn_output | explicit, optional, default "turn_output") — whether finished turn output posts automatically or only explicit `instrukt company reply` calls post
+connectors.<name>.role (string, optional, default "company-agent") — role assigned to this connector's session(s); defaults to company-agent
+connectors.<name>.session_scope (one of: conversation | company, optional, default "conversation") — whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)
+issuer (object, optional) — Built-in lightweight per-company OIDC issuer for `sign_in.mode: issuer`.
+issuer.enabled (boolean, required) — Whether this company's built-in OIDC issuer is enabled.
+issuer.signing_key (${NAME} secret reference, optional) — Optional ${NAME} reference into the company home's secrets.env holding the ES256 private signing key (set with `instrukt mcp issuer init --company <name>`).
+mcp (object, optional) — The MCP servers whose tools the company's agent calls, one named declaration each; a declaration here replaces the machine-wide one of the same name for this company.
+mcp.<name> (object, optional) — One server, under a name following the grammar of a project slug.
+mcp.<name>.credential (string, optional) — With `speaker_login: stored`, the credential key under `members.<member>.credentials`.
+mcp.<name>.description (string, required) — One-line description of what this MCP server is for.
+mcp.<name>.login (${NAME} secret reference, optional) — Exact ${NAME} reference into secrets.env (set with `instrukt secrets set`).
+mcp.<name>.sign_in (object, optional) — Sign-in options when `speaker_login: sign-in`.
+mcp.<name>.sign_in.accept_return_without_issuer (boolean, optional, default false) — Accept an OAuth return without RFC 9207 `iss` parameter.
+mcp.<name>.sign_in.client (object, optional) — Company-local pre-registered OAuth client. Mutually exclusive with `client_ref`.
+mcp.<name>.sign_in.client.id (${NAME} secret reference, required) — The identifier of a client registered with the authorization server beforehand; required when `client` is declared; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+mcp.<name>.sign_in.client.secret (${NAME} secret reference, optional) — That client's secret, only for a client that has one; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+mcp.<name>.sign_in.client_ref (string, optional) — Key name of a reusable host-level OAuth client declared under global `mcp_clients.<name>`. Mutually exclusive with `client`.
+mcp.<name>.sign_in.identity (object, optional) — Identity lookup request for non-OpenID Provider authorization servers.
+mcp.<name>.sign_in.identity.email_field (string, required) — Dot-separated JSON field path to the email address.
+mcp.<name>.sign_in.identity.url (string, required) — Absolute https URL without credentials or fragment.
+mcp.<name>.sign_in.mode (one of: authorization-code | issuer, optional, default "authorization-code") — `authorization-code` (interactive browser sign-in) or `issuer` (zero-click built-in per-company OIDC issuer `jwt-bearer`).
+mcp.<name>.sign_in.scopes (list of string, optional) — OAuth scopes requested during sign-in.
+mcp.<name>.speaker_login (one of: stored | sign-in, optional, default "stored") — How a speaker's login is obtained: `stored` (per-member credential) or `sign-in` (OAuth or built-in OIDC issuer).
+mcp.<name>.url (string, required) — Remote Streamable HTTP MCP server URL (https, or loopback http).
+members (object, optional) — The company's people, keyed by member: what a provider cannot supply, a person's own stored logins for the company's tools. An entry carries no role and grants nothing.
+members.<name> (object, optional) — One person, under a member key unique within the company that follows the grammar of a project slug.
+members.<name>.credentials (object, optional) — The person's own logins for the company's tools, keyed by the name an `mcp.<name>.credential` gives.
+members.<name>.credentials.<name> (${NAME} secret reference, optional) — The person's own login for that tool, never a literal value; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+members.<name>.email (string, required) — The person's email address, by which a speaker's entry is found; two addresses differing only in case are one, and an address is listed by at most one member.
+members.<name>.name (string, optional) — The person's display name; the member key when omitted.
+profiles (list of string, optional) — The ordered profile names, declared in the machine's `agents.yaml`, that every session in the company's home starts on in place of the machine-wide order; an empty list is a finding, and without it the machine-wide order applies.
+schema_version (integer, required) — The schema version this document is written in; `instrukt config init` writes the current one, an older document is converted and a newer one refused.
+webhooks (object, optional) — Inbound event sources, keyed by event domain (`[a-z][a-z0-9_]*`); each declared domain is served at `/hooks/inbound/company/<name>/<domain>`, and a delivery's event type is `<domain>.<name>`.
+webhooks.<name> (object, optional) — One event source, under its event domain: how its deliveries are verified and where each one's event name comes from.
+webhooks.<name>.header (string, optional) — The HTTP header carrying the signature; required with `verify: hmac-sha256` and refused with the other schemes.
+webhooks.<name>.name (string, optional) — A fixed event name for every delivery; exclusive with `name_from` and with `verify: github`.
+webhooks.<name>.name_from (string, optional) — The top-level JSON field whose string value names each delivery's event, normalized to the event-name grammar; exclusive with `name` and with `verify: github`.
+webhooks.<name>.previous_secret (${NAME} secret reference, optional) — The signing secret being rotated out, which verifies too until it is removed; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+webhooks.<name>.secret (${NAME} secret reference, required) — The signing secret every delivery is verified against; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+webhooks.<name>.state (list of string, optional) — Event names, without the domain, that are external state rather than occurrences; requires `subject_from`.
+webhooks.<name>.subject_from (string, optional) — The dotted payload field whose nonempty string or number qualifies the source's subject for its state names.
+webhooks.<name>.verify (one of: native | github | hmac-sha256, optional, default "native") — The verification scheme: `native` (`X-Hook-Signature`), `github` (`X-Hub-Signature-256` and GitHub's normalizer) or `hmac-sha256` (the declared `header`); never an unsigned fallback.

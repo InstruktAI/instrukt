@@ -68,6 +68,7 @@ invalid resulting state is refused without a partial local stamp.
 | Build completion | Current build evidence and clean shared todo-branch head; completion releases the attempt atomically. Any later todo-branch change clears completion until restamped. |
 | Role completion | Setup/finalizer or preparation doc-writer role and attempt, exact clean branch head and required artifact/commit references; releases the attempt atomically, independently of build completion or readiness. |
 | Deferrals processed | Dispositions covering the current deferrals artifact; `deferrals.pending` is false only while this binding is current. |
+| Verification disposition | Exact candidate commit at the clean shared todo-branch head and the current complete `verification-findings` report; a hotfix deferral also its tracked follow-up. From a bound verifier it releases the attempt atomically. |
 | Finalize readiness | Candidate commit handed to integration. |
 | Task-firing outcome | Particular execution and its result or failure reason. |
 
@@ -127,11 +128,12 @@ worker-ending or approval notice.
 | `--task-firing-started` | Particular due occurrence and start; the runner's last-fired accounting. |
 | `--build-complete` | Bound builder/fixer attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
 | `--role-complete` | Bound setup/finalizer or preparation doc-writer attempt, required outputs and clean committed branch head. Records `role_complete` and releases the attempt atomically without build completion or finalization event. |
+| `--verification pass\|fail\|blocked\|tier_0_skip\|hotfix_deferred [--follow-up <slug>]` | Exact candidate commit at the clean shared head and complete `verification-findings` digest; a hotfix deferral also its follow-up todo. From a bound `verifier` attempt it releases the attempt atomically; from the claim-holding orchestrator it is record-only. |
 
 Approval forms with `--by` and optional `--session` are owned by the approvals
-spec; build start, finalize readiness, deferral processing and task outcome
-forms are specified here. These forms are the admitted stamp set, rather than
-instructions to infer additional stamps.
+spec; build start, finalize readiness, deferral processing, verification
+disposition and task outcome forms are specified here. These forms are the
+admitted stamp set, rather than instructions to infer additional stamps.
 
 ### Build start, completion and review rounds
 
@@ -178,21 +180,63 @@ A failed attempt records only failure under the todo-attempt contract, never
 completion or readiness.
 
 `instrukt todo stamp <slug> --finalize-ready` requires current independent
-approval, no outstanding workspace-role attempt, the latest successful finalizer
-completion and equality of its clean shared worktree head, local todo branch,
-published todo branch and completed candidate. Readiness uses the caller's
-retained finalizer binding after release and admits no further workspace work.
-New changes require a new finalizer attempt and its completion.
+approval, a current verification disposition that admits handoff
+(`project/instrukt/spec/feature/workflow/delivery-cycle`), no outstanding
+workspace-role attempt, the latest successful finalizer completion and equality
+of its clean shared worktree head, local todo branch, published todo branch and
+completed candidate. Readiness uses the caller's retained finalizer binding
+after release and admits no further workspace work. New changes require a new
+finalizer attempt and its completion.
 
 The readiness stamp and `workflow.finalized` event append commit together,
 idempotently by project/todo/SHA. It records the exact candidate for integration
 and does not release the execution claim.
 
+### Verification dispositions
+
+A verification disposition records what is established about the live
+behavior of a candidate commit. Its vocabulary is closed: pass, fail, blocked,
+Tier 0 skip and hotfix deferral, with the meanings
+`sdlc/policy/live-verification` gives them. Any other value is refused.
+
+`instrukt todo stamp <slug> --verification <disposition>` records one. A
+disposition is commit-bound and report-bound. It names the exact candidate
+commit, which is the clean head of the shared todo worktree when it is
+recorded, and binds the current digest of the complete `verification-findings`
+report. A hotfix deferral also names, with `--follow-up <slug>`, the tracked
+follow-up todo that `sdlc/policy/live-verification` requires of it: another
+todo of the same project that the work record knows and that is neither
+delivered nor withdrawn, retained by its durable identity so a rename keeps
+the reference. A disposition with no such report, a hotfix deferral that names
+no follow-up, a follow-up that names this todo or no todo the record knows, a
+follow-up on any other disposition, or a disposition recorded over a dirty
+tree, is refused without a partial record. It counts only for the
+commit and report it names: a later candidate commit carries none until one is
+recorded for it, and a rewritten report leaves the earlier disposition as
+history.
+
+A disposition recorded from a bound `verifier` attempt is admitted only while
+the clean shared worktree is still at the head captured for that attempt, and
+releases the attempt in the same transaction, as a build-review verdict
+releases its reviewer. A head that moved refuses the disposition and leaves the
+attempt outstanding. Exact replay reports the retained outcome without a second
+release. A disposition recorded by the claim-holding orchestrator is a
+record-only write and releases nothing; its exact replay, with the same
+disposition, commit, report and follow-up, reports the retained stamp without
+recording a second. Which session may record which
+disposition, which disposition may follow another for the same commit, and
+what finalize readiness requires of it, is workflow's rule in
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
+
+The raw evidence a disposition rests on is part of neither the stamp nor the
+reflected report, and instrukt keeps no store of it. Where a run may keep it is
+the publication boundary of `sdlc/policy/live-verification`.
+
 ## Use cases
 
 Stamp capture supports the approval, GitHub-record and evaluation-report goals.
-Shared completion and release are exercised by UC-DC2, UC-DC4, UC-DC5, UC-DC6
-and UC-DC7 in `project/instrukt/spec/feature/workflow/delivery-cycle`.
+Shared completion and release are exercised by UC-DC2, UC-DC4, UC-DC5, UC-DC6,
+UC-DC7 and UC-DC10 in `project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 ## Known caveats
 

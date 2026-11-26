@@ -727,7 +727,7 @@ mod tests {
         let home = Home::at_user_home(PathBuf::from("/nonexistent"));
         let machine: Value = serde_yaml_ng::from_str(&format!(
             "schema_version: {}\nmodules: {{history: true}}\n",
-            super::super::CURRENT_SCHEMA_VERSION
+            super::super::GLOBAL_SCHEMA_VERSION
         ))
         .unwrap();
         let with_switch = |published| Admitted {
@@ -756,7 +756,7 @@ mod tests {
         let home = Home::at_user_home(dir.clone()).for_inspection();
         let machine = home.global_config();
         std::fs::create_dir_all(machine.parent().unwrap()).unwrap();
-        let schema = super::super::CURRENT_SCHEMA_VERSION;
+        let schema = super::super::GLOBAL_SCHEMA_VERSION;
         std::fs::write(
             &machine,
             format!("schema_version: {schema}\nrunner: {{runtime: t3}}\n"),
@@ -812,7 +812,7 @@ mod tests {
             &document,
             format!(
                 "schema_version: {}\ncompany: acme\nprofiles: [antigravity]\n",
-                super::super::CURRENT_SCHEMA_VERSION
+                super::super::COMPANY_SCHEMA_VERSION
             ),
         )
         .unwrap();

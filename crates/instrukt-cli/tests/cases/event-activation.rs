@@ -16,7 +16,7 @@ use runtime::{FakeRuntime, global_layer};
 fn fork_layer() -> String {
     format!(
         "schema_version: {}\nproject: fork\nevents:\n  watch:\n    - {{remote: upstream, ref: refs/heads/main}}\n",
-        instrukt_core::config::CURRENT_SCHEMA_VERSION
+        instrukt_core::config::PROJECT_SCHEMA_VERSION
     )
 }
 

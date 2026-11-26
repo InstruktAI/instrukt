@@ -17,6 +17,11 @@ struct Responsibility {
 }
 impl Responsibility {
     fn new(settings: &str) -> Self {
+        Self::answering(settings, Self::RECONCILE)
+    }
+
+    /// A responsibility whose published procedure reads `body`.
+    fn answering(settings: &str, body: &str) -> Self {
         let computer = Computer::new();
         let runtime = FakeT3::create(&computer.env);
         let redis = RedisServer::new(&computer.env);
@@ -26,7 +31,7 @@ impl Responsibility {
             redis,
             runtime,
         };
-        r.publish(settings);
+        r.publish_body(settings, body);
         r.computer.tick();
         r
     }
@@ -46,8 +51,13 @@ impl Responsibility {
     }
 
     const PROCEDURE: &str = "docs/domain/reactions/procedure/respond.md";
+    const RECONCILE: &str = "Inspect current subject state and reconcile the event.\n";
 
     fn procedure(settings: &str) -> String {
+        Self::procedure_body(settings, Self::RECONCILE)
+    }
+
+    fn procedure_body(settings: &str, body: &str) -> String {
         documented::snippet(
             "procedure",
             "Respond",
@@ -56,14 +66,18 @@ impl Responsibility {
                 "role: responder\nsubscription_home: project\nsubscriptions: [example.changed]\n{settings}"
             ),
             &[],
-            "Inspect current subject state and reconcile the event.\n",
+            body,
         )
     }
 
     fn publish(&self, settings: &str) {
+        self.publish_body(settings, Self::RECONCILE);
+    }
+
+    fn publish_body(&self, settings: &str, body: &str) {
         self.computer
             .project
-            .write(Self::PROCEDURE, &Self::procedure(settings));
+            .write(Self::PROCEDURE, &Self::procedure_body(settings, body));
         self.computer
             .project
             .commit("docs: update the response contract");
@@ -750,6 +764,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     let before = r.runtime.calls().len();
     let result = reserve().success();
     let request: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    insta::assert_snapshot!("manual-standing-title", request["title"].as_str().unwrap());
     let repeated = reserve().success();
     let repeated: serde_json::Value =
         serde_json::from_slice(&repeated.get_output().stdout).unwrap();
@@ -1099,6 +1114,7 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     r.tick();
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
+    insta::assert_snapshot!("successor-standing-title", r.runtime.title("s2"));
     insta::assert_snapshot!(
         "closed-home-next-generation",
         work::redact(&r.runtime.input_log("s2"))
@@ -1154,6 +1170,10 @@ fn subject_identity_keeps_distinct_agents_and_continues_the_matching_subject() {
     assert_eq!(r.runtime.threads().len(), 2);
     assert_eq!(r.runtime.message_count("s1"), 2);
     assert_eq!(r.runtime.message_count("s2"), 1);
+    insta::assert_snapshot!(
+        "subject-standing-titles",
+        format!("{}\n{}", r.runtime.title("s1"), r.runtime.title("s2"))
+    );
     insta::assert_snapshot!("continued-subject-assignment", r.conversation());
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA22
@@ -1195,7 +1215,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
     // The home's document was written by an older instrukt, and it orders
     // its sessions' profiles.
     let document = company.join("instrukt.yaml");
-    let older = instrukt_core::config::CURRENT_SCHEMA_VERSION - 1;
+    let older = instrukt_core::config::COMPANY_SCHEMA_VERSION - 1;
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     std::fs::write(
         &document,
@@ -1245,7 +1265,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         serde_yaml_ng::from_slice(&std::fs::read(&document).unwrap()).unwrap();
     assert_eq!(
         stored["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+        Some(instrukt_core::config::COMPANY_SCHEMA_VERSION)
     );
     // Each agent's assignment, as instrukt resolves it for that session,
     // names the home it works in; only the company agent's names a company.
@@ -1540,6 +1560,38 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), before + 1);
     // The later event reached the same, human-settled thread.
+    assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA30
+#[test]
+fn a_standing_agent_resting_by_its_procedure_stays_settled_and_wakes_in_place() {
+    let r = Responsibility::answering(
+        "",
+        "Inspect current subject state and reconcile the event. When no subject needs reconciling, settle your own thread and rest until the next event.\n",
+    );
+    r.append("initial");
+    r.tick();
+    // The agent's turn ends at its procedure's rest, and it settles its own
+    // thread there.
+    r.runtime
+        .finish("s1", "completed", "Nothing left to reconcile; resting.");
+    r.runtime.change("s1", "settled", true.into());
+    r.tick();
+    r.tick();
+    let shown = r
+        .runtime
+        .state_dir()
+        .join(format!("{}.json", r.runtime.native_id("s1")));
+    let thread: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
+    let rested = (thread["settled"].clone(), thread["archived"].clone());
+    let before = r.runtime.message_count("s1");
+    r.append("later");
+    r.tick();
+    assert_eq!(rested, (true.into(), false.into()));
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), before + 1);
     assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
 }
 

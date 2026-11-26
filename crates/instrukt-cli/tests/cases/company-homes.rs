@@ -59,7 +59,7 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
         env.instrukt_home().join("instrukt.yaml"),
         format!(
             "schema_version: {}\nmodules: {{events: true}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
         ),
     )
     .unwrap();
@@ -100,7 +100,7 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
         misnamed.join("instrukt.yaml"),
         format!(
             "schema_version: {}\ncompany: acme\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     )
     .unwrap();
@@ -150,7 +150,7 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
         env.instrukt_home().join("companies/bare/instrukt.yaml"),
         format!(
             "schema_version: {}\ncompany: bare\nwebhooks: {{erp: {{secret: '${{HOOK_KEY}}'}}}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     )
     .unwrap();

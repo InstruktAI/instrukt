@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+expression: "String::from_utf8_lossy(&render.get_output().stderr)"
+---
+instrukt: role `verifier` (focused) cannot perform docs-write on docs render with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact

@@ -196,6 +196,7 @@ fn finalizer_release_precedes_independent_current_review_and_readiness() {
         &["--verdict", "approve", "--phase", "build_review"],
     )
     .success();
+    crew.tier_0_skip(SLUG);
     stamp(&crew, &finalizer, &["--finalize-ready"]).success();
     let before = crew.todo(["show", SLUG]);
     stamp(&crew, &finalizer, &["--finalize-ready"]).success();
@@ -297,6 +298,7 @@ fn the_runner_removes_a_delivered_worktree_and_branch_once_no_uncommitted_change
     .success();
     let finalizer = worker(&crew, "finalizer", Some("crew/procedure/finalize"));
     stamp(&crew, &finalizer, &["--role-complete"]).success();
+    crew.verified(SLUG, "pass");
     stamp(&crew, &finalizer, &["--finalize-ready"]).success();
     let candidate = crew.project.env.git(&finalizer.path, ["rev-parse", "HEAD"]);
     crew.project
@@ -468,6 +470,23 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
         .assert()
         .success();
 
+    // The handoff gate's second half: no verification disposition admits it yet.
+    let undisposed = crew
+        .project
+        .env
+        .instrukt(&builder_path)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", slug, "--finalize-ready"])
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "fast-track-disposition-owed",
+        shown(&crew, &undisposed.get_output().stderr)
+    );
+    // The orchestrator judges the bounded change Tier 0 and records the skip.
+    assert_eq!(crew.workspace(slug), builder_path);
+    crew.tier_0_skip(slug);
+
     // Claim-holding orchestrator stamps --finalize-ready directly (no separate finalizer needed).
     crew.project
         .env
@@ -565,6 +584,124 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
             }
         }
     }
+}
+
+/// A built candidate of `SLUG`, published and independently approved at its
+/// exact head: the builder, whose attempt is released.
+fn approved_candidate(crew: &Crew) -> Worker {
+    let builder = worker(crew, "builder", Some("crew/procedure/build"));
+    commit(crew, &builder, "built.txt");
+    publish(crew, &builder);
+    stamp(crew, &builder, &["--build-complete"]).success();
+    let reviewer = worker(crew, "build-reviewer", Some("crew/procedure/review-build"));
+    crew.write(SLUG, "review-findings", "Approve the exact candidate.");
+    stamp(
+        crew,
+        &reviewer,
+        &["--verdict", "approve", "--phase", "build_review"],
+    )
+    .success();
+    builder
+}
+
+/// `todo stamp SLUG <args>` by the claim-holding orchestrator `lead-1`,
+/// from the shared worktree.
+fn lead(crew: &Crew, args: &[&str]) -> assert_cmd::assert::Assert {
+    crew.project
+        .env
+        .instrukt(&crew.workspace(SLUG))
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", SLUG])
+        .args(args)
+        .assert()
+}
+
+/// A refusal's text, with temporary paths and commits redacted.
+fn stderr(crew: &Crew, assert: &assert_cmd::assert::Assert) -> String {
+    shown(crew, &assert.get_output().stderr)
+}
+
+fn ledger(crew: &Crew) -> serde_json::Value {
+    let shown: serde_json::Value =
+        serde_json::from_str(&crew.todo(["show", SLUG, "--json"])).unwrap();
+    shown["ledger"].clone()
+}
+
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC10
+#[test]
+fn only_an_independent_verifiers_pass_accounts_for_live_behavior_at_handoff() {
+    let crew = prepared();
+    let builder = approved_candidate(&crew);
+    let head = crew.project.env.git(&builder.path, ["rev-parse", "HEAD"]);
+
+    // No disposition is current for the approved commit: readiness is refused.
+    let refused = lead(&crew, &["--finalize-ready"]).failure();
+    insta::assert_snapshot!("disposition-owed", stderr(&crew, &refused));
+    assert_eq!(
+        ledger(&crew)["gates"]["integrate_review_gate"]["status"],
+        "blocked"
+    );
+
+    // A pass from the orchestrator or from the change's writer records nothing.
+    crew.write(SLUG, "verification-findings", "Live run passed.");
+    let before = crew.todo(["show", SLUG]);
+    let orchestrator = lead(&crew, &["--verification", "pass"]).failure();
+    insta::assert_snapshot!("orchestrator-pass-refused", stderr(&crew, &orchestrator));
+    let writer = stamp(&crew, &builder, &["--verification", "pass"]).failure();
+    insta::assert_snapshot!("writer-pass-refused", stderr(&crew, &writer));
+    assert_eq!(crew.todo(["show", SLUG]), before);
+
+    // An independent verifier's pass releases its attempt and admits handoff.
+    let verifier = worker(&crew, "verifier", Some("crew/procedure/verify"));
+    assert_eq!(verifier.path, builder.path);
+    let first = stamp(&crew, &verifier, &["--verification", "pass"]).success();
+    let replay = stamp(&crew, &verifier, &["--verification", "pass"]).success();
+    assert_eq!(first.get_output().stdout, replay.get_output().stdout);
+    let verified = ledger(&crew);
+    assert!(verified["gates"]["active_workspace_attempt"].is_null());
+    assert_eq!(verified["verification"]["disposition"], "pass");
+    assert_eq!(verified["verification"]["commit"], head.as_str());
+    assert_eq!(verified["verification"]["role"], "verifier");
+    assert_eq!(verified["verification"]["binding"], "current");
+    assert_eq!(
+        verified["gates"]["integrate_review_gate"]["status"],
+        "ready"
+    );
+    lead(&crew, &["--finalize-ready"]).success();
+    assert_eq!(ledger(&crew)["finalize_ready_commit"], head.as_str());
+}
+
+// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC11
+#[test]
+fn a_verifiers_fail_is_not_waved_through_by_a_skip_or_a_deferral() {
+    let crew = prepared();
+    approved_candidate(&crew);
+    crew.project
+        .create("verify-parser-live", "change", "Verify the parser live.");
+    crew.verified(SLUG, "fail");
+    let before = crew.todo(["show", SLUG]);
+    let skip = lead(&crew, &["--verification", "tier_0_skip"]).failure();
+    insta::assert_snapshot!("skip-after-fail-refused", stderr(&crew, &skip));
+    let deferral = lead(
+        &crew,
+        &[
+            "--verification",
+            "hotfix_deferred",
+            "--follow-up",
+            "verify-parser-live",
+        ],
+    )
+    .failure();
+    insta::assert_snapshot!("deferral-after-fail-refused", stderr(&crew, &deferral));
+    let readiness = lead(&crew, &["--finalize-ready"]).failure();
+    insta::assert_snapshot!("readiness-after-fail-refused", stderr(&crew, &readiness));
+    assert_eq!(crew.todo(["show", SLUG]), before);
+    let limited = ledger(&crew);
+    assert_eq!(limited["verifier_limit"]["disposition"], "fail");
+    assert_eq!(
+        limited["gates"]["integrate_review_gate"]["status"],
+        "blocked"
+    );
 }
 
 // spec: project/instrukt/spec/feature/workflow/preparation UC-PR4

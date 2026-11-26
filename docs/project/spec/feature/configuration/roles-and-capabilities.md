@@ -46,6 +46,19 @@ version 2 converts to version 3 on the owned migration path
 it was, and nothing else changes. A version-2 file that holds both entries is
 refused with its source intact, naming both, until one is removed.
 
+The standing project coordinator's role is `sdlc-coordinator`. An agents file
+of schema version 3 converts to version 4 on the same owned migration path: a
+configured `roles.coordinator` entry becomes `roles.sdlc-coordinator` with
+every field as it was, and nothing else changes; a version-2 file takes both
+conversions. The file
+overrides everything it names
+(`project/instrukt/spec/feature/configuration/agent-selection`), and a
+person's stated choices and restrictions are migrated, never discarded
+(`project/instrukt/policy/checks-and-guards`); the conversion takes no value
+from the shipped defaults. A file that holds both entries is refused with its
+source intact, naming both, until one is removed. A file that names neither
+entry takes the new version and no other change.
+
 Every effective entry has a class and grants; model inputs inherit from
 `default` as agent-selection specifies. The shipped `default` and
 `event-handler` are unrestricted, awareness-only entries. A role absent from
@@ -72,7 +85,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |
 | Publication | `publication` | `sync` and hook-triggered publication for the selected project and positions; position ownership remains mandatory. |
 | Inspection | `code-check`, `eval-read` | `specs coverage|reserve|trace`, `blueprint affected|path|query|explain|status`, and `eval report`. Engine queries remain subject to their own interface. |
-| Events | `events-read` | `events list|schema|status`; subscription declarations retain their documentation/configuration write boundary. |
+| Events | `events-read`, `attention-raise` | `events list|schema|status`; `attention-raise` is `events raise`, addressing the project the raise belongs to, at `own` the assignment's project (`project/instrukt/spec/feature/runner/fleet-attention`). Subscription declarations retain their documentation/configuration write boundary. |
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
@@ -94,6 +107,19 @@ caller stands: `own` reaches it for every caller whose assignment records
 one. The grant reaches the command; which session may reclaim at a given
 moment is decided by the worktree's own writer admission, which binds every
 caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
+
+
+`instrukt review start` asks for a requested review
+(`project/instrukt/spec/feature/runner/requested-review`) and is
+`assignment-write`, addressing the project the caller stands in: it records an
+assignment and starts the session that works it, as `todo attempt` reserves
+one, and records no review evidence. The shipped `orchestrate` bundle carries
+it; focused roles without that bundle, the reviewers and builders among them,
+are refused it. The requested reviewer it starts resolves to the
+`commit-reviewer` role, the project and its placement from the runner's
+requested-review record, and its `stamp` grant at `own` reaches that project's
+review evidence.
+
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
@@ -161,7 +187,7 @@ composition is:
 | `review` | `artifact-write`, `stamp`, each at `own`. |
 | `record` | `todo-write`, `artifact-write`, `stamp`, `bug-report`, each at `own`. |
 | `report` | `bug-report` at `any`. |
-| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
+| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, `attention-raise`, each at `own`. |
 | `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
 | `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
 | `tools` | `mcp-access`, `company-reply`, each at `own`. |
@@ -191,25 +217,42 @@ report files is the work context's
 These entries cover every role declared by instrukt's shipped procedures and
 the `company-agent` role the runner gives a conversation session, declared by
 the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-They share the model `order`/`tier` defaults of agent-selection, except
-`technical-coordinator`, which ships `order: [antigravity, claude]` at tier
-`premium`; the table's App column names the identity reference, not another
-model/provider choice.
+Each role's model `order` and `tier` are the shipped data's, under
+`project/instrukt/spec/feature/configuration/agent-selection`; the table's App
+column names the identity reference, not another model/provider choice.
 
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
 | `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
-| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
+| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
 | `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
 | `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
 | `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
 | `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
-| `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
+| `sdlc-coordinator` | `standing` | `read`, `record`, `orchestrate`, `report` | project |
 | `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
 | `event-handler` | `standing` | `all` | project |
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
+
+`sdlc-coordinator` is the standing role of a project's fleet coordination. Its
+`own` scope is the project home of its standing assignment. Its
+fleet-attention grants (`project/instrukt/spec/feature/runner/fleet-attention`)
+are `read`, reaching the events and records a condition names; `record`,
+reaching that project's todos with the holds, dependencies and withdrawals that
+answer a condition; and `orchestrate`, reaching that project's sessions.
+`report` files a defect of the system it works through into the project that
+owns the defect, as it does for a company's agent.
+
+A raise is `attention-raise`, carried by `orchestrate`, so every orchestrating
+and standing role that orchestrates holds it. A shipped focused worker or
+reviewer holds no `attention-raise`: its raise is refused, and it returns the
+condition to the orchestrator that dispatched it in its own output, which
+raises it when it cannot resolve it.
+
+`verifier` takes the reviewer roles' model `order` and `tier`
+(`project/instrukt/spec/feature/configuration/agent-selection`).
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role

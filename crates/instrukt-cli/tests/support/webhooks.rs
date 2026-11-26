@@ -218,7 +218,7 @@ pub fn declare(computer: &Computer, declaration: &str) {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: fork\nwebhooks: {declaration}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     for (name, value) in [("HOOK_KEY", SECRET), ("OLD_KEY", OLD)] {

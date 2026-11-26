@@ -143,6 +143,15 @@ deleting the home is not a lossless reset.
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
+
+`state/requested-review.db` holds the requested reviews
+`instrukt review start` admitted, and `state/requested-review.lock` is its
+write-isolation unit, taken only by that command
+(`project/instrukt/spec/feature/runner/requested-review`, Requested review
+records). Nothing re-creates the store: it is the only record of each
+requested reviewer's assignment and must be preserved.
+
+
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
 a link at the database file itself is refused
@@ -383,9 +392,21 @@ sent through `runner.notify`.
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
-only-at-entry delivery waits for observed idleness. Standing T3 threads remain
-unsettled under automation; a human-settled thread stays reachable and wakes
-on its next message.
+only-at-entry delivery waits for observed idleness. Runner automation never
+settles a standing T3 thread. A standing procedure may self-settle when parked
+dormant (`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by itself or by a human, stays reachable and wakes on its next
+activation or message.
+
+Fleet attention composes three owners without a watcher. Work calls the
+runner's fleet-attention contract with the facts of each change it makes to a
+todo's status, hold or attempts, inside that change's own transaction; the
+runner decides which facts are conditions and appends them, together with the
+conditions it observes in executions and an agent's raise through
+`instrukt events raise`. The project's subscribed coordinator answers them, and
+the end of an attention episode wakes it once so it can rest
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 
 ### Conversation links
 

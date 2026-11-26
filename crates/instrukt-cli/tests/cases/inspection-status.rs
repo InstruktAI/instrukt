@@ -56,7 +56,7 @@ fn inspection_converts_old_config_in_memory_without_creating_locks_or_agents() {
         serde_yaml_ng::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert_eq!(
         current["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+        Some(instrukt_core::config::GLOBAL_SCHEMA_VERSION)
     );
 }
 // spec: project/instrukt/spec/feature/publication/instrukt-status UC-IS3
@@ -236,7 +236,7 @@ fn revision_from_old_inspection_is_accepted_by_the_next_atomic_writing_command()
         serde_yaml_ng::from_slice(&std::fs::read(file).unwrap()).unwrap();
     assert_eq!(
         value["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+        Some(instrukt_core::config::GLOBAL_SCHEMA_VERSION)
     );
     insta::assert_json_snapshot!(value["ticks"].as_str(), @r#"
 "on"

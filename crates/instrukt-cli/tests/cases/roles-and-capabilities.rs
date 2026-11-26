@@ -135,6 +135,65 @@ fn a_bound_reviewer_can_write_its_own_evidence_but_cannot_choose_another_assignm
         "other-todo-refused",
         String::from_utf8_lossy(&refused.get_output().stderr)
     );
+    // The shipped `verifier`, with no local agents entry, is a focused
+    // reviewer: its own evidence and stamp, never a commit or a docs write.
+    let crew = workflow::Crew::new();
+    crew.project
+        .create("verified", "change", "Verify parser depth.");
+    let verifier = crew.worker("verified", "verifier", Some("crew/procedure/verify"));
+    let verifier_session = verifier["session"]
+        .as_str()
+        .unwrap()
+        .strip_prefix("t3:")
+        .unwrap()
+        .to_owned();
+    let verifier_workspace = std::path::PathBuf::from(verifier["worktree"].as_str().unwrap());
+    let run = |args: &[&str]| {
+        crew.project
+            .env
+            .instrukt(&verifier_workspace)
+            .env("T3CODE_THREAD_ID", &verifier_session)
+            .args(args)
+            .assert()
+    };
+    run(&[
+        "todo",
+        "artifacts",
+        "write",
+        "verified",
+        "verification-findings",
+        "Tier 0: no live surface changed.",
+    ])
+    .success();
+    run(&["todo", "stamp", "verified", "--verification", "tier_0_skip"]).success();
+    let head = crew
+        .project
+        .env
+        .git(&verifier_workspace, ["rev-parse", "HEAD"]);
+    std::fs::write(
+        verifier_workspace.join("probe.txt"),
+        "not the verifier's to commit",
+    )
+    .unwrap();
+    crew.project
+        .env
+        .git(&verifier_workspace, ["add", "probe.txt"]);
+    let commit = run(&["repo", "commit", "-m", "chore: verifier commit"]).failure();
+    let render = run(&["docs", "render"]).failure();
+    assert_eq!(
+        crew.project
+            .env
+            .git(&verifier_workspace, ["rev-parse", "HEAD"]),
+        head
+    );
+    insta::assert_snapshot!(
+        "verifier-commit-refusal",
+        String::from_utf8_lossy(&commit.get_output().stderr)
+    );
+    insta::assert_snapshot!(
+        "verifier-docs-write-refusal",
+        String::from_utf8_lossy(&render.get_output().stderr)
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/roles-and-capabilities UC-RCAP1

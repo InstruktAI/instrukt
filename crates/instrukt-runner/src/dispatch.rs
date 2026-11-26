@@ -23,10 +23,12 @@ use jiff::tz::TimeZone;
 
 use crate::agents::role_order;
 use crate::anomaly;
+use crate::events::{Event, StalledCause};
 use crate::executions::{Execution, Executions};
+use crate::fleet_attention;
 use crate::interfaces::{
-    ClaimOutcome, Claimant, HoldCause, Lane, PickupCandidate, ProjectRef, RunnerWiring,
-    SessionBinding, TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
+    ClaimOutcome, Claimant, FleetRecord, HoldCause, Lane, PickupCandidate, ProjectRef,
+    RunnerWiring, SessionBinding, TaskOutcome, TodoKind, WorkPorts, WorkflowAssignments,
 };
 use crate::launch;
 use crate::sessions::{Observation, SessionState, Sessions, SessionsError, StartRequest};
@@ -133,14 +135,9 @@ fn pickup(
             return Vec::new();
         }
     };
-    if let Err(err) = Executions::new(cx.state).observe(
-        cx,
-        config,
-        workflow,
-        work.bindings.as_ref(),
-        project,
-        &offered,
-    ) {
+    if let Err(err) =
+        Executions::new(cx.state).observe(cx, config, workflow, work, project, &offered)
+    {
         tracing::warn!(event = "executions_unobservable", project = %project.slug, error = %err);
     }
     for candidate in &offered {
@@ -334,6 +331,17 @@ fn dispatch_one(
                 }
             }
             anomaly::notify(config, cx.env, &format!("{}/{todo}", project.slug), None);
+            let stalled = Event::AttentionExecutionStalled {
+                project: project.slug.clone(),
+                todo: todo.clone(),
+                session: None,
+                workflow_state: assignment.state.clone(),
+                cause: StalledCause::NeverStarted,
+                model_order: tried,
+            };
+            if let Err(err) = exhausted(cx, work.fleet.as_ref(), &stalled) {
+                tracing::warn!(event = "attention_unrecorded", project = %project.slug, todo = %todo, error = %err);
+            }
             return Some(Dispatched::Exhausted { todo: todo.clone() });
         }
         Err(err) if err.start_certainly_failed() => {
@@ -387,6 +395,22 @@ fn dispatch_one(
     }
     tracing::info!(event = "todo_dispatched", project = %project.slug, todo = %todo, session = %started.session);
     Some(Dispatched::Started { todo: todo.clone() })
+}
+
+/// Appends a start that found no model in the order, in a transaction of
+/// its own; its occurrence identity keeps a repeated exhaustion in the same
+/// state from appending again.
+fn exhausted(
+    cx: &DispatchContext<'_>,
+    fleet: &dyn FleetRecord,
+    stalled: &Event,
+) -> Result<(), crate::executions::ObserveError> {
+    let context = fleet_attention::context(cx.home, cx.now, None)?;
+    cx.state.write(|tx| {
+        let runnable = fleet.runnable_remains(tx, stalled.project())?;
+        fleet_attention::condition(tx, &context, stalled, runnable)?;
+        Ok(())
+    })
 }
 
 /// The procedure declaring `role` in the selected flavor's domain

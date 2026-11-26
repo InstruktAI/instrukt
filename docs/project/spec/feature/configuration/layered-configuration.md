@@ -11,9 +11,10 @@ like git's user and repository configuration. The global layer
 (`~/.instrukt/instrukt.yaml`) holds a machine's defaults and what only the
 machine may decide; the project layer (`instrukt.yaml` at the repository root)
 holds what the project declares, and overrides the global layer where a key
-may live in both. Validation knows, per key, which layer it may live in. Both
-layers carry `schema_version`, and older documents are migrated. Conversion
-retains supported existing settings. Omitted dependency-update branch selection follows
+may live in both. Validation knows, per key, which layer it may live in.
+Each layer carries the `schema_version` of its own kind's schema, and older
+documents are migrated.
+Conversion retains supported existing settings. Omitted dependency-update branch selection follows
 `DEFAULT_DEPENDENCY_BRANCH_PREFIX` in configuration's schema declaration
 (`crates/instrukt-core/src/config/_schema.rs`).
 
@@ -436,33 +437,45 @@ command.
 ### Schema versions and migration
 
 <!-- planned-change:remove-retire-thread -->
-- Every document carries `schema_version`; `init` writes the current one.
+- Every document carries `schema_version`. The global layer, the project layer
+  and a company home's document each version their own shape: each kind has
+  its own current schema version and its own forward conversion, and `init`
+  writes its kind's current version. A change to one kind's shape raises only
+  that kind's version, so documents of the other kinds stay current as written
+  (`sdlc/policy/backward-compatibility-hygiene`: a shape read across a
+  multi-version fleet moves once its slowest reader has caught up).
 - Every configuration path converts older configuration before schema refusal
   or skip, preserving its settings. Which path persists a conversion, the
   machine's layer on writing paths and a committed project layer only in a
   commit, follows `project/instrukt/spec/feature/configuration/owned-files`.
-- A document already at the current version is left untouched.
+- A document already at its kind's current version is left untouched.
 - Conversion removes a machine's `modules.conversations` key, whatever its
   value, and each company member's connector identity key. A member entry left
   without an email address is the validation finding of
   `project/instrukt/spec/feature/configuration/company-homes` until the
   address is added; conversion derives none.
 <!-- change:remove-retire-thread -->
-- Every document carries `schema_version`; `init` writes the current one.
+- Every document carries `schema_version`. The global layer, the project layer
+  and a company home's document each version their own shape: each kind has
+  its own current schema version and its own forward conversion, and `init`
+  writes its kind's current version. A change to one kind's shape raises only
+  that kind's version, so documents of the other kinds stay current as written
+  (`sdlc/policy/backward-compatibility-hygiene`: a shape read across a
+  multi-version fleet moves once its slowest reader has caught up).
 - Every configuration path converts older configuration before schema refusal
   or skip, preserving its settings. Which path persists a conversion, the
   machine's layer on writing paths and a committed project layer only in a
   commit, follows `project/instrukt/spec/feature/configuration/owned-files`.
-- A document already at the current version is left untouched.
+- A document already at its kind's current version is left untouched.
 - Conversion removes a machine's `modules.conversations` key, whatever its
   value, and each company member's connector identity key. A member entry left
   without an email address is the validation finding of
   `project/instrukt/spec/feature/configuration/company-homes` until the
   address is added; conversion derives none.
-- Conversion removes the `retire_thread` value from each runtime entry of a
-  machine's `runtimes`, keeping every other agent-action value. A runtime
-  entry that this removal leaves empty is removed, and so is a `runtimes` map
-  it leaves empty.
+- The global layer's conversion removes the `retire_thread` value from each
+  runtime entry of its `runtimes`, keeping every other agent-action value. A
+  runtime entry that this removal leaves empty is removed, and so is a
+  `runtimes` map it leaves empty.
 <!-- /planned-change:remove-retire-thread -->
 
 ### Environment
@@ -528,9 +541,10 @@ And reading the runtime choice inside that project still answers the machine's o
 
 ```gherkin
 Given a developer's machine and project configuration were written by an older instrukt
-When they upgrade instrukt and read configuration or run a scheduled tick
+When they upgrade instrukt and read or validate configuration or run a scheduled tick
 Then their configuration is brought to the current schema with every setting kept
 And the commands that read it work as before
+And validating the project's configuration passes while noting that its committed file is still to be converted
 ```
 
 ### UC-CL4: An older instrukt refuses configuration written by a newer one

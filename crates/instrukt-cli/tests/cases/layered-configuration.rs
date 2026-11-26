@@ -7,7 +7,9 @@ use crate::common;
 use crate::fixtures::{documented, mapped, t3};
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::{CURRENT_SCHEMA_VERSION, Revision};
+use instrukt_core::config::{
+    COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION, Revision,
+};
 
 fn write_global(env: &TestEnv, text: &str) {
     let path = env.instrukt_home().join("instrukt.yaml");
@@ -75,7 +77,7 @@ fn a_cloned_project_cannot_declare_what_runs_on_the_machine() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: hostile\nrunner: {{runtime: hostile}}\nagents:\n  order: [project-agent]\n  tier: strong\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     author.commit("feat: configuration");
@@ -182,7 +184,7 @@ fn thread_finishing_resolves_from_the_machine_entry_and_the_removed_retirement_i
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    finish_thread: Delete the thread and its transcript.\n"
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    finish_thread: Delete the thread and its transcript.\n"
         ),
     );
     let refused = env.run(repo.path(), ["config", "validate"]).failure();
@@ -236,7 +238,7 @@ fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withhold
         repo.write(
             "instrukt.yaml",
             &format!(
-                "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: demo\nregenerable: [{entry}]\n"
+                "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nregenerable: [{entry}]\n"
             ),
         );
     };
@@ -270,10 +272,13 @@ fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withhold
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL3
 #[test]
-fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
+fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     // Schema version 1 is the first schema; documents an earlier instrukt
-    // wrote carry it. Initializing again brings both layers to the current
-    // schema with every setting kept, and reads answer as before.
+    // wrote carry it. Validating the project before anything converts it
+    // passes on the converted view and notes the committed file still to be
+    // converted, leaving it as committed. Initializing again brings both
+    // layers to the current schema with every setting kept, and reads answer
+    // as before.
     let env = TestEnv::new();
     let global =
         format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\n");
@@ -290,6 +295,18 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     let layer = "schema_version: 1\nproject: kept\nboard: acme/7\nactions:\n  test: make test\n";
     let repo = project(&env, "kept", layer);
 
+    let validated = env.run(repo.path(), ["config", "validate"]).success();
+    insta::assert_snapshot!(stdout(&env, &validated), @"");
+    insta::assert_snapshot!(stderr(&env, &validated), @r"
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    ");
+    assert_eq!(
+        repo.read("instrukt.yaml"),
+        layer,
+        "the committed file is left as committed"
+    );
+
     env.run(repo.path(), ["config", "init"]).success();
     env.run(repo.path(), ["config", "init", "--global"])
         .success();
@@ -298,7 +315,7 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
         serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
     assert_eq!(
         stored["schema_version"].as_u64(),
-        Some(CURRENT_SCHEMA_VERSION)
+        Some(PROJECT_SCHEMA_VERSION)
     );
     assert_eq!(stored["board"].as_str(), Some("acme/7"));
     let read = |args: &[&str]| stdout(&env, &env.run(repo.path(), args).success());
@@ -324,7 +341,7 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
     assert!(converted["members"]["alex"].get("slack").is_none());
     assert_eq!(
         converted["schema_version"].as_u64(),
-        Some(CURRENT_SCHEMA_VERSION)
+        Some(COMPANY_SCHEMA_VERSION)
     );
     insta::assert_snapshot!(read(&["config", "get", "--company", "acme", "members.alex.email"]), @"alex@example.com");
 }
@@ -334,7 +351,7 @@ fn configuration_written_by_an_earlier_instrukt_keeps_working_after_init() {
 fn written_by_a_newer_instrukt(env: &TestEnv) -> (Repo, Vec<u8>) {
     let layer = format!(
         "schema_version: {}\nproject: future\nboard: acme/7\n",
-        CURRENT_SCHEMA_VERSION + 1
+        PROJECT_SCHEMA_VERSION + 1
     );
     let repo = project(env, "future", &layer);
     let bytes = std::fs::read(repo.path().join("instrukt.yaml")).unwrap();
@@ -404,7 +421,7 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     // a repository command names the door, and the door says to upgrade.
     let machine = format!(
         "schema_version: {}\nrunner: {{runtime: t3}}\n",
-        CURRENT_SCHEMA_VERSION + 1
+        GLOBAL_SCHEMA_VERSION + 1
     );
     write_global(&env, &machine);
     let path = env.instrukt_home().join("instrukt.yaml");

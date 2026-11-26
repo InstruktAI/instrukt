@@ -1,5 +1,7 @@
-//! One-way conversion of owned configuration into the current selection shape.
-use super::{Agents, ConfigError, Layer, SHIPPED_AGENTS};
+//! One-way conversion of owned configuration: each document kind's older
+//! schema versions into its current one, and the machine's old agent
+//! selection into `agents.yaml`.
+use super::{Agents, ConfigError, Layer, LayerKind, SHIPPED_AGENTS};
 use crate::{fsx::atomic_write, home::Home};
 use serde_yaml_ng::Value;
 
@@ -117,6 +119,64 @@ pub(super) fn selection(
     old.retain(|_, v| v.as_mapping().is_none_or(|m| !m.is_empty()));
     Ok(changed.then_some(next))
 }
+/// `value`, a document of `kind` at schema version `from`, converted to its
+/// kind's current version: retired settings removed, every other setting
+/// kept, and the kind's version stamped.
+pub(super) fn upcycle(value: Value, from: u64, kind: LayerKind) -> Value {
+    let mut value = match kind {
+        LayerKind::Global => global(value, from),
+        LayerKind::Project => project(value, from),
+        LayerKind::Company => company(value, from),
+    };
+    if let Value::Mapping(map) = &mut value {
+        map.insert(
+            Value::String("schema_version".to_owned()),
+            Value::Number(kind.current_schema_version().into()),
+        );
+    }
+    value
+}
+
+fn global(mut value: Value, from: u64) -> Value {
+    if from < 6
+        && let Some(Value::Mapping(modules)) = value.get_mut("modules")
+    {
+        // A declared connector gives a company conversations; the
+        // machine's switch is gone, whatever its value.
+        modules.remove(super::_schema::CONVERSATIONS);
+    }
+    value
+}
+
+fn project(mut value: Value, from: u64) -> Value {
+    if from < 3
+        && let Value::Mapping(map) = &mut value
+    {
+        map.remove("actions");
+    }
+    value
+}
+
+fn company(mut value: Value, from: u64) -> Value {
+    if from < 6
+        && let Some(Value::Mapping(members)) = value.get_mut("members")
+    {
+        // A member entry no longer names a connector identity; an entry
+        // left without an email address stays a finding.
+        for (_, entry) in members.iter_mut() {
+            if let Value::Mapping(fields) = entry {
+                // The connectors that existed when schema 6 was written,
+                // whatever this binary supports later.
+                const V6_CONNECTOR_KEYS: [&str; 1] = ["slack"];
+                for connector in V6_CONNECTOR_KEYS {
+                    fields.remove(connector);
+                }
+            }
+        }
+    }
+    value
+}
+
 fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::InvalidValue {
         key: "configuration migration".into(),

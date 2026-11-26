@@ -47,9 +47,20 @@ concurrency cap, and declared blind spots (`sdlc/policy/live-verification`).
     paired with a temporary git repository.
   - Inherit `HOME`, broad XDG base directories, and `TMPDIR` unchanged
     (`sdlc/policy/testing`).
-  - Initialize the slot with the candidate binary (`init`), execute the smoke
-    flow, then kill any spawned daemon/Redis process group and delete the
-    temporary slot directory on exit (`general/policy/shared-machine-resources`).
+  - Hold each slot under `scripts/with-runtime-homes.py`, which creates one
+    Python `tempfile.TemporaryDirectory`, points every isolated root above into
+    it, puts scheduler-command stubs first on `PATH`, runs the command it is
+    given, and removes the directory when that command ends, including when it
+    is stopped with `SIGTERM`. The slot's holder is one long-lived command
+    under it: initialize a temporary git repository inside the slot with the
+    candidate binary (`init`), print the slot's environment for the Driver, and
+    wait for a bounded time. The Driver runs the candidate binary with that
+    environment and keeps its raw evidence inside the slot directory, where
+    the Checker reads it.
+  - Teardown ends the holder: stop the process group of any daemon or Redis
+    started for the slot, then send `SIGTERM` to the holder, which removes the
+    slot and its raw evidence with it (`general/policy/shared-machine-resources`).
+    No command deletes the slot directory.
 - **Max parallel concurrency:** 4 isolated slots per host.
 - **Container stack:** None (`verification/Dockerfile.verify` omitted).
 
