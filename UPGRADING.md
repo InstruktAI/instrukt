@@ -700,3 +700,34 @@ the record:
     instrukt todo artifacts diff <address> <name> <digest> <digest>
 
 A version the command reports GitHub no longer serves stays without content.
+
+### Evaluation reports cover the computer fleet; a shared cluster Redis grants the fleet query
+
+`instrukt eval report` now covers every computer that shares this computer's
+cluster Redis, unless `--computer` narrows it. Each computer's `instrukt run`
+or `instrukt tick` keeps its entry on the fleet membership record and answers
+evaluation requests over that cluster connection. The cluster Redis user
+therefore needs the fleet query's permissions. A computer without
+`redis.cluster.url` is unaffected and still reports on itself alone.
+
+Where the cluster Redis is instrukt's own, the next `instrukt install`
+rewrites its access list with these permissions and restarts it. Nothing else
+is needed.
+
+Where the cluster Redis is supplied by an operator, its access list is not
+instrukt's to change. Before installing the new build on any computer that
+configures `redis.cluster.url` there, in this order:
+
+1. Grant the cluster Redis user these commands on instrukt's keys: `HSET` and
+   `HGETALL` on `instrukt:fleet:members`; `RPUSH`, `BLPOP`, `LPOP`, `LLEN` and
+   `EXPIRE` on `instrukt:eval:requests:*` and `instrukt:eval:reply:*`; and
+   `MULTI` and `EXEC`. A user already scoped to `~instrukt:*` needs only the
+   commands added, for example
+   `ACL SETUSER <user> +hset +hgetall +lpop +llen +rpush +blpop +expire +multi +exec`.
+2. On each such computer, run `instrukt install --check`. It reports a
+   `fleet Redis` finding naming any permission still denied.
+3. Run `instrukt install`.
+
+Until a computer's user is granted these permissions, reports covering it list
+it among their limitations, and its runner records the denial in its
+`computer-fleet` worker state.
