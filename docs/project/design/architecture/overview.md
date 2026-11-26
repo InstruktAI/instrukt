@@ -538,8 +538,10 @@ anyone asking: an eligible pull request's current head and the integrator's
 candidate.
 
 Whether a commit owes independent review is its author's decision, made when
-committing and kept as review evidence; instrukt asks for a review on its own
-initiative only where no author of ours can decide (`general/policy/commits`).
+committing and kept as review evidence (`general/policy/commits`); instrukt
+asks for a review on its own initiative only where no author of ours can
+decide (`project/instrukt/spec/feature/workflow/integration-gate`, Review
+coverage of a candidate).
 The picture below shows who decides and what follows at each stage, by kind of
 author. A trusted author is a session of ours, which decides for its own
 commits (todo, one-off worktree), or a trusted account or configured App bot
