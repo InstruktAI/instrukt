@@ -119,9 +119,12 @@ its stamps under that eval set, counting each todo, review and findings report
 once per eval set. Its answer holds only the project slugs, eval sets and
 model identities, those measures, the earliest and latest stamp time of each
 project, eval set and model, the commits that computer records setting each
-eval set, and the limitations it found. No stamp, artifact,
+eval set, and the limitations it found, each worded as a safe diagnostic
+that carries no URL, credential, checkout path or raw error text, the detail
+staying in that computer's own logs. No stamp, artifact,
 findings report or conversation leaves the computer, and no computer but the
-requesting one writes a report.
+requesting one writes a report. The requesting computer's own limitations read
+as in a report covering only this computer.
 
 A report covering any other computer pools by eval set, whether or not any
 other computer answers. Within each project it shows one window per eval set,
