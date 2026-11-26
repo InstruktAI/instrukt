@@ -146,6 +146,10 @@ pub enum AskError {
 }
 
 impl Fleet {
+    pub(crate) fn transport(&self) -> &ScopedTransport {
+        &self.transport
+    }
+
     /// Asks each of `computers` with `payload` as a request of `kind`, and
     /// waits for all their answers together until each has answered or
     /// `deadline` (at most [`MAX_DEADLINE`]) has passed. Returns what was

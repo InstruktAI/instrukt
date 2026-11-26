@@ -11,8 +11,11 @@
 //! work/eval-report`). The name keeps it apart from fleet attention's fleet,
 //! a project's active todos and their sessions.
 
+mod _members;
 mod _query;
 mod _responder;
+
+pub use _members::{LastSeen, Member, Members, MembersUnread};
 
 pub(crate) use _query::HISTORY;
 pub use _query::{AskError, EVALUATION, Fleet, Kind, MAX_DEADLINE, Outcome, Unopened, open};
