@@ -215,7 +215,8 @@ waiting on a person. The operator's answer here is the settlement.
 <!-- planned:todo-create-hold -->
 Before resting, read each held todo of the project whose manual hold waits on
 a stated condition outside the project's todos, and release every one whose
-condition the evidence its reason names shows met (`NC-51`). While you are
+condition the evidence its reason names shows met, under
+`sdlc/concept/coordination-cases`. While you are
 parked, whoever satisfies such a condition releases the hold or messages this
 thread, and either wakes you.
 <!-- /planned:todo-create-hold -->

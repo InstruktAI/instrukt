@@ -46,12 +46,10 @@ Creation places the todo by what it waits on, and its help and admission
 questions name the three placements apart:
 
 - `--after <slugs>` makes it wait for other todos and leaves it ready once they
-  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`,
-  Prerequisites).
+  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`).
 - `--hold --reason <text>` files converged work held for a condition outside
   the project's todos, the hold committed with the todo
-  (`project/instrukt/spec/feature/work/dependencies-and-holds`, Session
-  bindings, claims and holds).
+  (`project/instrukt/spec/feature/work/dependencies-and-holds`).
 - `--icebox` parks work whose outcome has not converged, outside the
   lifecycle (Parking, withdrawal and delivery, below).
 <!-- /planned:todo-create-hold -->

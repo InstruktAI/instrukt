@@ -99,9 +99,9 @@ A dispatch hold is the wait on a condition outside the project's todos, such
 as an unmerged one-off branch, a binary rollout or an external gate, and its
 reason names that condition. A wait on another todo is a prerequisite, which
 the dependent leaves on its own when the prerequisite delivers. Work whose
-outcome has not converged is parked in the icebox
-(`project/instrukt/spec/feature/work/todos`, Parking), outside the lifecycle,
-and is never held.
+outcome has not converged is parked in the icebox, which takes it out of the
+lifecycle (`project/instrukt/spec/feature/work/todos`), while a hold keeps
+converged work in it.
 <!-- /planned:todo-create-hold -->
 
 `instrukt todo update <slug> --release` releases the dispatch hold while

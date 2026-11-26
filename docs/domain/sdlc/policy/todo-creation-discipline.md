@@ -668,9 +668,10 @@ this policy.
 - Reviewers apply **Coordinator pauses and retirements** to the coordinator's
   holds, releases, log writes and withdrawals as the work record shows them. A
   coordinator acting within it is not a flagger.
-- Converged work filed with `--icebox` to wait on a merge, a release or another
-  todo, or a hold whose reason is another todo's delivery, violates **Place a
-  filing by what it waits on**.
+- Reviewers and peers reading a filing session apply **Place a filing by what
+  it waits on** to the placement it chose. The project's coordinator, reading a
+  hold under `sdlc/concept/coordination-cases`, points a hold whose reason
+  names another todo's delivery back to the session that recorded it.
 <!-- /planned-change:todo-create-hold -->
 
 ## Exceptions

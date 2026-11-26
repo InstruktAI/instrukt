@@ -366,10 +366,18 @@ stated condition outside its todos under `NC-51` before the coordinator rests.
 
 ##### NC-15-b — Untyped hold note
 
+<!-- planned-change:todo-create-hold -->
 - **Evidence available:** held state, free-text note, hold audit/history, and absence
   of a governed gate/owner discriminator.
 - **Ownership:** judgment and execution are unresolved; only the todo mechanism may
   mutate the hold, and the Coordinator changes no hold it did not place.
+<!-- change:todo-create-hold -->
+- **Evidence available:** held state, free-text note, hold audit/history, and absence
+  of both a governed gate/owner discriminator and a stated condition outside the
+  project's todos with evidence the Coordinator can read (`NC-51`).
+- **Ownership:** judgment and execution are unresolved; only the todo mechanism may
+  mutate the hold, and the Coordinator changes no such hold it did not place.
+<!-- /planned-change:todo-create-hold -->
 - **Coordinator:** leave the individual hold unchanged, assess the shared
   observability failure under `NC-24`, and never infer expiry from age or validity
   from the note. This case produces no separate per-hold report or log line.
@@ -686,8 +694,7 @@ stated condition outside its todos under `NC-51` before the coordinator rests.
 <!-- change:todo-create-hold -->
 - **Ownership:** the hold's source owns it; the Coordinator owns the holds it
   placed for a settlement, and releases a manual hold whose stated condition
-  outside the project's todos is met (`sdlc/policy/todo-creation-discipline`,
-  Coordinator pauses and retirements).
+  outside the project's todos is met (`sdlc/policy/todo-creation-discipline`).
 - **Coordinator:** a release of a hold you placed is read under `NC-48`. A hold
   with a governed gate is `NC-15-a`, a manual hold whose reason names a
   condition outside the project's todos and the evidence that releases it
@@ -728,8 +735,8 @@ stated condition outside its todos under `NC-51` before the coordinator rests.
 - **Ownership:** whoever the reason names satisfies the condition; whether it
   is met is `not applicable — mechanically determined by the record at the
   address the reason names`. The Coordinator releases the hold, expressly
-  authorised by `sdlc/policy/todo-creation-discipline` (Coordinator pauses and
-  retirements); the todo mechanism is the state authority.
+  authorised by `sdlc/policy/todo-creation-discipline`; the todo mechanism is
+  the state authority.
 - **Coordinator:** read that record on the event that placed the hold, on a
   message that the condition is met, and on every later wake before resting.
   When it shows the condition met, release the hold with
