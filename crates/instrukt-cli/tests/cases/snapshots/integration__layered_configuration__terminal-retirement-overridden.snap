@@ -17,7 +17,7 @@ source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
 ## Goal
 
 ```
-Use native settling for the addressed thread; settling this conversation applies when its current turn ends. Preserve unfinished human and worker obligations before settling.
+Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message.
 ```
 
 ```

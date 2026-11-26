@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/InstruktAI/instrukt/main/schemas/agents.schema.json
-schema_version: 3
+schema_version: 4
 default: {class: agent, can: [all], order: [claude, codex, antigravity], tier: standard}
 roles:
   builder: {github_app: author, class: focused, can: [read, worker, record], order: [claude, codex, antigravity], tier: strong}
@@ -19,12 +19,12 @@ roles:
   task-preparer: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
   task-runner: {github_app: author, class: agent, can: [read, worker, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
   integrator: {github_app: project, class: standing, can: [read, record, orchestrate, integrate], order: [claude, codex, antigravity], tier: strong}
-  coordinator: {github_app: project, class: standing, can: [read, record, orchestrate], order: [claude, codex, antigravity], tier: strong}
+  sdlc-coordinator: {github_app: project, class: standing, can: [read, record, orchestrate, report], order: [antigravity, claude], tier: strong}
   bug-hunter: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   upstream-watcher: {github_app: project, class: standing, can: [read, record], order: [claude, codex, antigravity], tier: strong}
   event-handler: {github_app: project, class: standing, can: [all], order: [claude, codex, antigravity], tier: strong}
   company-agent: {github_app: project, class: standing, can: [read, tools, report], order: [claude, codex, antigravity], tier: strong}
-  technical-coordinator: {github_app: project, class: standing, can: [read, worker, record, report, tools], order: [antigravity, claude], tier: premium}
+  technical-coordinator: {github_app: project, class: standing, can: [read, worker, record, report, tools], order: [antigravity, claude], tier: strong}
   prd-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   architecture-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
   plan-reviewer: {github_app: reviewer, class: focused, can: [read, review], order: [codex, claude, antigravity], tier: strong}
@@ -64,6 +64,7 @@ bundles:
     - {action: session-observe, scope: own}
     - {action: standing-bind, scope: own}
     - {action: conversation-link, scope: own}
+    - {action: attention-raise, scope: own}
   integrate:
     - {action: integration, scope: own}
     - {action: publication, scope: own}
@@ -110,6 +111,7 @@ bundles:
     - {action: runner-execute, scope: any}
     - {action: mcp-access, scope: any}
     - {action: company-reply, scope: any}
+    - {action: attention-raise, scope: any}
 profiles:
   codex:
     instance: codex

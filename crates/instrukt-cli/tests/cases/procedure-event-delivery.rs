@@ -17,6 +17,11 @@ struct Responsibility {
 }
 impl Responsibility {
     fn new(settings: &str) -> Self {
+        Self::answering(settings, Self::RECONCILE)
+    }
+
+    /// A responsibility whose published procedure reads `body`.
+    fn answering(settings: &str, body: &str) -> Self {
         let computer = Computer::new();
         let runtime = FakeT3::create(&computer.env);
         let redis = RedisServer::new(&computer.env);
@@ -26,7 +31,7 @@ impl Responsibility {
             redis,
             runtime,
         };
-        r.publish(settings);
+        r.publish_body(settings, body);
         r.computer.tick();
         r
     }
@@ -46,8 +51,13 @@ impl Responsibility {
     }
 
     const PROCEDURE: &str = "docs/domain/reactions/procedure/respond.md";
+    const RECONCILE: &str = "Inspect current subject state and reconcile the event.\n";
 
     fn procedure(settings: &str) -> String {
+        Self::procedure_body(settings, Self::RECONCILE)
+    }
+
+    fn procedure_body(settings: &str, body: &str) -> String {
         documented::snippet(
             "procedure",
             "Respond",
@@ -56,14 +66,18 @@ impl Responsibility {
                 "role: responder\nsubscription_home: project\nsubscriptions: [example.changed]\n{settings}"
             ),
             &[],
-            "Inspect current subject state and reconcile the event.\n",
+            body,
         )
     }
 
     fn publish(&self, settings: &str) {
+        self.publish_body(settings, Self::RECONCILE);
+    }
+
+    fn publish_body(&self, settings: &str, body: &str) {
         self.computer
             .project
-            .write(Self::PROCEDURE, &Self::procedure(settings));
+            .write(Self::PROCEDURE, &Self::procedure_body(settings, body));
         self.computer
             .project
             .commit("docs: update the response contract");
@@ -1546,6 +1560,38 @@ fn automation_leaves_a_finished_unattended_standing_thread_unsettled_and_a_human
     assert_eq!(r.runtime.threads().len(), 1);
     assert_eq!(r.runtime.message_count("s1"), before + 1);
     // The later event reached the same, human-settled thread.
+    assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
+}
+
+// spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA30
+#[test]
+fn a_standing_agent_resting_by_its_procedure_stays_settled_and_wakes_in_place() {
+    let r = Responsibility::answering(
+        "",
+        "Inspect current subject state and reconcile the event. When no subject needs reconciling, settle your own thread and rest until the next event.\n",
+    );
+    r.append("initial");
+    r.tick();
+    // The agent's turn ends at its procedure's rest, and it settles its own
+    // thread there.
+    r.runtime
+        .finish("s1", "completed", "Nothing left to reconcile; resting.");
+    r.runtime.change("s1", "settled", true.into());
+    r.tick();
+    r.tick();
+    let shown = r
+        .runtime
+        .state_dir()
+        .join(format!("{}.json", r.runtime.native_id("s1")));
+    let thread: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&shown).unwrap()).unwrap();
+    let rested = (thread["settled"].clone(), thread["archived"].clone());
+    let before = r.runtime.message_count("s1");
+    r.append("later");
+    r.tick();
+    assert_eq!(rested, (true.into(), false.into()));
+    assert_eq!(r.runtime.threads().len(), 1);
+    assert_eq!(r.runtime.message_count("s1"), before + 1);
     assert_eq!(r.delivered_to("later"), r.delivered_to("initial"));
 }
 

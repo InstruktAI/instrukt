@@ -57,7 +57,8 @@ pub(super) fn ports(ctx: &Ctx) -> anyhow::Result<Option<WorkPorts>> {
         firings: work.clone(),
         holds: work.clone(),
         retention: work.clone(),
-        reclamation: work,
+        reclamation: work.clone(),
+        fleet: work,
     }))
 }
 

@@ -8,13 +8,14 @@
 
 use std::collections::BTreeMap;
 
-use instrukt_core::ids::{CommitSha, ProjectSlug, TodoSlug};
+use instrukt_core::ids::{CommitSha, ProjectSlug, RoleName, SessionRef, TodoId, TodoSlug};
 use serde_json::{Value, json};
 
 use super::{
-    CiResult, DataField, DataValueKind, DeadLettered, EmissionContext, EnvelopeError, Event,
-    EventCatalog, EventDeclaration, EventEnvelope, EventHome, EventHomeOwner, EventRef, HomeKind,
-    LifecycleState, ProducerEvent, ReferenceKind, StateDeclaration, StateStanding, occurrence_id,
+    AttentionHoldSource, CiResult, DataField, DataValueKind, DeadLettered, EmissionContext,
+    EnvelopeError, Event, EventCatalog, EventDeclaration, EventEnvelope, EventHome, EventHomeOwner,
+    EventRef, HomeKind, LifecycleState, ProducerEvent, ReferenceKind, StalledCause,
+    StateDeclaration, StateStanding, occurrence_id,
 };
 
 fn context() -> EmissionContext {
@@ -700,4 +701,171 @@ fn the_review_request_is_the_type_automatic_review_routes() {
         review_request(None).name(),
         instrukt_core::config::REVIEW_NEEDED_EVENT
     );
+}
+
+fn demo() -> ProjectSlug {
+    ProjectSlug::parse("demo").unwrap()
+}
+
+fn todo(slug: &str) -> TodoSlug {
+    TodoSlug::parse(slug).unwrap()
+}
+
+fn session(id: &str) -> SessionRef {
+    SessionRef::parse(&format!("t3:{id}")).unwrap()
+}
+
+fn emitted(event: &Event, ctx: &EmissionContext) -> EventEnvelope {
+    let envelope = event.envelope(ctx).unwrap();
+    EventCatalog::builtin()
+        .unwrap()
+        .get(event.name())
+        .unwrap()
+        .validate_producer(&envelope)
+        .unwrap();
+    envelope
+}
+
+#[test]
+fn a_start_that_found_no_model_emits_its_declared_shape_without_a_session() {
+    let event = Event::AttentionExecutionStalled {
+        project: demo(),
+        todo: todo("stuck"),
+        session: None,
+        workflow_state: "build".into(),
+        cause: StalledCause::NeverStarted,
+        model_order: vec!["claude".into(), "codex".into()],
+    };
+    let envelope = emitted(&event, &context());
+    assert_eq!(
+        envelope.subject,
+        EventRef::new(ReferenceKind::Todo, "stuck").unwrap()
+    );
+    assert_eq!(envelope.data.get("session"), Some(&Value::Null));
+    assert_eq!(envelope.data.get("cause"), Some(&json!("never_started")));
+}
+
+#[test]
+fn a_github_hold_is_carried_with_its_source_and_placement_time() {
+    let placed_at: jiff::Timestamp = "2026-11-05T11:00:00Z".parse().unwrap();
+    let event = Event::AttentionHoldPlaced {
+        project: demo(),
+        todo: todo("held"),
+        source: AttentionHoldSource::GitHub,
+        reason: "label".into(),
+        placed_at,
+    };
+    let envelope = emitted(&event, &context());
+    assert_eq!(envelope.data.get("source"), Some(&json!("github")));
+    assert_eq!(
+        envelope.data.get("placed_at"),
+        Some(&json!(placed_at.to_string()))
+    );
+}
+
+#[test]
+fn a_raise_relates_its_other_todos_and_its_raising_session() {
+    let event = Event::AttentionRaised {
+        project: demo(),
+        todo: todo("first"),
+        related: vec![todo("second")],
+        obligation: "converging work".into(),
+        raise: "r1".into(),
+    };
+    let mut ctx = context();
+    ctx.caller_session = Some("t3:raiser".into());
+    let envelope = emitted(&event, &ctx);
+    assert_eq!(
+        envelope.subject,
+        EventRef::new(ReferenceKind::Todo, "first").unwrap()
+    );
+    assert_eq!(
+        envelope.related,
+        vec![
+            EventRef::new(ReferenceKind::Todo, "second").unwrap(),
+            EventRef::new(ReferenceKind::Session, "t3:raiser").unwrap(),
+        ]
+    );
+}
+
+#[test]
+fn each_wait_of_a_session_is_its_own_occurrence_whatever_the_boundary() {
+    let wait = |wait| Event::AttentionInputWaiting {
+        project: demo(),
+        todo: todo("waiting"),
+        session: session("worker"),
+        workflow_state: "build".into(),
+        wait,
+    };
+    let mut ctx = context();
+    ctx.source = "computer-two".into();
+    ctx.time = "2026-11-06T13:00:00Z".parse().unwrap();
+    ctx.caller_session = Some("t3:another".into());
+    assert_eq!(
+        wait(1).envelope(&context()).unwrap().id,
+        wait(1).envelope(&ctx).unwrap().id
+    );
+    assert_ne!(wait(1).occurrence_id(), wait(2).occurrence_id());
+}
+
+#[test]
+fn an_exhausted_start_repeats_its_occurrence_until_its_model_order_changes() {
+    let start = |order: &[&str]| Event::AttentionExecutionStalled {
+        project: demo(),
+        todo: todo("stuck"),
+        session: None,
+        workflow_state: "build".into(),
+        cause: StalledCause::NeverStarted,
+        model_order: order.iter().map(|model| (*model).to_owned()).collect(),
+    };
+    assert_eq!(
+        start(&["claude"]).occurrence_id(),
+        start(&["claude"]).occurrence_id()
+    );
+    assert_ne!(
+        start(&["claude"]).occurrence_id(),
+        start(&["claude", "codex"]).occurrence_id()
+    );
+}
+
+#[test]
+fn a_hold_is_one_occurrence_per_placement_and_source_whatever_its_reason() {
+    let at: jiff::Timestamp = "2026-11-05T11:00:00Z".parse().unwrap();
+    let hold = |source, reason: &str, placed_at| Event::AttentionHoldPlaced {
+        project: demo(),
+        todo: todo("held"),
+        source,
+        reason: reason.into(),
+        placed_at,
+    };
+    let first = hold(AttentionHoldSource::Manual, "wait", at).occurrence_id();
+    assert_eq!(
+        first,
+        hold(AttentionHoldSource::Manual, "reworded", at).occurrence_id()
+    );
+    assert_ne!(
+        first,
+        hold(AttentionHoldSource::Automatic, "wait", at).occurrence_id()
+    );
+    let later = at.checked_add(jiff::SignedDuration::from_secs(1)).unwrap();
+    assert_ne!(
+        first,
+        hold(AttentionHoldSource::Manual, "wait", later).occurrence_id()
+    );
+}
+
+#[test]
+fn a_repeated_failure_is_one_occurrence_per_role_attempt_whatever_its_reason() {
+    let failing = |role: &str, attempt, reason: &str| Event::AttentionAttemptsFailing {
+        project: demo(),
+        todo: todo("failing"),
+        todo_id: TodoId::parse(&"a".repeat(32)).unwrap(),
+        role: RoleName::parse(role).unwrap(),
+        attempt,
+        reason: reason.into(),
+    };
+    let first = failing("builder", 2, "crash").occurrence_id();
+    assert_eq!(first, failing("builder", 2, "other").occurrence_id());
+    assert_ne!(first, failing("builder", 3, "crash").occurrence_id());
+    assert_ne!(first, failing("reviewer", 2, "crash").occurrence_id());
 }

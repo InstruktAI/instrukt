@@ -392,9 +392,21 @@ sent through `runner.notify`.
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
-only-at-entry delivery waits for observed idleness. Standing T3 threads remain
-unsettled under automation; a human-settled thread stays reachable and wakes
-on its next message.
+only-at-entry delivery waits for observed idleness. Runner automation never
+settles a standing T3 thread. A standing procedure may self-settle when parked
+dormant (`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`); a settled
+standing thread, by itself or by a human, stays reachable and wakes on its next
+activation or message.
+
+Fleet attention composes three owners without a watcher. Work calls the
+runner's fleet-attention contract with the facts of each change it makes to a
+todo's status, hold or attempts, inside that change's own transaction; the
+runner decides which facts are conditions and appends them, together with the
+conditions it observes in executions and an agent's raise through
+`instrukt events raise`. The project's subscribed coordinator answers them, and
+the end of an attention episode wakes it once so it can rest
+(`project/instrukt/spec/feature/runner/fleet-attention`).
 
 ### Conversation links
 

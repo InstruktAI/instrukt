@@ -378,6 +378,15 @@ When automatic activation or manual entry reservation is requested for it
 Then entry refuses before creating a session and identifies the unusable effective role
 ```
 
+### UC-PSA30: Keep a quiet responsibility's agent out of the active list
+
+```gherkin
+Given a developer's standing agent answers a responsibility whose procedure names when it rests
+When that rest condition holds and the agent's current work is recorded
+Then its thread leaves the active list and stays findable and reachable
+And the next activation wakes that same thread without a new generation
+```
+
 ## Known caveats
 
 - Person homes and their execution are unavailable. Source UC-PSA8's company
