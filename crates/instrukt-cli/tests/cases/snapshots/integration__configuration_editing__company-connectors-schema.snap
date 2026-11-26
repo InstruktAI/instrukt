@@ -1,0 +1,61 @@
+---
+source: crates/instrukt-cli/tests/cases/configuration-editing.rs
+expression: "stdout(&schema(&[\"connectors\"]).success())"
+---
+connectors (object, optional) — The connectors the company's people reach its agent through, one named entry each; an entry under a kind's own key, such as `slack`, is of that kind.
+connectors.slack (object, optional) — Each company's workspace has its own Slack app, named `agent`: Slack shows that name as the sender of every answer and in front of the status line. Create the app from the manifest below and install it to the workspace.
+    The app token is generated in the app's settings as an app-level token with the scope `connections:write`; its reference goes into `app_token`.
+    The bot token is issued when the app is installed to the workspace; its reference goes into `bot_token`.
+    The agent hears a channel only once it has been invited to it.
+    Manifest:
+    display_information:
+      name: agent
+      description: The company's agent. Tag it in a channel or message it directly.
+    features:
+      app_home:
+        home_tab_enabled: false
+        messages_tab_enabled: true
+        messages_tab_read_only_enabled: false
+      bot_user:
+        display_name: agent
+        always_online: true
+    oauth_config:
+      scopes:
+        bot:
+          - app_mentions:read
+          - chat:write
+          - channels:history
+          - channels:read
+          - groups:history
+          - groups:read
+          - im:history
+          - im:read
+          - users:read
+          - users:read.email
+    settings:
+      event_subscriptions:
+        bot_events:
+          - app_mention
+          - message.im
+      interactivity:
+        is_enabled: false
+      org_deploy_enabled: false
+      socket_mode_enabled: true
+      token_rotation_enabled: false
+connectors.slack.admit (one of: members | admins_only, optional, default "members") — who is admitted to address this connector
+connectors.slack.app_token (${NAME} secret reference, required) — the app-level token with the scope `connections:write`, generated in the Slack app's settings; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.slack.bot_token (${NAME} secret reference, required) — the bot token Slack issues when the app is installed to the workspace; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.slack.context_messages (integer, optional, default 30) — the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted
+connectors.slack.kind (one of: slack, optional, default "slack") — registered connector kind; defaults to the map key when omitted
+connectors.slack.reply_mode (one of: turn_output | explicit, optional, default "turn_output") — whether finished turn output posts automatically or only explicit `instrukt company reply` calls post
+connectors.slack.role (string, optional, default "company-agent") — role assigned to this connector's session(s); defaults to company-agent
+connectors.slack.session_scope (one of: conversation | company, optional, default "conversation") — whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)
+connectors.<name> (object, optional) — a further `slack` connector under its own name; set it up as `connectors.slack` shows
+connectors.<name>.admit (one of: members | admins_only, optional, default "members") — who is admitted to address this connector
+connectors.<name>.app_token (${NAME} secret reference, required) — the app-level token with the scope `connections:write`, generated in the Slack app's settings; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.<name>.bot_token (${NAME} secret reference, required) — the bot token Slack issues when the app is installed to the workspace; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
+connectors.<name>.context_messages (integer, optional, default 30) — the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted
+connectors.<name>.kind (one of: slack, required, default "slack") — registered connector kind; defaults to the map key when omitted
+connectors.<name>.reply_mode (one of: turn_output | explicit, optional, default "turn_output") — whether finished turn output posts automatically or only explicit `instrukt company reply` calls post
+connectors.<name>.role (string, optional, default "company-agent") — role assigned to this connector's session(s); defaults to company-agent
+connectors.<name>.session_scope (one of: conversation | company, optional, default "conversation") — whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)

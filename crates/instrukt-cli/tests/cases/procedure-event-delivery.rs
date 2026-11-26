@@ -750,6 +750,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
     let before = r.runtime.calls().len();
     let result = reserve().success();
     let request: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
+    insta::assert_snapshot!("manual-standing-title", request["title"].as_str().unwrap());
     let repeated = reserve().success();
     let repeated: serde_json::Value =
         serde_json::from_slice(&repeated.get_output().stdout).unwrap();
@@ -1099,6 +1100,7 @@ fn a_confirmed_closed_home_gets_its_next_event_in_a_new_generation() {
     r.tick();
     r.tick();
     assert_eq!(r.runtime.threads().len(), 1);
+    insta::assert_snapshot!("successor-standing-title", r.runtime.title("s2"));
     insta::assert_snapshot!(
         "closed-home-next-generation",
         work::redact(&r.runtime.input_log("s2"))
@@ -1154,6 +1156,10 @@ fn subject_identity_keeps_distinct_agents_and_continues_the_matching_subject() {
     assert_eq!(r.runtime.threads().len(), 2);
     assert_eq!(r.runtime.message_count("s1"), 2);
     assert_eq!(r.runtime.message_count("s2"), 1);
+    insta::assert_snapshot!(
+        "subject-standing-titles",
+        format!("{}\n{}", r.runtime.title("s1"), r.runtime.title("s2"))
+    );
     insta::assert_snapshot!("continued-subject-assignment", r.conversation());
 }
 // spec: project/instrukt/spec/feature/runner/procedure-standing-agent UC-PSA22

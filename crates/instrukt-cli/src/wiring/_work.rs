@@ -74,6 +74,14 @@ pub(super) fn review(
     )))
 }
 
+/// Work's answers a requested review is admitted on: a head's verdict
+/// standing, its pinned base and the history retention cutoff.
+pub(super) fn head_verdicts(ctx: &Ctx) -> Arc<dyn instrukt_runner::interfaces::HeadVerdicts> {
+    Arc::new(instrukt_todos::work::review::HeadVerdictWork::new(
+        ctx.home.clone(),
+    ))
+}
+
 /// Work's evidence read contract for workflow, wired as the ports are: the
 /// runner's workflow reads it per project.
 pub(super) fn evidence(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn WorkEvidence>>> {

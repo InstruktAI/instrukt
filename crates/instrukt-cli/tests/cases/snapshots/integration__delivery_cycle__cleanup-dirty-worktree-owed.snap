@@ -20,11 +20,13 @@ artifacts:
   plan-review-findings (v1): <digest 3>
   quality-checklist (v1): <digest 4>
   review-findings (v1): <digest 5>
+  verification-findings (v1): <digest 6>
 reviews:
   plan_review: approve (current; target <digest 2>, report <digest 3>)
   build_review: approve (exact_target, independent, commit <commit 1>, report <digest 5>, by t3:build-reviewer-1)
+verification: pass (current, commit <commit 1>, report <digest 6>, by t3:verifier-1 as verifier)
 finalize_ready: <commit 1>
 gates:
   interference lock: free
   prd approval: not required
-  review gate: blocked (worktree has uncommitted changes)
+  handoff gate: blocked (worktree has uncommitted changes)

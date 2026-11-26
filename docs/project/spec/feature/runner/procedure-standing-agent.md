@@ -67,12 +67,20 @@ actor or repair lost identity. The opening loader directs
 `instrukt docs get <procedure-id> --closure` before handling events; continuation
 retains its initialized role, home, subject, attendance and delivery facts.
 
+The thread title names its actor (`sdlc/principle/domain-driven-design`): the
+assignment's effective role alone for home identity, or `{role} · {subject}`
+with the complete typed subject for subject identity. An assignment without an
+effective role is titled by the last segment of its procedure ID in the same
+shape. Automatic activation, manual entry reservation and successors title
+their generation this way.
+
 ### Continuation and successors
 
-Standing T3 threads are settled, never closed. Automation never settles a
-standing agent: it stays unsettled in the sidebar by design. A human may settle
-it; the thread remains findable and reachable, wakes on a message and can be
-unsettled. Later activations reuse the same keyed assignment for home and
+Standing T3 threads are settled, never closed. Runner automation never settles a
+standing agent (`UC-PSA27`). A standing procedure may self-settle when parked
+dormant (`general/procedure/event-handling/overview`), or a human may settle it;
+either way the thread remains findable and reachable, wakes in place on a
+message and un-settles. Later activations reuse the same keyed assignment for home and
 subject identity, attended and unattended alike. Settling neither retires a
 responsibility nor authorizes a successor. There is no closed T3 context to
 revive or non-resumability proof to obtain.

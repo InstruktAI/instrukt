@@ -437,7 +437,12 @@ fn deliver_group(
                 adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
             ),
             checkout: root.clone(),
-            title: standing_title(&first.procedure, subject, responsibility),
+            title: standing_title(
+                &first.procedure,
+                fixed.role.as_deref(),
+                subject,
+                responsibility,
+            ),
             key: responsibility.into(),
             brief: content,
             worktree: None,
@@ -807,7 +812,7 @@ pub fn reserve_manual(
             .into_iter()
             .next()
             .map(|selection| crate::runtime::adapter(runtime).native_selection(&selection)),
-        title: standing_title(entry.id.as_str(), None, &key),
+        title: standing_title(entry.id.as_str(), entry.role.as_deref(), None, &key),
         reservation: keyed::request_id()?,
         key: key.clone(),
         brief: initialized,
@@ -1314,7 +1319,7 @@ fn prepare_successor(
         let mut pending=Vec::new();for item in pending_on(tx,&path)? {if responsibility(&item)?.0==cx.responsibility{pending.push(item);}}
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);
         let content=compose_opening(tx,cx.now,&prefix,&mut pending)?;
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.current.role.as_deref(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;
@@ -1358,8 +1363,64 @@ fn compose_opening(
     }
 }
 
-fn standing_title(procedure: &str, subject: Option<&str>, key: &str) -> String {
-    let name = procedure.rsplit('/').next().unwrap_or(procedure);
-    let label = subject.map_or_else(|| name.to_owned(), |subject| format!("{name} · {subject}"));
+/// The standing thread's display title names the actor answering the
+/// responsibility: its effective role, or the procedure's last ID segment when
+/// the assignment carries none. Identity never derives from it.
+fn standing_title(procedure: &str, role: Option<&str>, subject: Option<&str>, key: &str) -> String {
+    let actor = role
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+        .unwrap_or_else(|| procedure.rsplit('/').next().unwrap_or(procedure));
+    let label = subject.map_or_else(
+        || actor.to_owned(),
+        |subject| format!("{actor} · {subject}"),
+    );
     crate::runtime::thread_title(&label, key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::standing_title;
+
+    const PROCEDURE: &str = "sdlc/procedure/lifecycle/integrate";
+
+    #[test]
+    fn a_declared_role_titles_a_home_agent() {
+        insta::assert_snapshot!(
+            "declared-role-home",
+            standing_title(PROCEDURE, Some("integrator"), None, "k")
+        );
+    }
+
+    #[test]
+    fn a_declared_role_titles_a_subject_agent_with_its_subject() {
+        insta::assert_snapshot!(
+            "declared-role-subject",
+            standing_title(PROCEDURE, Some("integrator"), Some("todo:demo"), "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "absent-role-home",
+            standing_title(PROCEDURE, None, None, "k")
+        );
+    }
+
+    #[test]
+    fn a_blank_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "blank-role-home",
+            standing_title(PROCEDURE, Some("  "), None, "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_subject_agent_by_its_procedure_and_subject() {
+        insta::assert_snapshot!(
+            "absent-role-subject",
+            standing_title(PROCEDURE, None, Some("todo:demo"), "k")
+        );
+    }
 }

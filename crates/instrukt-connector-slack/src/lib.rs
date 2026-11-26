@@ -18,6 +18,8 @@ use instrukt_connector::{
 use jiff::Timestamp;
 use serde_json::Value;
 
+use crate::_manifest::{MANIFEST, manifest_bot_scopes};
+
 /// The target every log statement of the connector carries: the module the
 /// host and Slack shared before the cut, so the same settings select it.
 const LOG_TARGET: &str = "instrukt_runner::connectors";
@@ -89,14 +91,26 @@ const CONTEXT_MESSAGES: &str = "the largest number of earlier messages that acco
 pub static SLACK_DECLARATION: Declaration = Declaration {
     key: SLACK,
     message_chars: SLACK_MESSAGE_LIMIT,
+    // How a company sets up its Slack app (`slack-connector` spec, The Slack app).
+    setup: "Each company's workspace has its own Slack app, named `agent`: Slack shows that name as the sender of every answer and in front of the status line. Create the app from the manifest below and install it to the workspace.
+The app token is generated in the app's settings as an app-level token with the scope `connections:write`; its reference goes into `app_token`.
+The bot token is issued when the app is installed to the workspace; its reference goes into `bot_token`.
+The agent hears a channel only once it has been invited to it.",
+    manifest: Some(MANIFEST),
     fields: &[
         Field {
             name: "app_token",
-            rule: Rule::SecretReference { required: true },
+            rule: Rule::SecretReference {
+                required: true,
+                source: "the app-level token with the scope `connections:write`, generated in the Slack app's settings",
+            },
         },
         Field {
             name: "bot_token",
-            rule: Rule::SecretReference { required: true },
+            rule: Rule::SecretReference {
+                required: true,
+                source: "the bot token Slack issues when the app is installed to the workspace",
+            },
         },
         Field {
             name: "context_messages",
@@ -867,32 +881,26 @@ fn own_message(message: &Value, me: &Me) -> bool {
         || message["user"].as_str() == Some(me.user.as_str())
 }
 
+mod _manifest;
 mod read_back;
 
 impl Connector for Slack {
     fn check_permissions(&self) -> Result<(), ConnectorError> {
-        const REQUIRED: &[&str] = &[
-            "app_mentions:read",
-            "chat:write",
-            "channels:history",
-            "channels:read",
-            "groups:history",
-            "groups:read",
-            "im:history",
-            "im:read",
-            "users:read",
-            "users:read.email",
-        ];
+        let required = manifest_bot_scopes().map_err(|error| {
+            failed(format!(
+                "the Slack app manifest names no bot scopes: {error}"
+            ))
+        })?;
         let (_, scopes) = self
             .api
             .call_with_headers("auth.test", false, &[], None)
             .map_err(failed)?;
         let scopes = scopes.ok_or_else(|| failed("Slack did not report the bot token's scopes"))?;
         let granted: std::collections::HashSet<_> = scopes.split(',').map(str::trim).collect();
-        let missing: Vec<_> = REQUIRED
+        let missing: Vec<&str> = required
             .iter()
-            .filter(|scope| !granted.contains(**scope))
-            .copied()
+            .map(String::as_str)
+            .filter(|scope| !granted.contains(scope))
             .collect();
         if !missing.is_empty() {
             return Err(failed(format!(

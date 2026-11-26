@@ -17,6 +17,7 @@
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
 //! | [`OpenWorkSessions`] | `thread-retention` "Threads that are kept" | work | runner thread retention |
+//! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
@@ -1003,6 +1004,63 @@ pub enum CandidateFinding {
     Owed,
     /// The repository cannot answer; derived again next tick.
     CannotAnswer(String),
+}
+
+/// A head verdict's value as work answers it at the boundary: the runner
+/// cannot name work's own verdict type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadVerdictValue {
+    Approve,
+    NeedsWork,
+}
+
+impl HeadVerdictValue {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Approve => "approve",
+            Self::NeedsWork => "needs_work",
+        }
+    }
+}
+
+/// What this computer holds of a commit's head verdict, as work's
+/// Settlement row reads it (`github-apps`, Admission of review evidence,
+/// Settlement).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerdictStanding {
+    /// No verdict stands here and none was handed off.
+    Nothing,
+    /// A verdict stands here; `recorder` recorded its current version.
+    Stands {
+        verdict: HeadVerdictValue,
+        recorder: SessionRef,
+    },
+    /// The verdict that stood here was handed off by `export`.
+    HandedOff { export: String },
+}
+
+/// A commit's head verdict standing with the pinned base work admits its
+/// verdict against; `None` when the commit shares no history with the
+/// canonical branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeadVerdict {
+    pub standing: VerdictStanding,
+    pub pinned_base: Option<instrukt_core::ids::CommitSha>,
+}
+
+/// Work's answers a requested review is admitted on
+/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask,
+/// Coordinates, Requested review records). Read-only: no lock is taken.
+pub trait HeadVerdicts: Send + Sync {
+    /// `head`'s verdict standing on this computer and its pinned base.
+    fn head_verdict(
+        &self,
+        project: &ProjectRef,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<HeadVerdict, String>;
+    /// The moment before which review evidence history retires at `now`.
+    fn history_cutoff(&self, now: Timestamp) -> Timestamp;
 }
 
 /// Work's answers the runner asks for automatic review

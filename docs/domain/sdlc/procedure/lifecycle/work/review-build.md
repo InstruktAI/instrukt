@@ -57,7 +57,8 @@ Read in full (for every artifact present on the slug):
 - `input` and, for a feature, `prd`. For a bug, also read `diagnosis` when present.
   Derived artifacts do not replace the checked input.
 
-- `architecture` when present, plus the domain or design snippets it indexes.
+- `architecture` when present, plus the pending domain or design snippets
+  authored in `<slug>/work`.
 - `implementation-plan` and `plan-review-findings` when present.
 - `quality-checklist` when present.
 - The relevant project README, generated agent instructions, and current

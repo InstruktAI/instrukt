@@ -95,12 +95,32 @@ one. The grant reaches the command; which session may reclaim at a given
 moment is decided by the worktree's own writer admission, which binds every
 caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
+
+`instrukt review start` asks for a requested review
+(`project/instrukt/spec/feature/runner/requested-review`) and is
+`assignment-write`, addressing the project the caller stands in: it records an
+assignment and starts the session that works it, as `todo attempt` reserves
+one, and records no review evidence. The shipped `orchestrate` bundle carries
+it; focused roles without that bundle, the reviewers and builders among them,
+are refused it. The requested reviewer it starts resolves to the
+`commit-reviewer` role, the project and its placement from the runner's
+requested-review record, and its `stamp` grant at `own` reaches that project's
+review evidence.
+
+
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
 reaches only objects bound by the recorded assignment. For machine-wide
 objects, `own` is empty unless that machine-wide configuration or installation
 responsibility is explicitly part of the recorded assignment; being in a
 project does not own the machine.
+
+`instrukt hooks run`, the call in each of instrukt's hook sections
+(`project/instrukt/spec/feature/repository/hook-sections`), belongs to the
+Repository family: it is `code-commit`, addressing the working tree the hook
+runs in, so `own` reaches it in the workspace the caller's assignment records.
+The detached `hooks worker` a post-hook starts remains `runner-execute`, and
+the sync it runs remains `publication`.
 
 ### Caller and object resolution
 
@@ -192,7 +212,7 @@ model/provider choice.
 | Roles | Class | `can` bundles | App |
 | --- | --- | --- | --- |
 | `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
-| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer` | `focused` | `read`, `review` | reviewer |
+| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
 | `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
 | `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
 | `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
@@ -203,6 +223,9 @@ model/provider choice.
 | `company-agent` | `standing` | `read`, `tools`, `report` | project |
 | `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
 | `default` | `agent` | `all` | project |
+
+`verifier` takes the reviewer roles' model `order` and `tier`
+(`project/instrukt/spec/feature/configuration/agent-selection`).
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role
@@ -271,6 +294,15 @@ Then reporting a defect into any project on its computer and reading which defec
 And creating, changing or withdrawing any other work is not
 ```
 
+### UC-RCAP4: A focused author's hook runs are admitted in its own workspace
+
+```gherkin
+Given a focused author holding code-commit at own, bound to its assigned worktree, with instrukt's hooks installed
+When it commits there
+Then the hook runs its commit triggers are admitted
+But a hook run it starts outside its assigned worktree is refused before it runs, with its reporting path
+```
+
 ## Known caveats
 
 - Capabilities cover instrukt commands only. File edits, raw git, `gh` and
@@ -281,9 +313,11 @@ And creating, changing or withdrawing any other work is not
 - `company-agent` is a `standing` role, so its grants shape its help and
   briefing and refuse nothing: an instrukt command outside `read`, `tools` and
   `report` is held back by its procedure
-  (`general/procedure/company-assistance`), not refused by this layer. A
-  `focused` company agent would also be refused the instrukt hook run its own
-  commits trigger in the company home.
+  (`general/procedure/company-assistance`), not refused by this layer.
+- A `focused` role without `code-commit`, such as a reviewer, is refused the
+  hook run a commit of its own triggers, and that commit is made without what
+  instrukt generates. Every shipped `focused` role that commits holds
+  `code-commit` through `worker`.
 
 ## See Also
 
