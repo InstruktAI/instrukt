@@ -251,6 +251,7 @@ No command/agent verb kind or agent-action exit-status router exists.
 
 ### Agent-action values
 
+<!-- planned-change:delegator-reply-checks -->
 | Value under `runtimes.<runtime>` | What its instruction conveys |
 | --- | --- |
 | `dispatch` | Delegate this agent's worker using the supplied brief, role, attempt, semantic key, display title and preferences with shared isolation in the parent's recorded workspace. Return native child identity and matching workspace/branch/head evidence; retain native parent linkage. |
@@ -267,6 +268,25 @@ No command/agent verb kind or agent-action exit-status router exists.
 | `discover_environments` | Discover connected computers/environments, their project locations, access and task capabilities; keep runtime addresses distinct from instrukt machine IDs. |
 | `connect_environment` | Request the runtime's native connection/authentication flow for a named missing computer; report unresolved access as a prerequisite without inventing an address. |
 | `dispatch_remote` | Assign a local brief and report destination to an explicitly addressed connected environment, under its project and permissions; follow native completion evidence and retain partial results. |
+<!-- change:delegator-reply-checks -->
+| Value under `runtimes.<runtime>` | What its instruction conveys |
+| --- | --- |
+| `dispatch` | Delegate this agent's worker using the supplied brief, role, attempt, semantic key, display title and preferences with shared isolation in the parent's recorded workspace. Return native child identity and matching workspace/branch/head evidence; retain native parent linkage. |
+| `message_child` | Send a bounded follow-up, findings, review continuation or recovery to this parent's identified child within its outstanding attempt, or the brief of a newly reserved attempt already bound to that child, using the native continuation behavior when idle. |
+| `message_peer` | Send the supplied substantive text to an addressed peer/coordinator conversation, preserving the target and source attribution. |
+| `read_thread` | Read an identified conversation's relevant messages and attribution; state extent, pagination and unavailable evidence. This is not history search. |
+| `inspect_thread` | Inspect an identified thread or own child/task's state/result, distinguishing unavailable observation, input wait, failure and confirmed absence. A scheduled reply check is permitted inspection of a running child. |
+| `schedule_check` | Set, update or clear this agent's one scheduled reply check (`general/procedure/ai-to-ai-operations`) through the runtime's scheduler, at the interval the agent supplies, carrying its own identity so a later run can clear it. |
+| `look_around` | Discover current conversations in the supplied project/scope, including native current-thread metadata search and settled threads where supported. It releases no archive/history search service. |
+| `steer` | Deliver current direction at the target's supported safe input boundary while its turn and children continue; state queued/entry degradation when native interjection is absent. |
+| `discuss` | Open, participate in and close a runner-owned conversation link between two peer threads; the person participates in either thread and the runner relays finished turns with attribution. |
+| `start_thread` | Start a separately addressed conversation with its supplied project, semantic key, display title, initialized brief and placement. Repository todos use a single `<slug>/work` worktree; tasks create no git worktree. A worker uses `dispatch`. |
+| `cancel_child` | Stop this parent's identified child under its existing mandate, retaining its work/evidence and distinguishing accepted cancellation from completion. |
+| `finish_thread` | Dormantly settle an addressed conversation, or this agent's own conversation where the runtime supports it, so it stays wakeable in place with full context: a resting conversation, or the orchestrator thread of a todo that was delivered or withdrawn. Retain open obligations, forbid external agents and runner automation from settling a standing agent (a standing procedure may self-settle when parked dormant), and apply self-settling at its supported turn boundary. |
+| `discover_environments` | Discover connected computers/environments, their project locations, access and task capabilities; keep runtime addresses distinct from instrukt machine IDs. |
+| `connect_environment` | Request the runtime's native connection/authentication flow for a named missing computer; report unresolved access as a prerequisite without inventing an address. |
+| `dispatch_remote` | Assign a local brief and report destination to an explicitly addressed connected environment, under its project and permissions; follow native completion evidence and retain partial results. |
+<!-- /planned-change:delegator-reply-checks -->
 
 Each entry supplies the complete set, including a clear unsupported/prerequisite
 instruction where neither a native counterpart nor an implemented instrukt route
@@ -286,6 +306,7 @@ The following table specifies the instruction text carried by the `t3` entry.
 Only the configuration entry carries the runtime-specific execution wording;
 agent-facing consumers retrieve the value through its alias.
 
+<!-- planned-change:delegator-reply-checks -->
 | Value | T3 entry instruction |
 | --- | --- |
 | `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. A repository todo shares one `<slug>/work` worktree; all repository children inherit `todo-orchestrator`'s workspace (`kind: task` creates no git worktree). Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
@@ -302,6 +323,25 @@ agent-facing consumers retrieve the value through its alias.
 | `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
 | `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
 | `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
+<!-- change:delegator-reply-checks -->
+| Value | T3 entry instruction |
+| --- | --- |
+| `dispatch` | Use native delegated-task dispatch with shared isolation from this conversation, preserving its recorded workspace. A repository todo shares one `<slug>/work` worktree; all repository children inherit `todo-orchestrator`'s workspace (`kind: task` creates no git worktree). Use the supplied brief, semantic key, title and role-attempt facts. Include the role/attempt identity in the child brief and require it to await confirmed instrukt binding before workspace changes, record writes or stamps. Retain the native child/task id and matching workspace/branch/head evidence for instrukt binding. Follow native completion delivery. |
+| `message_child` | Message or continue the identified child natively, as the `message_child` contract above requires: a follow-up within an outstanding attempt stays under that role/attempt, and a newly reserved attempt is bound to the child through instrukt before its brief is sent. The native wording is owned by the shipped entry, `crates/instrukt-core/src/config/shipped/t3.yaml`. |
+| `message_peer` | Use native thread messaging for the supplied peer/coordinator thread id and text. Preserve its identity and the message's attribution. |
+| `read_thread` | Read the identified thread with native thread-read operations, including the relevant message range and attribution. Report pagination or unavailable evidence; read no archive/history service. |
+| `inspect_thread` | Read the identified native thread or own delegated task through its native status/result operation. Follow native completion/wake instructions; inspect a running task only when those instructions permit it or your scheduled reply check fires. |
+| `schedule_check` | Set, update or clear the check with native scheduled tasks bound to this thread and running in its own session, as the `schedule_check` contract above requires. The native wording is owned by the shipped entry, `crates/instrukt-core/src/config/shipped/t3.yaml`. |
+| `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
+| `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
+| `discuss` | When asked to open a discussion, use `instrukt discuss open <thread> [--message <text>]`; the native caller is the other member. Use `instrukt discuss close [--message <text>]` to deliver an optional final contribution and close for both members. The running instrukt runner shares finished turns automatically under project/instrukt/spec/feature/runner/conversation-links. |
+| `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a repository todo, start `t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>` (on another computer use `--worktree origin/<slug>/work --branch <slug>/work`; legacy un-integrated `<slug>/prepare` branches are carried forward automatically). instrukt derives these names; creation refuses an existing local branch. Native shared children inherit `<slug>/work`. After deliberate native startup, enter `instrukt todo work <slug> --placement-evidence <file\|->` containing native session, key, title, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
+| `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
+| `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |
+| `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
+| `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
+| `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
+<!-- /planned-change:delegator-reply-checks -->
 
 Selection and entry values stay global; a project cannot replace either. A
 shipped entry never chooses the runtime on the developer's behalf. T3's host CLI
