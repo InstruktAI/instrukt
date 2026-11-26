@@ -288,3 +288,326 @@ fn a_companys_secrets_stay_out_of_its_repository() {
         @"[TMP]/home/.instrukt/companies/acme/secrets.env: repository: the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit"
     );
 }
+
+/// A computer whose fake GitHub serves the owning organisation `homes`, the
+/// project App installed on it with repository administration, and
+/// `acme-admin`, a person's account; git reaches the fake's repositories in
+/// the test's `remotes/` folder; instrukt's hook sections find the built
+/// binary.
+fn company_computer() -> (TestEnv, common::github::FakeGitHub, std::path::PathBuf) {
+    let mut env = TestEnv::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
+    let github = env.with_fake_github();
+    github
+        .set_installation_permissions(
+            1,
+            serde_json::json!({"issues":"write","contents":"write","pull_requests":"write","checks":"read","statuses":"read","organization_projects":"write","administration":"write"}),
+        )
+        .install_on_org("homes")
+        .set_account("homes", "Organization")
+        .set_account("acme-admin", "User")
+        .set_account("ana", "User");
+    let remotes = env.route_github_remotes(&github.url());
+    github.serve_remotes(&remotes);
+    (env, github, remotes)
+}
+
+/// Declares `org` as the owning organisation through a revision-checked
+/// global patch.
+fn declare_owner(env: &TestEnv, org: &str) {
+    let here = env.path("");
+    let revision = stdout(
+        &env.run(&here, ["config", "get", "--global", "--revision"])
+            .success(),
+    );
+    env.run(
+        &here,
+        [
+            "config",
+            "patch",
+            "--global",
+            "--revision",
+            revision.trim(),
+            "--yaml",
+            &format!("{{github: {{org: {org}}}}}"),
+        ],
+    )
+    .success();
+}
+
+/// The GitHub calls the fake recorded that change something.
+fn writes(github: &common::github::FakeGitHub) -> Vec<String> {
+    github
+        .requests()
+        .into_iter()
+        .filter(|request| request.method != "GET" && !request.path.ends_with("/access_tokens"))
+        .filter(|request| request.path != "/graphql")
+        .map(|request| format!("{} {}", request.method, request.path))
+        .collect()
+}
+
+/// Every file the commit `main` of the bare repository `remote` holds.
+fn files_on_main(env: &TestEnv, remote: &std::path::Path) -> Vec<String> {
+    env.git(remote, ["ls-tree", "-r", "--name-only", "main"])
+        .lines()
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+/// The text `main` of the bare repository `remote` holds at `path`.
+fn on_main(env: &TestEnv, remote: &std::path::Path, path: &str) -> String {
+    env.git(remote, ["show", &format!("main:{path}")])
+}
+
+fn stderr(assert: &assert_cmd::assert::Assert) -> String {
+    String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
+}
+
+// spec: project/instrukt/spec/feature/configuration/company-homes UC-CH5
+#[test]
+fn adding_a_company_generates_its_home_the_same_as_every_other() {
+    let (env, github, remotes) = company_computer();
+    let add = [
+        "init",
+        "--company",
+        "acme",
+        "--name",
+        "Acme",
+        "--admin",
+        "acme-admin",
+    ];
+    let acme_home = env.instrukt_home().join("companies/acme");
+
+    // No organisation is declared: nothing is created, and the operator is
+    // told the organisation is a prerequisite.
+    let refused = env.run(&env.path(""), add).failure();
+    assert!(
+        stderr(&refused).contains("github.org") && stderr(&refused).contains("GitHub organisation"),
+        "{}",
+        stderr(&refused)
+    );
+    // The declared owner is a person's account: refused the same way.
+    let machine = env.instrukt_home().join("instrukt.yaml");
+    let declared = std::fs::read_to_string(&machine).unwrap();
+    let mut layer: serde_yaml_ng::Value = serde_yaml_ng::from_str(&declared).unwrap();
+    layer["github"]["org"] = "ana".into();
+    std::fs::write(&machine, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
+    let refused = env.run(&env.path(""), add).failure();
+    assert!(
+        stderr(&refused).contains("personal GitHub account")
+            && stderr(&refused).contains("GitHub organisation"),
+        "{}",
+        stderr(&refused)
+    );
+    std::fs::write(&machine, &declared).unwrap();
+    assert_eq!(writes(&github), Vec::<String>::new());
+    assert!(!acme_home.exists());
+    assert!(!remotes.join("homes").exists());
+
+    // The operator declares the owning organisation; their agent adds the
+    // company from a working directory inside another company's home, in a
+    // repository whose configuration cannot be read, which refuses no one.
+    declare_owner(&env, "homes");
+    let elsewhere = env
+        .instrukt_home()
+        .join("companies/globex-old/projects/tool");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    env.git(&elsewhere, ["init", "--quiet"]);
+    std::fs::write(elsewhere.join("instrukt.yaml"), "schema_version: [\n").unwrap();
+    let added = env.run(&elsewhere, add).success();
+    let report = stdout(&added);
+    assert!(report.contains("created"), "{report}");
+
+    // The organisation holds the company's private repository, named after
+    // its key, holding the company skeleton.
+    let remote = remotes.join("homes/company-acme.git");
+    let skeleton = files_on_main(&env, &remote);
+    for file in [
+        ".gitignore",
+        "instrukt.yaml",
+        "docs/index.yaml",
+        "AGENTS.md",
+        "skills/acme/SKILL.md",
+        ".claude-plugin/marketplace.json",
+    ] {
+        assert!(skeleton.contains(&file.to_owned()), "{file}: {skeleton:?}");
+    }
+    let layer: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&on_main(&env, &remote, "instrukt.yaml")).unwrap();
+    assert_eq!(layer["project"], "company-acme");
+    assert_eq!(layer["company_repository"], true);
+    assert_eq!(layer["modules"]["todos"], false);
+    assert_eq!(layer["review"]["automatic"], true);
+    assert!(!skeleton.iter().any(|file| file.starts_with(".github/")));
+    assert_eq!(
+        writes(&github),
+        [
+            "POST /orgs/homes/repos",
+            "PATCH /repos/homes/company-acme",
+            "PUT /repos/homes/company-acme/collaborators/acme-admin",
+        ]
+    );
+    // The company's GitHub administrator is an administrator of it.
+    assert_eq!(
+        github.collaborators("homes/company-acme"),
+        [("acme-admin".to_owned(), "admin".to_owned())]
+    );
+    assert_eq!(
+        github.default_branch("homes/company-acme").as_deref(),
+        Some("main")
+    );
+
+    // The computer holds the home as the checkout of that repository, ready
+    // as a project like any other with no step taken by hand.
+    assert_eq!(
+        env.git(&acme_home, ["rev-parse", "HEAD"]),
+        env.git(&remote, ["rev-parse", "main"])
+    );
+    assert!(acme_home.join("company.yaml").is_file());
+    assert_eq!(env.git(&acme_home, ["status", "--porcelain"]), "");
+    env.run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .success();
+    let hooks = stdout(&env.run(&acme_home, ["hooks", "status"]).success());
+    assert!(hooks.contains("pre-commit"), "{hooks}");
+    assert!(
+        env.instrukt_home()
+            .join("state/publication/company-acme.yaml")
+            .is_file()
+    );
+    // A commit made in it carries its rendered AGENTS.md; publishing it put
+    // none of the company's documents on the computer.
+    env.git(&acme_home, ["checkout", "--quiet", "-b", "knowledge"]);
+    std::fs::write(
+        acme_home.join("docs/about.md"),
+        "---\ndescription: Who Acme is.\n---\n\n# About Acme\n\nAcme builds bicycles to order.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        acme_home.join("docs/index.yaml"),
+        "expanded: [about.md]\nlisted: []\n",
+    )
+    .unwrap();
+    env.git(&acme_home, ["add", "docs"]);
+    env.git(&acme_home, ["commit", "--quiet", "-m", "Who Acme is"]);
+    assert!(
+        env.git(&acme_home, ["show", "HEAD:AGENTS.md"])
+            .contains("Acme builds bicycles to order.")
+    );
+    assert!(
+        !env.instrukt_home()
+            .join("docs/project/company-acme")
+            .exists()
+    );
+    env.git(&acme_home, ["checkout", "--quiet", "main"]);
+
+    // A second company's home holds the same skeleton, differing only where
+    // its identity enters it.
+    env.run(
+        &env.path(""),
+        [
+            "init",
+            "--company",
+            "globex",
+            "--name",
+            "Globex",
+            "--admin",
+            "acme-admin",
+        ],
+    )
+    .success();
+    let globex_remote = remotes.join("homes/company-globex.git");
+    let identity = |text: String| text.replace("acme", "globex").replace("Acme", "Globex");
+    assert_eq!(
+        files_on_main(&env, &globex_remote),
+        skeleton
+            .iter()
+            .map(|file| identity(file.clone()))
+            .collect::<Vec<_>>()
+    );
+    for file in &skeleton {
+        assert_eq!(
+            on_main(&env, &globex_remote, &identity(file.clone())),
+            identity(on_main(&env, &remote, file)),
+            "{file}"
+        );
+    }
+
+    // The company already has a home: nothing of it is changed, and the
+    // operator is told the home exists.
+    let before = common::Snapshot::over(vec![], vec![acme_home.clone()]);
+    let recorded = writes(&github).len();
+    let refused = env.run(&env.path(""), add).failure();
+    assert!(
+        stderr(&refused).contains(&acme_home.display().to_string()),
+        "{}",
+        stderr(&refused)
+    );
+    assert_eq!(before.changed(), Vec::<std::path::PathBuf>::new());
+    assert_eq!(writes(&github).len(), recorded);
+}
+
+// spec: project/instrukt/spec/feature/configuration/company-homes UC-CH6
+#[test]
+fn another_computer_gets_an_existing_companys_home() {
+    // The company's repository exists in the owning organisation: another
+    // computer created it.
+    let (first, _first_github, first_remotes) = company_computer();
+    declare_owner(&first, "homes");
+    first
+        .run(
+            &first.path(""),
+            [
+                "init",
+                "--company",
+                "acme",
+                "--name",
+                "Acme",
+                "--admin",
+                "acme-admin",
+            ],
+        )
+        .success();
+    let (env, github, remotes) = company_computer();
+    declare_owner(&env, "homes");
+    std::fs::create_dir_all(remotes.join("homes")).unwrap();
+    let copied = std::process::Command::new("cp")
+        .arg("-R")
+        .arg(first_remotes.join("homes/company-acme.git"))
+        .arg(remotes.join("homes/"))
+        .status()
+        .unwrap();
+    assert!(copied.success());
+    let remote = remotes.join("homes/company-acme.git");
+    let refs = env.git(&remote, ["for-each-ref"]);
+    let home = env.instrukt_home().join("companies/acme");
+    assert!(!home.exists());
+
+    // Their agent adds the company by its key.
+    let added = env
+        .run(&env.path(""), ["init", "--company", "acme"])
+        .success();
+    assert!(stdout(&added).contains("contract"), "{}", stdout(&added));
+
+    // The computer holds the home as the checkout of that repository, ready
+    // as a project like any other.
+    assert_eq!(
+        env.git(&home, ["rev-parse", "HEAD"]),
+        env.git(&remote, ["rev-parse", "main"])
+    );
+    assert!(home.join("company.yaml").is_file());
+    env.run(&env.path(""), ["config", "validate", "--company", "acme"])
+        .success();
+    assert!(stdout(&env.run(&home, ["hooks", "status"]).success()).contains("pre-commit"));
+    assert!(
+        env.instrukt_home()
+            .join("state/publication/company-acme.yaml")
+            .is_file()
+    );
+    // Nothing of the repository on GitHub is changed.
+    assert_eq!(writes(&github), Vec::<String>::new());
+    assert_eq!(env.git(&remote, ["for-each-ref"]), refs);
+}

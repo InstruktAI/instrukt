@@ -391,7 +391,7 @@ fn patch(
 
 /// Work's readiness for automatic review on `repository`, as a finding at
 /// `review.automatic` of `layer` when it is unmet or GitHub cannot be asked.
-fn review_readiness_finding(
+pub(crate) fn review_readiness_finding(
     ctx: &Ctx,
     layer: &Layer,
     repository: &str,

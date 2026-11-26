@@ -323,6 +323,44 @@ where
     (args_text, command)
 }
 
+/// Runs `git <args>` that talk to a remote in `dir`, under the same limit
+/// as [`run`], with the computer's own credentials and never asking for any
+/// on a terminal: a remote those credentials do not reach answers as a
+/// failure. Returns stdout with one trailing newline removed.
+pub fn run_remote<I, S>(dir: &Path, args: I) -> Result<String, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (args_text, output) = raw_remote(dir, args)?;
+    stdout_text(dir, args_text, output)
+}
+
+/// [`run_remote`] answering git's whole output, whatever its status.
+pub fn run_output_remote<I, S>(dir: &Path, args: I) -> Result<Output, GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    raw_remote(dir, args).map(|(_, output)| output)
+}
+
+fn raw_remote<I, S>(dir: &Path, args: I) -> Result<(String, Output), GitError>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    let (args_text, mut command) = command(dir, args);
+    command.env("GIT_TERMINAL_PROMPT", "0");
+    let output = crate::process::output(&mut command, None, COMMAND_TIMEOUT).map_err(|error| {
+        GitError::Spawn {
+            dir: dir.to_path_buf(),
+            source: std::io::Error::other(error),
+        }
+    })?;
+    Ok((args_text, output))
+}
+
 fn raw<I, S>(dir: &Path, args: I) -> Result<(String, Output), GitError>
 where
     I: IntoIterator<Item = S>,

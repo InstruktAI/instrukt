@@ -135,6 +135,40 @@ fn author(
     }
 }
 
+/// Makes the root commit of the repository at `root` from everything its
+/// working tree holds, on the branch it stands on: the one commit instrukt
+/// composes on a default branch, because it creates that branch
+/// (`project/instrukt/spec/domain/repository`, Company home adoption). It
+/// is attributed as [`commit`] attributes, `Human-Involved:` as the caller
+/// declares it; the repository has no hooks to run.
+pub(super) fn root_commit(
+    home: &Home,
+    root: &Path,
+    env: &Env,
+    wiring: &CoreWiring,
+    message: &str,
+    human_involved: bool,
+) -> Result<CommitSha, RepositoryError> {
+    refuse_owned_trailers(message)?;
+    let configuration = Configuration::load(home, Some(root))?;
+    let author = author(&configuration, env, wiring)?;
+    let session = session(&configuration, env)?;
+    let message = compose(message, session.as_deref(), human_involved, None);
+    git::run(root, ["add", "--all"])?;
+    let mut args: Vec<String> = vec![
+        "commit".into(),
+        "--quiet".into(),
+        "--cleanup=whitespace".into(),
+        "--message".into(),
+        message,
+    ];
+    if let Some(author) = &author {
+        args.push(format!("--author={author}"));
+    }
+    git::run(root, &args)?;
+    Ok(CommitSha::parse(&git::run(root, ["rev-parse", "HEAD"])?)?)
+}
+
 /// Commits exactly `paths`: untracked ones are made known to the index
 /// (intent to add) so `--only` takes them, and made unknown again when the
 /// commit does not happen.

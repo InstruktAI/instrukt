@@ -99,6 +99,33 @@ pub enum RepositoryError {
     #[error(transparent)]
     PublicationState(#[from] crate::publication::PublicationStateError),
     #[error(transparent)]
+    Generation(#[from] crate::config::GenerationRefusal),
+    #[error(
+        "creating the company's repository needs `{flag}`, and its repository does not exist yet; give it and run the command again; nothing was created"
+    )]
+    CompanyFlagMissing { flag: &'static str },
+    #[error(
+        "`--admin {login}` is {}; the company's GitHub administrator is a person's own GitHub account; nothing was created",
+        match kind {
+            crate::interfaces::AccountKind::Organisation => "a GitHub organisation",
+            crate::interfaces::AccountKind::Personal => "a personal GitHub account",
+            crate::interfaces::AccountKind::Absent => "no GitHub account",
+        }
+    )]
+    CompanyAdminNotPersonal {
+        login: String,
+        kind: crate::interfaces::AccountKind,
+    },
+    #[error(transparent)]
+    CompanyRepository(#[from] crate::interfaces::CompanyRepositoryError),
+    #[error(
+        "{}: cannot be read as the company's creation intent ({reason}); remove it to start the creation anew",
+        path.display()
+    )]
+    CompanyIntent { path: PathBuf, reason: String },
+    #[error("the company skeleton cannot be composed: {findings}")]
+    Skeleton { findings: String },
+    #[error(transparent)]
     Id(#[from] IdError),
     #[error(transparent)]
     Config(#[from] ConfigError),

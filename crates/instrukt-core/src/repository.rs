@@ -15,6 +15,7 @@
 
 mod _adoption;
 mod _commit;
+mod _company;
 mod _contain;
 mod _error;
 mod _git;
@@ -28,6 +29,9 @@ pub use _adoption::{
     PROJECT_DOCS, PartOutcome, init,
 };
 pub use _commit::{CommitRequest, OWNED_TRAILERS, commit};
+pub use _company::{
+    CompanyOrigin, CompanyPorts, CompanyReport, CompanyRequest, CompanySync, adopt_company,
+};
 pub use _error::RepositoryError;
 pub use _git::HooksDir;
 pub use _git::primary_worktree;

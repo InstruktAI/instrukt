@@ -190,7 +190,7 @@ pub fn event_log(ctx: &Ctx) -> anyhow::Result<Option<Arc<dyn EventLog>>> {
     _runner::event_log(ctx)
 }
 
-struct RecordedRole(instrukt_core::home::Home);
+pub(crate) struct RecordedRole(pub(crate) instrukt_core::home::Home);
 impl instrukt_core::interfaces::SessionRoleLookup for RecordedRole {
     fn role(
         &self,
