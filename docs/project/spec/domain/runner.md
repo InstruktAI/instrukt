@@ -461,7 +461,7 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
+| `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `sdlc/procedure/upstream-watch` |
 | `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
 | `runner.dependency_failing` | A check run on a current configured dependency-update head fails | Project, branch, head SHA, check run ID/name/conclusion | Project, branch, head, run ID and conclusion | Workflow's subscribed integrator, assessing and deduplicating bug work under its procedure |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |

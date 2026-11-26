@@ -35,7 +35,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 - **A snippet without `delivered_by` is the current contract; staleness is a
   defect.** If code changes and a current snippet does not, the change updates it
   or marks it pending. Pending state and its clearing on delivery are
-  `sdlc/principle/documentation-first-development`; the carriers
+  `general/principle/documentation-first-development`; the carriers
   are `general/procedure/doc-snippet-authoring`.
 - **A limit found is recorded with its contract.** A limit of a current contract
   that investigation or review uncovers is recorded by the session that found it,
@@ -120,7 +120,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 ## Rationale
 
 Documentation leads and code catches up
-(`sdlc/principle/documentation-first-development`); this policy
+(`general/principle/documentation-first-development`); this policy
 is that disposition's rule layer.
 
 Reader identity cannot classify a surface that one string serves to both humans
@@ -167,7 +167,3 @@ doc-hygiene worktree-head review catches self-reviewed and stale snippets.
 ## Exceptions
 
 - Trivial implementation-internal changes with no contract change touch no docs.
-
-## See Also
-
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md) — owns whether work executes in context or through a todo.

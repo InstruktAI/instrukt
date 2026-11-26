@@ -18,7 +18,7 @@ visibility: public
 
 - [general/policy/agent-facing-text](../policy/agent-facing-text.md)
 - [general/policy/documentation-discipline](../policy/documentation-discipline.md)
-- [sdlc/principle/documentation-first-development](../../domain/sdlc/principle/documentation-first-development.md)
+- [general/principle/documentation-first-development](../principle/documentation-first-development.md)
 - [general/policy/snippet-value-contract](../policy/snippet-value-contract.md)
 - [general/spec/snippet-authoring-schema](../spec/snippet-authoring-schema.md)
 

@@ -361,14 +361,21 @@ impl RuntimeAdapter for T3 {
                 created: false,
             });
         }
-        // T3 titles the project from the folder name. A refusal of a root
-        // that already has an active project (a concurrent creator) is a
-        // reuse the snapshot read below confirms; T3's own words are never
-        // kept.
+        // A company home is created titled with its repository's name;
+        // every other root keeps T3's own title, its folder name. A refusal
+        // of a root that already has an active project (a concurrent
+        // creator) is a reuse the snapshot read below confirms; T3's own
+        // words are never kept.
+        let instrukt_home = instrukt_core::home::Home::from_env()
+            .map_err(|error| failure("project add", error.to_string()))?;
+        let title = project_title(root, &instrukt_home);
         let root_text = root.to_string_lossy();
-        let added = self
-            .call(&["project", "add", "--", root_text.as_ref()], None)
-            .is_ok();
+        let mut args = vec!["project", "add"];
+        if let Some(title) = title.as_deref() {
+            args.extend(["--title", title]);
+        }
+        args.extend(["--", root_text.as_ref()]);
+        let added = self.call(&args, None).is_ok();
         match super::_t3_readiness::exact_project_id(&home, &self.env, root)? {
             Some(id) => Ok(super::ExecutionRootStatus {
                 project_id: Some(id),
@@ -1030,6 +1037,20 @@ struct NativeMessage {
     text: String,
     run_id: Option<String>,
 }
+/// The title T3 creates `root`'s project with, when it is not T3's own: a
+/// company home, a folder directly in `home`'s companies folder named as a
+/// company is (`company-homes`), is titled with the company's repository
+/// name, `company-<name>`, so a company project is told apart from others.
+fn project_title(root: &Path, home: &instrukt_core::home::Home) -> Option<String> {
+    if root.parent() != Some(home.companies_dir().as_path()) {
+        return None;
+    }
+    let name = instrukt_core::ids::ProjectSlug::parse(root.file_name()?.to_str()?).ok()?;
+    instrukt_core::config::company_repository(&name)
+        .ok()
+        .map(|repository| repository.to_string())
+}
+
 fn failure(operation: &str, detail: impl Into<String>) -> SessionsError {
     SessionsError::Failed {
         runtime: "t3".into(),
@@ -1088,6 +1109,28 @@ mod tests {
         assert!(
             matches!(outcome, Err(SessionsError::PlacementPreparing(ref session)) if *session == thread.session)
         );
+    }
+
+    #[test]
+    fn a_company_home_is_titled_with_its_repository_name() {
+        let home = instrukt_core::home::Home::at_user_home("/machine".into());
+        let company = instrukt_core::ids::ProjectSlug::parse("acme").unwrap();
+        assert_eq!(
+            project_title(&home.company_dir(&company), &home),
+            Some(
+                instrukt_core::config::company_repository(&company)
+                    .unwrap()
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn a_checkout_inside_a_company_home_keeps_the_runtime_title() {
+        let home = instrukt_core::home::Home::at_user_home("/machine".into());
+        let company = instrukt_core::ids::ProjectSlug::parse("acme").unwrap();
+        let checkout = home.company_dir(&company).join("projects").join("site");
+        assert_eq!(project_title(&checkout, &home), None);
     }
 
     #[test]
