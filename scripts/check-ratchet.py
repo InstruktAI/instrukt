@@ -1,21 +1,38 @@
 #!/usr/bin/env python3
-"""Holds lint suppressions to the committed baseline.
+"""Holds lint suppressions to the committed baseline and reports size signals.
 
 project/instrukt/policy/size-and-suppression-ratchet owns the rules: which
-suppression directives count, and what the baseline, ratchet-baseline.json at
-the repository root, allows. This script measures the tracked files as they
-are in the working tree and compares the measurement with the baseline.
+suppression directives count, what the baseline, ratchet-baseline.json at the
+repository root, allows, and what a size signal is. This script measures the
+tracked files as they are in the working tree, compares their suppressions
+with the baseline and reports each size signal against a base revision.
 
-    check-ratchet.py                        compare the tree with the baseline
+    check-ratchet.py [--base REV]           compare the tree with the baseline
     check-ratchet.py --update               lower the baseline to the tree
     check-ratchet.py --init --threshold N   create the baseline from the tree
+
+A size signal is a source file above the baseline's threshold that has more
+lines now than at the base revision, HEAD unless --base names another. A file
+the base holds under neither its path nor the path it was renamed from has
+none there. The comparison prints each signal with the file's lines at the
+base and now, and never fails on one.
+
+Test code inside a Rust source file is not counted. It is an item whose outer
+attribute is `#[cfg(test)]`, or `#[cfg(all(...))]` with `test` as a direct
+operand, standing where an item stands: after `;`, `{`, `}`, other attributes
+or the start of the file, and before an item keyword (`mod`, `fn`, `use`,
+`impl`, `struct` and the like), a visibility allowed. Its lines run from that
+attribute to the first `;`, or the `}` that closes its first brace, at bracket
+depth zero. A test attribute anywhere else (a field, a variant, a match arm, a
+parameter, a `let` or expression statement) is not recognized and its lines
+count. Python and shell files hold no test code this script recognizes.
 
 The comparison exits 1 when a lint's suppressions rose above the baseline, or
 when the baseline allows more than the tree measures. --update lowers and
 removes entries and never raises or adds one; while a rise stands it writes
 nothing and exits 1. --init refuses an existing baseline. Exit 2 means the
-check cannot run: no baseline, a malformed one, or a source file that is not
-UTF-8.
+check cannot run: no baseline, a malformed one, a base that names no commit,
+or a source file that is not UTF-8, in the tree or at the base.
 """
 
 import argparse
@@ -50,6 +67,31 @@ RUST_ATTRIBUTE = re.compile(r"#!?\[")
 RUST_LINT_LIST = re.compile(r"(?:^|[(,])\s*(?:allow|expect)\s*\(")
 RUST_LINT = re.compile(r"[A-Za-z_]\w*(?:::[A-Za-z_]\w*)*")
 RUST_REASON = re.compile(r"reason\s*=")
+# What may follow a test attribute for it to gate an item: other attributes,
+# a visibility, then one of the keywords an item begins with.
+RUST_VISIBILITY = re.compile(r"pub\b(?:\s*\([^()]*\))?\s*")
+RUST_WORD = re.compile(r"[A-Za-z_]\w*")
+RUST_ITEM_KEYWORDS = frozenset(
+    {
+        "async",
+        "const",
+        "enum",
+        "extern",
+        "fn",
+        "impl",
+        "macro_rules",
+        "mod",
+        "static",
+        "struct",
+        "trait",
+        "type",
+        "union",
+        "unsafe",
+        "use",
+    }
+)
+# The characters that end an item or change its bracket depth.
+RUST_ITEM_EDGE = re.compile(r"[;()\[\]{}]")
 
 # Ruff's rule codes after `noqa:`, separated by commas or spaces.
 NOQA_CODES = r"(?:\s*:\s*([A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*))?"
@@ -77,6 +119,15 @@ class Measurement:
 
 
 @dataclass(frozen=True)
+class Signal:
+    """A source file above the threshold that grew since the base; review answers it."""
+
+    path: str
+    base_lines: int | None
+    lines: int
+
+
+@dataclass(frozen=True)
 class Baseline:
     """What the tree may hold: ratchet-baseline.json."""
 
@@ -96,10 +147,10 @@ class Findings:
     stale: list[str]
 
 
-def git(root: Path | None, *args: str) -> bytes:
-    """The output of one git command; the standard library has no reader of git's index."""
+def git(root: Path | None, *args: str, stdin: bytes | None = None) -> bytes:
+    """The output of one git command; the standard library has no reader of git's index or objects."""
     try:
-        return subprocess.run(["git", *args], cwd=root, capture_output=True, check=True).stdout
+        return subprocess.run(["git", *args], cwd=root, input=stdin, capture_output=True, check=True).stdout
     except subprocess.CalledProcessError as error:
         raise CannotCheck(f"git {' '.join(args)} failed: {os.fsdecode(error.stderr).strip()}") from error
 
@@ -137,17 +188,22 @@ def block_comment_end(text: str, index: int) -> int:
 
 
 def rust_code(text: str) -> str:
-    """The file's code: comments dropped, every string and character literal emptied."""
+    """The file's code: comments dropped, every string and character literal emptied.
+
+    What is dropped leaves its newlines behind, so each line of the code is
+    the same line of the file.
+    """
     pieces: list[str] = []
     index = 0
     while (found := RUST_NOT_CODE.search(text, index)) is not None:
         pieces.append(text[index : found.start()])
         if found.group("block") is not None:
             index = block_comment_end(text, found.end())
-            pieces.append(" ")
+            placeholder = " "
         else:
             index = found.end()
-            pieces.append(" " if found.group().startswith("//") else '""')
+            placeholder = " " if found.group().startswith("//") else '""'
+        pieces.append(placeholder + "\n" * text.count("\n", found.start(), index))
     pieces.append(text[index:])
     return "".join(pieces)
 
@@ -189,8 +245,7 @@ def lint_list(attribute: str, start: int) -> list[str]:
     return lints
 
 
-def rust_suppressions(text: str) -> list[str]:
-    code = rust_code(text)
+def rust_suppressions(code: str) -> list[str]:
     lints: list[str] = []
     resume = 0
     for match in RUST_ATTRIBUTE.finditer(code):
@@ -204,6 +259,136 @@ def rust_suppressions(text: str) -> list[str]:
         for group in RUST_LINT_LIST.finditer(inner):
             lints.extend(lint_list(inner, group.end()))
     return lints
+
+
+def call_operands(predicate: str, name: str) -> list[str] | None:
+    """The operands of `predicate` when it is exactly `name(...)`, written without whitespace."""
+    if not (predicate.startswith(f"{name}(") and predicate.endswith(")")):
+        return None
+    inner = predicate[len(name) + 1 : -1]
+    operands: list[str] = []
+    depth = 0
+    start = 0
+    for index, char in enumerate(inner):
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif char == "," and depth == 0:
+            operands.append(inner[start:index])
+            start = index + 1
+    if depth != 0:
+        return None
+    operands.append(inner[start:])
+    return [operand for operand in operands if operand]
+
+
+def is_test_cfg(attribute: str) -> bool:
+    """Whether an attribute's content is `cfg(test)` or `cfg(all(...))` with `test` as a direct operand."""
+    predicates = call_operands("".join(attribute.split()), "cfg")
+    if predicates is None or len(predicates) != 1:
+        return False
+    predicate = predicates[0]
+    return predicate == "test" or "test" in (call_operands(predicate, "all") or [])
+
+
+def stands_after_item_boundary(code: str, start: int, attributes: dict[int, int]) -> bool:
+    """Whether what precedes `start`, attributes crossed, is `;`, `{`, `}` or the start of the file."""
+    index = start - 1
+    while True:
+        while index >= 0 and code[index].isspace():
+            index -= 1
+        if index < 0 or code[index] in ";{}":
+            return True
+        opening = attributes.get(index)
+        if opening is None:
+            return False
+        index = opening - 1
+
+
+def item_keyword_follows(code: str, index: int) -> bool:
+    """Whether an item keyword follows `index`, past stacked attributes and a visibility."""
+    while True:
+        while index < len(code) and code[index].isspace():
+            index += 1
+        if not code.startswith("#[", index):
+            break
+        closing = closing_bracket(code, index + 1)
+        if closing is None:
+            return False
+        index = closing + 1
+    visibility = RUST_VISIBILITY.match(code, index)
+    if visibility is not None:
+        index = visibility.end()
+    word = RUST_WORD.match(code, index)
+    return word is not None and word.group() in RUST_ITEM_KEYWORDS
+
+
+def item_end(code: str, index: int) -> int | None:
+    """Where the item continuing at `index` ends: past its first `;` or the `}` closing its first brace."""
+    depth = 0
+    for edge in RUST_ITEM_EDGE.finditer(code, index):
+        char = edge.group()
+        if char == ";":
+            if depth == 0:
+                return edge.end()
+        elif char in "([{":
+            depth += 1
+        else:
+            depth -= 1
+            if depth < 0:
+                return None
+            if depth == 0 and char == "}":
+                return edge.end()
+    return None
+
+
+def rust_test_items(code: str) -> list[tuple[int, int]]:
+    """The spans of the items test configuration gates, in order and not nested (see the module docstring)."""
+    attributes: dict[int, int] = {}
+    spans: list[tuple[int, int]] = []
+    resume = 0
+    for match in RUST_ATTRIBUTE.finditer(code):
+        closing = closing_bracket(code, match.end() - 1)
+        if closing is None:
+            continue
+        attributes[closing] = match.start()
+        if match.start() < resume or match.group() != "#[" or not is_test_cfg(code[match.end() : closing]):
+            continue
+        if not (stands_after_item_boundary(code, match.start(), attributes) and item_keyword_follows(code, closing + 1)):
+            continue
+        end = item_end(code, closing + 1)
+        if end is None:
+            continue
+        spans.append((match.start(), end))
+        resume = end
+    return spans
+
+
+def rust_test_lines(code: str) -> int:
+    """How many lines the file's test items span, each line once."""
+    spanned = 0
+    last = -1
+    for start, end in rust_test_items(code):
+        first = max(code.count("\n", 0, start), last + 1)
+        final = code.count("\n", 0, end - 1)
+        spanned += max(0, final - first + 1)
+        last = max(last, final)
+    return spanned
+
+
+def counted_lines(data: bytes, code: str | None) -> int:
+    """A source file's lines, its test code not counted; `code` is a Rust file's code, None for another file."""
+    return line_count(data) - (rust_test_lines(code) if code is not None else 0)
+
+
+def decode(data: bytes, name: str) -> str:
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise CannotCheck(f"{name} is not UTF-8 ({error.reason} at byte {error.start})") from error
 
 
 def codes(listed: str | None) -> list[str]:
@@ -248,14 +433,12 @@ def measure(root: Path) -> Measurement:
         if file.is_symlink() or not file.is_file():
             continue
         data = file.read_bytes()
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError as error:
-            raise CannotCheck(f"{relative} is not UTF-8 ({error.reason} at byte {error.start})") from error
+        text = decode(data, relative)
+        code = rust_code(text) if rust else None
         if not in_tests(path):
-            sizes[relative] = line_count(data)
-        if rust:
-            found = rust_suppressions(text)
+            sizes[relative] = counted_lines(data, code)
+        if code is not None:
+            found = rust_suppressions(code)
         elif python:
             found = python_suppressions(text)
         else:
@@ -314,6 +497,75 @@ def compare(baseline: Baseline, measured: Measurement) -> Findings:
     return Findings(rises, stale)
 
 
+def resolve(root: Path, revision: str) -> str:
+    """The commit `revision` names, as its full id."""
+    try:
+        resolved = git(root, "rev-parse", "--verify", "--end-of-options", f"{revision}^{{commit}}")
+    except CannotCheck as error:
+        raise CannotCheck(f"--base {revision} names no commit here; pass a revision that exists") from error
+    return os.fsdecode(resolved).strip()
+
+
+def blobs(root: Path, base: str, paths: list[str]) -> dict[str, bytes]:
+    """Each path's content at the base commit; a path the base has no file at is left out."""
+    if not paths:
+        return {}
+    request = b"".join(os.fsencode(f"{base}:{path}\n") for path in paths)
+    output = git(root, "cat-file", "--batch", stdin=request)
+    contents: dict[str, bytes] = {}
+    offset = 0
+    for path in paths:
+        header_end = output.index(b"\n", offset)
+        header = output[offset:header_end].split(b" ")
+        offset = header_end + 1
+        # `<name> missing`, or `<id> <type> <size>` followed by the object and a newline.
+        if header[-1] == b"missing":
+            continue
+        size = int(header[-1])
+        if header[-2] == b"blob":
+            contents[path] = output[offset : offset + size]
+        offset += size + 1
+    return contents
+
+
+def renamed_from(root: Path, base: str) -> dict[str, str]:
+    """Each path of the tree that a rename since the base produced, mapped to its path at the base."""
+    fields = git(root, "diff", "--find-renames", "--diff-filter=R", "--name-status", "-z", base, "--").split(b"\0")
+    # Each rename is `R<score>`, the old path and the new path.
+    return {os.fsdecode(fields[index + 2]): os.fsdecode(fields[index + 1]) for index in range(0, len(fields) - 2, 3)}
+
+
+def signals(root: Path, base: str, threshold: int, measured: Measurement) -> list[Signal]:
+    above = measured.above(threshold)
+    origins = {path: path for path in above}
+    contents = blobs(root, base, sorted(origins.values()))
+    absent = [path for path in above if path not in contents]
+    if absent:
+        renames = renamed_from(root, base)
+        moved = {path: renames[path] for path in absent if path in renames}
+        origins.update(moved)
+        contents.update(blobs(root, base, sorted(moved.values())))
+    grown: list[Signal] = []
+    for path, lines in sorted(above.items()):
+        origin = origins[path]
+        data = contents.get(origin)
+        base_lines = None
+        if data is not None:
+            code = rust_code(decode(data, f"{origin} at {base}")) if is_rust(PurePosixPath(origin)) else None
+            base_lines = counted_lines(data, code)
+        if lines > (base_lines or 0):
+            grown.append(Signal(path, base_lines, lines))
+    return grown
+
+
+def describe(signal: Signal, base: str, threshold: int) -> str:
+    then = "absent" if signal.base_lines is None else f"{signal.base_lines} lines"
+    return (
+        f"size signal: {signal.path}: {then} at {base[:12]}, {signal.lines} lines now (threshold {threshold}); "
+        f"review answers it ({POLICY})"
+    )
+
+
 def write(root: Path, baseline: Baseline) -> None:
     """Replaces the baseline whole: written beside it, then renamed over it."""
     descriptor, temporary = tempfile.mkstemp(dir=root, prefix=f".{BASELINE}.", suffix=".tmp")
@@ -331,8 +583,13 @@ def report(lines: list[str]) -> None:
         print(f"ratchet: {line}", file=sys.stderr)
 
 
-def check(root: Path) -> int:
-    findings = compare(load(root), measure(root))
+def check(root: Path, revision: str) -> int:
+    """Reports every size signal, which never fails; fails on a suppression rise or a stale entry."""
+    baseline = load(root)
+    base = resolve(root, revision)
+    measured = measure(root)
+    report([describe(signal, base, baseline.threshold) for signal in signals(root, base, baseline.threshold, measured)])
+    findings = compare(baseline, measured)
     report(findings.rises + findings.stale)
     if not (findings.rises or findings.stale):
         return 0
@@ -374,10 +631,12 @@ def main(argv: list[str]) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--update", action="store_true")
     mode.add_argument("--init", action="store_true")
+    mode.add_argument("--base", metavar="REV", help="the revision size signals are measured against (HEAD)")
     parser.add_argument("--threshold", type=int)
     args = parser.parse_args(argv)
     is_init: bool = args.init
     is_update: bool = args.update
+    base: str | None = args.base
     threshold: int | None = args.threshold
     if is_init != (threshold is not None):
         parser.error("--init and --threshold go together")
@@ -387,7 +646,7 @@ def main(argv: list[str]) -> int:
             return init(root, threshold)
         if is_update:
             return update(root)
-        return check(root)
+        return check(root, base or "HEAD")
     except CannotCheck as error:
         print(f"ratchet: {error}", file=sys.stderr)
         return 2
