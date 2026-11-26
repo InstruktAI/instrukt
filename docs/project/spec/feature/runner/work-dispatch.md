@@ -160,6 +160,22 @@ the todo pickup policy. Task timing belongs to
 
 ### Agent selection and intent checks
 
+<!-- planned-change:runner-start-carries-effort -->
+Dispatch resolves the procedure's role through `agents.yaml`, with per-task
+overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
+Walk each ready profile's tier chain before moving to the next profile. Report
+skipped profiles/models and reasons; skip unavailable/degraded marks until
+expiry. instrukt's own starts use the last known local T3 provider snapshot, kept
+current in the background (`project/instrukt/spec/feature/runner/session-continuity`),
+to check installation, enablement, login, reported models and quota windows; a
+failed or slow refresh never refuses a start, and the runtime's own refusal at
+the start is the signal. Runner
+starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
+effort/options cannot be expressed there and remain explicit start evidence.
+A rejection proven before creation permits the next chain entry; ambiguous
+starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
+releases the runner's own claim and reports an anomaly, setting no hold.
+<!-- change:runner-start-carries-effort -->
 Dispatch resolves the procedure's role through `agents.yaml`, with per-task
 overrides first, under `project/instrukt/spec/feature/configuration/agent-selection`.
 Walk each ready profile's tier chain before moving to the next profile. Report
@@ -179,6 +195,7 @@ have no flag there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
+<!-- /planned-change:runner-start-carries-effort -->
 
 The responsible orchestrator delegates the intent checker natively on the
 computer where the originating conversation is readable, using the configured
@@ -279,6 +296,13 @@ And the developer sees in status that the project's event responses are not admi
 
 ## Known caveats
 
+<!-- planned-change:runner-start-carries-effort -->
+- Re-creating a deleted orchestrator while its todo worktree remains requires
+  safe worktree removal first or the runtime's existing-worktree start where
+  available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
+  uses its existing workspace.
+- T3 host CLI cannot express effort/options; native delegation receives them as resolved facts.
+<!-- change:runner-start-carries-effort -->
 - Re-creating a deleted orchestrator while its todo worktree remains requires
   safe worktree removal first or the runtime's existing-worktree start where
   available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
@@ -286,6 +310,7 @@ And the developer sees in status that the project's event responses are not admi
 - T3's host CLI cannot express effort/options, so an agent-driven `t3 thread
   start` runs at T3's default effort; runner starts and native delegation
   receive them as resolved facts.
+<!-- /planned-change:runner-start-carries-effort -->
 
 ## See Also
 

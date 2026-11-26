@@ -37,6 +37,15 @@ an installed executable never substitutes for it.
 
 ### Native launch and replay
 
+<!-- planned-change:runner-start-carries-effort -->
+The consumed native boundary includes `GET /api/projects`, `server.getConfig`,
+`orchestration.getThreadProjection` and `orchestration.launchThread`. Verify fixed
+command/thread identity and opening-message replay, captured native project and
+resolved modes, and existing-worktree capability where provider-free evidence
+permits. Native launch accepts `createdBy:"user"` on the pinned WebSocket path;
+caller payload provenance does not override it. Grammar or projection shape alone
+proves neither completed workspace preparation nor successful provider execution.
+<!-- change:runner-start-carries-effort -->
 The consumed native boundary includes `GET /api/projects`, `server.getConfig`,
 `orchestration.getThreadProjection` and `orchestration.launchThread`. Verify fixed
 command/thread identity and opening-message replay, captured native project,
@@ -44,6 +53,7 @@ model-selection options and resolved modes, and existing-worktree capability
 where provider-free evidence permits. Native launch accepts `createdBy:"user"`
 on the pinned WebSocket path; caller payload provenance does not override it.
 Grammar or projection shape alone proves neither completed workspace preparation nor successful provider execution.
+<!-- /planned-change:runner-start-carries-effort -->
 
 Project resolution and registration belong to the same boundary. `t3 project
 add <root>` creates a live project at exactly that root and refuses a root that

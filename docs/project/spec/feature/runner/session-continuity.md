@@ -302,6 +302,13 @@ A released or ineligible assignment receives no successor.
 
 ### T3 realization of keyed dispatch
 
+<!-- planned-change:runner-start-carries-effort -->
+The adapter calls authenticated `orchestration.launchThread` over the existing
+WebSocket transport with a fixed `commandId`, `threadId`, `projectId`, supplied
+title (`generateTitle:false`), explicit model/modes and initial message. Scoped
+short-lived tokens are revoked after use. T3 0.1.8 stamps WebSocket launches and
+sends `createdBy:"user"`; that native stamp is accepted.
+<!-- change:runner-start-carries-effort -->
 The adapter calls authenticated `orchestration.launchThread` over the existing
 WebSocket transport with a fixed `commandId`, `threadId`, `projectId`, supplied
 title (`generateTitle:false`), explicit model/modes and initial message. The
@@ -311,6 +318,7 @@ model selection carries the resolved provider instance and model and, as
 selection without effort or settings sends none. Scoped
 short-lived tokens are revoked after use. T3 0.1.8 stamps WebSocket launches and
 sends `createdBy:"user"`; that native stamp is accepted.
+<!-- /planned-change:runner-start-carries-effort -->
 
 Before first launch, authenticated `GET /api/projects` supplies registered project
 IDs and roots. Exclude deleted projects, compare canonical paths when available
@@ -503,6 +511,13 @@ removed in the same transaction. A failed refresh changes no mark. Observed quot
 restrictions remain independent: applying a snapshot never changes a manual one. Availability and skip diagnostics retain cause
 and expiry. Launch-error text supplies no quota evidence or no-start proof.
 
+<!-- planned-change:runner-start-carries-effort -->
+The selected adapter supplies the selection-realization report: generic starts,
+standing assignments and generations carry it without declaring native limits.
+Configuration retains neutral effort and extra settings; the T3 boundary maps
+effort to its native option ids for native delegation. Host CLI starts pass
+instance/model and report their inability to express requested effort/options.
+<!-- change:runner-start-carries-effort -->
 The selected adapter supplies the selection-realization report: generic starts,
 standing assignments and generations carry it without declaring native limits.
 Configuration retains neutral effort and extra settings; the T3 boundary maps
@@ -517,6 +532,7 @@ options dropped. A model T3 reports no descriptors for is launched with its
 options unchecked. A retry replays its captured selection unchecked. Host CLI
 starts pass instance/model and report their inability to express requested
 effort/options.
+<!-- /planned-change:runner-start-carries-effort -->
 
 An unstructured launch failure retains its key and selected inputs for recovery.
 Only proven pre-creation rejection or explicit no-start resolution permits chain
@@ -545,6 +561,20 @@ adapter runs the installed `t3` on the host's executable search path; there are
 no configured command templates in this adapter contract. Agent-native
 instruction prose is a separate configuration surface.
 
+<!-- planned-change:runner-start-carries-effort -->
+| Operation | Native translation and evidence |
+| --- | --- |
+| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
+| Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
+| State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
+| Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |
+| Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
+| Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
+| Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+| Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed` false and no `pendingBackgroundTasks`; any other status, `unknown` included, is not quiet. A missing or malformed `status` or `snoozed`, or a malformed `pendingBackgroundTasks`, is not quiet; a listing that omits `pendingBackgroundTasks` reports none. Pinned is the projection row's `pinnedAt`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned pinned, with unknown latest activity. |
+| Archive | Re-reads the projection: the thread row present with no `archivedAt` or `deletedAt`, `settledOverride` `settled` with `settledAt`, no `pinnedAt`, no `snoozedUntil` later than now, and no `updatedAt` or `opens.openedAt` later than observed; no run of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `rolled_back`; no runtime request of the thread `pending`; and no delegated task of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `idle`. Anything else reports changed. A projection that cannot be read, or whose tables lack what the re-read consumes, fails the archive with its cause, and nothing is archived. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, over the scoped-token connection runner-owned queued input uses, with a token issued and revoked for that command. T3's refusal that the thread is already archived is reported as already archived. |
+<!-- change:runner-start-carries-effort -->
 | Operation | Native translation and evidence |
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/options/modes, title and opening message. Native acceptance and execution remain separate. |
@@ -557,6 +587,7 @@ instruction prose is a separate configuration surface.
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
 | Finished threads | `t3 thread list --project <checkout> --json`. Finished is `settled` with `settledAt`. Quiet is a status of the `input-ready` or `failed` row below with `snoozed` false and no `pendingBackgroundTasks`; any other status, `unknown` included, is not quiet. A missing or malformed `status` or `snoozed`, or a malformed `pendingBackgroundTasks`, is not quiet; a listing that omits `pendingBackgroundTasks` reports none. Pinned is the projection row's `pinnedAt`. Latest activity is the latest of `updatedAt`, `settledAt` and the projection row's `opens.openedAt` (epoch milliseconds), read read-only from the projection database as for the linked-thread source, by bound parameters. A listed thread without a projection row is returned pinned, with unknown latest activity. |
 | Archive | Re-reads the projection: the thread row present with no `archivedAt` or `deletedAt`, `settledOverride` `settled` with `settledAt`, no `pinnedAt`, no `snoozedUntil` later than now, and no `updatedAt` or `opens.openedAt` later than observed; no run of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `rolled_back`; no runtime request of the thread `pending`; and no delegated task of the thread whose status is other than `completed`, `failed`, `interrupted`, `cancelled` or `idle`. Anything else reports changed. A projection that cannot be read, or whose tables lack what the re-read consumes, fails the archive with its cause, and nothing is archived. Then authenticated `orchestration.dispatchCommand` with `thread.archive` and a fresh command ID, over the scoped-token connection runner-owned queued input uses, with a token issued and revoked for that command. T3's refusal that the thread is already archived is reported as already archived. |
+<!-- /planned-change:runner-start-carries-effort -->
 
 Execution-root readiness reads the authenticated project snapshot and matches
 canonical roots exactly, as launch does. Ensure mode adds a missing root with
@@ -947,6 +978,67 @@ And no failed start is reported for the pickup
 
 ## Known caveats
 
+<!-- planned-change:runner-start-carries-effort -->
+- A legacy native admission whose original startup request is unknown remains
+  pending after terminal presence until its owner supplies an authorized
+  successor assignment. Existing worktree attachment does not invent its brief.
+
+- T3 host-CLI ASAP delivery is queue-only. Consumption, assignment recovery and
+  activity timestamps require their own supported evidence; a send acknowledgement
+  or completed prior run proves no consumption.
+- T3 native shared delegation inherits the parent's recorded workspace. Native
+  children may be absent from project listings; their parent recovers them through
+  native task evidence.
+- UC-SS4 is retired on this session surface; searchable history is owned by
+  `project/instrukt/spec/feature/runner/history`.
+- UC-SS7 is retired: session ending belongs to the runtime.
+- Pre-change unbound CLI starts cannot be retroactively deduplicated. Migration
+  refuses an unresolved old start without a recoverable native ID and preserves
+  all data. Settle it with the old version before upgrade.
+- T3's list JSON carries no worktree path. `show` decoder fields require verified
+  runtime evidence; a fixture alone establishes no native response guarantee.
+- T3 receives the resolved provider-instance/model pair. Its CLI has no
+  effort/options flag; instrukt-owned starts get effort only from the T3
+  project default until upstream adds support. No instrukt workaround is
+  built. Native delegation passes supported resolved options; the full
+  selection contract is `project/instrukt/spec/feature/configuration/agent-selection`.
+- T3 conversation reads cover the latest 100 messages. Missing older evidence is
+  a visible gap; the operational session surface is independent of extracted
+  history under `project/instrukt/spec/feature/runner/history`.
+- T3's `thread.archive` takes no condition on the thread's state. A message a
+  person sends between the adapter's re-read and its archive command still
+  reaches an archived thread, whose queued run T3 then cancels; the person
+  unarchives the thread to continue.
+- T3 does not record every opening of a thread in `opens.openedAt`. A reading
+  it leaves unrecorded does not restart the thread's quiet time.
+
+- T3 reports a turn that ended on a plain message, with no pending request, as
+  `input-ready`; nothing in the thread tells a session that paused there from
+  one that stopped. This bears only on an execution that still lasts: a session
+  that an observation finds without the todo's execution claim is not weighed,
+  whatever its thread shows. For a session that holds the claim, such an ending
+  is left alone while the work record shows the todo waiting on a person. Outside that
+  wait, when the workflow state has not advanced, it receives the one recovery
+  send and a repeated ending raises the anomaly. A thread reported as `running`
+  or `needs-input` is sent no recovery, and that state alone raises no anomaly.
+  An earlier recovery input that ended unconfirmed is a separate ground
+  (`project/instrukt/spec/feature/runner/anomaly-notification`): with the
+  workflow state unmoved and outside a person wait, it raises the anomaly where
+  the execution reaches the recovery decision, a thread reported as `running`
+  or `needs-input` included. Confirmed native archive or deletion with an
+  eligible active assignment does not reach that decision: the successor
+  transaction comes first, and that input raises no anomaly there.
+- An observation that reads the claim holder and the person wait acts on what
+  it read. A release, a transfer or the start of a person wait that lands after
+  that reading is taken up by the next observation; the observation under way
+  can still send the recovery it decided on. The decision to send a recovery is
+  taken at observation and is not taken again at delivery, so a recovery input
+  already recorded can still reach a session whose claim was released, or whose
+  todo began waiting on a person, after it was recorded.
+  Whether and when it is delivered follows the ordinary delivery rules of
+  `project/instrukt/spec/feature/runner/procedure-event-delivery`, those for a
+  batch it shares with other entries included.
+<!-- change:runner-start-carries-effort -->
 - A legacy native admission whose original startup request is unknown remains
   pending after terminal presence until its owner supplies an authorized
   successor assignment. Existing worktree attachment does not invent its brief.
@@ -1006,6 +1098,7 @@ And no failed start is reported for the pickup
   Whether and when it is delivered follows the ordinary delivery rules of
   `project/instrukt/spec/feature/runner/procedure-event-delivery`, those for a
   batch it shares with other entries included.
+<!-- /planned-change:runner-start-carries-effort -->
 
 ## See Also
 
