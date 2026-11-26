@@ -719,21 +719,33 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_and_any_other_refuses() {
-        let capability = Finding {
+    /// A finding that the selected runtime cannot carry the retention window.
+    fn retention_capability() -> Finding {
+        Finding {
             kind: FindingKind::RuntimeCapabilityMissing,
             ..finding("runner.archive_finished_after")
-        };
+        }
+    }
+
+    #[test]
+    fn a_machine_layer_without_findings_is_admitted() {
         assert_eq!(admit_machine_layer(Vec::new()), MachineLayer::Admitted);
+    }
+
+    #[test]
+    fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_with_it_withheld() {
         assert_eq!(
-            admit_machine_layer(vec![capability.clone()]),
-            MachineLayer::RetentionWithheld(vec![capability.clone()])
+            admit_machine_layer(vec![retention_capability()]),
+            MachineLayer::RetentionWithheld(vec![retention_capability()])
         );
+    }
+
+    #[test]
+    fn a_machine_layer_with_any_other_finding_beside_it_is_refused() {
         let shape = finding("runner.archive_finished_after");
         assert_eq!(
-            admit_machine_layer(vec![capability.clone(), shape.clone()]),
-            MachineLayer::Refused(vec![capability, shape])
+            admit_machine_layer(vec![retention_capability(), shape.clone()]),
+            MachineLayer::Refused(vec![retention_capability(), shape])
         );
     }
 

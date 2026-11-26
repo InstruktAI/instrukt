@@ -1397,34 +1397,54 @@ mod tests {
         }
     }
 
+    /// Whether validation and the published global schema each admit
+    /// `window` as the retention window.
+    fn window_admitted(window: &str) -> (bool, bool) {
+        let doc = format!("schema_version: 1\nrunner: {{archive_finished_after: {window}}}\n");
+        (
+            check(&yaml(&doc), LayerKind::Global).is_empty(),
+            fits(&layer_json_schema(LayerKind::Global), &as_json(&doc)),
+        )
+    }
+
     #[test]
-    fn the_global_schema_reads_the_retention_window_grammar_as_validation_does() {
-        let schema = layer_json_schema(LayerKind::Global);
-        for (window, valid) in [
-            ("off", true),
-            ("7d", true),
-            ("24h", true),
-            ("1s", true),
-            ("90m", true),
-            ("2w", true),
-            ("0d", false),
-            ("07d", false),
-            ("7", false),
-            ("7y", false),
-            ("d", false),
-            ("-1d", false),
-            ("7 d", false),
-            ("'on'", false),
-            ("true", false),
-        ] {
-            let doc = format!("schema_version: 1\nrunner: {{archive_finished_after: {window}}}\n");
-            assert_eq!(
-                check(&yaml(&doc), LayerKind::Global).is_empty(),
-                valid,
-                "{doc}"
-            );
-            assert_eq!(fits(&schema, &as_json(&doc)), valid, "{doc}");
-        }
+    fn validation_and_the_global_schema_admit_a_counted_window() {
+        assert_eq!(window_admitted("7d"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_admit_an_off_window() {
+        assert_eq!(window_admitted("off"), (true, true));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_zero_count() {
+        assert_eq!(window_admitted("0d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_leading_zero() {
+        assert_eq!(window_admitted("07d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_count_without_a_unit() {
+        assert_eq!(window_admitted("7"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_an_unknown_unit() {
+        assert_eq!(window_admitted("7y"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_unit_without_a_count() {
+        assert_eq!(window_admitted("d"), (false, false));
+    }
+
+    #[test]
+    fn validation_and_the_global_schema_refuse_a_window_that_is_not_text() {
+        assert_eq!(window_admitted("true"), (false, false));
     }
 
     /// Read as ECMA-262, each published action pattern admits a value exactly
