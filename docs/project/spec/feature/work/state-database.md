@@ -241,7 +241,7 @@ Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
 withdrawal whose working resources are being released. It starts empty.
 <!-- planned:github-human-agent-reflection -->
 
-Version 39 ends the shared remote record. It drops `listing_copies` and the
+Version 40 ends the shared remote record. It drops `listing_copies` and the
 reflection columns that tracked a record copy on GitHub (`record_comment`,
 `conflicted`), and adds the issue read positions, the published work-branch
 head with why its publication is outstanding, and the kept refusals to
@@ -377,14 +377,14 @@ Approvals and intent checks are stamps: `fact = 'approval'` and
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
-| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
+| `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `verification_disposition`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
 | `at`, `actor` | Time and acting session, GitHub account or person. |
 | `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; so reading the issue again never reapplies the same decision. |
 | `role` | The role the acting session played, or `NULL`. |
 | `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
 | `eval_fingerprint` | The published fingerprint copied at write time. |
 | `human_involved` | The audit-only declaration, or `NULL`. |
-| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp). |
+| `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp, disposition and follow-up todo). |
 
 <!-- /planned-change:github-human-agent-reflection -->
 
