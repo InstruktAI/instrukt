@@ -125,6 +125,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   pull request whose current head is an admitted proposal
   (`project/instrukt/spec/domain/company`) holds an approving verdict, and the
   company's standing integrator is woken to integrate that exact head.
+
 <!-- /planned:company-home-integration -->
 
 ## Ownership boundary
@@ -228,37 +229,42 @@ admitted value and its validation, owned by configuration
 
 <!-- planned:company-home-integration -->
 The runner also owns carrying a company's knowledge proposals to review and
-integration, in a company home admitted for automatic review, and what of
-them reaches the operator. Its review observation's fetch of a company home
-prunes remote-tracking branches the remote no longer holds. On each review
-observation's tick it asks the company context's proposal lookups
-(`project/instrukt/spec/domain/company`) and:
+integration, and what of them reaches the operator. It carries them in a
+company home admitted for automatic review whose proposal pull-request
+credential work answers is ready (`project/instrukt/spec/domain/work`); a
+credential that is not ready withholds only the carrying, and is listed in
+`instrukt events status` with its repair door. Its review observation's
+fetch of a company home prunes remote-tracking branches the remote no longer
+holds. On each review observation's tick it considers only the heads of the
+home's remote-tracking branches, never a branch that exists only on the
+computer, and asks the company context's proposal lookups
+(`project/instrukt/spec/domain/company`):
 
-- **Opens pull requests.** For each head it names that is an admitted
-  proposal, is not contained in the remote-tracking canonical branch, and
-  that no pull request, open or closed, has as its head, the runner has
-  work's GitHub boundary open a pull request for its branch, as the identity
-  the `company-agent` role selects. The pull request is then reviewed as every
-  eligible pull request is. When GitHub refuses the opening, the refusal is
-  listed with GitHub's answer, and the head is asked for again only once it
-  changes.
+- **Opens pull requests.** For each such head that is an admitted proposal,
+  is not contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, the runner has work's GitHub
+  boundary open a pull request for its branch, as the identity the
+  `company-agent` role selects. The pull request is then reviewed as every
+  eligible pull request is.
 - **Hands off.** When an open pull request's current head is an admitted
   proposal, holds an approving verdict that work answers is current and covers
   the canonical branch, and is not contained in the canonical branch, the
   runner emits `runner.proposal_approved`.
-- **Reports.** It lists in `instrukt events status`, with their doors, each
-  unestablished commit standing on a branch and a proposal store whose
+- **Reports.** It lists in `instrukt events status`, with their doors, the
+  unestablished entries the company context names and a proposal store whose
   condition is not usable. Each is current state, derived again on every
   tick. It raises each as an anomaly through
   `project/instrukt/spec/feature/runner/anomaly-notification` as that
   contract stands, once per running process.
 
-When GitHub or the runtime is unavailable, opening and emission retry on later
-ticks and the unavailable service is reported, as for the rest of the review
-observation. The verdict is work's, and what the integrator does with the head
-is workflow's integrator's.
-<!-- /planned:company-home-integration -->
+An opening or emission GitHub or the runtime does not complete, whether it is
+unavailable or refuses, is tried again on the next tick and reported as the
+rest of the review observation is
+(`project/instrukt/spec/feature/runner/pull-request-review`, Availability);
+nothing of it is kept. The verdict is work's, and what the integrator does
+with the head is workflow's integrator's.
 
+<!-- /planned:company-home-integration -->
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
@@ -523,9 +529,9 @@ commit stays in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.proposal_approved` | In a company home admitted for automatic review, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
-<!-- /planned:company-home-integration -->
+| `runner.proposal_approved` | In a company home admitted for automatic review and for carrying proposals, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
 
+<!-- /planned:company-home-integration -->
 Fleet attention's conditions are occurrences with a todo subject in their
 project origin; which facts count, and from what point, is
 `project/instrukt/spec/feature/runner/fleet-attention`'s.
@@ -662,11 +668,11 @@ Carrying a company's knowledge proposals adds these crossings:
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: the heads of branches holding a recorded proposal, whether a head is an admitted proposal, the unestablished commits on a branch and the store's condition |
-| work → runner | Customer / Supplier | Through its GitHub boundary, whether any pull request has a commit as its head, and opening a pull request for a branch as the identity the caller names |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work → runner | Customer / Supplier | Through its GitHub boundary, the readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch as the identity the caller names |
 | runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
-<!-- /planned:company-home-integration -->
 
+<!-- /planned:company-home-integration -->
 Fleet attention adds these crossings
 (`project/instrukt/spec/feature/runner/fleet-attention`):
 

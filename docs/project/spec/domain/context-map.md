@@ -163,16 +163,15 @@ home's candidate).
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| company → repository | Customer / Supplier | The proposal recording the `post-commit` hook run invokes, through an interface core declares and the CLI wires |
-| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: the heads of branches holding a recorded proposal, whether a head is an admitted proposal, the unestablished commits on a branch and the store's condition |
-| work GitHub boundary → runner | Customer / Supplier | Whether any pull request has a commit as its head, and opening a pull request for a branch as the identity the caller names |
+| company → repository | Customer / Supplier | The proposal recording the `pre-commit` hook run invokes, through an interface core declares and the CLI wires, with its answer |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch as the identity the caller names |
 | configuration → runner | Customer / Supplier | A company repository's company identity, whose finding withholds the home's event responses |
-| work → configuration, runner | Customer / Supplier | In a company repository, the readiness of the identity that opens proposal pull requests, beside the two identities automatic review already needs |
 | runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
 | configuration → publication | Customer / Supplier | The company identity a company repository's committed project layer declares, with its finding |
 | publication → workflow | Customer / Supplier | Publication's one operation rendering a tree's agent material, from which candidate coverage reproduces a rendering commit |
-<!-- /planned:company-home-integration -->
 
+<!-- /planned:company-home-integration -->
 Thread retention adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
 

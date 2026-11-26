@@ -171,16 +171,16 @@ Company home adoption extends this boundary:
   author).
 
 <!-- planned:company-home-integration -->
-The `post-commit` hook run also invokes the company context's proposal
-recording, through an interface core declares and the CLI wires, in the
-session and the repository the commit was made in, and waits for it. The run
-decides nothing about it, and what the commit waits for is the recording's
-(`project/instrukt/spec/domain/company`, Knowledge proposal). Unlike the sync
-this run starts detached, it waits, because the speaker the recording reads
-exists only while the session's turn is in progress. The run never fails the
-commit, as no section does.
-<!-- /planned:company-home-integration -->
+The `pre-commit` hook run also invokes the company context's proposal
+recording, through an interface core declares and the CLI wires, once it has
+staged what it generates, in the session, the repository and the index the
+commit is made from, and waits for it. The run decides nothing about the
+recording; what the commit waits for, and what each answer means, are the
+company context's (`project/instrukt/spec/domain/company`, Knowledge
+proposal). The run's only act on the answer is the refusal stated in the hook
+section's invariants.
 
+<!-- /planned:company-home-integration -->
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
 it reclaims the regenerable output of a todo's worktree and belongs to runner
 (`project/instrukt/spec/domain/runner`).
@@ -211,8 +211,18 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
     ends the hook early, so every section after it runs; a redirection-only
     `exec` is allowed, and the pre-push section uses one to give the sections
     after it the full ref list on stdin.
+<!-- planned-change:company-home-integration -->
   - A section never fails the git operation. The `pre-commit` section waits
     for its staging; publication triggers remain detached.
+<!-- change:company-home-integration -->
+  - A section never fails the git operation, with one exception: the
+    `pre-commit` section refuses a commit of a company's conversation session
+    in its company's repository when the company context's proposal recording
+    answers that its store cannot record, naming the store and its repair
+    door (`project/instrukt/spec/domain/company`, Knowledge proposal). The
+    `pre-commit` section waits for its staging and that recording;
+    publication triggers remain detached.
+<!-- /planned-change:company-home-integration -->
 - **Identifier:** the hook name within the repository's hooks directory.
 - **Lifecycle:** written by `instrukt hooks install` or `instrukt init`;
   removed by `instrukt hooks remove`; lost when a hook manager regenerates the
@@ -361,9 +371,8 @@ This context emits no events.
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
-
 <!-- planned:company-home-integration -->
-- **company** — Customer / Supplier. The `post-commit` hook run invokes the
+- **company** — Customer / Supplier. The `pre-commit` hook run invokes the
   company context's proposal recording, declared by core and wired by the CLI.
 <!-- /planned:company-home-integration -->
 
