@@ -59,14 +59,19 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     is **skip unless justified**, not "produce when applicable."
 
     **Pre-materialization sparring on high-consequence directive changes.** In a
-    human-present authoring session that will commit a change to the process
-    layer (`sdlc/policy/process-change-authority`), directive text in
-    `docs/general/` or `docs/domain/`, or promotion into an always-on set
-    (`general/policy/documentation-discipline`), unless the design has already
-    converged with an independent peer, consult one complementary peer (selected
-    through `~/.instrukt/agents.yaml` under `general/procedure/orchestration`
-    and invoked via `general/procedure/ai-to-ai-operations`) before
-    materializing the change from the scratchpad. Use two exchanges
+    human-present authoring session, the author judges whether a directive
+    change is consequential enough to be challenged before it is materialized
+    from the scratchpad: it removes or relaxes a control, redirects what many
+    agents do, or rests on a design nobody outside the conversation has tested.
+    A change to the process layer (`sdlc/policy/process-change-authority`),
+    directive text in `docs/general/` or `docs/domain/`, and promotion into an
+    always-on set (`general/policy/documentation-discipline`) are where that
+    is likely. A correction, a clarification, a rewording that keeps the rule,
+    and a design that has already converged with an independent peer need no
+    sparring. Where the author judges it warranted, consult one complementary
+    peer (selected through `~/.instrukt/agents.yaml` under
+    `general/procedure/orchestration` and invoked via
+    `general/procedure/ai-to-ai-operations`) first. Use two exchanges
     (`sdlc/policy/peer-invocation`): first send the problem, evidence and corpus
     pointers so the peer forms its own reading; then send the draft and rejected
     alternatives to test for duplication, contradictions, layer bleed and
