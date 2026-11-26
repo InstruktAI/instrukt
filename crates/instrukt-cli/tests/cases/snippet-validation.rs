@@ -718,7 +718,7 @@ fn a_publisher_learns_everything_their_indexes_cannot_say_in_one_run() {
     )
     .write(
         "docs/general/index.yaml",
-        "expanded: [general/policy/top, general/spec/coming, nowhere/policy/x]\n\
+        "expanded: [general/policy/top, general/spec/coming, general/policy/absent, acme/policy/rules]\n\
          listed: [general/principle/root, not an id]\n\
          agents:\n  claude: [general/policy/top]\n  cursor: [general/policy/top]\n  1invalid: [general/policy/top]\n\
          bundles: [x]\n",

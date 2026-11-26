@@ -148,7 +148,7 @@ codes! {
     IndexIdUnresolved => "index-id-unresolved",
     /// An id that names a pending snippet.
     IndexIdPending => "index-id-pending",
-    /// A domain's or the project's index naming an id of another position.
+    /// An index naming an id of another position.
     IndexIdForeign => "index-id-foreign",
     /// An `agents` key with invalid provider-name syntax.
     IndexAgentInvalid => "index-agent-invalid",
