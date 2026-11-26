@@ -759,6 +759,7 @@ impl Session<'_> {
                 tier: args.tier.map(tier),
             }),
             human_involved: args.human_involved,
+            hold: None,
         };
         if request.kind == TodoKind::Bug {
             bail!(

@@ -242,6 +242,19 @@ mod tests {
     }
 
     #[test]
+    fn a_todo_created_active_and_held_places_its_hold() {
+        let change = facts(None, &held(HoldSource::Manual))
+            .unwrap()
+            .with_runnable(false);
+        assert_eq!(change.hold_before, None);
+        assert_eq!(
+            change.hold_after.map(|hold| hold.source),
+            Some(AttentionHoldSource::Manual)
+        );
+        assert!(!change.left_active);
+    }
+
+    #[test]
     fn a_hold_placed_or_released_on_an_iceboxed_todo_has_no_facts() {
         let iceboxed = TodoRecord {
             status: TodoStatus::Iceboxed,
