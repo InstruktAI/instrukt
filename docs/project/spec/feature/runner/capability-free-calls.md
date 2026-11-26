@@ -66,8 +66,13 @@ CLI under exactly the confinement and settings a call uses and prompts it to
 use a tool, to read a file outside its folder and to reach a network host other
 than its model service. The CLI is admitted only when every attempt fails and
 it still returns an answer of the requested shape under that confinement; a
-CLI that cannot answer there, for instance because it cannot reach its own
-model service, is refused.
+CLI that cannot answer there while its model service is available, for
+instance because the confinement blocks its own model service, is refused. A
+model service that is temporarily unreachable or not answering while admission
+runs is an outage, not evidence: admission waits and tries again until the
+service returns, the CLI is neither admitted nor refused meanwhile, the
+operator can see that it waits, and calls it would serve wait rather than
+being refused for want of an admitted CLI.
 
 A CLI that offers the model any tool in its call mode is refused even when
 confinement would contain that tool's effect, because the model has no tools
