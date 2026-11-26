@@ -56,7 +56,8 @@ NOQA_CODES = r"(?:\s*:\s*([A-Z]+[0-9]+(?:[\s,]+[A-Z]+[0-9]+)*))?"
 PYTHON_FILE_NOQA = re.compile(r"#\s*ruff\s*:\s*noqa" + NOQA_CODES, re.IGNORECASE)
 PYTHON_NOQA = re.compile(r"#\s*noqa" + NOQA_CODES, re.IGNORECASE)
 PYTHON_TYPE_IGNORE = re.compile(r"#\s*type\s*:\s*ignore(?:\[([^\]]*)\])?")
-SHELLCHECK_DISABLE = re.compile(r"#\s*shellcheck\s+disable=([^\s#]+)")
+# Shellcheck codes (`SC2086`) or `all`, separated by commas.
+SHELLCHECK_DISABLE = re.compile(r"#\s*shellcheck\s+disable=([A-Za-z0-9,]+)")
 CODE_SEPARATOR = re.compile(r"[\s,]+")
 
 
