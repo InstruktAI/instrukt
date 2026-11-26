@@ -910,6 +910,20 @@ Then the work stays pending and that thread receives none of it
 And the runner reports the thread and the checkout, and that the thread rolls over once idle
 ```
 
+<!-- planned:fix-start-recovery-stuck-unregistered-worktree -->
+### UC-SS30: A developer's todo pickup moves to the checkout's own project when its created orchestrator idles elsewhere
+
+```gherkin
+Given T3 created a developer's todo orchestrator but the runner never accepted its start
+And that orchestrator's thread is idle in a runtime project rooted elsewhere than the checkout
+When the runner resumes the pickup
+Then a successor orchestrator starts in the checkout's own runtime project, in that todo's managed worktree
+And the todo's orchestrator is the successor
+And the earlier thread receives nothing more
+And no failed start is reported for the pickup
+```
+<!-- /planned:fix-start-recovery-stuck-unregistered-worktree -->
+
 ## Known caveats
 
 - A legacy native admission whose original startup request is unknown remains
