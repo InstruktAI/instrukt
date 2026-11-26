@@ -786,9 +786,9 @@ impl FakeT3 {
         let id = resolved.as_str();
         self.change(id, "pendingRequestCount", count.into());
     }
-    /// Thread `id` ended its turn after delegating a worker that is still
-    /// running, as the installed T3 shows it: `waiting`, with no active run,
-    /// no pending request and the worker held in `pendingBackgroundTasks`.
+    /// Thread `id` ended its turn after delegating `worker`, which still
+    /// runs: the shape the installed T3 shows for a parent its worker's
+    /// background task holds, which waits on no input.
     pub fn park_on_delegate(&self, id: &str, worker: &str) {
         self.change(id, "status", "waiting".into());
         self.change(id, "activeRunId", serde_json::Value::Null);
