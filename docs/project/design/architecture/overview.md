@@ -172,7 +172,7 @@ the read-back cursor of each connector (`connector_read_back`), each conversatio
 message's no-work interval and the current state of the runner's background
 workers — the history workers and the readiness refresh (`runner_workers`). The
 computer fleet's evaluation responder keeps its current failure apart from the
-state database, in `state/computer-fleet.json`, so it never takes the writer
+state database, in `state/computer-fleet.json`, and its uses of cluster Redis record no reachability there, so it never takes the writer
 lock (`project/instrukt/spec/domain/runner`). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).

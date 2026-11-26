@@ -542,18 +542,29 @@ A responder or membership write that cannot reach the cluster store retries:
 wake, running the rest of its wake meanwhile
 (`project/instrukt/policy/checks-and-guards`). While the failure lasts it is
 recorded, with when it began, in the computer fleet's failure file
-`state/computer-fleet.json`, and the next success removes the file; a
-configured cluster connection that cannot be used is recorded the same way,
-and the file is removed when no cluster connection is configured.
-`instrukt install --check` and `instrukt events status` report it as they
-report the runner's other workers, under the name `computer-fleet`. The file
-is written whole beside its previous version and renamed over it, by
-`instrukt run`'s responder or by `instrukt tick`'s fleet step, which the
-runner lock never lets run at once; readers take no lock. It is current state
-the runner owns for this home, and losing it costs nothing: the next attempt
-records the failure again. It is kept apart from the state database so that
-this background writer never waits on, or holds, the writer lock that work
-commands wait on (`sdlc/policy/state-storage`, Write isolation).
+`state/computer-fleet.json`; a changed failure keeps the time it began, the
+next success removes the file, a configured cluster connection that cannot be
+used is recorded the same way, and the file is removed when no cluster
+connection is configured. A failure to write or remove the file is logged and
+leaves what the writer has recorded as it was, so the next outcome writes it
+again; it is never taken as a recorded success. `instrukt install --check`
+and `instrukt events status` report the file as they report the runner's other
+workers, under the name `computer-fleet`, and report a file they cannot read
+as that worker's failure. The file is written whole beside its previous
+version and renamed over it, by `instrukt run`'s responder or by
+`instrukt tick`'s fleet step, which the runner lock never lets run at once;
+readers take no lock. It is current state the runner owns for this home, and
+losing it costs nothing: the next attempt records the failure again.
+
+The evaluation kind's uses of the cluster store — `instrukt run`'s evaluation
+responder, `instrukt tick`'s fleet step, membership writes and the evaluation
+report's asking — write nothing into the state database: the transport they
+use keeps no reachability record there, and whether the store can be reached
+shows in the failure file instead. They never wait on, or hold, the writer
+lock that work commands wait on (`sdlc/policy/state-storage`, Write
+isolation). Reachability recorded for event transport
+(`project/instrukt/spec/feature/runner/event-transport`) and merged history
+search's uses of the store are unchanged.
 Whether the cluster user permits the fleet query is checked where the
 connection enters, at installation
 (`project/instrukt/spec/feature/runner/module-installation`).
