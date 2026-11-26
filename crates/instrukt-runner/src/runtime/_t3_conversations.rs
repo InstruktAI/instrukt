@@ -241,6 +241,12 @@ fn latest_update(path: &Path, thread: &str) -> Result<Option<String>, SourceErro
     Ok(newest.map(|(_, text)| text))
 }
 
+/// The condition that thread `?1` has no run T3 projects as not ended: every
+/// run's status is one of the terminal ones.
+const NO_UNENDED_RUN: &str = "NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs \
+     WHERE thread_id=?1 AND (status IS NULL OR status NOT IN \
+     ('completed','failed','interrupted','cancelled','rolled_back')))";
+
 /// Read exact acceptance and quiescence from one projection snapshot.
 pub(super) fn send_evidence(
     home: &Home,
@@ -251,17 +257,17 @@ pub(super) fn send_evidence(
 ) -> Result<(bool, bool, bool), SourceError> {
     let db = open(&T3Home::discover(home, env).database())?;
     Ok(db.query_row(
-        "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
+        &format!(
+            "SELECT EXISTS(SELECT 1 FROM orchestration_v2_projection_messages
                        WHERE thread_id=?1 AND role='user'
                          AND json_extract(payload_json,'$.text')=?2),
                 EXISTS(SELECT 1 FROM orchestration_v2_projection_threads
                        WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL)
-                AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs
-                       WHERE thread_id=?1
-                         AND (status IS NULL OR status NOT IN ('completed','failed','interrupted','cancelled','rolled_back'))),
+                AND {NO_UNENDED_RUN},
                 EXISTS(SELECT 1 FROM orchestration_command_receipts
                        WHERE command_id=?3 AND aggregate_kind='thread' AND aggregate_id=?1
-                         AND command_type='message.dispatch' AND status='rejected')",
+                         AND command_type='message.dispatch' AND status='rejected')"
+        ),
         params![thread, text, command_id],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?)
@@ -392,17 +398,16 @@ pub(super) fn archive_holds(
     }
     let row: Option<(String, String, bool)> = db
         .query_row(
-            "SELECT payload_json,updated_at,\
-                    NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runs \
-                       WHERE thread_id=?1 AND (status IS NULL OR status NOT IN \
-                       ('completed','failed','interrupted','cancelled','rolled_back'))) \
+            &format!(
+                "SELECT payload_json,updated_at,{NO_UNENDED_RUN} \
                 AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_runtime_requests \
                        WHERE thread_id=?1 AND status='pending') \
                 AND NOT EXISTS(SELECT 1 FROM orchestration_v2_projection_subagents \
                        WHERE thread_id=?1 AND (status IS NULL OR status NOT IN \
                        ('completed','failed','interrupted','cancelled','idle'))) \
              FROM orchestration_v2_projection_threads \
-             WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL",
+             WHERE thread_id=?1 AND archived_at IS NULL AND deleted_at IS NULL"
+            ),
             params![thread],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
