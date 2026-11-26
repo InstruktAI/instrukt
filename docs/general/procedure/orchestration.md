@@ -110,7 +110,7 @@ workflow policy; the record supplies facts rather than a stored phase machine.
   to a former claim holder), and the round is one of
   (`general/principle/session-lifecycle`):
   - A follow-up round of a producer (`intaker`, `architect`, `planner`,
-    `builder`, `fixer`, `deferrer`, `finalizer`).
+    `builder`, `deferrer`, `finalizer`).
   - A finding-closure re-check of a reviewer (`prd-reviewer`,
     `architecture-reviewer`, `plan-reviewer`, `build-reviewer`) where **all**
     target changes address only that reviewer's findings (no unrelated changes,

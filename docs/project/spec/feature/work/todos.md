@@ -186,7 +186,7 @@ orchestrator's native evidence, not a recorded fact.
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
-`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
+`approvals.prd` checks apply (`builder` and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
 current shared `<slug>/work` head. Whether the reserved round starts a fresh
 worker or continues the role's prior session, and the order of the
@@ -219,7 +219,7 @@ listings supply no such evidence. A workspace mismatch stays a visible binding
 gap; resolve that assignment before admitting work.
 
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
-`planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
+`planner`, reviewers) and delivery roles (`builder`, `build-reviewer`,
 `verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
 outstanding workspace-role attempt at a time (`task-preparer` runs without a
 worktree on `kind: task`). Completion stamps release writing

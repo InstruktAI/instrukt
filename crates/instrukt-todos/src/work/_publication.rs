@@ -1,6 +1,6 @@
 //! Live publication of a todo's work branch (`github-record`, Issues and
-//! visible work): on runner ticks, the commits builders and fixers land on
-//! the branch are pushed to the remote the project's default branch
+//! visible work): on runner ticks, the commits builders land on the
+//! branch are pushed to the remote the project's default branch
 //! tracks, fast-forward only, so the todo's pull request shows them while
 //! the work is built and reviewed. Agent commands never push.
 

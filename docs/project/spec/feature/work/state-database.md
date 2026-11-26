@@ -369,7 +369,7 @@ The orchestrator coordinates work and keeps the workspace clean between roles.
 | Role | Evidence and release in the same record transaction |
 | --- | --- |
 | Setup | `--role-complete` at the clean shared todo head after setup. |
-| Builder/fixer, including plan reconciliation | `--build-complete` at the clean shared todo head. |
+| Builder, including plan reconciliation and remediation rounds | `--build-complete` at the clean shared todo head. |
 | Build reviewer | Verdict bound to the complete findings and current captured shared head. |
 | Verifier | `--verification` disposition bound to the complete `verification-findings` and current captured shared head. |
 | Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
