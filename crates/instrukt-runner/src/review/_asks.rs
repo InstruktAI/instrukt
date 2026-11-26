@@ -117,6 +117,33 @@ fn outcome(input_state: Option<&str>, accepted: bool) -> Outcome {
     }
 }
 
+/// The state of an ask record, as `review_asks.state` keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AskState {
+    /// The ask waits in delivery.
+    Queued,
+    /// The runtime accepted the ask.
+    Asked,
+    /// Delivery ended the ask without the runtime accepting it.
+    Undelivered,
+}
+
+impl AskState {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Asked => "asked",
+            Self::Undelivered => "undelivered",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Self> {
+        [Self::Queued, Self::Asked, Self::Undelivered]
+            .into_iter()
+            .find(|state| state.as_str() == text)
+    }
+}
+
 /// What a queue pass does for a commit and session the finding names to be
 /// asked, from its record's state and attempt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,11 +155,11 @@ enum Queue {
     Nothing,
 }
 
-fn queue_decision(record: Option<(&str, u64)>) -> Queue {
+fn queue_decision(record: Option<(AskState, u64)>) -> Queue {
     match record {
         None => Queue::Attempt(1),
-        Some(("undelivered", attempt)) => Queue::Attempt(attempt + 1),
-        Some(_) => Queue::Nothing,
+        Some((AskState::Undelivered, attempt)) => Queue::Attempt(attempt + 1),
+        Some((AskState::Queued | AskState::Asked, _)) => Queue::Nothing,
     }
 }
 
@@ -169,10 +196,10 @@ pub(super) fn sync(
         let path = state::db_path(tx);
         let queued: Vec<(String, String, String)> = {
             let mut query = tx
-                .prepare("SELECT commit_sha,session,input_id FROM review_asks WHERE project=?1 AND state='queued'")
+                .prepare("SELECT commit_sha,session,input_id FROM review_asks WHERE project=?1 AND state=?2")
                 .map_err(state::sql(&path))?;
             query
-                .query_map([project.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+                .query_map(params![project.as_str(), AskState::Queued.as_str()], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
                 .map_err(state::sql(&path))?
                 .collect::<Result<_, _>>()
                 .map_err(state::sql(&path))?
@@ -195,18 +222,18 @@ pub(super) fn sync(
             };
             let (next, cause) = match outcome(input_state, accepted) {
                 Outcome::Waiting => continue,
-                Outcome::Asked => ("asked", None),
+                Outcome::Asked => (AskState::Asked, None),
                 Outcome::Undelivered => (
-                    "undelivered",
+                    AskState::Undelivered,
                     Some(failure.unwrap_or_else(|| format!("delivery ended the ask {}", input_state.unwrap_or("gone")))),
                 ),
             };
             tx.execute(
                 "UPDATE review_asks SET state=?4,cause=?5,changed_at=?6 WHERE project=?1 AND commit_sha=?2 AND session=?3",
-                params![project.as_str(), commit, session, next, cause, now.to_string()],
+                params![project.as_str(), commit, session, next.as_str(), cause, now.to_string()],
             )
             .map_err(state::sql(&path))?;
-            tracing::info!(event = "review_ask_outcome", project = %project, commit = %commit, session = %session, outcome = next, cause = cause.as_deref());
+            tracing::info!(event = "review_ask_outcome", project = %project, commit = %commit, session = %session, outcome = next.as_str(), cause = cause.as_deref());
         }
         Ok(())
     })
@@ -233,7 +260,15 @@ pub(super) fn queue(
             )
             .optional()
             .map_err(state::sql(&path))?;
-        let Queue::Attempt(attempt) = queue_decision(record.as_ref().map(|(s, a, _)| (s.as_str(), *a))) else {
+        let recorded = record
+            .as_ref()
+            .map(|(text, attempt, _)| {
+                AskState::parse(text)
+                    .map(|state| (state, *attempt))
+                    .ok_or_else(|| state::invalid(&path, format!("review_asks state `{text}` is unknown")))
+            })
+            .transpose()?;
+        let Queue::Attempt(attempt) = queue_decision(recorded) else {
             return Ok(());
         };
         if let Some((_, _, previous)) = &record {
@@ -260,9 +295,9 @@ pub(super) fn queue(
             },
         )?;
         tx.execute(
-            "INSERT INTO review_asks(project,commit_sha,session,candidate,attempt,input_id,state,cause,queued_at,changed_at) VALUES(?1,?2,?3,?4,?5,?6,'queued',NULL,?7,?7)
-             ON CONFLICT(project,commit_sha,session) DO UPDATE SET attempt=excluded.attempt,input_id=excluded.input_id,state='queued',changed_at=excluded.changed_at",
-            params![project.as_str(), commit.as_str(), target, candidate.as_str(), attempt, id, now.to_string()],
+            "INSERT INTO review_asks(project,commit_sha,session,candidate,attempt,input_id,state,cause,queued_at,changed_at) VALUES(?1,?2,?3,?4,?5,?6,?8,NULL,?7,?7)
+             ON CONFLICT(project,commit_sha,session) DO UPDATE SET attempt=excluded.attempt,input_id=excluded.input_id,state=excluded.state,changed_at=excluded.changed_at",
+            params![project.as_str(), commit.as_str(), target, candidate.as_str(), attempt, id, now.to_string(), AskState::Queued.as_str()],
         )
         .map_err(state::sql(&path))?;
         tracing::info!(event = "review_ask_queued", project = %project, candidate = %candidate, commit = %commit, session = %target, attempt);
@@ -405,12 +440,15 @@ mod tests {
 
     #[test]
     fn an_undelivered_ask_is_queued_again_under_the_next_attempt() {
-        assert_eq!(queue_decision(Some(("undelivered", 2))), Queue::Attempt(3));
+        assert_eq!(
+            queue_decision(Some((AskState::Undelivered, 2))),
+            Queue::Attempt(3)
+        );
     }
 
     #[test]
     fn a_queued_ask_is_not_sent_again() {
-        assert_eq!(queue_decision(Some(("queued", 1))), Queue::Nothing);
+        assert_eq!(queue_decision(Some((AskState::Queued, 1))), Queue::Nothing);
     }
 
     #[test]
