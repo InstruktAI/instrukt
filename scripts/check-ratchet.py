@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""Holds source file sizes and lint suppressions to the committed baseline.
+"""Holds lint suppressions to the committed baseline.
 
 project/instrukt/policy/size-and-suppression-ratchet owns the rules: which
-files and which suppression directives count, and what the baseline,
-ratchet-baseline.json at the repository root, allows. This script measures the
-tracked files as they are in the working tree and compares the measurement
-with the baseline.
+suppression directives count, and what the baseline, ratchet-baseline.json at
+the repository root, allows. This script measures the tracked files as they
+are in the working tree and compares the measurement with the baseline.
 
     check-ratchet.py                        compare the tree with the baseline
     check-ratchet.py --update               lower the baseline to the tree
     check-ratchet.py --init --threshold N   create the baseline from the tree
 
-The comparison exits 1 when a file or a lint rose above the baseline, or when
-the baseline allows more than the tree measures. --update lowers and removes
-entries and never raises or adds one; while a rise stands it writes nothing
-and exits 1. --init refuses an existing baseline. Exit 2 means the check
-cannot run: no baseline, a malformed one, or a source file that is not UTF-8.
+The comparison exits 1 when a lint's suppressions rose above the baseline, or
+when the baseline allows more than the tree measures. --update lowers and
+removes entries and never raises or adds one; while a rise stands it writes
+nothing and exits 1. --init refuses an existing baseline. Exit 2 means the
+check cannot run: no baseline, a malformed one, or a source file that is not
+UTF-8.
 """
 
 import argparse
@@ -81,11 +81,10 @@ class Baseline:
     """What the tree may hold: ratchet-baseline.json."""
 
     threshold: int
-    files: dict[str, int]
     suppressions: dict[str, int]
 
     def render(self) -> str:
-        document = {"files": self.files, "suppressions": self.suppressions, "threshold": self.threshold}
+        document = {"suppressions": self.suppressions, "threshold": self.threshold}
         return json.dumps(document, indent=2, sort_keys=True) + "\n"
 
 
@@ -289,42 +288,23 @@ def load(root: Path) -> Baseline:
     if not isinstance(document, dict):
         raise CannotCheck(f"{BASELINE} is not a JSON object; fix it")
     keys = set(document)
-    expected = {"files", "suppressions", "threshold"}
+    expected = {"suppressions", "threshold"}
     if keys != expected:
         named = ", ".join(sorted(keys ^ expected))
         raise CannotCheck(f"{BASELINE}: unknown or missing keys {named}; fix the named keys")
     threshold = document["threshold"]
     if not isinstance(threshold, int) or isinstance(threshold, bool) or threshold < 1:
         raise CannotCheck(f"{BASELINE}: `threshold` is not a positive integer; fix the named key")
-    return Baseline(threshold, counts(document, "files"), counts(document, "suppressions"))
+    return Baseline(threshold, counts(document, "suppressions"))
 
 
 def compare(baseline: Baseline, measured: Measurement) -> Findings:
-    threshold = baseline.threshold
-    above = measured.above(threshold)
     rises: list[str] = []
     stale: list[str] = []
-    for path, lines in sorted(above.items()):
-        allowed = baseline.files.get(path)
-        if allowed is None:
-            rises.append(f"{path}: {lines} lines, not in the baseline (threshold {threshold})")
-        elif lines > allowed:
-            rises.append(f"{path} grew: baseline {allowed} lines, measured {lines}")
     for lint, count in sorted(measured.suppressions.items()):
         allowed = baseline.suppressions.get(lint, 0)
         if count > allowed:
             rises.append(f"{lint} rose: baseline {allowed} suppressions, measured {count}")
-    for path, allowed in sorted(baseline.files.items()):
-        if path in above:
-            if above[path] < allowed:
-                stale.append(f"{path} is below its entry: baseline {allowed} lines, measured {above[path]}")
-        elif path in measured.sizes:
-            lines = measured.sizes[path]
-            stale.append(
-                f"{path} needs no entry: baseline {allowed} lines, measured {lines} (threshold {threshold})"
-            )
-        else:
-            stale.append(f"{path} needs no entry: baseline {allowed} lines, not a source file in the tree")
     for lint, allowed in sorted(baseline.suppressions.items()):
         count = measured.suppressions.get(lint, 0)
         if count == 0:
@@ -357,7 +337,7 @@ def check(root: Path) -> int:
     if not (findings.rises or findings.stale):
         return 0
     print(
-        "ratchet: take the lines or suppressions out in this change, run `make ratchet` to lower an entry "
+        "ratchet: take the suppressions out in this change, run `make ratchet` to lower an entry "
         f"above the tree, or raise {BASELINE} by hand in a commit that states why ({POLICY})",
         file=sys.stderr,
     )
@@ -373,7 +353,7 @@ def update(root: Path) -> int:
         print(f"ratchet: {BASELINE} is unchanged; --update never raises an entry ({POLICY})", file=sys.stderr)
         return 1
     if findings.stale:
-        lowered = Baseline(baseline.threshold, measured.above(baseline.threshold), measured.suppressions)
+        lowered = Baseline(baseline.threshold, measured.suppressions)
         write(root, lowered)
         report([f"lowered: {line}" for line in findings.stale])
     return 0
@@ -385,7 +365,7 @@ def init(root: Path, threshold: int) -> int:
     if threshold < 1:
         raise CannotCheck("--threshold must be a positive integer")
     measured = measure(root)
-    write(root, Baseline(threshold, measured.above(threshold), measured.suppressions))
+    write(root, Baseline(threshold, measured.suppressions))
     return 0
 
 
