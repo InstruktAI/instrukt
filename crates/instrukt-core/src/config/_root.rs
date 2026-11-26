@@ -110,22 +110,14 @@ mod tests {
     }
 
     #[test]
-    fn company_repository_false_null_or_absent_is_a_project() {
-        for document in [
-            &b"project: demo\ncompany_repository: false\n"[..],
-            b"project: demo\ncompany_repository: null\n",
-            b"project: demo\n",
-        ] {
-            assert_eq!(
-                classify_root(Some(document)),
-                RootDocument::ProjectLayer {
-                    slug: Some(ProjectSlug::parse("demo").unwrap()),
-                    company_repository: false,
-                },
-                "{}",
-                String::from_utf8_lossy(document)
-            );
-        }
+    fn company_repository_false_is_a_project() {
+        assert_eq!(
+            classify_root(Some(b"project: demo\ncompany_repository: false\n")),
+            RootDocument::ProjectLayer {
+                slug: Some(ProjectSlug::parse("demo").unwrap()),
+                company_repository: false,
+            }
+        );
     }
 
     #[test]

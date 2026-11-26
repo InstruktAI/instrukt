@@ -1,0 +1,20 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "(writes(&github), github.collaborators(\"homes/company-acme\"),\ngithub.default_branch(\"homes/company-acme\"),)"
+---
+(
+    [
+        "POST /orgs/homes/repos",
+        "PATCH /repos/homes/company-acme",
+        "PUT /repos/homes/company-acme/collaborators/acme-admin",
+    ],
+    [
+        (
+            "acme-admin",
+            "admin",
+        ),
+    ],
+    Some(
+        "main",
+    ),
+)

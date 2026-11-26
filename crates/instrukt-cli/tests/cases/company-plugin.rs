@@ -132,8 +132,6 @@ fn an_operator_gives_people_who_work_with_claude_the_companys_own_knowledge() {
         "company_plugin_entry",
         serde_json::to_string_pretty(&plugins[1]).unwrap()
     );
-    assert_eq!(plugins[1]["source"], "./");
-    assert_eq!(plugins[1]["skills"], serde_json::json!(["./skills/acme"]));
 
     // A document refers to something outside the company's own documents:
     // the rendering names the document and the reference, and changes

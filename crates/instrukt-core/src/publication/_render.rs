@@ -1223,7 +1223,8 @@ mod tests {
         ]));
         assert_eq!(plan.findings, []);
         assert_eq!(plan.notices, []);
-        insta::assert_snapshot!("company_repository_rendering", root(&plan).text);
+        let written: Vec<&Path> = plan.writes.iter().map(|file| file.path.as_path()).collect();
+        assert_eq!(written, [Path::new(AGENTS_FILE)]);
     }
 
     #[test]

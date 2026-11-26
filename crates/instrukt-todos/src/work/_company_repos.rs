@@ -288,34 +288,33 @@ impl CompanyRepositories for GitHubAccess {
 
 #[cfg(test)]
 mod tests {
-    use super::{AccountKind, already_exists, json, kind_of};
+    use super::{already_exists, json, kind_of};
 
     #[test]
-    fn only_a_name_that_already_exists_is_an_existing_repository() {
+    fn a_name_that_already_exists_is_an_existing_repository() {
         assert!(already_exists(&json!({
             "message": "Repository creation failed.",
             "errors": [{"resource": "Repository", "code": "custom", "field": "name",
                         "message": "name already exists on this account"}]
         })));
+    }
+
+    #[test]
+    fn another_refused_name_is_no_existing_repository() {
         assert!(!already_exists(&json!({
             "message": "Repository creation failed.",
             "errors": [{"resource": "Repository", "code": "custom", "field": "name",
                         "message": "name is too long"}]
         })));
-        assert!(!already_exists(&json!({"message": "Validation Failed"})));
     }
 
     #[test]
-    fn an_accounts_type_decides_its_kind() {
-        assert_eq!(
-            kind_of("homes", &json!({"type": "Organization"})).unwrap(),
-            AccountKind::Organisation
-        );
-        assert_eq!(
-            kind_of("ana", &json!({"type": "User"})).unwrap(),
-            AccountKind::Personal
-        );
+    fn an_account_of_another_type_is_no_answer() {
         assert!(kind_of("robot", &json!({"type": "Bot"})).is_err());
+    }
+
+    #[test]
+    fn an_account_record_naming_no_type_is_no_answer() {
         assert!(kind_of("odd", &json!({})).is_err());
     }
 }

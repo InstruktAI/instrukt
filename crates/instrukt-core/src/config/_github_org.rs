@@ -197,17 +197,29 @@ mod tests {
     #[test]
     fn without_a_lookup_a_new_owner_is_refused() {
         let (_root, home, revision) = machine(MACHINE);
-        assert!(admit(&home, &revision, "github: {org: homes}", None).is_err());
+        let error = admit(&home, &revision, "github: {org: homes}", None).unwrap_err();
+        assert!(
+            matches!(&error, ConfigError::Invalid(Findings(findings))
+                if findings.len() == 1 && findings[0].key == GITHUB_ORG_KEY),
+            "{error}"
+        );
+    }
+
+    /// A machine layer that declares `homes`, and a lookup that would
+    /// refuse any owner it were asked about.
+    const DECLARED: &str = "schema_version: 6\ngithub: {org: homes}\n";
+    const REFUSING: Stub = Stub(Ok(AccountKind::Personal));
+
+    #[test]
+    fn a_patch_that_leaves_the_owner_as_it_is_asks_nothing() {
+        let (_root, home, revision) = machine(DECLARED);
+        admit(&home, &revision, "modules: {events: true}", Some(&REFUSING)).unwrap();
     }
 
     #[test]
-    fn a_patch_that_leaves_the_owner_or_removes_it_asks_nothing() {
-        let declared = "schema_version: 6\ngithub: {org: homes}\n";
-        let (_root, home, revision) = machine(declared);
-        let refusing = Stub(Ok(AccountKind::Personal));
-        admit(&home, &revision, "modules: {events: true}", Some(&refusing)).unwrap();
-        admit(&home, &revision, "github: {org: homes}", Some(&refusing)).unwrap();
-        admit(&home, &revision, "github: {org: null}", Some(&refusing)).unwrap();
+    fn a_patch_that_removes_the_owner_asks_nothing() {
+        let (_root, home, revision) = machine(DECLARED);
+        admit(&home, &revision, "github: {org: null}", Some(&REFUSING)).unwrap();
     }
 
     #[test]

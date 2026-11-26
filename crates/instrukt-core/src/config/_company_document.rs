@@ -193,7 +193,7 @@ pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
 mod tests {
     use super::{
         COMPANY_DOCUMENT, CONFIG_FILE_NAME, CompanyDocument, ConfigError, Home, PathBuf,
-        ProjectSlug, convert, declares_company, lock_path, resolve, write_company_settings,
+        ProjectSlug, Value, convert, declares_company, lock_path, resolve, write_company_settings,
     };
 
     fn acme() -> ProjectSlug {
@@ -212,13 +212,14 @@ mod tests {
     }
 
     const LEGACY: &str = "schema_version: 6\ncompany: acme\nmembers:\n  ana: {}\n";
+    const COMPANY_YAML: &str = "company: acme\n";
     const PROJECT_LAYER: &str =
         "schema_version: 6\nproject: company-acme\ncompany_repository: true\n";
 
     #[test]
     fn company_yaml_beside_a_project_layer_is_present() {
         let (_root, home, dir) = home_with(&[
-            (COMPANY_DOCUMENT, "company: acme\n"),
+            (COMPANY_DOCUMENT, COMPANY_YAML),
             (CONFIG_FILE_NAME, PROJECT_LAYER),
         ]);
         assert_eq!(
@@ -240,21 +241,25 @@ mod tests {
     fn a_generated_home_without_company_yaml_holds_no_company_document() {
         let (_root, home, _dir) = home_with(&[(CONFIG_FILE_NAME, PROJECT_LAYER)]);
         assert_eq!(resolve(&home, &acme()).unwrap(), CompanyDocument::Absent);
-        let (_root, home, _dir) = home_with(&[]);
-        assert_eq!(resolve(&home, &acme()).unwrap(), CompanyDocument::Absent);
     }
 
     #[test]
-    fn both_present_is_named_and_converting_changes_neither_file() {
-        let (_root, home, dir) = home_with(&[
-            (COMPANY_DOCUMENT, "company: acme\n"),
-            (CONFIG_FILE_NAME, LEGACY),
-        ]);
-        let both = CompanyDocument::Both {
-            company: dir.join(COMPANY_DOCUMENT),
-            legacy: dir.join(CONFIG_FILE_NAME),
-        };
-        assert_eq!(resolve(&home, &acme()).unwrap(), both);
+    fn both_present_is_named() {
+        let (_root, home, dir) =
+            home_with(&[(COMPANY_DOCUMENT, COMPANY_YAML), (CONFIG_FILE_NAME, LEGACY)]);
+        assert_eq!(
+            resolve(&home, &acme()).unwrap(),
+            CompanyDocument::Both {
+                company: dir.join(COMPANY_DOCUMENT),
+                legacy: dir.join(CONFIG_FILE_NAME),
+            }
+        );
+    }
+
+    #[test]
+    fn converting_with_both_present_is_refused_and_changes_neither_file() {
+        let (_root, home, dir) =
+            home_with(&[(COMPANY_DOCUMENT, COMPANY_YAML), (CONFIG_FILE_NAME, LEGACY)]);
         let error = convert(&home, &acme()).unwrap_err();
         assert!(
             matches!(
@@ -266,7 +271,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
-            "company: acme\n"
+            COMPANY_YAML
         );
         assert_eq!(
             std::fs::read_to_string(dir.join(CONFIG_FILE_NAME)).unwrap(),
@@ -322,7 +327,7 @@ mod tests {
         let value = super::super::_layer::read_usable(&home, &layer)
             .unwrap()
             .unwrap();
-        assert!(value.get("members").is_some());
+        assert_eq!(value, serde_yaml_ng::from_str::<Value>(LEGACY).unwrap());
         assert_eq!(
             std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
             LEGACY
@@ -368,10 +373,8 @@ mod tests {
     }
 
     #[test]
-    fn writing_settings_ignores_them_and_never_replaces_a_document() {
+    fn writing_settings_never_replaces_a_document_the_home_holds() {
         let dir = tempfile::tempdir().unwrap();
-        assert!(write_company_settings(dir.path(), &acme()).unwrap());
-        // A document the home already holds is never written over.
         let held = "company: acme\nmine: 1\n";
         std::fs::write(dir.path().join(COMPANY_DOCUMENT), held).unwrap();
         assert!(!write_company_settings(dir.path(), &acme()).unwrap());

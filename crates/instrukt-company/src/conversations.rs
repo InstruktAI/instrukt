@@ -5035,11 +5035,14 @@ mod tests {
         assert_eq!(cut(&"é".repeat(41), 40), (vec![40, 1], true));
     }
 
-    #[test]
-    fn a_conversation_session_is_recognised_from_its_binding_before_it_starts() {
+    /// A home whose runner bound `session` to Acme's Slack conversation,
+    /// with the fixed native thread, before the native start: the
+    /// conversation records no session and no generation yet.
+    fn bound_before_start(
+        session: &instrukt_core::ids::SessionRef,
+    ) -> (tempfile::TempDir, instrukt_core::home::Home) {
         let root = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = instrukt_core::home::Home::at_user_home(root.path().to_path_buf()).for_writing();
-        let session: instrukt_core::ids::SessionRef = "t3:thread-before-start".parse().unwrap();
         let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
         db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
             tx.execute(
@@ -5047,9 +5050,6 @@ mod tests {
                 [],
             )
             .unwrap();
-            // The runner's binding, written with the fixed native thread
-            // before the native start: the conversation records no session
-            // and no generation yet.
             tx.execute(
                 "INSERT INTO runtime_bindings(runtime,semantic_key,kind,subject,session,checkout,accepted,generation) VALUES ('t3','company:acme:slack:C1','conversation','company:acme:slack:C1',?1,'/h/companies/acme',0,1)",
                 [session.to_string()],
@@ -5059,28 +5059,39 @@ mod tests {
         })
         .unwrap();
         drop(db);
+        (root, home)
+    }
+
+    #[test]
+    fn a_conversation_session_is_recognised_from_its_binding_before_it_starts() {
+        let session: instrukt_core::ids::SessionRef = "t3:thread-before-start".parse().unwrap();
+        let (_root, home) = bound_before_start(&session);
+        let acme = instrukt_core::ids::ProjectSlug::parse("acme").unwrap();
         let assignment = super::conversation_assignment(&home, &session)
             .unwrap()
             .expect("the bound session is the conversation's");
-        assert_eq!(
-            assignment.company.map(|c| c.to_string()).as_deref(),
-            Some("acme")
-        );
-        assert_eq!(assignment.role.as_str(), "company-agent");
+        assert_eq!(assignment.company, Some(acme.clone()));
+        assert_eq!(assignment.role.as_str(), COMPANY_AGENT_ROLE);
         // Until the runner records it as the conversation's, the session has
         // no speaker to act for: it is refused, never served as a session
         // nobody is asking in.
         let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
         assert!(matches!(
             super::speaker(&home, &session, adapter.as_ref()),
-            Err(instrukt_runner::mcp::McpError::Unbound { company }) if company == "acme"
+            Err(instrukt_runner::mcp::McpError::Unbound { company }) if company == acme.as_str()
         ));
+    }
+
+    #[test]
+    fn a_session_no_binding_names_is_no_conversations() {
+        let (_root, home) = bound_before_start(&"t3:thread-before-start".parse().unwrap());
         let other: instrukt_core::ids::SessionRef = "t3:someone-else".parse().unwrap();
         assert!(
             super::conversation_assignment(&home, &other)
                 .unwrap()
                 .is_none()
         );
+        let adapter = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3);
         assert!(matches!(
             super::speaker(&home, &other, adapter.as_ref()),
             Ok(None)

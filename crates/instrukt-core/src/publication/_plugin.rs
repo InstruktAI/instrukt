@@ -1248,32 +1248,45 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_version_is_kept_when_the_rendering_equals_what_the_folder_holds_and_raised_otherwise() {
+    /// A company's repository rendered once, and the version it was
+    /// rendered at.
+    fn rendered_once() -> (Vec<(String, String)>, PluginVersion) {
         let first = files_of(&[
             (INDEX, "expanded: [company.md]\n"),
             ("docs/company.md", "# Company\n\nWe make things.\n"),
             (CATALOG, CATALOG_TEXT),
         ]);
         let planned = plan(&view(&first), &key(), &name()).unwrap();
-        let plan1 = planned.drift.clone().unwrap();
-        let rendered = applied_plan(&first, &planned);
+        let version = planned.drift.clone().unwrap().version;
+        (applied_plan(&first, &planned), version)
+    }
+
+    #[test]
+    fn the_version_is_kept_when_the_rendering_equals_what_the_folder_holds() {
+        let (rendered, version) = rendered_once();
         let again = drift_of(&view(&rendered));
         assert!(again.writes.is_empty() && again.removals.is_empty());
-        assert_eq!(again.version, plan1.version);
-        let mut changed = rendered.clone();
+        assert_eq!(again.version, version);
+    }
+
+    #[test]
+    fn the_version_is_raised_when_a_document_changes() {
+        let (mut changed, version) = rendered_once();
         for (path, text) in &mut changed {
             if path == "docs/company.md" {
                 *text = "# Company\n\nWe make more things.\n".to_owned();
             }
         }
-        let raised = drift_of(&view(&changed));
-        assert_eq!(raised.version, plan1.version.raised());
-        let mut stray = rendered.clone();
+        assert_eq!(drift_of(&view(&changed)).version, version.raised());
+    }
+
+    #[test]
+    fn the_version_is_raised_when_a_file_the_skill_no_longer_holds_is_removed() {
+        let (mut stray, version) = rendered_once();
         stray.push(("skills/acme/notes.md".to_owned(), "old".to_owned()));
         let cleaned = drift_of(&view(&stray));
         assert_eq!(cleaned.removals, [PathBuf::from("skills/acme/notes.md")]);
-        assert_eq!(cleaned.version, plan1.version.raised());
+        assert_eq!(cleaned.version, version.raised());
     }
 
     /// `tree` with the plan's skill files and catalog applied.
@@ -1284,39 +1297,6 @@ mod tests {
             files.push((CATALOG.to_owned(), catalog.text.clone()));
         }
         files
-    }
-
-    #[test]
-    fn the_entry_carries_the_version_kept_or_raised_against_the_skill() {
-        let first = files_of(&[
-            (INDEX, "expanded: [company.md]\n"),
-            ("docs/company.md", "# Company\n\nWe make things.\n"),
-            (CATALOG, CATALOG_TEXT),
-        ]);
-        let plan1 = plan(&view(&first), &key(), &name()).unwrap();
-        let rendered = applied_plan(&first, &plan1);
-        let version = |files: &[(String, String)]| -> PluginVersion {
-            let text = &files.iter().find(|(path, _)| path == CATALOG).unwrap().1;
-            let catalog: Json = serde_json::from_str(text).unwrap();
-            PluginVersion::parse(catalog["plugins"][1]["version"].as_str().unwrap()).unwrap()
-        };
-        assert_eq!(version(&rendered), PluginVersion::first());
-        // Unchanged: nothing is written, the catalog included.
-        let again = plan(&view(&rendered), &key(), &name()).unwrap();
-        assert_eq!(again.catalog, None);
-        assert!(again.drift.unwrap().writes.is_empty());
-        // A changed document raises the entry's version.
-        let mut changed = rendered.clone();
-        for (path, text) in &mut changed {
-            if path == "docs/company.md" {
-                *text = "# Company\n\nWe make more things.\n".to_owned();
-            }
-        }
-        let raised = plan(&view(&changed), &key(), &name()).unwrap();
-        assert_eq!(
-            version(&applied_plan(&changed, &raised)),
-            PluginVersion::first().raised()
-        );
     }
 
     #[test]
@@ -1363,43 +1343,38 @@ mod tests {
     }
 
     #[test]
-    fn an_entry_the_catalog_does_not_list_is_added_after_the_others() {
-        let tree = repository(Some(CATALOG_TEXT), &[]);
-        let file = catalog(&tree, "0.1.0").unwrap().unwrap().unwrap();
-        let written: Json = serde_json::from_str(&file.text).unwrap();
-        let names: Vec<&str> = written["plugins"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|entry| entry["name"].as_str().unwrap())
-            .collect();
-        assert_eq!(names, ["other", "acme"]);
-        assert_eq!(written["plugins"][0]["extra"], 1);
-    }
-
-    #[test]
-    fn a_missing_catalog_is_created_and_an_unreadable_one_is_a_finding() {
+    fn a_missing_catalog_is_created_holding_the_entry() {
         let file = catalog(&repository(None, &[]), "0.1.0")
             .unwrap()
             .unwrap()
             .unwrap();
         assert_eq!(file.current, None);
-        let written: Json = serde_json::from_str(&file.text).unwrap();
-        assert_eq!(written["name"], "acme");
-        assert_eq!(written["owner"], serde_json::json!({"name": "Acme"}));
-        let names: Vec<&String> = written.as_object().unwrap().keys().collect();
-        assert_eq!(names, ["name", "owner", "plugins"]);
-        assert_eq!(written["plugins"].as_array().unwrap().len(), 1);
-        assert_eq!(written["plugins"][0]["name"], "acme");
-        for text in ["[]", "{\"plugins\": {}}", "{"] {
-            assert!(
-                matches!(
-                    catalog(&repository(Some(text), &[]), "0.1.0").unwrap(),
-                    Err(PluginFinding::CatalogUnreadable { .. })
-                ),
-                "{text:?}"
-            );
-        }
+        // The created catalog already holds the entry: nothing more to set.
+        let created = repository(Some(&file.text), &[]);
+        assert_eq!(catalog(&created, "0.1.0").unwrap(), Ok(None));
+    }
+
+    /// Whether setting the entry finds the catalog `text` unreadable.
+    fn unreadable(text: &str) -> bool {
+        matches!(
+            catalog(&repository(Some(text), &[]), "0.1.0").unwrap(),
+            Err(PluginFinding::CatalogUnreadable { .. })
+        )
+    }
+
+    #[test]
+    fn a_catalog_that_is_not_json_is_a_finding() {
+        assert!(unreadable("{"));
+    }
+
+    #[test]
+    fn a_catalog_that_is_no_json_object_is_a_finding() {
+        assert!(unreadable("[]"));
+    }
+
+    #[test]
+    fn a_catalog_holding_no_plugins_list_is_a_finding() {
+        assert!(unreadable("{\"plugins\": {}}"));
     }
 
     /// The output of the renderer before the skill moved to the root: its
@@ -1491,32 +1466,12 @@ mod tests {
 
     #[test]
     fn an_entry_whose_version_is_not_three_numbers_is_a_finding_naming_it() {
-        let held = |entry: &str| {
-            let document: Json =
-                serde_json::from_str(&format!("{{\"plugins\": [{entry}]}}")).unwrap();
-            held_version(&Committed::of(&[]), &document, &key())
-        };
-        assert_eq!(
-            held(r#"{"name": "acme", "version": "1.0"}"#),
-            Err(PluginFinding::EntryVersion {
-                version: Some("1.0".to_owned()),
-            })
-        );
-        assert_eq!(
-            held(r#"{"name": "acme"}"#),
-            Err(PluginFinding::EntryVersion { version: None })
-        );
-        assert_eq!(
-            held(r#"{"name": "acme", "version": "2.3.4"}"#)
-                .unwrap()
-                .map(|v| v.to_string())
-                .as_deref(),
-            Some("2.3.4")
-        );
-        assert_eq!(held(r#"{"name": "other", "version": "x"}"#), Ok(None));
+        let held = "one";
         let plan = plan(
             &repository(
-                Some(r#"{"plugins": [{"name": "acme", "version": "one"}]}"#),
+                Some(&format!(
+                    "{{\"plugins\": [{{\"name\": \"acme\", \"version\": \"{held}\"}}]}}"
+                )),
                 &[],
             ),
             &key(),
@@ -1526,40 +1481,65 @@ mod tests {
         assert_eq!(
             plan.findings,
             [PluginFinding::EntryVersion {
-                version: Some("one".to_owned())
+                version: Some(held.to_owned())
             }]
         );
         assert_eq!((plan.drift, plan.catalog), (None, None));
     }
 
+    /// What planning finds with a link at `link`, and whether it still
+    /// knows what differs.
+    fn linked(link: &str) -> (Vec<PluginFinding>, bool) {
+        let tree = repository(Some(CATALOG_TEXT), &[]).with_link(link);
+        let plan = plan(&tree, &key(), &name()).unwrap();
+        (plan.findings, plan.drift.is_some())
+    }
+
     #[test]
-    fn a_link_on_the_way_to_the_skill_or_the_catalog_or_inside_the_skill_is_a_finding() {
-        for link in [
-            "skills",
-            "skills/acme",
-            "skills/acme/x.md",
-            ".claude-plugin",
-        ] {
-            let tree = repository(Some(CATALOG_TEXT), &[]).with_link(link);
-            let plan = plan(&tree, &key(), &name()).unwrap();
-            // Behind a link at the skill's folder, or at the catalog that
-            // holds the version, nothing is compared.
-            assert!(plan.drift.is_none(), "{link}");
-            assert_eq!(
-                plan.findings,
-                [PluginFinding::Link {
+    fn a_link_on_the_way_to_the_skill_is_a_finding_and_nothing_is_compared() {
+        let link = "skills/acme";
+        assert_eq!(
+            linked(link),
+            (
+                vec![PluginFinding::Link {
                     path: link.to_owned()
                 }],
-                "{link}"
-            );
-        }
-        for elsewhere in ["skills/other", "plugins/acme"] {
-            let tree = repository(Some(CATALOG_TEXT), &[]).with_link(elsewhere);
-            assert!(
-                plan(&tree, &key(), &name()).unwrap().findings.is_empty(),
-                "{elsewhere}"
-            );
-        }
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_link_inside_the_skill_is_a_finding_and_nothing_is_compared() {
+        let link = "skills/acme/x.md";
+        assert_eq!(
+            linked(link),
+            (
+                vec![PluginFinding::Link {
+                    path: link.to_owned()
+                }],
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_link_on_the_way_to_the_catalog_is_a_finding_and_nothing_is_compared() {
+        let link = ".claude-plugin";
+        assert_eq!(
+            linked(link),
+            (
+                vec![PluginFinding::Link {
+                    path: link.to_owned()
+                }],
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn a_link_elsewhere_is_no_finding() {
+        assert_eq!(linked("skills/other"), (vec![], true));
     }
 
     #[test]

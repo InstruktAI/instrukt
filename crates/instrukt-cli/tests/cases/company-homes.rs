@@ -436,40 +436,32 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     // its key, holding the company skeleton.
     let remote = remotes.join("homes/company-acme.git");
     let skeleton = files_on_main(&env, &remote);
-    for file in [
-        ".gitignore",
-        "instrukt.yaml",
-        "docs/index.yaml",
-        "AGENTS.md",
-        "skills/acme/SKILL.md",
-        ".claude-plugin/marketplace.json",
-    ] {
-        assert!(skeleton.contains(&file.to_owned()), "{file}: {skeleton:?}");
-    }
-    let layer: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&on_main(&env, &remote, "instrukt.yaml")).unwrap();
-    assert_eq!(layer["project"], "company-acme");
-    assert_eq!(layer["company_repository"], true);
-    assert_eq!(layer["modules"]["todos"], false);
-    assert_eq!(layer["review"]["automatic"], true);
-    assert!(!skeleton.iter().any(|file| file.starts_with(".github/")));
-    assert_eq!(github.is_private("homes/company-acme"), Some(true));
     assert_eq!(
-        writes(&github),
+        skeleton,
         [
-            "POST /orgs/homes/repos",
-            "PATCH /repos/homes/company-acme",
-            "PUT /repos/homes/company-acme/collaborators/acme-admin",
+            ".claude-plugin/marketplace.json",
+            ".gitignore",
+            "AGENTS.md",
+            "docs/index.yaml",
+            "instrukt.yaml",
+            "skills/acme/SKILL.md",
         ]
     );
-    // The company's GitHub administrator is an administrator of it.
-    assert_eq!(
-        github.collaborators("homes/company-acme"),
-        [("acme-admin".to_owned(), "admin".to_owned())]
+    insta::assert_snapshot!("skeleton-layer", on_main(&env, &remote, "instrukt.yaml"));
+    insta::assert_snapshot!(
+        "skeleton-catalog",
+        on_main(&env, &remote, ".claude-plugin/marketplace.json")
     );
-    assert_eq!(
-        github.default_branch("homes/company-acme").as_deref(),
-        Some("main")
+    assert_eq!(github.is_private("homes/company-acme"), Some(true));
+    // GitHub was asked to create it, set its default branch and make the
+    // company's GitHub administrator an administrator of it.
+    insta::assert_debug_snapshot!(
+        "company-created-github",
+        (
+            writes(&github),
+            github.collaborators("homes/company-acme"),
+            github.default_branch("homes/company-acme"),
+        )
     );
 
     // The computer holds the home as the checkout of that repository, ready
@@ -479,7 +471,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
         env.git(&remote, ["rev-parse", "main"])
     );
     assert!(acme_home.join("company.yaml").is_file());
-    assert_eq!(env.git(&acme_home, ["status", "--porcelain"]), "");
+    assert!(env.git(&acme_home, ["status", "--porcelain"]).is_empty());
     env.run(&env.path(""), ["config", "validate", "--company", "acme"])
         .success();
     let hooks = stdout(&env.run(&acme_home, ["hooks", "status"]).success());
@@ -533,8 +525,12 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     .unwrap_or(serde_yaml_ng::Value::Null);
     let mut named = Vec::new();
     values(&index, &mut named);
+    let repository = instrukt_core::config::company_repository(
+        &instrukt_core::ids::ProjectSlug::parse("acme").unwrap(),
+    )
+    .unwrap();
     assert!(
-        !named.iter().any(|value| value == "company-acme"),
+        !named.iter().any(|value| value == repository.as_str()),
         "{named:?}"
     );
 
