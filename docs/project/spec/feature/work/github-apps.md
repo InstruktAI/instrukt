@@ -226,9 +226,9 @@ to it, and they bind every caller, a session without a role included
 | Invariant | Rule | The refusal names |
 | --- | --- | --- |
 | Repository | `--head` is the full id of a commit present in the repository of the project the caller stands in. | The commit and the project. |
-| Reviewer | The reviewing session is the caller, a session the selected runtime adapter recognises, resolved as for an attributed commit (`project/instrukt/spec/feature/repository/attributed-commit`, Resolution). With `--reviewer` it is the named session (A handed-over approval). | That no session resolves. |
-| Request | Read from the runner (`project/instrukt/spec/feature/runner/pull-request-review`, One review per commit). While a request for exactly this project and commit is queued, selected or handed over, the review is that request's: only the session it was handed over to records it, and every other caller is refused, also while no session holds it yet. A commit with no such request is unrequested, and its verdict is a one-off review's whoever reviewed, a session whose request has ended included. | The request with its standing, and the session that holds it once it was handed over. |
-| Range | The pinned base is fixed by instrukt and the caller cannot narrow it. A request of the commit, live or ended, carries the pinned base the runner selected for it (`project/instrukt/spec/feature/runner/pull-request-review`, Review requests). For a commit that has had no request, work pins the head's merge base with the canonical branch, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate, and refuses a head that has none. A verdict whose pinned base does not lie on the canonical branch is recorded as not covering that branch. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. | The pinned base. |
+| Reviewer | The reviewing session is the caller, a session the selected runtime adapter recognises, resolved as for an attributed commit (`project/instrukt/spec/feature/repository/attributed-commit`). With `--reviewer` it is the named session (A handed-over approval). | That no session resolves. |
+| Request | Read from the runner (`project/instrukt/spec/feature/runner/pull-request-review`). While a request for exactly this project and commit is queued, selected or handed over, the review is that request's: only the session it was handed over to records it, and every other caller is refused, also while no session holds it yet. A commit with no such request is unrequested, and its verdict is a one-off review's whoever reviewed, a session whose request has ended included. | The request with its standing, and the session that holds it once it was handed over. |
+| Range | The pinned base is fixed by instrukt and the caller cannot narrow it. A request of the commit, live or ended, carries the pinned base the runner selected for it (`project/instrukt/spec/feature/runner/pull-request-review`). For a commit that has had no request, work pins the head's merge base with the canonical branch, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate, and refuses a head that has none. A verdict whose pinned base does not lie on the canonical branch is recorded as not covering that branch. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. | The pinned base. |
 | Independence | No commit after the pinned base up to the head names the reviewing session in its `Session:` trailer. | The commits that name the reviewing session. The door is a review by a session none of them names. |
 | Settlement | This computer holds no verdict of the commit, or the verdict is a revision: the commit's verdict stands here, the caller is the session that recorded the current version, and, where a review request for this commit reached that session, the turn the session has in progress when it offers the verdict was not opened by such a request. | The settled verdict and `instrukt review show`; for the session that recorded it, which of the answers below applied; for a verdict this computer handed off, the export and its door (Evidence when the serving computer changes). |
 | Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
@@ -237,8 +237,7 @@ A review request is answered in the turn it opened. A verdict the settling
 session offers in such a turn, for a commit that is already settled, answers
 that request a second time. Only a session that a request of the commit
 reached can be in such a turn, so work reads the commit's requests first
-(`project/instrukt/spec/feature/runner/pull-request-review`, One review per
-commit).
+(`project/instrukt/spec/feature/runner/pull-request-review`).
 
 | The commit's requests | The settling session's offer |
 | --- | --- |
@@ -288,8 +287,7 @@ canonical branch does not contain it, and only with the coverage finding it
 rests on. Until GitHub shows it as the commit's review status it stands only
 while that finding does: workflow derives the candidate's coverage again on
 each tick before anything of the approval is written
-(`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
-a candidate).
+(`project/instrukt/spec/feature/workflow/integration-gate`).
 
 | Workflow finds again | The derived approval GitHub does not show yet |
 | --- | --- |
@@ -346,8 +344,7 @@ approval is not entered owes its review like any other.
 Evidence is recorded before anything of it is published, and recording does
 not wait for GitHub. Publication is the tick's, on a computer the project is
 admitted on for automatic review
-(`project/instrukt/spec/feature/configuration/layered-configuration`, Automatic
-review enablement), whether or not that project's todos module is on. It
+(`project/instrukt/spec/feature/configuration/layered-configuration`), whether or not that project's todos module is on. It
 publishes the current verdict of each commit this computer holds evidence for:
 the current version of the head verdict that stands here, or its derived
 approval. An exemption publishes nothing, a verdict this computer handed off
@@ -430,8 +427,8 @@ workflow's finding names it.
 | Covering item | Reference |
 | --- | --- |
 | A head approved by a head verdict | The commit, the reviewing session and the digest of the approving version's report. |
-| A finalized commit approved in its todo's record | The todo, the build-review approval bound to that exact commit and its report's digest, and the todo's pull request when that approval was reflected there as a review (`project/instrukt/spec/feature/work/github-record`, Artifacts and stamps). |
-| A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`, Historical preparation-head stamps). No pull-request review exists for it and none is cited. |
+| A finalized commit approved in its todo's record | The todo, the build-review approval bound to that exact commit and its report's digest, and the todo's pull request when that approval was reflected there as a review (`project/instrukt/spec/feature/work/github-record`). |
+| A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`). No pull-request review exists for it and none is cited. |
 | An exempted commit | The commit, the exemption's basis and who declared it. |
 | A reproduced merge, documentation fold or revert | The commits it was reproduced from, named as reproduced. |
 
@@ -652,8 +649,7 @@ Work verifies each by requesting the credential with exactly those
 permissions. A missing installation or permission is an unmet finding naming
 the App, the repository, the missing permission and the configuration repair
 door. Verification writes no state. Where readiness is consulted belongs to
-`project/instrukt/spec/feature/configuration/layered-configuration` (Automatic
-review enablement). The credentials that observe CI and that reflect build
+`project/instrukt/spec/feature/configuration/layered-configuration`. The credentials that observe CI and that reflect build
 reviews are unchanged: a project that has not opted in needs none of these
 permissions.
 
@@ -765,8 +761,7 @@ But a later head of that pull request carries no status from that verdict
   opened is refused; the reviewing session records it in another turn. The
   answer rests on the input that opened the turn, so a request that a runtime
   steers into a running turn is not seen by it
-  (`project/instrukt/spec/feature/runner/pull-request-review`, One review per
-  commit).
+  (`project/instrukt/spec/feature/runner/pull-request-review`).
 - While the runtime cannot say which input opened the turn a revision is
   offered in, the revision is refused and the earlier version stays current.
   GitHub keeps showing that version and enforces by it: where it approved, a
@@ -776,8 +771,7 @@ But a later head of that pull request carries no status from that verdict
 - While a candidate's needs-work verdict is admitted and its failure status
   not yet published, GitHub still shows the earlier approving status and would
   accept the push; the candidate's failed result is what holds it back
-  (`project/instrukt/spec/feature/workflow/integration-gate`, Candidate and
-  verification).
+  (`project/instrukt/spec/feature/workflow/integration-gate`).
 - A verdict whose pinned base does not lie on the canonical branch covers
   nothing on the canonical branch.
 - Work verifies a reviewer's independence only against the sessions the
