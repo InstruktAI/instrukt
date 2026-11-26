@@ -484,7 +484,8 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let writes = command.can_change_the_record();
     let result = session.dispatch(command, ctx);
     if writes
-        && let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now())
+        && let Err(error) =
+            instrukt_runner::deliver_approval_attention(&ctx.home, Some(&work), ctx.clock.now())
     {
         tracing::warn!(event="approval_attention_pending",error=%error);
     }

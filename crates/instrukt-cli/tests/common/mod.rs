@@ -465,7 +465,8 @@ impl TestEnv {
     }
 
     /// A new git repository at `<test dir>/<name>` on branch `main`, with
-    /// no commits.
+    /// no commits. A developer's repository on this computer is a project T3
+    /// holds, so the fixture places its runtime project too.
     pub fn git_repo(&self, name: &str) -> Repo {
         let path = self.base().join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -474,7 +475,33 @@ impl TestEnv {
             vars: self.vars.clone(),
         };
         repo.git(["init", "--quiet", "--initial-branch=main"]);
+        self.place_runtime_project(&repo.path);
         repo
+    }
+
+    /// Places a live T3 project rooted exactly at `checkout`, as T3 holds
+    /// one for a folder a person added.
+    pub fn place_runtime_project(&self, checkout: &Path) {
+        t3_readiness::place_project(
+            &self.base(),
+            checkout,
+            &t3_readiness::default_project_id(checkout),
+        );
+    }
+
+    /// Places the runtime project of company home `name`, as `instrukt
+    /// install` leaves it for an onboarded company.
+    pub fn place_company_project(&self, name: &str) {
+        let home = instrukt_core::home::Home::at_user_home(self.home().into());
+        let company = home.company_dir(&instrukt_core::ids::ProjectSlug::parse(name).unwrap());
+        std::fs::create_dir_all(&company).unwrap();
+        self.place_runtime_project(&company);
+    }
+
+    /// Removes the T3 project rooted exactly at `checkout`, as `t3 project
+    /// remove` leaves it: deleted.
+    pub fn withdraw_runtime_project(&self, checkout: &Path) {
+        t3_readiness::withdraw_project(&self.base(), checkout);
     }
 
     /// A new bare repository at `<test dir>/<name>.git`, to push to and
@@ -503,6 +530,7 @@ impl TestEnv {
                 path.as_os_str(),
             ],
         );
+        self.place_runtime_project(&path);
         Repo {
             path,
             vars: self.vars.clone(),

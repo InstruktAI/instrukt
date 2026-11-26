@@ -146,6 +146,12 @@ adapter; an actor as JSON text, one of
   and its sidecars as found. The todo-existence lookup reads that way for
   every caller.
 
+
+- A process that has opened the database through SQLite, such as the runner,
+  reads it through SQLite from then on, also where a status or documentation
+  read takes the in-memory image elsewhere.
+
+
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
 
 Version 13 canonicalizes retained native assignments with an omitted dispatcher
@@ -1245,6 +1251,19 @@ Then the local change completes without waiting for the in-flight GitHub request
 And listing the work and reading an artifact complete without waiting for that request or for a local write that is still open
 And the reflected change and the concurrent local change both reach GitHub intact, with no conflict between them
 ```
+
+
+### UC-SD6: A process that holds the database open keeps it intact while it inspects it
+
+```gherkin
+Given an instrukt process holds the state database open, as the runner does
+When that process reads the database for inspection, as the runner's workers do
+Then another process still finds that process's lock on the database file in place
+And another instrukt command can write the database and exit
+And the holding process goes on reading and writing the database, seeing that command's write
+And the database passes its integrity check
+```
+
 
 ## Known caveats
 

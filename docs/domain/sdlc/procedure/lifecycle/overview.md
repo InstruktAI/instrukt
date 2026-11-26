@@ -147,6 +147,18 @@ build output there; remove none of it yourself
 (`general/policy/shared-machine-resources`). A worktree still in its rounds of
 building, reviewing and fixing keeps its output.
 
+An approval stamp (`--prd-approved`, `--task-approved`) records the human's
+decision as state. When the human approves in your own conversation, record it
+with `--by human --session` naming this conversation:
+- **Repository work (`--prd-approved`):** reclaim your claim with
+  `instrukt todo work <slug>` from `<slug>/work` (or keep it if still held) and
+  continue immediately — do not wait for the runner.
+- **Task (`--task-approved`):** `kind: task` has no `<slug>/work`; leave the
+  claim released for scheduled `task-runner` dispatch.
+
+Runner wake-up of an orchestrator serves approvals that arrive out of band
+(such as on GitHub) while the conversation is idle.
+
 ## Preconditions
 
 - `instrukt todo show <slug> [--json]` displays the factual ledger: artifacts,

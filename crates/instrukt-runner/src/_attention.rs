@@ -82,6 +82,7 @@ fn finish_approval(
 /// A synchronous work command attempts attention only after its work transaction closed.
 pub fn deliver_approval_attention(
     home: &instrukt_core::home::Home,
+    work: Option<&dyn crate::interfaces::SessionBindings>,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let runtime = instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?;
@@ -90,7 +91,7 @@ pub fn deliver_approval_attention(
     };
     let adapter = crate::runtime::adapter(runtime);
     approvals(&invocation, adapter.as_ref(), now)?;
-    inputs::pump_all(&invocation, adapter.as_ref(), now)?;
+    inputs::pump_all(&invocation, adapter.as_ref(), work, now)?;
     settle_approvals(&RunnerState::new(home))?;
     Ok(())
 }
