@@ -96,8 +96,11 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      blast-radius discovery, substrate readiness check, and
      `implementation-plan`, followed by independent `plan-reviewer`
      (`sdlc/procedure/lifecycle/prepare/review-plan`).
-  2. Optionally dispatch `architect` + `architecture-reviewer` if structural
-     boundaries or durable state change.
+  2. Where the work makes a structural decision, the plan carries its
+     architecture reasoning and `plan-reviewer` judges it
+     (`sdlc/policy/preparation-artifact-quality`, Structural decisions carry
+     architecture review). `architect` and `architecture-reviewer` are
+     dispatched only for a todo that carries an approved `prd`.
   3. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and
@@ -420,7 +423,7 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
              to update pending fills and `implementation-plan`
              (`--role-complete`), obtain independent `plan-reviewer` approval
              (`sdlc/procedure/lifecycle/prepare/review-plan`), and only after
-             plan approval dispatch `builder` (`work/build`, `--build-complete`)
+             plan approval dispatch `builder` (`sdlc/procedure/lifecycle/work/build`, `--build-complete`)
              for any implementation delta, followed by static `build-reviewer`
              and live verification (Step 4b).
            - Exceeding this todo's frozen scope, file a tracked prerequisite
