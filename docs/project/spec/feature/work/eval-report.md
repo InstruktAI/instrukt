@@ -105,8 +105,7 @@ Requests and answers travel through the runner's bounded fleet query
 answer. A computer answers over the cluster connection it already has, from
 its own work record and publication state, applying the requested range,
 whether or not history is switched on there; a named computer without a
-cluster connection of its own is named as a limitation of the report with that
-reason.
+cluster connection of its own does not answer.
 For each project it counts its outcomes per eval set and model across all of
 its stamps under that eval set, counting each todo, review and findings report
 once per eval set. Its answer holds only the project slugs, eval sets and
