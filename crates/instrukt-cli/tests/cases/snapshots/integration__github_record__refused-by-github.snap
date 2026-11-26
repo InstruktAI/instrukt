@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-expression: "redact(&format!(\"{recorded}---\\n{read}---\\n{shown}---\\n{next}---\\n{refused_again}---\\n{later}---\\n{settled}\"))"
+expression: "redact(&format!(\"{recorded}---\\n{read}---\\n{shown}---\\n{rewritten}---\\n{next}---\\n{refused_again}---\\n{later}---\\n{settled}\"))"
 ---
 wrote prd of nested-lists: <digest 1>
 reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
@@ -26,11 +26,14 @@ artifacts:
 stamps:
   none
 ---
+wrote prd of nested-lists: <digest 1>
+reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
+---
 wrote prd of nested-lists: <digest 3>
 reflection: reflected to GitHub
 ---
 wrote prd of nested-lists: <digest 4>
-reflection: pending: GitHub refused artifact `prd` version 4: Validation Failed (IssueArtifact.body: too_long)
+reflection: pending: GitHub refused artifact `prd` version 5: Validation Failed (IssueArtifact.body: too_long)
 ---
 wrote prd of nested-lists: <digest 5>
 reflection: reflected to GitHub
@@ -39,7 +42,7 @@ nested-lists · feature · active
 identity: <id 1>
 record status: held
 created: <time> by Test Developer
-revision: 6
+revision: 7
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: reflected to GitHub
@@ -49,7 +52,8 @@ hold: waiting (manual, by Test Developer, <time>)
 artifacts:
   input (1 version)
     <digest 2> by Test Developer at <time>
-  prd (4 versions)
+  prd (5 versions)
+    <digest 1> by Test Developer at <time>
     <digest 1> by Test Developer at <time>
     <digest 3> by Test Developer at <time>
     <digest 4> by Test Developer at <time>

@@ -90,6 +90,18 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     );
     assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
     let shown = project.ok(["show", "nested-lists"]);
+    // The refused content written again as the artifact's next version is
+    // still the refused content: nothing is sent, and the refusal still holds
+    // the todo's reflection back.
+    let rewritten = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/issues/1/artifacts")
+            .len(),
+        attempts,
+        "the refused content was sent again as a later version"
+    );
 
     // The door is the artifact's next version: once GitHub accepts it, the
     // refused version no longer holds the todo's reflection back.
@@ -139,7 +151,7 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     insta::assert_snapshot!(
         "refused-by-github",
         redact(&format!(
-            "{recorded}---\n{read}---\n{shown}---\n{next}---\n{refused_again}---\n{later}---\n{settled}"
+            "{recorded}---\n{read}---\n{shown}---\n{rewritten}---\n{next}---\n{refused_again}---\n{later}---\n{settled}"
         ))
     );
 }

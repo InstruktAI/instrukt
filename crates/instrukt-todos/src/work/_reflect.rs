@@ -391,12 +391,16 @@ fn send<T>(
     }
 }
 
-/// Whether `refusals` keeps a refusal of `target` for a request with
-/// `identity`.
+/// Whether `refusals` refused `identity` for `target`, or for any version of its artifact.
 fn refused_before(refusals: &[KeptRefusal], target: &RefusedTarget, identity: &str) -> bool {
-    refusals
-        .iter()
-        .any(|kept| &kept.target == target && kept.identity == identity)
+    use RefusedTarget::Artifact;
+    refusals.iter().any(|kept| {
+        kept.identity == identity
+            && match (&kept.target, target) {
+                (Artifact { name: refused, .. }, Artifact { name, .. }) => refused == name,
+                (refused, target) => refused == target,
+            }
+    })
 }
 
 /// The identity of a request: a digest of its method, path and body, and of
@@ -513,10 +517,8 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 name: artifact.name.clone(),
                 sequence: version.sequence,
             };
-            // What an artifact version sends is its content, whichever
-            // request carries it: a version refused as a new artifact is not
-            // sent again as an update of one.
-            let version_identity = version.digest.as_str().to_owned();
+            // An artifact version's identity is its content, whichever request carries it.
+            let identity = version.digest.as_str().to_owned();
             let sent = match artifact.address {
                 None => {
                     let path = format!("/issues/{number}/artifacts");
@@ -525,7 +527,6 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                         "name": artifact.name.as_str(),
                         "body": content,
                     });
-                    let identity = version_identity.clone();
                     match send(&mut item.reflection, target, identity, || {
                         gh.post(&path, &body)
                     })? {
@@ -539,7 +540,6 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 Some(address) => {
                     let path = format!("/issues/{number}/artifacts/{address}");
                     let body = json!({"body": content});
-                    let identity = version_identity.clone();
                     matches!(
                         send(&mut item.reflection, target, identity, || gh
                             .patch(&path, &body))?,
@@ -965,7 +965,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_same_request_to_the_same_target_is_skipped_as_refused() {
+    fn refused_content_is_skipped_for_its_target_and_later_versions_of_its_artifact() {
         let kept = [KeptRefusal {
             target: RefusedTarget::Artifact {
                 name: crate::evidence::ArtifactName::new("prd"),
@@ -976,7 +976,7 @@ mod tests {
         }];
         let target = RefusedTarget::Artifact {
             name: crate::evidence::ArtifactName::new("prd"),
-            sequence: 3,
+            sequence: 7,
         };
         assert!(refused_before(&kept, &target, "same"));
         assert!(!refused_before(&kept, &target, "changed"));
