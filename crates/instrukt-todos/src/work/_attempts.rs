@@ -1410,7 +1410,8 @@ struct DriverClaim<'a> {
 }
 
 impl DriverClaim<'_> {
-    /// The phase branch: the current or recorded driver's, else `<todo>/work`.
+    /// The phase branch: the current driver's, else the recorded driver's,
+    /// else the work branch derived from `todo`.
     fn branch(&self, todo: &TodoSlug) -> String {
         self.existing
             .or(self.recorded)
