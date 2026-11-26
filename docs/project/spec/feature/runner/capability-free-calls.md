@@ -74,9 +74,9 @@ service returns, the CLI is neither admitted nor refused meanwhile, the
 operator can see that it waits, and calls it would serve wait rather than
 being refused for want of an admitted CLI.
 
-A CLI that offers the model any tool in its call mode is refused even when
-confinement would contain that tool's effect, because the model has no tools
-during a call. A CLI is likewise refused when it has no non-interactive mode,
+Whether the model can use any tool is decided by that check, whatever takes
+the tool away: a single switch, switching off each of the CLI's features, deny
+rules or confinement. A CLI is refused when it has no non-interactive mode,
 when it is not signed in, or when any attempt succeeds. A refusal names what
 is missing. A CLI that is not installed is reported as absent.
 

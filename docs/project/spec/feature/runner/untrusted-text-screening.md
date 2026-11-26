@@ -10,7 +10,7 @@ delivered_by:
 Untrusted text is text written by people outside the project, such as the
 description of an outside contributor's pull request. Before such text reaches
 a tool-capable agent, screening judges whether it tries to manipulate the model
-that reads it. The text is cut into fragments of random length and shuffled,
+that reads it. The text is cut into shuffled fragments of 3 to 8 words,
 and independent classifiers judge the fragments through capability-free calls
 (`project/instrukt/spec/feature/runner/capability-free-calls`). A classifier
 never sees the text in its original order, and a manipulation that succeeds
@@ -30,7 +30,7 @@ model on its side has read.
 | Field | Meaning |
 | --- | --- |
 | Text | The complete untrusted text. |
-| Fragments | The complete text cut at random-length boundaries and shuffled, carrying no original position. Each classification cuts and shuffles independently. |
+| Fragments | The complete text cut into fragments of 3 to 8 words, of random length within that range, and shuffled, carrying no original position. |
 | Classification | One capability-free call that sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
 | Verdict | `benign` or `flagged`, with reasons from a bounded set. A classifier passes on no free text. |
 | Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, or `pending` while a model service is unavailable. A held outcome never carries the text. |
