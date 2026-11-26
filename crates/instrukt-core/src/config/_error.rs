@@ -150,6 +150,10 @@ pub enum ConfigError {
         "{company} and {legacy} both hold a company's settings; keep the one that holds them and remove the other, then run instrukt again"
     )]
     BothCompanyDocuments { company: PathBuf, legacy: PathBuf },
+    #[error(
+        "{path} is a symbolic link, and a company home's ignore lines are never read or written through one; replace it in the company's repository with the file itself, then run the command again"
+    )]
+    LinkedIgnoreFile { path: PathBuf },
     #[error("cannot create the company home {path}: {source}")]
     CreateHome {
         path: PathBuf,

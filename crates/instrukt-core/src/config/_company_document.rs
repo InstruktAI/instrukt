@@ -151,9 +151,20 @@ pub fn write_company_settings(dir: &Path, name: &ProjectSlug) -> Result<bool, Co
 }
 
 /// Appends each line of [`COMPANY_IGNORED`] the `.gitignore` of the company
-/// home at `dir` lacks, keeping every other line as it is.
+/// home at `dir` lacks, keeping every other line as it is. A `.gitignore`
+/// that is a symbolic link is refused before anything is read or written:
+/// the file may come from a cloned repository, and nothing outside the home
+/// is read through it.
 pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
     let path = dir.join(".gitignore");
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(ConfigError::LinkedIgnoreFile { path });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => return Err(ConfigError::Read { path, source }),
+    }
     let current = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -322,6 +333,34 @@ mod tests {
             lock_path(&home, &dir.join(COMPANY_DOCUMENT)),
             lock_path(&home, &dir.join(CONFIG_FILE_NAME))
         );
+    }
+
+    #[test]
+    fn an_ignore_file_that_is_a_link_is_refused_and_nothing_is_read_through_it() {
+        let outside = tempfile::tempdir().unwrap();
+        let secret = outside.path().join("secrets.env");
+        let secret_bytes = "GITHUB_TOKEN=machine-secret-4f1e\n";
+        std::fs::write(&secret, secret_bytes).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(&secret, dir.path().join(".gitignore")).unwrap();
+        let error = write_company_settings(dir.path(), &acme()).unwrap_err();
+        assert!(matches!(
+            error,
+            ConfigError::LinkedIgnoreFile { ref path } if path == &dir.path().join(".gitignore")
+        ));
+        assert_eq!(std::fs::read_to_string(&secret).unwrap(), secret_bytes);
+        assert!(
+            std::fs::symlink_metadata(dir.path().join(".gitignore"))
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        // Nothing was written into the tree: it holds the link alone.
+        let held: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(held, [std::ffi::OsString::from(".gitignore")]);
     }
 
     #[test]
