@@ -59,6 +59,48 @@ pub(crate) struct ReviewPass<'a> {
 /// The remote the project's checkout is fetched from.
 const REMOTE: &str = "origin";
 
+/// Automatic review's part of the GitHub pass, on a project this pass
+/// admitted: its pull requests are observed with the observation
+/// credential readiness issued, and publication issues its own credential
+/// on `clock`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
+pub(crate) fn pass(
+    cx: &crate::runner::RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &crate::runner::Considered,
+    candidate: Option<&CommitSha>,
+    token: &str,
+    api_url: &str,
+    repository: &str,
+    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let Some(port) = &cx.wiring.review else {
+        return;
+    };
+    let pass = ReviewPass {
+        home: cx.home,
+        candidate,
+        state,
+        log,
+        project,
+        api_url,
+        repository,
+        token,
+        port: port.as_ref(),
+        now,
+        clock,
+    };
+    if let Err(error) = observe(&pass) {
+        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
+    }
+}
+
 /// Observes the project's open pull requests and asks for the reviews that
 /// are owed (`pull-request-review`, Which heads are reviewed, Review
 /// requests, One review per commit).

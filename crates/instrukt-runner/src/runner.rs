@@ -993,18 +993,20 @@ fn github_pass(
         now,
     );
     match readiness {
-        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => review_pass(
-            cx,
-            state,
-            log,
-            considered,
-            observed.candidate.as_ref(),
-            observation.token(),
-            &api_url,
-            &repository,
-            clock,
-            now,
-        ),
+        Some(instrukt_core::interfaces::ReviewReadiness::Met { observation }) => {
+            crate::review::pass(
+                cx,
+                state,
+                log,
+                considered,
+                observed.candidate.as_ref(),
+                observation.token(),
+                &api_url,
+                &repository,
+                clock,
+                now,
+            )
+        }
         Some(instrukt_core::interfaces::ReviewReadiness::Unmet(finding)) => {
             tracing::warn!(event = "review_readiness_unmet", project = %project.slug, finding = %finding);
         }
@@ -1177,48 +1179,6 @@ fn ci_read(
             tracing::debug!(event = "ci_poll_deferred", project = %project.slug, until = %until);
         }
         Err(err) => tracing::warn!(event = "ci_unreadable", project = %project.slug, error = %err),
-    }
-}
-
-/// Automatic review's part of the GitHub pass, on a project this pass
-/// admitted: its pull requests are observed with the observation
-/// credential readiness issued, and publication issues its own credential
-/// on `clock`.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one pass over the project's resolved GitHub source"
-)]
-fn review_pass(
-    cx: &RunnerContext<'_>,
-    state: &RunnerState,
-    log: &DbEventLog,
-    considered: &Considered,
-    candidate: Option<&CommitSha>,
-    token: &str,
-    api_url: &str,
-    repository: &str,
-    clock: &dyn Fn() -> Timestamp,
-    now: Timestamp,
-) {
-    let project = &considered.project;
-    let Some(port) = &cx.wiring.review else {
-        return;
-    };
-    let pass = crate::review::ReviewPass {
-        home: cx.home,
-        candidate,
-        state,
-        log,
-        project,
-        api_url,
-        repository,
-        token,
-        port: port.as_ref(),
-        now,
-        clock,
-    };
-    if let Err(error) = crate::review::observe(&pass) {
-        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
     }
 }
 
