@@ -7,6 +7,7 @@ visibility: 'public'
 
 ## Rules
 
+<!-- planned-change:compressed-global-entrypoints -->
 - **Read your role's commands before work.** Before doing anything, run
   `instrukt --help` and read the commands your role has. An action that help
   does not offer you goes back to the dispatcher in your output, which can
@@ -41,6 +42,48 @@ visibility: 'public'
   follow-up flow.
 - **Third-party docs: consolidated first.** Run `instrukt docs index --third-party`
   before web search or Context7; those are fallbacks for coverage gaps.
+<!-- change:compressed-global-entrypoints -->
+- **Read your role's commands before work.** Before doing anything, run
+  `instrukt --help` and read the commands your role has. An action that help
+  does not offer you goes back to the dispatcher in your output, which can
+  change the assignment.
+- **Read a domain's rendering once, at entry.** When a task enters a knowledge
+  domain, run `instrukt docs get --domain <domain>` and read its output in
+  full, unless that domain's contracts are already loaded this session. A task
+  enters `sdlc` when it writes or changes code or tests, and then also reads
+  the core and testing policies of each language whose code it touches
+  (`sdlc/policy/<language>/core` and `sdlc/policy/<language>/testing` where
+  the language has them). A task that makes an architectural or structural
+  decision also reads `sdlc/principle/design-fundamentals` with
+  `instrukt docs get <id>` before deciding. The rendering is the
+  domain's mandatory contract in one pass: its `expanded` snippets with their
+  closure, its `listed` snippets as one line each, and its triggered
+  procedures. Your global agent file names each published domain with that
+  command; a snippet that always needs a domain names it in its
+  `## Required reads` by its bare name.
+- **`instrukt docs` is the entry point for discovery, and always filtered.** Use
+  `--domain`, `--areas` and the other filters; an unfiltered index floods the
+  context. Retrieve before any task where missing context could alter
+  decisions.
+- **Three phases:** filtered index, then `instrukt docs get <id>` for the selected
+  ids, then the ids listed under `# Required reads (not loaded)` in that
+  response. Dependencies are never expanded inline by default; `--closure`, on
+  any snippet, takes them in the same pass.
+- **A listing line leads to the command to run**, on the line itself or once
+  in the heading over its run of lines. A triggered procedure's line leads to
+  `instrukt docs get <id> --closure`, which delivers the procedure with its
+  transitive required reads in one pass; a scheduled job's startup
+  instruction does the same for the procedure its declaration names. A listed
+  snippet's line leads to `instrukt docs get <id>`, which keeps the explicit
+  follow-up flow.
+- **A compressed section holds its source's rules, not its prose.** Where
+  the legend of your instruction file says a section is compressed, apply its
+  rules as written; when applying one turns on a case it does not name, on
+  its exact wording or on its reasons, read the source in full with
+  `instrukt docs get <id>` first.
+- **Third-party docs: consolidated first.** Run `instrukt docs index --third-party`
+  before web search or Context7; those are fallbacks for coverage gaps.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 ## Rationale
 
@@ -52,6 +95,12 @@ procedure. The rendering, not the files behind it, is what an agent reads: it
 leaves undelivered content out and resolves every reference, so the agent
 grounds in the current contract. Consolidated third-party docs are curated and project-aware; live web
 results are noisy and bypass shared knowledge.
+
+<!-- planned:compressed-global-entrypoints -->
+A compressed section keeps every rule of its source with one clause of
+reason and leaves the rest of the reasoning in the source, which stays the
+authority for a case the rules do not settle.
+<!-- /planned:compressed-global-entrypoints -->
 
 ## Scope
 

@@ -72,6 +72,7 @@ the position's rendering carries; depth below that comes from required reads.
 | `docs/domain/<x>/index.yaml` | `description`, `expanded`, `listed` |
 | `docs/project/index.yaml`    | `expanded`, `listed`                |
 
+<!-- planned-change:compressed-global-entrypoints -->
 - `expanded` — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
 - `listed` — snippet ids rendered as one line each: id, description and the
@@ -85,6 +86,22 @@ the position's rendering carries; depth below that comes from required reads.
   how always-on content from several domains is chosen in one place. A
   domain's index and the project's index name only snippets of their own
   position.
+<!-- change:compressed-global-entrypoints -->
+- `expanded` — snippet ids rendered in full, each with its closure: its
+  transitive required reads, each once.
+- `listed` — snippet ids rendered as one line each: id and description,
+  leading to the command that gets it, on the line or once in the heading
+  over its run of lines.
+- `description` — the domain's one line in every global agent file, which
+  names `instrukt docs get --domain <x>`.
+- `agents` — a map from the name of an agent runtime instrukt deploys to, to
+  snippet ids. Those snippets are ordinary `policy` snippets, appended to that
+  one runtime's global file only.
+- `general`'s `expanded` and `listed` may name ids from any domain, which is
+  how always-on content from several domains is chosen in one place. A
+  domain's index and the project's index name only snippets of their own
+  position.
+<!-- /planned-change:compressed-global-entrypoints -->
 
 `instrukt docs validate`, and the sync that publishes the position, report as
 findings a key the position does not allow (`agents` outside
@@ -263,6 +280,23 @@ It never decides who may read a snippet (`general/policy/artifact-scope`).
 - `docs/project/adr/{NNNN}-{kebab-case-title}.md` — an `adr` snippet (type derived from the `adr/` path). Architectural decision records. Capture what was chosen and why, so specs/procedures/principles can describe the current state without becoming history logs. `date` and `number` are required additional frontmatter fields. ADRs sit at top-level under `docs/project/` (peer to `spec/`, `design/`, `policy/`, `procedure/`, `concept/`) — they are reasoning records, not design exploration, and do not belong under `design/`. An `adr` snippet carries no `delivered_by`, no `supersedes`, and no companion file — ADRs sit outside the pending/delivery machinery and do not cross-reference each other via frontmatter. The ADR body references earlier ADRs only (a backward in-prose reference); the one forward link is the optional `## Status` section's supersession pointer (`Superseded by ADR-NNNN` / `Superseded in part by ADR-NNNN` / `Deprecated`), added to an existing ADR when a later one supersedes it. `## Status` is the only part of an ADR that may change after authoring; the body is immutable.
 
 - **In-body marker grammar.** The `planned`, `planned-change`, and `change` markers are **whole-line**: each occupies its own line, with only whitespace before its opening `<!--` and after its closing `-->`. Markers **never nest** — an in-body block holds only plain content between its own markers, never another `planned`/`planned-change` block, and two carriers never overlap. Marker validation rejects inline (mid-prose) and nested markers as malformed, so every accepted marker is one the delivery fold can resolve.
+
+<!-- planned:compressed-global-entrypoints -->
+`docs/_compressed/` is no position. It holds the repository's compressed
+units: one for each source an entrypoint rendering holds in full, at the
+source's path relative to `docs/` (`docs/_compressed/general/<taxonomy>/<rest>.md`,
+`docs/_compressed/domain/<x>/…`, `docs/_compressed/project/…`, and a company
+document's own path below it). A unit's frontmatter carries exactly two
+keys: `source_sha256`, the digest `instrukt docs units` names for its source,
+and `model`, the model that wrote it. Its body is written in the
+compressed-unit notation (`general/spec/agent-shorthand`). Validation skips
+the folder, as it skips every folder whose name begins with an underscore,
+and no index names a unit; a folder named `_compressed` inside a position is
+refused at sync. Write and renew units under
+`general/procedure/compressed-unit-authoring`; their currency and structural
+checks are publication's
+(`project/instrukt/spec/feature/publication/compressed-units`).
+<!-- /planned:compressed-global-entrypoints -->
 
 The default index view lists the published snippets and the project snippets of the project the caller stands in; a reader reaches another project's by naming that project or a snippet's `project/<slug>/` identity.
 

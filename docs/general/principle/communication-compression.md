@@ -31,6 +31,10 @@ Compression is also fragile. The receiver must reliably reconstruct the intended
 - **Compression yields to observability and clarity.** If a compressed exchange starts producing correction loops, or a human asks "what's happening here?", expand the register immediately and stay expanded.
 - **Brevity is not emptiness.** Acknowledgment-only output, echo, and pure narration spend context without moving the work, regardless of register. Cut the noise, but write the substance in prose the human can follow.
 
+<!-- planned:compressed-global-entrypoints -->
+A compressed unit is no exchange and needs no opt-in. It is the dense counterpart of one prose source, held in that source's place by the instruction files every agent starts with, so that every runtime receives the whole selection within its instruction-size limit. It spends no observability the human did not agree to spend: the source stays prose and stays the authority, each unit stands under its source's name, its notation is fixed and explained once in every file that holds one (`general/spec/agent-shorthand`), and the full prose of every source is one read away, with an uncompressed copy of each global file kept for people.
+<!-- /planned:compressed-global-entrypoints -->
+
 ## Tensions
 
 - **Transparency vs. economy.** Every token spent on readability is a token not spent on work. The trade leans toward transparency by default; only the human's explicit signal flips it.
