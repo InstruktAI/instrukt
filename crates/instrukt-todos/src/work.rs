@@ -20,6 +20,7 @@ mod _apps;
 mod _assignment;
 mod _attempts;
 mod _board;
+mod _company_repos;
 mod _diff;
 mod _envelope;
 mod _error;

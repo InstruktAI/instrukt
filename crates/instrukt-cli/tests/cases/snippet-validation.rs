@@ -658,9 +658,23 @@ fn an_operator_validating_a_companys_repository_is_told_nothing_about_its_index(
     // what it is would fail to read it.
     const NOT_TEXT: &[u8] = &[0xff, 0xfe, 0x00, 0x9f];
     let env = TestEnv::new();
+    // A clone of a generated company repository: its committed project layer
+    // declares it a company's, and its documents are the company's own.
     let clone = env.git_repo("acme-company");
-    std::fs::create_dir_all(clone.path().join("docs")).unwrap();
+    clone
+        .write(
+            "instrukt.yaml",
+            &format!(
+                "schema_version: {}\nproject: company-acme\ncompany_repository: true\n",
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
+            ),
+        )
+        .write(
+            "docs/about.md",
+            "# About Acme\n\nAcme builds bicycles to order.\n",
+        );
     std::fs::write(clone.path().join("docs/index.yaml"), NOT_TEXT).unwrap();
+    clone.commit("the company's repository");
     let company = validate(&env, &clone, &[]);
     assert!(company.success, "{}{}", company.out, company.err);
     insta::assert_snapshot!("company_index_left_alone", company.out);

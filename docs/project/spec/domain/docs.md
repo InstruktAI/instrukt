@@ -214,6 +214,16 @@ recorded by publication.
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
 
+A company repository's `docs/` folder is the company's knowledge, not
+documentation positions. Validation asks publication whether the repository
+it validates is a company's (`project/instrukt/spec/domain/publication`);
+in one, it reads no file under `docs/` as a snippet, a position index or a
+third-party doc, places none of them and reports no finding or notice on
+them. The company's index and documents are judged by publication's company
+rendering (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+In every other repository a `docs/index.yaml` stays a misplaced index, as
+`project/instrukt/spec/feature/docs/position-index` states.
+
 Nor does docs own compressed units: `docs/_compressed/`, the units in it,
 their currency and their structural rules are publication's
 (`project/instrukt/spec/domain/publication`). That folder lies outside

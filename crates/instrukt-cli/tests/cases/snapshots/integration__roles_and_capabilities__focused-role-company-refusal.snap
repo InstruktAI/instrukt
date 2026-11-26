@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
+expression: "String::from_utf8_lossy(&company.get_output().stderr)"
+---
+instrukt: role `build-reviewer` (focused) cannot perform repository-write on init --company with its ungranted scope; return the required action to the dispatcher in your own output or assigned artifact

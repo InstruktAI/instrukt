@@ -175,7 +175,7 @@ fn target_workspace(
     let Some((branch, path)) = found else {
         let approved: Option<String> = state.conn().query_row(
             "SELECT COALESCE(
-                (SELECT delivery_commit FROM todos WHERE project=?1 AND slug=?2 AND delivery_commit IS NOT NULL),
+                (SELECT delivered_commit FROM todos WHERE project=?1 AND slug=?2 AND delivered_commit IS NOT NULL),
                 (SELECT json_extract(s.evidence,'$.head') FROM stamps s JOIN todos t ON t.id=s.todo_id WHERE t.project=?1 AND t.slug=?2 AND s.fact='preparation_head_reviewed' AND json_extract(s.evidence,'$.verdict')='approve' ORDER BY s.sequence DESC LIMIT 1)
             )",
             params![project.as_str(), target.as_str()],

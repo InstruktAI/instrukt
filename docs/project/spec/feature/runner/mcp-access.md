@@ -265,7 +265,7 @@ running an external IdP (such as Keycloak or Okta):
   in the company home's `secrets.env` under a `${NAME}` reference (never in the
   repository, state database, or cluster Redis), records a stable 128-bit
   `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
-  the company home's `instrukt.yaml`.
+  the company home's `company.yaml`.
 - Cluster Redis holds derived public issuer metadata rebuilt idempotently from
   authoritative `company_issuers` + `ingress.url` without rotating keys on
   ingress receiver startup, when `ingress.url` changes, or via

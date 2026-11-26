@@ -1270,18 +1270,18 @@ pub(super) fn resolve_launch(
                         "; native caught project-default escalation uses managed ceiling",
                     );
                 }
-                let instance = &request
+                let selection = request
                     .selection
                     .as_ref()
-                    .ok_or_else(|| launch_error("missing model selection"))?
-                    .instance;
+                    .ok_or_else(|| launch_error("missing model selection"))?;
                 let providers = config["providers"]
                     .as_array()
                     .ok_or_else(|| launch_error("missing providers"))?;
                 let provider = providers
                     .iter()
-                    .find(|p| p["instanceId"].as_str() == Some(instance.as_str()))
+                    .find(|p| p["instanceId"].as_str() == Some(selection.instance.as_str()))
                     .ok_or_else(|| launch_error("selected native provider instance missing"))?;
+                super::_t3_options::admit(provider, selection)?;
                 if let Some(value) = provider.get("supportedRuntimeModes") {
                     let supported: Vec<LaunchRuntimeMode> =
                         serde_json::from_value(value.clone())

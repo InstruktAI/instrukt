@@ -15,9 +15,13 @@ use crate::ids::ProjectSlug;
 pub enum RootDocument {
     /// No root `instrukt.yaml`.
     Absent,
-    /// A project layer, with the slug it declares; `None` when it declares
-    /// none.
-    ProjectLayer(Option<ProjectSlug>),
+    /// A project layer, with the slug it declares (`None` when it declares
+    /// none) and whether it declares the repository a company's
+    /// (`company_repository: true`).
+    ProjectLayer {
+        slug: Option<ProjectSlug>,
+        company_repository: bool,
+    },
     /// A company's settings document, naming the company.
     CompanySettings(ProjectSlug),
     /// A document that cannot be read: no YAML mapping, or a name that is
@@ -27,7 +31,8 @@ pub enum RootDocument {
 
 /// Classifies the root document whose bytes are `bytes` (`None` when the
 /// root holds none): a mapping declaring `company` is a company's settings
-/// document, any other mapping the project layer.
+/// document, any other mapping the project layer, which declares the
+/// repository a company's with `company_repository: true`.
 pub fn classify_root(bytes: Option<&[u8]>) -> RootDocument {
     let Some(bytes) = bytes else {
         return RootDocument::Absent;
@@ -48,11 +53,21 @@ pub fn classify_root(bytes: Option<&[u8]>) -> RootDocument {
             Some(_) => Err(format!("its `{key}` is not a name")),
         }
     };
+    let company_repository = || -> Result<bool, String> {
+        match map.get("company_repository") {
+            None | Some(Value::Null) => Ok(false),
+            Some(Value::Bool(declared)) => Ok(*declared),
+            Some(_) => Err("its `company_repository` is not a boolean".to_owned()),
+        }
+    };
     match name("company") {
         Ok(Some(company)) => RootDocument::CompanySettings(company),
-        Ok(None) => match name("project") {
-            Ok(project) => RootDocument::ProjectLayer(project),
-            Err(reason) => RootDocument::Unreadable(reason),
+        Ok(None) => match (name("project"), company_repository()) {
+            (Ok(slug), Ok(company_repository)) => RootDocument::ProjectLayer {
+                slug,
+                company_repository,
+            },
+            (Err(reason), _) | (_, Err(reason)) => RootDocument::Unreadable(reason),
         },
         Err(reason) => RootDocument::Unreadable(reason),
     }
@@ -74,7 +89,52 @@ mod tests {
     fn any_other_mapping_is_the_project_layer() {
         assert_eq!(
             classify_root(Some(b"schema_version: 6\nproject: demo\n")),
-            RootDocument::ProjectLayer(Some(ProjectSlug::parse("demo").unwrap()))
+            RootDocument::ProjectLayer {
+                slug: Some(ProjectSlug::parse("demo").unwrap()),
+                company_repository: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_project_layer_declaring_company_repository_is_a_companys_repository() {
+        assert_eq!(
+            classify_root(Some(
+                b"schema_version: 6\nproject: company-acme\ncompany_repository: true\n"
+            )),
+            RootDocument::ProjectLayer {
+                slug: Some(ProjectSlug::parse("company-acme").unwrap()),
+                company_repository: true,
+            }
+        );
+    }
+
+    #[test]
+    fn company_repository_false_is_a_project() {
+        assert_eq!(
+            classify_root(Some(b"project: demo\ncompany_repository: false\n")),
+            RootDocument::ProjectLayer {
+                slug: Some(ProjectSlug::parse("demo").unwrap()),
+                company_repository: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_company_repository_that_is_no_boolean_is_unreadable() {
+        let RootDocument::Unreadable(reason) =
+            classify_root(Some(b"project: demo\ncompany_repository: \"yes\"\n"))
+        else {
+            panic!("a non-boolean company_repository must be unreadable");
+        };
+        insta::assert_snapshot!("company_repository_not_a_boolean", reason);
+    }
+
+    #[test]
+    fn a_document_declaring_company_stays_a_companys_settings_whatever_else_it_declares() {
+        assert_eq!(
+            classify_root(Some(b"company: acme\ncompany_repository: false\n")),
+            RootDocument::CompanySettings(ProjectSlug::parse("acme").unwrap())
         );
     }
 

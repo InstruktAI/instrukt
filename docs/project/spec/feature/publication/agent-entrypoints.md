@@ -203,12 +203,12 @@ A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
 section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
 commit naming each stale entrypoint; the repair is `instrukt docs render` and
-a commit, or a commit through the hook. In a company's repository, the
-workflow that publishes the company's skill on main also writes the
-repository's `AGENTS.md`, with the shared workflows repository's own renderer,
-and commits to main only when what it rendered differs from what main holds;
-that workflow and its renderer belong to the shared workflows repository
-(`project/instrukt/policy/shared-workflows`).
+a commit, or a commit through the hook. In a company's repository that
+carries the shared workflows repository's publishing workflow, that workflow
+also writes the repository's `AGENTS.md` on main, with the shared workflows
+repository's own renderer, and commits to main only when what it rendered
+differs from what main holds; that workflow and its renderer belong to the
+shared workflows repository (`project/instrukt/policy/shared-workflows`).
 
 ### Company home entrypoint
 
@@ -231,23 +231,29 @@ the home and leaves any other there as it is.
 
 - **What makes a repository a company home.** The rendering mode comes from
   what the working tree's root holds, tracked or not:
+  - a root `instrukt.yaml` that is a project layer declaring
+    `company_repository`: company rendering — the company's home, a clone of
+    the company's repository, or its CI
+    (`project/instrukt/spec/feature/configuration/company-homes`, The home);
   - a root `instrukt.yaml` that declares `company` is a company's settings
-    document: company rendering — the company's home, where that file is
-    present and ignored;
+    document not yet converted to `company.yaml`: company rendering — the
+    company's home, where that file is present and ignored;
   - any other root `instrukt.yaml` is the project layer: project rendering,
     from the moment `instrukt init` writes it
-    (`project/instrukt/spec/feature/repository/project-initialization`);
+    (`project/instrukt/spec/feature/repository/project-initialization`),
+    whatever the repository's `docs/` folder holds;
   - no root `instrukt.yaml` and a `docs/index.yaml`: company rendering — a
-    clone of the company's repository, or its CI.
+    clone of a company's repository that commits no project layer, its CI, or
+    a home whose settings are in `company.yaml`.
 
-  A project never stands without its layer: initialization writes the layer
-  and the project's index together, and the layer is committed with the
-  project. A company's home and a clone of its repository therefore render
-  the same bytes. A root `instrukt.yaml` that cannot be read is a finding
-  naming it, handled as every finding is: the mode is never guessed from a
-  file that cannot be read (`sdlc/principle/design-fundamentals`). A company's
-  settings document tracked by mistake changes no rendering; configuration
-  validation reports the tracked file
+  The declaration and the index are committed with the company's
+  repository, so a company's home and a clone of its repository render the
+  same bytes, and a project's `docs/index.yaml` never makes it a company's. A
+  root `instrukt.yaml` that cannot be read is a finding naming it,
+  handled as every finding is: the mode is never guessed from a file that
+  cannot be read (`sdlc/principle/design-fundamentals`). A company's settings
+  document tracked by mistake changes no rendering; configuration validation
+  reports the tracked file
   (`project/instrukt/spec/feature/configuration/company-homes`).
 - **The company index.** `docs/index.yaml` holds `expanded` and `listed` and
   no other key; each is a list. Each entry names a company document by its
@@ -345,10 +351,11 @@ the home and leaves any other there as it is.
   in the home or in a clone of the repository. The block order above and the
   same bytes in a home and in a clone hold for instrukt's rendering, and
   `instrukt docs render --check` compares the working file with that
-  rendering. The company repository's workflow on main commits an `AGENTS.md`
-  as well, rendered by the shared workflows repository's publisher with its
-  own renderer; what that file holds, and what that publisher reads, is that
-  repository's contract (`project/instrukt/policy/shared-workflows`). It
+  rendering. A company repository that carries the shared workflows
+  repository's publishing workflow has an `AGENTS.md` committed on main by it
+  as well, rendered by that publisher with its own renderer; what that file
+  holds, and what that publisher reads, is that repository's contract
+  (`project/instrukt/policy/shared-workflows`). It
   opens with that publisher's own first line and holds its blocks in that
   publisher's own order, so it is not instrukt's rendering: the generated
   line, the block order, the company passage and the removal of a rendering
@@ -735,11 +742,11 @@ And no agent runtime loads it
 - A company home's knowledge is the documents its `docs/index.yaml` selects
   and the documents their required reads reach. Documentation positions
   inside the home are not rendered or published.
-- The company index's editor schema is generated with the others, but
-  nothing writes `.instrukt/schemas/` in a company home and its
-  `docs/index.yaml` carries no modeline
+- The company index's editor schema is generated with the others and written
+  wherever they are, a company repository's `.instrukt/schemas/` among them,
+  but a company's `docs/index.yaml` carries no modeline
   (`project/instrukt/spec/feature/publication/editor-schemas`): an editor
-  there is pointed at the schema by hand.
+  there is pointed at that schema by hand.
 - No entrypoint is rendered from an `AGENTS.master.md`. A project whose
   purpose is still in a master commits a root `AGENTS.md` without it at its
   next commit through the hook, until the purpose is a snippet its index

@@ -7,6 +7,7 @@ mod _t3_diagnostics;
 mod _t3_fingerprint;
 pub(crate) mod _t3_home;
 mod _t3_notifications;
+mod _t3_options;
 mod _t3_readiness;
 pub mod conversations;
 

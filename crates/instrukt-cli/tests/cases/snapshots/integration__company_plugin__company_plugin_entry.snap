@@ -1,9 +1,14 @@
 ---
 source: crates/instrukt-cli/tests/cases/company-plugin.rs
-expression: repo.read(MANIFEST)
+expression: "serde_json::to_string_pretty(&plugins[1]).unwrap()"
 ---
 {
   "name": "acme",
+  "source": "./",
+  "strict": false,
+  "skills": [
+    "./skills/acme"
+  ],
   "version": "0.1.0",
   "description": "The knowledge of Acme Bicycles, as the company keeps it in its own repository.",
   "author": {

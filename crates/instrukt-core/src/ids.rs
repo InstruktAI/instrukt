@@ -21,7 +21,7 @@ pub struct IdError {
 }
 
 macro_rules! identifier {
-    ($(#[$meta:meta])* $name:ident, $kind:literal, $check:path, $rule:literal) => {
+    ($(#[$meta:meta])* $name:ident, $kind:literal, $check:path, $rule:expr) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name(String);
@@ -81,6 +81,23 @@ identifier!(
     "project slug",
     is_slug,
     "lowercase letters, digits, `.`, `_` and `-`, starting with a letter or digit"
+);
+
+identifier!(
+    /// The login of a GitHub organisation: the owner of company
+    /// repositories.
+    GitHubOrganisation,
+    "GitHub organisation",
+    is_github_login,
+    GITHUB_LOGIN_RULE
+);
+
+identifier!(
+    /// The login of a person's GitHub account.
+    GitHubLogin,
+    "GitHub login",
+    is_github_login,
+    GITHUB_LOGIN_RULE
 );
 
 identifier!(
@@ -292,6 +309,17 @@ impl SnippetId {
         }
         DomainName::parse(self.0.split('/').next()?).ok()
     }
+}
+
+/// The shape of a GitHub account's login, an organisation's or a person's.
+const GITHUB_LOGIN_RULE: &str = "ASCII letters, digits and `-`, not empty";
+
+/// Whether `value` has the shape [`GITHUB_LOGIN_RULE`] states.
+fn is_github_login(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 fn is_slug(value: &str) -> bool {

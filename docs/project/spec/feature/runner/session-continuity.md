@@ -304,7 +304,11 @@ A released or ineligible assignment receives no successor.
 
 The adapter calls authenticated `orchestration.launchThread` over the existing
 WebSocket transport with a fixed `commandId`, `threadId`, `projectId`, supplied
-title (`generateTitle:false`), explicit model/modes and initial message. Scoped
+title (`generateTitle:false`), explicit model/modes and initial message. The
+model selection carries the resolved provider instance and model and, as
+`options`, the selection's effort and extra settings in T3's native option form
+(a list of option `id` and `value`), translated as for native delegation; a
+selection without effort or settings sends none. Scoped
 short-lived tokens are revoked after use. T3 0.1.8 stamps WebSocket launches and
 sends `createdBy:"user"`; that native stamp is accepted.
 
@@ -502,8 +506,17 @@ and expiry. Launch-error text supplies no quota evidence or no-start proof.
 The selected adapter supplies the selection-realization report: generic starts,
 standing assignments and generations carry it without declaring native limits.
 Configuration retains neutral effort and extra settings; the T3 boundary maps
-effort to its native option ids for native delegation. Host CLI starts pass
-instance/model and report their inability to express requested effort/options.
+effort to its native option ids for native launch and native delegation alike.
+Before a new launch the adapter checks the native options against the option
+descriptors `server.getConfig` reports for the selected model, by T3's own
+rules for delegated tasks: an option the model does not offer, a value outside
+a choice's ids, a non-boolean for a boolean option, or any value that is
+neither text nor boolean refuses the start before creation, naming the
+profile, model and each rejected option; a start never launches with its
+options dropped. A model T3 reports no descriptors for is launched with its
+options unchecked. A retry replays its captured selection unchecked. Host CLI
+starts pass instance/model and report their inability to express requested
+effort/options.
 
 An unstructured launch failure retains its key and selected inputs for recovery.
 Only proven pre-creation rejection or explicit no-start resolution permits chain
@@ -534,7 +547,7 @@ instruction prose is a separate configuration surface.
 
 | Operation | Native translation and evidence |
 | --- | --- |
-| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/modes, title and opening message. Native acceptance and execution remain separate. |
+| Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/options/modes, title and opening message. Native acceptance and execution remain separate. |
 | Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
@@ -952,11 +965,11 @@ And no failed start is reported for the pickup
   all data. Settle it with the old version before upgrade.
 - T3's list JSON carries no worktree path. `show` decoder fields require verified
   runtime evidence; a fixture alone establishes no native response guarantee.
-- T3 receives the resolved provider-instance/model pair. Its CLI has no
-  effort/options flag; instrukt-owned starts get effort only from the T3
-  project default until upstream adds support. No instrukt workaround is
-  built. Native delegation passes supported resolved options; the full
-  selection contract is `project/instrukt/spec/feature/configuration/agent-selection`.
+- T3's CLI has no effort/options flag, so an agent-driven `t3 thread start`
+  gets effort only from the T3 project default until upstream adds support.
+  Runner starts use the native launch, which carries the resolved options, and
+  native delegation passes supported resolved options; the full selection
+  contract is `project/instrukt/spec/feature/configuration/agent-selection`.
 - T3 conversation reads cover the latest 100 messages. Missing older evidence is
   a visible gap; the operational session surface is independent of extracted
   history under `project/instrukt/spec/feature/runner/history`.

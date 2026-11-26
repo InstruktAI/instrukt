@@ -120,6 +120,13 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
     (path, leaf)
 }
 
+/// Whether the command is `instrukt init --company`: adding a company,
+/// which addresses a machine-wide object and reads no working directory.
+pub fn company_init(matches: &ArgMatches) -> bool {
+    let (path, leaf) = command_path(matches);
+    path == ["init"] && leaf.try_get_raw("company").ok().flatten().is_some()
+}
+
 /// The commands that work on the repository the caller stands in and need
 /// nothing else of the computer: `docs render [--check]`, `docs plugin
 /// [--check | --validate]`, `docs units`, `hooks run`, the
@@ -165,7 +172,7 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
     };
     Ok(
         match instrukt_core::config::classify_root(bytes.as_deref()) {
-            instrukt_core::config::RootDocument::ProjectLayer(project) => project,
+            instrukt_core::config::RootDocument::ProjectLayer { slug, .. } => slug,
             _ => None,
         },
     )
@@ -263,6 +270,21 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
     let Some((assignment, grants)) = caller(ctx)? else {
         return Ok(());
     };
+    if company_init(matches) {
+        // Adding a company is the operator's: a session bound to a company
+        // is refused it whatever its class. Its object is the company's
+        // home, machine-wide, which no assignment owns.
+        if let Some(company) = &assignment.company {
+            return Err(PermissionRefused(format!(
+                "adding a company is the operator's: this session's recorded assignment is company `{company}`'s, so `instrukt init --company` is refused whatever its role, and nothing was created; ask the operator to add the company"
+            ))
+            .into());
+        }
+        if grants.class == RoleClass::Focused && !grants.admits(action, false) {
+            return Err(PermissionRefused(grants.refusal(action, "init --company")).into());
+        }
+        return Ok(());
+    }
     if grants.class != RoleClass::Focused {
         return Ok(());
     }

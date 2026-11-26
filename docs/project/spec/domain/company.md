@@ -120,7 +120,10 @@ state database's file and migrations (work).
     section of `instrukt events status`.
   - The conversation assignment lookup, which the runner's assignment
     resolution takes beside work's own, returning the connector's recorded role
-    and company home.
+    and company home. It recognises a conversation's session from the
+    runner's binding of the conversation's key, which the runner records with
+    the session's fixed native thread before the session starts, so a
+    conversation session is recognised from its first command.
   - The explicit reply queueing operation (`instrukt company reply`), which
     verifies an active company conversation binding, checks that the target
     conversation is admitted on that `(company, connector)`, and writes the

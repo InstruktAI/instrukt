@@ -82,18 +82,18 @@ enum DocsCommand {
     Render(RenderArgs),
     /// Render the company's Claude plugin from the repository's working tree.
     ///
-    /// The plugin `plugins/<key>/` is rendered from the company index
-    /// `docs/index.yaml`, the documents it selects, the key and the name
-    /// given here and what the working tree holds, nothing else: no home,
-    /// publication or configuration is read, so a fresh clone and the
-    /// binary are enough. Writes each file of the plugin whose content
-    /// differs, removes each file under `plugins/<key>/` that the rendering
-    /// does not hold, sets the plugin's entry in
-    /// `.claude-plugin/marketplace.json`, then prints the plugin's version
-    /// and one line per file changed. The version is kept when the
-    /// rendering equals what the folder holds and its last number is raised
-    /// otherwise. A finding leaves every file as it is and fails the run.
-    /// Stages nothing.
+    /// The company's skill `skills/<key>/` is rendered from the company
+    /// index `docs/index.yaml`, the documents it selects, the key and the
+    /// name given here and what the working tree holds, nothing else: no
+    /// home, publication or configuration is read, so a fresh clone and the
+    /// binary are enough. Writes each file of the skill whose content
+    /// differs, removes each file under `skills/<key>/` that the rendering
+    /// does not hold, sets the plugin's entry, which is its manifest, in
+    /// `.claude-plugin/marketplace.json`, creating the catalog where there
+    /// is none, then prints the plugin's version and one line per file
+    /// changed. The version is kept when the rendering equals what the
+    /// folder holds and its last number is raised otherwise. A finding
+    /// leaves every file as it is and fails the run. Stages nothing.
     ///
     /// With `--check`, writes nothing: prints each file that differs from
     /// the rendering or is missing, each file a rendering would remove and
@@ -142,7 +142,7 @@ struct UnitsArgs {
 #[derive(Debug, clap::Args)]
 struct PluginArgs {
     /// The company's key: the name of the plugin and of its skill, and the
-    /// plugin's folder under `plugins/`.
+    /// skill's folder under `skills/`.
     #[arg(long, value_name = "KEY")]
     key: ProjectSlug,
     /// The name people write the company by, as one line: the skill's title

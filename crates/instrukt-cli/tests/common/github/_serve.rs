@@ -19,7 +19,7 @@ pub(super) struct Reply {
 }
 
 impl Reply {
-    fn json(status: u16, body: Value) -> Self {
+    pub(super) fn json(status: u16, body: Value) -> Self {
         Self {
             status,
             body: Some(body),
@@ -117,22 +117,26 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     let jwt_endpoint = path == "/app"
         || path.starts_with("/app/installations/")
         || path.ends_with("/installation");
+    // An App's record and an account's record are public: GitHub answers
+    // them without a credential.
     let public_app = path.starts_with("/apps/");
-    let mut reply =
-        if jwt_endpoint && jwt.is_none() || (!jwt_endpoint && !public_app && token.is_none()) {
-            Reply::json(401, json!({"message":"Bad credentials"}))
-        } else if public_app && jwt.is_none() {
-            Reply::not_found()
-        } else {
-            match canned {
-                Some(canned) => Reply {
-                    status: canned.response.status,
-                    body: Some(canned.response.body),
-                    headers: canned.response.headers,
-                },
-                None => route(&mut guard, &method, &path, &query, &body),
-            }
-        };
+    let public_account = method == "GET" && path.starts_with("/users/");
+    let mut reply = if jwt_endpoint && jwt.is_none()
+        || (!jwt_endpoint && !public_app && !public_account && token.is_none())
+    {
+        Reply::json(401, json!({"message":"Bad credentials"}))
+    } else if public_app && jwt.is_none() {
+        Reply::not_found()
+    } else {
+        match canned {
+            Some(canned) => Reply {
+                status: canned.response.status,
+                body: Some(canned.response.body),
+                headers: canned.response.headers,
+            },
+            None => route(&mut guard, &method, &path, &query, &body),
+        }
+    };
     guard.active_token = previous_token;
     guard.login = previous_login;
     if let Some(seconds) = guard.poll_interval {

@@ -413,6 +413,27 @@ impl TestEnv {
         self.base().join(relative)
     }
 
+    /// Routes git's `https://<host of api_url>/` to the test's own
+    /// `remotes/` folder, in the test's own git configuration, so a
+    /// repository the fake GitHub creates there is reached as GitHub's.
+    /// Returns that folder.
+    pub fn route_github_remotes(&self, api_url: &str) -> PathBuf {
+        let remotes = self.path("remotes");
+        std::fs::create_dir_all(&remotes).unwrap();
+        let host = instrukt_core::github::api_host(api_url);
+        let routed = std::process::Command::new("git")
+            .arg("config")
+            .arg("--file")
+            .arg(self.home.join(".gitconfig"))
+            .arg("--add")
+            .arg(format!("url.file://{}/.insteadOf", remotes.display()))
+            .arg(format!("https://{host}/"))
+            .status()
+            .unwrap();
+        assert!(routed.success());
+        remotes
+    }
+
     /// Adds `location` to the write fence every later instrukt process
     /// carries.
     pub fn fence(&mut self, location: &Path) -> &mut Self {

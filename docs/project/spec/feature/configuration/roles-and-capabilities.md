@@ -37,7 +37,7 @@ edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
 The default role of conversation sessions is `company-agent`; a named connector
-may declare a different `role` in its company home's `instrukt.yaml`, which is
+may declare a different `role` in its company home's `company.yaml`, which is
 recorded on the session's `connected_conversations` binding and returned by
 caller assignment lookup. An agents file of schema
 version 2 converts to version 3 on the owned migration path
@@ -119,7 +119,6 @@ one. The grant reaches the command; which session may reclaim at a given
 moment is decided by the worktree's own writer admission, which binds every
 caller alike (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
-
 `instrukt review start` asks for a requested review
 (`project/instrukt/spec/feature/runner/requested-review`) and is
 `assignment-write`, addressing the project the caller stands in: it records an
@@ -130,6 +129,14 @@ are refused it. The requested reviewer it starts resolves to the
 `commit-reviewer` role, the project and its placement from the runner's
 requested-review record, and its `stamp` grant at `own` reaches that project's
 review evidence.
+
+`instrukt init --company <key>` belongs to the Repository family: it is
+`repository-write`, and its object is the company's home, a machine-wide
+object, so only `any` reaches it. Adding a company is the operator's: a
+session whose recorded assignment names a company, a company conversation's
+among them, is refused it whatever its class, naming the operator's door,
+and nothing is created
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation).
 
 `instrukt docs units` belongs to the Documentation family: it is `docs-read`,
 as the read forms of the renderings are — `docs render --check`,

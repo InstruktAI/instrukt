@@ -33,8 +33,11 @@ with (`project/instrukt/spec/feature/publication/agent-entrypoints`:
 `expanded` and `listed`, each a list of paths ending in `.md`, no other key,
 and a document holding nothing admitted). It is written wherever the others
 are, and no file carries a modeline naming it: in a project a file at
-`docs/index.yaml` is a misplaced index, and in a company home nothing writes
-`.instrukt/schemas/`.
+`docs/index.yaml` is a misplaced index, and a company repository's
+`docs/index.yaml` carries none. A company repository is synced as every
+project is, so its `.instrukt/schemas/` is written there, and its committed
+project layer carries its modeline from the commit that creates it, so a sync
+of the home changes no committed file.
 
 - Each schema is generated from the same type the validator reads that file
   with — the position index and snippet schema types of the docs context
