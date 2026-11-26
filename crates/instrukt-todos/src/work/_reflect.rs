@@ -391,16 +391,12 @@ fn send<T>(
     }
 }
 
-/// Whether `refusals` refused `identity` for `target`, or for any version of its artifact.
+/// Whether `refusals` keeps a refusal of `target` for a request with
+/// `identity`.
 fn refused_before(refusals: &[KeptRefusal], target: &RefusedTarget, identity: &str) -> bool {
-    use RefusedTarget::Artifact;
-    refusals.iter().any(|kept| {
-        kept.identity == identity
-            && match (&kept.target, target) {
-                (Artifact { name: refused, .. }, Artifact { name, .. }) => refused == name,
-                (refused, target) => refused == target,
-            }
-    })
+    refusals
+        .iter()
+        .any(|kept| &kept.target == target && kept.identity == identity)
 }
 
 /// The identity of a request: a digest of its method, path and body, and of
@@ -493,7 +489,9 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
         // Versions keep their order: a version maps to a remote version
         // after the one its predecessor maps to.
         let mut floor = 0;
-        for version in &mut artifact.versions {
+        for i in 0..artifact.versions.len() {
+            let (before, rest) = artifact.versions.split_at_mut(i);
+            let version = &mut rest[0];
             if let Some(n) = version.remote {
                 floor = floor.max(n);
                 continue;
@@ -504,6 +502,12 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
             {
                 version.remote = Some(*n);
                 floor = *n;
+                continue;
+            }
+            // Content that does not change does not move: a version repeating the
+            // one before it takes that version's place on GitHub, or its refusal.
+            if let Some(previous) = before.last().filter(|p| p.digest == version.digest) {
+                version.remote = previous.remote;
                 continue;
             }
             let Some(content) = version.content.clone() else {
@@ -517,8 +521,10 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 name: artifact.name.clone(),
                 sequence: version.sequence,
             };
-            // An artifact version's identity is its content, whichever request carries it.
-            let identity = version.digest.as_str().to_owned();
+            // What an artifact version sends is its content, whichever
+            // request carries it: a version refused as a new artifact is not
+            // sent again as an update of one.
+            let version_identity = version.digest.as_str().to_owned();
             let sent = match artifact.address {
                 None => {
                     let path = format!("/issues/{number}/artifacts");
@@ -527,6 +533,7 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                         "name": artifact.name.as_str(),
                         "body": content,
                     });
+                    let identity = version_identity.clone();
                     match send(&mut item.reflection, target, identity, || {
                         gh.post(&path, &body)
                     })? {
@@ -540,6 +547,7 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 Some(address) => {
                     let path = format!("/issues/{number}/artifacts/{address}");
                     let body = json!({"body": content});
+                    let identity = version_identity.clone();
                     matches!(
                         send(&mut item.reflection, target, identity, || gh
                             .patch(&path, &body))?,
@@ -965,7 +973,7 @@ mod tests {
     }
 
     #[test]
-    fn refused_content_is_skipped_for_its_target_and_later_versions_of_its_artifact() {
+    fn only_the_same_request_to_the_same_target_is_skipped_as_refused() {
         let kept = [KeptRefusal {
             target: RefusedTarget::Artifact {
                 name: crate::evidence::ArtifactName::new("prd"),
@@ -976,7 +984,7 @@ mod tests {
         }];
         let target = RefusedTarget::Artifact {
             name: crate::evidence::ArtifactName::new("prd"),
-            sequence: 7,
+            sequence: 3,
         };
         assert!(refused_before(&kept, &target, "same"));
         assert!(!refused_before(&kept, &target, "changed"));

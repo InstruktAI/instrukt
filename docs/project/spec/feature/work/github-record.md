@@ -318,8 +318,9 @@ reflection is outstanding. The same content is not sent again: a refused
 request is sent again only once what it sends, or the published branch head
 it concerns, has changed. The todo's other reflection continues, the local
 record continues and other todos reflect independently. A refused artifact
-version is followed by the artifact's next version as usual, unless that
-version carries the refused content again.
+version is followed by the artifact's next version as usual. Content that does
+not change does not move: an artifact version whose content repeats the version
+before it is not sent, and takes that version's place on GitHub or its refusal.
 
 ## Use cases
 

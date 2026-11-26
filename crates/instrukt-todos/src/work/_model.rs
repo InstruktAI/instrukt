@@ -203,11 +203,14 @@ impl TodoRecord {
         self.artifacts.iter().find(|a| a.name.as_str() == name)
     }
 
+    /// The current version of the artifact `name`.
+    pub fn current_version(&self, name: &str) -> Option<&Version> {
+        self.artifact(name).and_then(|a| a.versions.last())
+    }
+
     /// The current version's digest of the artifact `name`.
     pub fn current_digest(&self, name: &str) -> Option<&ContentDigest> {
-        self.artifact(name)
-            .and_then(|a| a.versions.last())
-            .map(|v| &v.digest)
+        self.current_version(name).map(|v| &v.digest)
     }
 
     /// Whether the todo is addressable by its slug: active, iceboxed or a

@@ -987,6 +987,21 @@ impl Work {
             })
             .collect();
         let grounding = grounding_now(&mut s, index, name, content, &[])?;
+        // Content that does not change does not move: a write matching the
+        // current version's content and provenance records nothing.
+        if let Some(current) = s.items[index].record.current_version(name)
+            && (&current.digest, &current.derived_from, &current.grounding)
+                == (&digest_of(content), &derived_from, &grounding)
+        {
+            let value = current.clone();
+            let docs_changed = std::mem::take(&mut s.docs_changed);
+            let reflection = s.status(index);
+            return Ok(Outcome {
+                value,
+                reflection,
+                docs_changed,
+            });
+        }
         let version = Version {
             digest: digest_of(content),
             writer: s.actor()?,

@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-expression: "redact(&format!(\"{recorded}---\\n{read}---\\n{shown}---\\n{rewritten}---\\n{next}---\\n{refused_again}---\\n{later}---\\n{settled}\"))"
+expression: "redact(&format!(\"{recorded}---\\n{read}---\\n{shown}---\\n{rewritten}---\\n{regrounded}---\\n{reshown}---\\n{next}---\\n{refused_again}---\\n{later}---\\n{settled}\"))"
 ---
 wrote prd of nested-lists: <digest 1>
 reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
@@ -29,6 +29,29 @@ stamps:
 wrote prd of nested-lists: <digest 1>
 reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
 ---
+wrote prd of nested-lists: <digest 1>
+reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (2 versions)
+    <digest 1> by Test Developer at <time>
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
 wrote prd of nested-lists: <digest 3>
 reflection: reflected to GitHub
 ---
@@ -42,7 +65,7 @@ nested-lists · feature · active
 identity: <id 1>
 record status: held
 created: <time> by Test Developer
-revision: 7
+revision: 8
 intent:
   Keep the depth of nested lists when parsing Markdown.
 reflection: reflected to GitHub
@@ -52,11 +75,12 @@ hold: waiting (manual, by Test Developer, <time>)
 artifacts:
   input (1 version)
     <digest 2> by Test Developer at <time>
-  prd (5 versions)
+  prd (6 versions)
     <digest 1> by Test Developer at <time>
     <digest 1> by Test Developer at <time>
     <digest 3> by Test Developer at <time>
     <digest 4> by Test Developer at <time>
+    <digest 5> by Test Developer at <time>
     <digest 5> by Test Developer at <time>
 stamps:
   none
