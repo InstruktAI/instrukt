@@ -115,13 +115,14 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     let global = env.instrukt_home().join("instrukt.yaml");
     let old_global = "schema_version: 1\nticks: off\n";
     std::fs::write(&global, old_global).unwrap();
-    let current = Some(instrukt_core::config::CURRENT_SCHEMA_VERSION);
+    let machine_current = Some(instrukt_core::config::GLOBAL_SCHEMA_VERSION);
+    let project_current = Some(instrukt_core::config::PROJECT_SCHEMA_VERSION);
 
     // Sync on an unchanged main: the machine layer is written current, the
     // committed project layer stays as committed.
     env.run(repo.path(), ["sync"]).success();
     let machine = std::fs::read_to_string(&global).unwrap();
-    assert_eq!(schema_version(&machine), current);
+    assert_eq!(schema_version(&machine), machine_current);
     let kept: serde_yaml_ng::Value = serde_yaml_ng::from_str(&machine).unwrap();
     insta::assert_snapshot!(kept["ticks"].as_str().unwrap(), @"off");
     assert_eq!(repo.read("instrukt.yaml"), project);
@@ -142,7 +143,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     env.run(repo.path(), ["tick"]).failure();
     assert_eq!(
         schema_version(&std::fs::read_to_string(&global).unwrap()),
-        current
+        machine_current
     );
     assert_eq!(repo.read("instrukt.yaml"), project);
 
@@ -175,17 +176,10 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
       last run: staged in committed form: instrukt.yaml, AGENTS.md
     ");
 
-    // A commit that bypasses the hook keeps the older layer, and validation
-    // reports it.
+    // A commit that bypasses the hook keeps the older layer.
     repo.write("instrukt.yaml", project);
     repo.git(["commit", "--quiet", "--no-verify", "-am", "bypass"]);
     env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
-    let validated = env.run(repo.path(), ["config", "validate"]).failure();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&validated.get_output().stdout)
-            .replace(&repo.path().display().to_string(), "[REPO]"),
-        @"[REPO]/instrukt.yaml: schema_version: this instrukt writes schema_version 6"
-    );
 
     // An edit of the layer the developer staged stays staged through a
     // partial commit that converts the committed layer, and their next
@@ -201,7 +195,7 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     env.finished_hook_run(repo.path(), instrukt_core::repository::Hook::PostCommit);
     assert_eq!(
         schema_version(&repo.git(["show", "HEAD:instrukt.yaml"])),
-        current
+        project_current
     );
     assert_eq!(repo.git(["show", ":instrukt.yaml"]), staged.trim_end());
     assert_eq!(repo.read("instrukt.yaml"), staged);
@@ -441,7 +435,7 @@ fn history_migration_preserves_inherited_global_false_without_a_project_override
         serde_yaml_ng::from_str(&repo.read("instrukt.yaml")).unwrap();
     assert_eq!(
         migrated["schema_version"].as_u64(),
-        Some(instrukt_core::config::CURRENT_SCHEMA_VERSION)
+        Some(instrukt_core::config::PROJECT_SCHEMA_VERSION)
     );
     assert!(migrated.get("modules").is_none());
 }

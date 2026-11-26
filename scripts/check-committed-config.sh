@@ -6,7 +6,8 @@
 # revision under check. Without INSTRUKT_CHECK_BIN it builds this checkout's
 # instrukt and runs that. A project layer committed at an older schema than
 # the program's, as a commit that bypassed instrukt's pre-commit section
-# leaves it, is a finding
+# leaves it, is validated as converted in memory, its pending conversion a
+# notice on stderr; one missing its schema version or at a newer one fails
 # (project/instrukt/spec/feature/configuration/owned-files). The throwaway
 # machine layer selects the runtime the project's modules need, and names an
 # event transport for its event responses (validation only reads the setting).

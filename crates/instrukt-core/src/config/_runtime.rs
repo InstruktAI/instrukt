@@ -152,7 +152,7 @@ impl std::fmt::Display for WorkflowCapability {
 /// Agent actions as `(name, contract)`: the contract is the one line the
 /// configuration schema prints for the action; its execution wording lives
 /// only in configuration data.
-pub(crate) const ACTIONS: [(&str, &str); 15] = [
+pub(crate) const ACTIONS: [(&str, &str); 14] = [
     (
         "dispatch",
         "Delegate this agent's worker with shared isolation in the parent's recorded workspace.",
@@ -195,11 +195,7 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     ),
     (
         "finish_thread",
-        "Dormantly settle a conversation so it stays wakeable in place with full context.",
-    ),
-    (
-        "retire_thread",
-        "Terminally retire a delivered or withdrawn todo's orchestrator thread, retaining its transcript; never a standing agent.",
+        "Dormantly settle an addressed conversation, or this agent's own, so it stays wakeable in place with full context; external agents and runner automation never settle a standing agent, which may self-settle when parked dormant.",
     ),
     (
         "discover_environments",

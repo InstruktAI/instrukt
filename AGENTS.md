@@ -239,9 +239,12 @@ whose purpose that is.
   their own world — a service of theirs that is unreachable, the assistant being
   unavailable for a while — and never about instrukt's internals. What instrukt
   cannot resolve goes to the operator. Each object generation uses a fixed native start key and thread ID; retries
-  replay that identity. Outstanding work after confirmed native archive or deletion
-  uses a new generation automatically. Native lifecycle owns provider detachment;
-  a create receipt supplies no physical-process exit guarantee.
+  replay that identity. Outstanding work after confirmed native archive or deletion,
+  or after an idle thread is confirmed to belong to a runtime project other than its
+  checkout's own, uses a new generation automatically; a misplaced thread that is
+  still busy is left alone until it is idle. Native lifecycle owns provider
+  detachment; neither a create receipt nor a misplacement rollover supplies a
+  physical-process exit guarantee.
 - A record in an older or unknown shape is discarded only when its specification
   names the source that rebuilds it. A person's stated choices and restrictions,
   and records of external effects, are migrated, never discarded or expired.

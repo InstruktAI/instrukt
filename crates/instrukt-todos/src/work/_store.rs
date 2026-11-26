@@ -877,11 +877,20 @@ impl Store {
             if !live.record.is_live() {
                 return Ok(Completed::NotLive(Box::new(written(tx, path, id)?)));
             }
+            let before = live.record.clone();
             live.reflection.etag = None;
             live.record.withdraw(at, branch, worktrees);
             live.record.revision += 1;
             live.reflection.pending = true;
             save_in(tx, path, &live)?;
+            fleet_record(
+                tx,
+                path,
+                project,
+                &self.home,
+                at,
+                [(Some(&before), &live.record)],
+            )?;
             Ok(Completed::Withdrawn(Box::new(written(tx, path, id)?)))
         })
     }
@@ -1049,6 +1058,70 @@ pub(crate) fn referenced(
         }
     }
     Ok(found)
+}
+
+/// Whether `project` has, among this computer's todos, an active one that
+/// is unheld and not a structural holder (`fleet-attention`, "Attention
+/// episodes").
+pub(crate) fn runnable_remains(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+) -> Result<bool, WorkError> {
+    tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM todos t
+                        WHERE t.project = ?1 AND t.status = 'active'
+                          AND NOT EXISTS (SELECT 1 FROM holds h
+                                          WHERE h.todo_id = t.id AND h.released_at IS NULL))",
+        params![project.as_str()],
+        |row| row.get(0),
+    )
+    .map_err(StateDbError::sqlite(path))
+    .map_err(WorkError::from)
+}
+
+/// Whether `todo` is active work of `project` on this computer: an active
+/// todo or a structural holder.
+pub(crate) fn active_todo(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    todo: &TodoSlug,
+) -> Result<bool, WorkError> {
+    tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM todos
+                        WHERE project = ?1 AND slug = ?2
+                          AND status IN ('active', 'structural_holder'))",
+        params![project.as_str(), todo.as_str()],
+        |row| row.get(0),
+    )
+    .map_err(StateDbError::sqlite(path))
+    .map_err(WorkError::from)
+}
+
+/// Calls the runner's fleet-attention contract inside `tx` for the change
+/// from each `before` row to its written `after` row, answering once
+/// whether runnable work remains after all of them.
+pub(crate) fn fleet_record<'a>(
+    tx: &Transaction<'_>,
+    path: &Path,
+    project: &ProjectSlug,
+    home: &Home,
+    now: Timestamp,
+    changes: impl IntoIterator<Item = (Option<&'a TodoRecord>, &'a TodoRecord)>,
+) -> Result<(), WorkError> {
+    let facts: Vec<_> = changes
+        .into_iter()
+        .filter_map(|(before, after)| super::_fleet::facts(before, after))
+        .collect();
+    if facts.is_empty() {
+        return Ok(());
+    }
+    let runnable = runnable_remains(tx, path, project)?;
+    for facts in facts {
+        instrukt_runner::fleet_attention::record(tx, home, now, &facts.with_runnable(runnable))?;
+    }
+    Ok(())
 }
 
 /// The local rows of `project` that refer to todo `id`, as `tx` holds

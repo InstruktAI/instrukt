@@ -69,7 +69,7 @@ operation inside acceptance or its write transaction.
 
 Identity deduplication retains occurrence IDs, ingress claims and consumer handled
 marks. In addition, every catalog type declares `occurrence` or `state` under
-event-envelope. Occurrences all count. A newer undelivered state event of the
+`project/instrukt/spec/feature/runner/event-envelope`. Occurrences all count. A newer undelivered state event of the
 same type and exact subject replaces an older pending state for that responsibility.
 Source time establishes newer state, with arrival order breaking ties. Superseded
 rows retain their identity and disposition. Selection freezes message content:
@@ -120,12 +120,15 @@ have no shared transaction: a crash after external acceptance but before local
 confirmation can repeat input. Retained identities suppress confirmed repeats;
 the procedure reconciles its effects idempotently.
 
-Human settling of a standing T3 thread suspends neither its responsibility nor
-delivery: later input wakes the same thread. Automation keeps it unsettled.
-Continuation resolves retained older work first; actual runtime record removal
-requires reconciliation under the standing-agent contract. Failed observation
-or send never authorizes a replacement. Cleanup retains pending input or a
-visible terminal failure; it never silently discards the responsibility's work.
+Settling a standing T3 thread suspends neither its responsibility nor delivery:
+later input wakes the same thread. Runner automation never settles it; a
+standing procedure may self-settle when parked dormant
+(`general/procedure/event-handling/overview`,
+`project/instrukt/spec/feature/runner/procedure-standing-agent`). Continuation
+resolves retained older work first; actual runtime record removal requires
+reconciliation under the standing-agent contract. Failed observation or send
+never authorizes a replacement. Cleanup retains pending input or a visible
+terminal failure; it never silently discards the responsibility's work.
 
 ### Initialization-fixed settings
 
@@ -338,9 +341,11 @@ Examples:
 - Handover establishes supplied context, not successful domain execution.
   Lost acknowledgement can repeat data; identities promise neither exactly-once
   effects nor replay beyond retention.
-- Only-at-entry work may defer later events for its whole run. Standing T3
-  threads remain unsettled under automation and reachable after human settling
-  under procedure-standing-agent; no revival or attendance-visibility gate applies.
+- Only-at-entry work may defer later events for its whole run. Runner automation
+  never settles a standing T3 thread, a standing procedure may self-settle when
+  parked dormant, and a settled one stays reachable, under
+  `project/instrukt/spec/feature/runner/procedure-standing-agent`; no revival or
+  attendance-visibility gate applies.
 
 ## See Also
 

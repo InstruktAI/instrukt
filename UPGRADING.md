@@ -230,12 +230,13 @@ state database migrates to hold it. In each adopted repository run
 hook manager) so the `pre-commit` section exists.
 
 A commit made without the hook, from a web editor or a bot, keeps an older
-project layer. `instrukt config validate` reports it, exiting non-zero; to catch
-it, add that command to the repository's own CI, run inside the checkout with a
-throwaway machine layer that makes the project's configuration valid, written
-from outside the checkout (`scripts/check-committed-config.sh` is instrukt's
-own). A repository whose project layer still names an older schema needs one
-commit through the hook, or `instrukt config init`, before that check passes.
+project layer. `instrukt config validate` judges it as converted in memory and
+notes its pending conversion on stderr without failing; the next commit through
+the hook, or `instrukt config init`, converts the file. To catch a project
+layer that is invalid, names a newer schema or names none, add that command to
+the repository's own CI, run inside the checkout with a throwaway machine layer
+that makes the project's configuration valid, written from outside the checkout
+(`scripts/check-committed-config.sh` is instrukt's own).
 
 ### Dependency-update CI observation
 
@@ -396,6 +397,24 @@ being sent again. Sessions started earlier keep the opening they started with.
 The agents file converts by itself: its `roles.conversation` entry becomes
 `roles.company-agent` with its settings kept. A file holding both entries is
 refused, and left as it is, until one of them is removed.
+
+### The project coordinator stands and is woken by fleet attention
+
+The project's coordinator is now `sdlc-coordinator`, a standing role woken by
+`runner.attention.*` events, and agents can raise a condition about their
+project's active todos with `instrukt events raise`.
+
+The agents file converts by itself: its `roles.coordinator` entry becomes
+`roles.sdlc-coordinator` with its settings kept. A file holding both entries
+is refused, and left as it is, until one of them is removed.
+
+The shipped `technical-coordinator` role now selects at `tier: strong`. A kept
+agents file that sets its own tier for that role keeps it.
+
+The shipped `orchestrate` bundle grants `attention-raise` at `own`. A kept
+agents file that defines its own `orchestrate` bundle replaces the shipped one
+whole; add `{action: attention-raise, scope: own}` to it so orchestrating
+roles can raise.
 
 ### Protected secrets and owned files
 
@@ -634,6 +653,26 @@ whose installed instrukt predates this release, that key is an unknown key in
 this repository's layer: the layer does not validate there, which withholds
 history extraction for the project on that computer until instrukt is
 upgraded. Upgrade instrukt on each computer that serves this repository.
+
+### One thread-finishing action: `retire_thread` is removed
+
+The runtime action `retire_thread` is gone; `finish_thread` is now the only
+action that ends a thread, for a resting conversation and for the orchestrator
+of a delivered or withdrawn todo alike.
+
+The machine layer, `~/.instrukt/instrukt.yaml`, moves to global schema 7. The
+first writing command of this release on a computer converts it: any
+`runtimes.<runtime>.retire_thread` override is dropped, a runtime entry or a
+`runtimes` map left empty by that goes with it, and every other setting is
+kept. Read-only commands convert it in memory until then. Nothing needs doing
+by hand.
+
+Project layers and company homes keep their schema version, so no
+repository, this one included, needs a commit for this change.
+
+Once an instrukt of this release has written a computer's machine layer, an
+instrukt from before it on the same computer refuses that layer as newer
+than it supports. Upgrade every instrukt on a computer together.
 
 ### The work record lives on this computer only
 

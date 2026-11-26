@@ -21,6 +21,7 @@ use crate::interfaces::{AutomaticReview, ProjectRef};
 use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
+pub(crate) use _requests::live;
 pub use _requests::{
     Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
     turn_opening_with,

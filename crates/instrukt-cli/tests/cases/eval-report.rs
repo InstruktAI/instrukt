@@ -21,7 +21,7 @@ use crate::fixtures::work as support;
 use crate::fixtures::workflow;
 use std::path::{Path, PathBuf};
 
-use instrukt_core::config::CURRENT_SCHEMA_VERSION;
+use instrukt_core::config::PROJECT_SCHEMA_VERSION;
 use support::{Project, redact, stdout};
 
 /// The review policy the flows project publishes into the eval set.
@@ -50,7 +50,7 @@ struct Evaluated {
 /// under the `crew` flavor.
 fn tracked(slug: &str, repository: &str) -> String {
     format!(
-        "schema_version: {CURRENT_SCHEMA_VERSION}\nproject: {slug}\nmodules:\n  todos: true\n\
+        "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: {slug}\nmodules:\n  todos: true\n\
          github:\n  repository: {repository}\nworkflow:\n  domain: crew\n"
     )
 }

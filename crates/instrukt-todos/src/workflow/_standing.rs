@@ -64,6 +64,7 @@ fn back_to_preparation(evidence: &TodoEvidence) -> bool {
                     | StampFact::BuildComplete { .. }
                     | StampFact::BuildVerdict { .. }
                     | StampFact::DeferralsProcessed { .. }
+                    | StampFact::VerificationDisposition { .. }
                     | StampFact::FinalizeReady { .. }
             )
         })

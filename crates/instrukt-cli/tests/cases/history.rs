@@ -775,7 +775,7 @@ fn disabled_history_search_preserves_retained_conversations() {
         "schema_version: 1",
         &format!(
             "schema_version: {}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
         ),
         1,
     );

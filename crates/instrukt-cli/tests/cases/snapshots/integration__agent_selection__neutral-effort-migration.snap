@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/cases/agent-selection.rs
 expression: own
 ---
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "default": {
     "order": [
       "personal",

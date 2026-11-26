@@ -4,6 +4,20 @@ expression: "String::from_utf8_lossy(&run.get_output().stdout)"
 ---
 instrukt.system.event.dead_lettered v1 — A persistently failing stream entry was parked in a dead letter destination. (subject: stream_entry, delivery: occurrence)
   instrukt events schema instrukt.system.event.dead_lettered
+runner.attention.attempts_failing v1 — A role's attempt on a todo failed where an earlier attempt of that role on that todo already failed. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.attempts_failing
+runner.attention.execution_stalled v1 — The session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or no session could be started from the model order available. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.execution_stalled
+runner.attention.fleet_quiet v1 — The project's attention episode ended: its last active todo that is unheld and not a structural holder left active work or was held. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.fleet_quiet
+runner.attention.hold_placed v1 — A change made on this computer placed a dispatch hold on a todo. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.hold_placed
+runner.attention.hold_released v1 — A change made on this computer removed a todo's dispatch hold. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.hold_released
+runner.attention.input_waiting v1 — The session holding a todo's execution claim began a wait for input while the todo does not wait on a person. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.input_waiting
+runner.attention.raised v1 — An agent raised a condition about active todos of the project it works in. (subject: todo, delivery: occurrence)
+  instrukt events schema runner.attention.raised
 runner.ci_completed v1 — The integrate candidate CI completed, including a no-CI observation. (subject: commit, delivery: state)
   instrukt events schema runner.ci_completed
 runner.dependency_failing v1 — A check run on a current dependency-update head failed. (subject: commit, delivery: occurrence)

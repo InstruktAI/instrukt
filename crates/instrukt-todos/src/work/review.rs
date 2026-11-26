@@ -388,10 +388,7 @@ pub fn record(
     }
     let state = RunnerState::new(home);
     let requests = instrukt_runner::review::requests(&state, &project.slug, &head)?;
-    let held = match _store::reader(home)? {
-        Some(conn) => _store::held(&conn, &project.slug, &head)?,
-        None => Held::Nothing,
-    };
+    let held = held_here(home, &project.slug, &head)?;
     let (offer, check) = _admission::offer(&held, &reviewer, &requests);
     if let Offer::HandedOff(export) = &offer {
         return Err(handed_off(&head, export));
@@ -426,9 +423,8 @@ pub fn record(
         }
         Offer::HandedOff(export) => return Err(handed_off(&head, &export)),
     }
-    let canonical = project.canonical()?;
-    let merge_base = project.merge_base(head.as_str(), &canonical)?;
-    let Some(pinned) = _admission::pinned_base(&held, &requests, merge_base.as_ref()) else {
+    let (canonical, pinned) = pinned_base(project, &head, &held, &requests)?;
+    let Some(pinned) = pinned else {
         return Err(refused(format!(
             "{head} shares no history with the canonical branch {canonical}; there is no pinned base to review it from"
         )));
@@ -566,6 +562,29 @@ fn handed_over(
             .iter()
             .any(|text| _admission::names_commit(text, &base))
     }))
+}
+
+/// What this computer holds of `head`'s verdict, read without a lock.
+fn held_here(home: &Home, project: &ProjectSlug, head: &CommitSha) -> Result<Held, ReviewError> {
+    Ok(match _store::reader(home)? {
+        Some(conn) => _store::held(&conn, project, head)?,
+        None => Held::Nothing,
+    })
+}
+
+/// The canonical branch and the pinned base `head`'s verdict is admitted
+/// against (`github-apps`, Admission of review evidence, Range): `None`
+/// when the head shares no history with the canonical branch.
+fn pinned_base(
+    project: &ReviewProject,
+    head: &CommitSha,
+    held: &Held,
+    requests: &[instrukt_runner::review::Request],
+) -> Result<(String, Option<CommitSha>), ReviewError> {
+    let canonical = project.canonical()?;
+    let merge_base = project.merge_base(head.as_str(), &canonical)?;
+    let pinned = _admission::pinned_base(held, requests, merge_base.as_ref());
+    Ok((canonical, pinned))
 }
 
 fn handed_off(head: &CommitSha, export: &str) -> ReviewError {
@@ -876,6 +895,66 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
             clock,
         )
         .map_err(|error| error.to_string())
+    }
+}
+
+/// Work's answers a requested review is admitted on
+/// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask):
+/// a head's verdict standing, its pinned base and the review history
+/// retention cutoff, read from this home alone, without a lock.
+pub struct HeadVerdictWork {
+    home: Home,
+}
+
+impl HeadVerdictWork {
+    pub fn new(home: Home) -> Self {
+        Self { home }
+    }
+
+    fn answer(
+        &self,
+        project: &instrukt_runner::interfaces::ProjectRef,
+        head: &CommitSha,
+    ) -> Result<instrukt_runner::interfaces::HeadVerdict, ReviewError> {
+        use instrukt_runner::interfaces::{HeadVerdict, HeadVerdictValue, VerdictStanding};
+        let state = RunnerState::new(&self.home);
+        let requests = instrukt_runner::review::requests(&state, &project.slug, head)?;
+        let held = held_here(&self.home, &project.slug, head)?;
+        let review_project = ReviewProject {
+            slug: project.slug.clone(),
+            root: project.root.clone(),
+        };
+        let (_, pinned_base) = pinned_base(&review_project, head, &held, &requests)?;
+        let standing = match held {
+            Held::Nothing => VerdictStanding::Nothing,
+            Held::Stands { current, .. } => VerdictStanding::Stands {
+                verdict: match current.verdict {
+                    Verdict::Approve => HeadVerdictValue::Approve,
+                    Verdict::NeedsWork => HeadVerdictValue::NeedsWork,
+                },
+                recorder: current.reviewer.clone(),
+            },
+            Held::HandedOff { export } => VerdictStanding::HandedOff { export },
+        };
+        Ok(HeadVerdict {
+            standing,
+            pinned_base,
+        })
+    }
+}
+
+impl instrukt_runner::interfaces::HeadVerdicts for HeadVerdictWork {
+    fn head_verdict(
+        &self,
+        project: &instrukt_runner::interfaces::ProjectRef,
+        head: &CommitSha,
+    ) -> Result<instrukt_runner::interfaces::HeadVerdict, String> {
+        self.answer(project, head)
+            .map_err(|error| error.to_string())
+    }
+
+    fn history_cutoff(&self, now: Timestamp) -> Timestamp {
+        retention_cutoff(now)
     }
 }
 

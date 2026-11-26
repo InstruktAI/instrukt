@@ -293,10 +293,32 @@ fn push_with_failing_step(failure: &Failure) {
     match failure {
         Failure::Removal => fake("rm", "#!/bin/sh\nexit 1\n"),
         Failure::Copy => fake("cat", "#!/bin/sh\nexit 1\n"),
-        Failure::FileGone => fake(
-            "cat",
-            "#!/bin/sh\nfor f in \"$TMPDIR\"/instrukt-pre-push.*; do /bin/rm -f \"$f\"; done\n",
-        ),
+        // The temporary directory is the host's, shared with tests running
+        // beside this one, so `cat` removes exactly the file this push's
+        // section made, as the real `mktemp` named it, and no other.
+        Failure::FileGone => {
+            let mktemp = std::env::split_paths(env.injected("PATH").unwrap())
+                .map(|dir| dir.join("mktemp"))
+                .find(|candidate| candidate.is_file())
+                .unwrap();
+            let made = env.path("pre-push-temporary-file");
+            fake(
+                "mktemp",
+                &format!(
+                    "#!/bin/sh\nmade=\"$('{}' \"$@\")\" || exit 1\n\
+                     printf '%s\\n' \"$made\" > '{}'\nprintf '%s\\n' \"$made\"\n",
+                    mktemp.display(),
+                    made.display()
+                ),
+            );
+            fake(
+                "cat",
+                &format!(
+                    "#!/bin/sh\nread -r made < '{}'\n/bin/rm \"$made\"\n",
+                    made.display()
+                ),
+            );
+        }
         Failure::TemporaryFile => {
             env.set_env("TMPDIR", &env.path("no-such-dir").display().to_string());
         }

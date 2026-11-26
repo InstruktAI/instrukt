@@ -19,6 +19,8 @@
 //!   order and task due times.
 //! - [`anomaly`], [`ticks`] and [`install`] — notification, wake-up
 //!   accounting and the OS scheduler registration.
+//! - [`fleet_attention`] — the conditions of a project's active work that
+//!   need attention from outside one todo, and its attention episode.
 //! - [`reclamation`] — worktree reclamation: declared regenerable output
 //!   from idle todo worktrees, and delivered todos' worktrees.
 #![cfg_attr(
@@ -37,6 +39,7 @@ pub mod dispatch;
 pub mod event_log;
 pub mod events;
 pub mod executions;
+pub mod fleet_attention;
 pub mod history;
 pub mod install;
 pub mod interfaces;
@@ -44,6 +47,7 @@ pub mod keyed;
 pub mod launch;
 pub mod process;
 pub mod reclamation;
+pub mod requested_review;
 pub mod review;
 pub mod runner;
 pub mod runtime;

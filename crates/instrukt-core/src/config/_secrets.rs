@@ -144,17 +144,6 @@ pub fn resolve_secret(home: &Home, reference_text: &str) -> Result<String, Confi
     resolve_secret_from(home, &SecretSource::Machine, reference_text)
 }
 
-/// Read every nonblank secret entry from `source`'s file for in-memory
-/// credential scrubbing; returns an empty map when the file is absent or
-/// unreadable. Values are never logged or printed.
-pub fn readable_secret_values(home: &Home, source: &SecretSource) -> BTreeMap<String, String> {
-    read_values(home, source)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|(_, value)| !value.trim().is_empty())
-        .collect()
-}
-
 /// Resolve a reference from `source` alone.
 pub fn resolve_secret_from(
     home: &Home,

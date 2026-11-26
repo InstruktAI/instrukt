@@ -1,5 +1,7 @@
-//! One-way conversion of owned configuration into the current selection shape.
-use super::{Agents, ConfigError, Layer, SHIPPED_AGENTS};
+//! One-way conversion of owned configuration: each document kind's older
+//! schema versions into its current one, and the machine's old agent
+//! selection into `agents.yaml`.
+use super::{Agents, ConfigError, Layer, LayerKind, SHIPPED_AGENTS};
 use crate::{fsx::atomic_write, home::Home};
 use serde_yaml_ng::Value;
 
@@ -117,9 +119,156 @@ pub(super) fn selection(
     old.retain(|_, v| v.as_mapping().is_none_or(|m| !m.is_empty()));
     Ok(changed.then_some(next))
 }
+/// `value`, a document of `kind` at schema version `from`, converted to its
+/// kind's current version: retired settings removed, every other setting
+/// kept, and the kind's version stamped.
+pub(super) fn upcycle(value: Value, from: u64, kind: LayerKind) -> Value {
+    let mut value = match kind {
+        LayerKind::Global => global(value, from),
+        LayerKind::Project => project(value, from),
+        LayerKind::Company => company(value, from),
+    };
+    if let Value::Mapping(map) = &mut value {
+        map.insert(
+            Value::String("schema_version".to_owned()),
+            Value::Number(kind.current_schema_version().into()),
+        );
+    }
+    value
+}
+
+fn global(mut value: Value, from: u64) -> Value {
+    if from < 6
+        && let Some(Value::Mapping(modules)) = value.get_mut("modules")
+    {
+        // A declared connector gives a company conversations; the
+        // machine's switch is gone, whatever its value.
+        modules.remove(super::_schema::CONVERSATIONS);
+    }
+    if from < 7
+        && let Some(Value::Mapping(runtimes)) = value.get_mut("runtimes")
+    {
+        // An entry or a `runtimes` map this removal empties goes with it;
+        // one that is not a mapping is left for validation to report.
+        let mut emptied = false;
+        runtimes.retain(|_, entry| {
+            let Value::Mapping(actions) = entry else {
+                return true;
+            };
+            // `retire_thread` is the runtime action global schema 6 accepted
+            // and the current catalog does not define, whatever it holds later.
+            let removed = actions.remove("retire_thread").is_some();
+            let keep = !(removed && actions.is_empty());
+            emptied |= !keep;
+            keep
+        });
+        if emptied
+            && runtimes.is_empty()
+            && let Value::Mapping(map) = &mut value
+        {
+            map.remove("runtimes");
+        }
+    }
+    value
+}
+
+fn project(mut value: Value, from: u64) -> Value {
+    if from < 3
+        && let Value::Mapping(map) = &mut value
+    {
+        map.remove("actions");
+    }
+    value
+}
+
+fn company(mut value: Value, from: u64) -> Value {
+    if from < 6
+        && let Some(Value::Mapping(members)) = value.get_mut("members")
+    {
+        // A member entry no longer names a connector identity; an entry
+        // left without an email address stays a finding.
+        for (_, entry) in members.iter_mut() {
+            if let Value::Mapping(fields) = entry {
+                // The connectors that existed when schema 6 was written,
+                // whatever this binary supports later.
+                const V6_CONNECTOR_KEYS: [&str; 1] = ["slack"];
+                for connector in V6_CONNECTOR_KEYS {
+                    fields.remove(connector);
+                }
+            }
+        }
+    }
+    value
+}
+
 fn invalid(message: impl Into<String>) -> ConfigError {
     ConfigError::InvalidValue {
         key: "configuration migration".into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::upcycle;
+    use crate::config::{GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION};
+    use serde_yaml_ng::Value;
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml_ng::from_str(text).unwrap()
+    }
+
+    /// A global schema-6 document converted to the current global schema.
+    fn global_6(text: &str) -> Value {
+        upcycle(
+            yaml(&format!("schema_version: 6\n{text}")),
+            6,
+            LayerKind::Global,
+        )
+    }
+
+    fn current_global(text: &str) -> Value {
+        yaml(&format!("schema_version: {GLOBAL_SCHEMA_VERSION}\n{text}"))
+    }
+
+    #[test]
+    fn a_global_schema_6_runtime_entry_loses_the_retired_action_and_keeps_the_rest() {
+        assert_eq!(
+            global_6(
+                "ticks: 'off'\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    finish_thread: Settle it.\n    retire_thread: Archive it.\n"
+            ),
+            current_global(
+                "ticks: 'off'\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    finish_thread: Settle it.\n"
+            ),
+        );
+    }
+
+    #[test]
+    fn a_global_schema_6_runtimes_map_the_removal_empties_goes() {
+        assert_eq!(
+            global_6("ticks: 'off'\nruntimes:\n  t3:\n    retire_thread: Archive it.\n"),
+            current_global("ticks: 'off'\n"),
+        );
+    }
+
+    #[test]
+    fn only_the_runtime_entry_the_removal_empties_goes() {
+        assert_eq!(
+            global_6(
+                "runtimes:\n  t3:\n    retire_thread: Archive it.\n  other:\n    finish_thread: Settle it.\n    retire_thread: Archive it.\n"
+            ),
+            current_global("runtimes:\n  other:\n    finish_thread: Settle it.\n"),
+        );
+    }
+
+    #[test]
+    fn a_project_schema_6_document_is_already_current() {
+        let text = format!(
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: p\nruntimes:\n  t3:\n    retire_thread: Archive it.\n"
+        );
+        assert_eq!(
+            upcycle(yaml(&text), PROJECT_SCHEMA_VERSION, LayerKind::Project),
+            yaml(&text),
+        );
     }
 }

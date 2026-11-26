@@ -48,6 +48,8 @@ mod event_consumers;
 mod event_discovery;
 #[path = "cases/event-transport.rs"]
 mod event_transport;
+#[path = "cases/fleet-attention.rs"]
+mod fleet_attention;
 #[path = "cases/github-apps.rs"]
 mod github_apps;
 #[path = "cases/github-record.rs"]
@@ -104,6 +106,8 @@ mod project_publication;
 mod pull_request_review;
 #[path = "cases/release-installer.rs"]
 mod release_installer;
+#[path = "cases/requested-review.rs"]
+mod requested_review;
 #[path = "cases/roles-and-capabilities.rs"]
 mod roles_and_capabilities;
 #[path = "cases/session-continuity.rs"]

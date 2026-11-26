@@ -58,6 +58,12 @@ The active candidate SHA is the fetched `origin/integrate` head not yet
 contained in remote canonical main, under the integration-gate contract.
 An absent ref or an already promoted head means no candidate is pending.
 
+Fleet attention adds no polled source. Its `runner.attention.*` conditions are
+appended by the record change, observation or raise that establishes them
+(`project/instrukt/spec/feature/runner/fleet-attention`) and reach the
+procedure subscribed to them through the same event log, transport and
+activation path.
+
 The project layer selects watched refs with `events.watch: [{remote, ref}]`.
 `ci.dependency_branch_prefixes` selects dependency-update branches. Only their
 current remote heads are observed; an empty list disables this source. The

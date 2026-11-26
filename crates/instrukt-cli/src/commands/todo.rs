@@ -22,6 +22,7 @@ use instrukt_runner::interfaces::{
 use instrukt_todos::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, DriftClass, HoldSource,
     ModelProvenance, PreparationReview, ReviewVerdict, StampFact, TaskResult, TodoStatus,
+    VerificationDisposition,
 };
 use instrukt_todos::work::{
     CreateRequest, DiffLine, ListEntry, Outcome, ReflectionStatus, Selection, StampRequest,
@@ -162,10 +163,22 @@ struct CreateArgs {
     /// nothing is created.
     #[arg(long)]
     approved: bool,
-    /// Park it in the icebox.
+    /// Park work whose outcome has not converged in the icebox, outside the
+    /// lifecycle. Never for a wait on another todo (`--after`) or for
+    /// converged work waiting on a merge or release (`--hold`).
     #[arg(long)]
     icebox: bool,
-    /// Prerequisites, comma-separated slugs.
+    /// File converged work on hold for a concrete condition outside the
+    /// project's todos, such as a one-off branch merge, a binary rollout or
+    /// an external gate; needs `--reason`. The hold commits with the todo.
+    /// Never for a wait on another todo (`--after`).
+    #[arg(long, requires = "reason", conflicts_with = "icebox")]
+    hold: bool,
+    /// The condition the held work waits on.
+    #[arg(long, requires = "hold")]
+    reason: Option<String>,
+    /// Prerequisites, comma-separated slugs: the todos this one waits on. It
+    /// is ready once they deliver; never hold or icebox it for them.
     #[arg(long, value_name = "SLUGS")]
     after: Option<String>,
     /// The group parent.
@@ -334,6 +347,13 @@ struct StampArgs {
     /// The work branch's head is handed to integration.
     #[arg(long)]
     finalize_ready: bool,
+    /// A live verification disposition of the candidate at the clean head,
+    /// bound to the current `verification-findings` report.
+    #[arg(long, value_name = "pass|fail|blocked|tier_0_skip|hotfix_deferred")]
+    verification: Option<VerificationArg>,
+    /// The tracked follow-up todo a hotfix deferral names.
+    #[arg(long, value_name = "SLUG", requires = "verification")]
+    follow_up: Option<TodoSlug>,
     /// A task firing starts: the run of `--occurrence`, or now.
     #[arg(long)]
     task_firing_started: bool,
@@ -412,6 +432,17 @@ enum PhaseArg {
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 #[value(rename_all = "snake_case")]
+enum VerificationArg {
+    Pass,
+    Fail,
+    Blocked,
+    #[value(name = "tier_0_skip")]
+    Tier0Skip,
+    HotfixDeferred,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+#[value(rename_all = "snake_case")]
 enum ByArg {
     Human,
     Peer,
@@ -463,7 +494,8 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let writes = command.can_change_the_record();
     let result = session.dispatch(command, ctx);
     if writes
-        && let Err(error) = instrukt_runner::deliver_approval_attention(&ctx.home, ctx.clock.now())
+        && let Err(error) =
+            instrukt_runner::deliver_approval_attention(&ctx.home, Some(&work), ctx.clock.now())
     {
         tracing::warn!(event="approval_attention_pending",error=%error);
     }
@@ -729,6 +761,7 @@ impl Session<'_> {
                 tier: args.tier.map(tier),
             }),
             human_involved: args.human_involved,
+            hold: args.hold.then(|| args.reason.unwrap_or_default()),
         };
         if request.kind == TodoKind::Bug {
             bail!(
@@ -747,6 +780,8 @@ impl Session<'_> {
             record.kind,
             if record.status == TodoStatus::Iceboxed {
                 ", in the icebox"
+            } else if record.hold.is_some() {
+                ", on hold"
             } else {
                 ""
             },
@@ -952,6 +987,18 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
             forms.push(form);
         }
     }
+    if let Some(disposition) = args.verification {
+        forms.push(StampRequest::VerificationDisposition {
+            disposition: match disposition {
+                VerificationArg::Pass => VerificationDisposition::Pass,
+                VerificationArg::Fail => VerificationDisposition::Fail,
+                VerificationArg::Blocked => VerificationDisposition::Blocked,
+                VerificationArg::Tier0Skip => VerificationDisposition::Tier0Skip,
+                VerificationArg::HotfixDeferred => VerificationDisposition::HotfixDeferred,
+            },
+            follow_up: args.follow_up.clone(),
+        });
+    }
     if let Some(result) = args.task_outcome {
         forms.push(StampRequest::TaskOutcome {
             result: match result {
@@ -1035,6 +1082,10 @@ fn admission(slug: &TodoSlug) -> String {
 - Is the work already covered? Read `instrukt todo list` and the `input` of each plausible match.
 - Does a small addition belong in an existing todo that has not started build?
 - Has the intended outcome converged, with every contract preparation consumes authored and reviewed? If not, file it with --icebox.
+- Does converged work wait on something? Place it by what it waits on:
+  - on other todos: --after <slugs>; it is ready once they deliver.
+  - on a concrete condition outside the project's todos (a one-off branch merge, a binary rollout, an external gate): --hold --reason <condition>.
+  Never use --hold or --icebox for a wait on another todo, nor --icebox for converged work waiting on a merge or release.
 - Is it documentation-only? That executes in context and needs no todo.
 - Does a defect claim name the contract it breaks and cite the occurrence?
 "
@@ -1534,6 +1585,18 @@ fn fact(fact: &StampFact) -> String {
         StampFact::DeferralsProcessed { deferrals } => {
             format!("deferrals processed — deferrals {deferrals}")
         }
+        StampFact::VerificationDisposition {
+            disposition,
+            commit,
+            report,
+            follow_up,
+        } => format!(
+            "verification {disposition} — commit {commit}, report {report}{}",
+            follow_up
+                .as_ref()
+                .map(|todo| format!(", follow-up {} ({})", todo.slug, todo.id))
+                .unwrap_or_default()
+        ),
         StampFact::FinalizeReady { commit } => format!("finalize ready — commit {commit}"),
         StampFact::TaskFiringStarted { occurrence } => {
             format!("task firing started — occurrence {}", time(*occurrence))

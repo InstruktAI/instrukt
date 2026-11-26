@@ -133,6 +133,25 @@ Automatic review adds these crossings; their composition is the review gate in
 | work → workflow | Customer / Supplier | Which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet: the only source of a non-todo head's approval and of exemptions in coverage, and with the review status the source of a candidate's result |
 | workflow → runner | Customer / Supplier | An active candidate's review coverage, derived from the repository, work's answer and the runner's red observation of the canonical head |
 
+Fleet attention adds these crossings
+(`project/instrukt/spec/feature/runner/fleet-attention`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts; the runner decides the conditions and appends their events |
+| work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an attention episode |
+| workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+
+
+A requested review (`project/instrukt/spec/feature/runner/requested-review`)
+adds one crossing and is no part of the review gate: it emits no event and the
+runner holds no review request for it.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+
+
 Worktree reclamation adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/worktree-reclamation`.
 

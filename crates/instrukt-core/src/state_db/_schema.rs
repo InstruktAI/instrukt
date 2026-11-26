@@ -49,18 +49,19 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V36),
     Sql(V37),
     Sql(V38),
-    Step(v39),
+    Sql(V39),
+    Step(v40),
 ];
 
-/// Version 39: the shared remote record ends (`state-database`, Version
-/// 39). `listing_copies` and the reflection columns that tracked a record
+/// Version 40: the shared remote record ends (`state-database`, Version
+/// 40). `listing_copies` and the reflection columns that tracked a record
 /// copy on GitHub go; `reflections` gains the issue read positions, the
 /// published work-branch head and why its publication is outstanding, the
 /// kept refusals, and the reviewed build verdicts by stamp record order in
 /// place of their count; `inbound_commands` gains the command's time. Every
 /// work row is kept, a conflicted row with its pending reflection. Each part
 /// checks what is there first, so the step re-enters its own output.
-fn v39(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
+fn v40(tx: &rusqlite::Transaction<'_>) -> rusqlite::Result<()> {
     let has = |table: &str, column: &str| -> rusqlite::Result<bool> {
         tx.query_row(
             &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
@@ -147,6 +148,26 @@ fn reviewed_verdicts(count: u64, stamps: &[(u64, String)]) -> Vec<u64> {
         .map(|(sequence, _)| *sequence)
         .collect()
 }
+
+/// Version 39: the runner's fleet-attention state (`state-database`,
+/// "Runner tables"). `input_waits` numbers each claim-holding session's waits
+/// for input on a todo and outlives the claim's release; it goes with the
+/// todo's other rows. `attention_episodes` holds a project's open attention
+/// episode and the occurrence that opened it. Both start empty.
+const V39: &str = "
+CREATE TABLE IF NOT EXISTS input_waits (
+    project TEXT NOT NULL,
+    todo_id TEXT NOT NULL REFERENCES todos(id) ON DELETE CASCADE,
+    session TEXT NOT NULL,
+    wait    INTEGER NOT NULL,
+    waiting INTEGER NOT NULL,
+    PRIMARY KEY (project, todo_id, session)
+);
+CREATE TABLE IF NOT EXISTS attention_episodes (
+    project   TEXT PRIMARY KEY,
+    opened_by TEXT NOT NULL
+);
+";
 
 /// Version 38: lookups of the todos a worktree path or a work branch names,
 /// and of a todo's hold history and label actions, so worktree standing

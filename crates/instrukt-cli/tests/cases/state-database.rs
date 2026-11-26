@@ -10,10 +10,16 @@ use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use nix::fcntl::{FcntlArg, fcntl};
+use nix::libc;
+
+use instrukt_core::home::Home;
+use instrukt_core::state_db::rusqlite::Connection;
+use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+
 use crate::common;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
-use instrukt_core::state_db::rusqlite::Connection;
 use workflow::Crew;
 
 // spec: project/instrukt/spec/feature/work/state-database UC-SD2
@@ -118,7 +124,7 @@ fn retain_historical_starts(env: &common::TestEnv) -> serde_json::Value {
     let db = Connection::open(&file).unwrap();
     db.execute_batch("DROP TABLE agent_quota; DROP TABLE conversation_relay_positions; DROP TABLE conversation_links; ALTER TABLE poll_deferrals DROP COLUMN cause; CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations; PRAGMA user_version=4;")
         .unwrap();
-    crate::common::recreate_pre_v39_listing_copies(&db);
+    crate::common::recreate_pre_v40_listing_copies(&db);
     let checkout = env.git_repo("retained");
     let old = serde_json::json!({"key":"retained-key","brief":"retained-input","checkout":checkout.path(),"worktree":null,"selection":{"family":"gemini","provider":"account-two","model":"chosen-model","effort":"high","options":{"thinking_level":"high"}},"preferences":[{"agent":"gemini","tier":"strong"}]});
     db.execute("INSERT INTO runtime_starts(runtime,semantic_key,project,kind,subject,checkout,brief,request,begun_at,reported,state) VALUES('t3','retained-key','p','run','s',?1,'retained-input',?2,'2030-01-01T00:00:00Z',0,'retry_allowed')",instrukt_core::state_db::rusqlite::params![checkout.path().to_str().unwrap(),old.to_string()]).unwrap();
@@ -509,6 +515,112 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
             "{listing}---\n{current}---\n{during}---\n{listed}---\n{after}---\n{on_github}\n"
         ))
     );
+}
+
+/// The stage variable under which this test binary, run again, observes
+/// the database's lock from another process; it carries the database path.
+const LOCK_OBSERVER: &str = "INSTRUKT_STATE_DB_LOCK_OBSERVER";
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD6
+#[test]
+fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
+    if let Some(file) = std::env::var_os(LOCK_OBSERVER) {
+        println!(
+            "observed-lock {}",
+            observe_lock(std::path::Path::new(&file))
+        );
+        return;
+    }
+    let project = support::Project::new();
+    project.create("held-database", "change", "Keep the database whole.");
+    let home = Home::at_user_home(project.env.home().to_path_buf());
+    let file = home.state_db_file();
+    let todos = |db: &Connection| -> i64 {
+        db.query_row("SELECT count(*) FROM todos", [], |row| row.get(0))
+            .unwrap()
+    };
+
+    // This process holds the database open, as the runner does: a
+    // connection that has run a query keeps its read lock between reads.
+    let held = StateRead::open(&home).unwrap().unwrap();
+    assert_eq!(todos(held.conn()), 1);
+
+    // It reads the database for inspection, as the runner's workers do.
+    let inspected = StateRead::open(&home.for_inspection()).unwrap().unwrap();
+    assert_eq!(todos(inspected.conn()), 1);
+    drop(inspected);
+
+    // Another process asks the kernel whether a write lock could be taken
+    // where SQLite's readers hold theirs; a process never sees its own locks.
+    let observer = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "state_database::a_process_holding_the_database_keeps_its_lock_while_it_inspects_it",
+            "--nocapture",
+        ])
+        .env(LOCK_OBSERVER, &file)
+        .output()
+        .unwrap();
+    assert!(observer.status.success(), "{observer:?}");
+    let stdout = String::from_utf8(observer.stdout).unwrap();
+    let observed = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("observed-lock "))
+        .unwrap_or_else(|| panic!("the observer reported no lock: {stdout}"))
+        .split(' ')
+        .map(|number| number.parse::<i64>().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        observed,
+        [i64::from(libc::F_RDLCK), i64::from(std::process::id())],
+        "another process finds this process's read lock on {} in place",
+        file.display()
+    );
+
+    // Another instrukt command writes the database and exits.
+    project.create("second-write", "change", "Write while it is held.");
+
+    // The holder goes on reading, seeing that write, and writing.
+    assert_eq!(todos(held.conn()), 2);
+    let mut writer = StateDb::open(&home).unwrap();
+    let path = writer.path().to_path_buf();
+    writer
+        .write(|tx| {
+            tx.execute(
+                "UPDATE todos SET revision = revision WHERE slug = 'second-write'",
+                [],
+            )
+            .map_err(StateDbError::sqlite(&path))
+        })
+        .unwrap();
+    drop(writer);
+    assert_eq!(todos(held.conn()), 2);
+    // The integrity check reports each problem it finds as a row of its own.
+    let problems: i64 = held
+        .conn()
+        .query_row(
+            "SELECT count(*) FROM pragma_integrity_check WHERE integrity_check <> 'ok'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(problems, 0, "the database passes its integrity check");
+}
+
+/// The lock, as `<type> <pid>`, that keeps a write lock off SQLite's
+/// shared-reader range of the database at `file` (`SHARED_FIRST`,
+/// `0x40000002`, 510 bytes).
+fn observe_lock(file: &std::path::Path) -> String {
+    let database = std::fs::File::open(file).unwrap();
+    let mut lock = libc::flock {
+        l_type: libc::F_WRLCK as libc::c_short,
+        l_whence: libc::SEEK_SET as libc::c_short,
+        l_start: 0x4000_0002,
+        l_len: 510,
+        l_pid: 0,
+    };
+    fcntl(&database, FcntlArg::F_GETLK(&mut lock)).unwrap();
+    format!("{} {}", lock.l_type, lock.l_pid)
 }
 
 #[test]
