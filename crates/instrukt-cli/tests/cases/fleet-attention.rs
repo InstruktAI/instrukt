@@ -161,7 +161,7 @@ fn a_developers_stuck_work_is_attended_to_without_their_watching() {
     let fake = FakeT3::create(&project.env);
     // Three dispatched todos: `gate` reaches a person's approval, `handed`
     // is released by its session to a developer's, and `tokens` keeps
-    // running.
+    // running, first parked on a worker it delegated.
     for slug in ["gate", "handed", "tokens"] {
         change(&project, slug);
     }
@@ -186,15 +186,18 @@ fn a_developers_stuck_work_is_attended_to_without_their_watching() {
         "prd_review",
     ]);
     take_up(&project, &fake, "handed", handed);
-    fake.set_status(gate, "waiting");
-    fake.set_status(handed, "waiting");
+    fake.set_pending(gate, 1);
+    fake.set_pending(handed, 1);
+    fake.park_on_delegate(tokens, "verifier · tokens");
     project.tick();
     project.tick();
     let started = fake.threads().len();
     let quiet = (attention(&project), started);
 
     let waiting = holder(&project, "tokens");
-    fake.set_status(tokens, "waiting");
+    fake.set_status(tokens, "running");
+    fake.change(tokens, "pendingBackgroundTasks", serde_json::json!([]));
+    fake.set_pending(tokens, 1);
     project.tick();
     project.tick();
     let woken = (attention(&project), deliveries(&project));

@@ -866,14 +866,14 @@ enum ThreadStatus {
     Running,
     Preparing,
     Starting,
-    Resuming,
     Queued,
+    /// No active run while held background work — a delegated subagent, a
+    /// background task, an awaited command or monitor — keeps the thread
+    /// from completing, or an ended turn awaiting checkpoint capture. T3
+    /// reports a wait for input only as a pending request.
     Waiting,
-    WaitingForInput,
-    WaitingForApproval,
     Idle,
     Completed,
-    Stopped,
     Failed,
     Interrupted,
     Cancelled,
@@ -890,13 +890,10 @@ impl ThreadStatus {
     }
     fn state(self) -> SessionState {
         match self {
-            Self::Running | Self::Preparing | Self::Starting | Self::Resuming | Self::Queued => {
+            Self::Running | Self::Preparing | Self::Starting | Self::Queued | Self::Waiting => {
                 SessionState::Running
             }
-            Self::Waiting | Self::WaitingForInput | Self::WaitingForApproval => {
-                SessionState::NeedsInput
-            }
-            Self::Idle | Self::Completed | Self::Stopped => SessionState::InputReady,
+            Self::Idle | Self::Completed => SessionState::InputReady,
             Self::Failed | Self::Interrupted | Self::Cancelled | Self::RolledBack => {
                 SessionState::EndedFailed
             }
