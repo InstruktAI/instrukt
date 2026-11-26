@@ -1726,7 +1726,7 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     assert_eq!(c.runtime.message_count(&successor), received);
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS29
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS30
 #[test]
 fn an_unaccepted_pickup_idle_in_another_runtime_project_rolls_over_to_the_checkouts_own() {
     let p = Tracked::new(true);
