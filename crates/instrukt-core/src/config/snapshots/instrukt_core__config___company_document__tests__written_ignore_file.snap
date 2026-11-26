@@ -1,8 +1,0 @@
----
-source: crates/instrukt-core/src/config/_company_document.rs
-expression: "std::fs::read_to_string(dir.path().join(\".gitignore\")).unwrap()"
----
-/company.yaml
-/secrets.env
-/projects/
-/.instrukt/

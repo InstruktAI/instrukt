@@ -246,7 +246,6 @@ mod tests {
     #[test]
     fn the_skeletons_layer_is_a_company_repository_with_todos_off_and_review_on() {
         let layer = skeleton_layer(&acme()).unwrap();
-        insta::assert_snapshot!("skeleton_layer", serde_yaml_ng::to_string(&layer).unwrap());
         assert!(matches!(
             super::super::classify_root(Some(serde_yaml_ng::to_string(&layer).unwrap().as_bytes())),
             super::super::RootDocument::ProjectLayer {

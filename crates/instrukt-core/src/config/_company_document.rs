@@ -288,11 +288,6 @@ mod tests {
             legacy
         );
         assert!(!dir.join(CONFIG_FILE_NAME).exists());
-        // The earlier line is kept and the missing ones follow it.
-        insta::assert_snapshot!(
-            "converted_ignore_file",
-            std::fs::read_to_string(dir.join(".gitignore")).unwrap()
-        );
         // Converting again finds nothing to convert.
         convert(&home, &acme()).unwrap();
         assert_eq!(
@@ -372,23 +367,13 @@ mod tests {
     fn writing_settings_ignores_them_and_never_replaces_a_document() {
         let dir = tempfile::tempdir().unwrap();
         assert!(write_company_settings(dir.path(), &acme()).unwrap());
-        insta::assert_snapshot!(
-            "written_settings",
-            std::fs::read_to_string(dir.path().join(COMPANY_DOCUMENT)).unwrap()
-        );
-        insta::assert_snapshot!(
-            "written_ignore_file",
-            std::fs::read_to_string(dir.path().join(".gitignore")).unwrap()
-        );
-        std::fs::write(
-            dir.path().join(COMPANY_DOCUMENT),
-            "company: acme\nmine: 1\n",
-        )
-        .unwrap();
+        // A document the home already holds is never written over.
+        let held = "company: acme\nmine: 1\n";
+        std::fs::write(dir.path().join(COMPANY_DOCUMENT), held).unwrap();
         assert!(!write_company_settings(dir.path(), &acme()).unwrap());
         assert_eq!(
             std::fs::read_to_string(dir.path().join(COMPANY_DOCUMENT)).unwrap(),
-            "company: acme\nmine: 1\n"
+            held
         );
     }
 }

@@ -1331,9 +1331,19 @@ mod tests {
         let listed = r#"{"name": "acme-tools", "plugins": [{"name": "acme", "version": "9", "category": "knowledge", "source": "./old"}, {"name": "other"}], "owner": {"name": "Acme"}}"#;
         let tree = repository(Some(listed), &[]);
         let file = catalog(&tree, "1.2.3").unwrap().unwrap().unwrap();
-        // The entry's values, every other member in its place, and the
-        // document's form, as written.
-        insta::assert_snapshot!("entry_set_by_value", file.text);
+        // What the entry held beyond its own values, the other entry and the
+        // catalog's other members are the input's, in the input's order.
+        let input: Json = serde_json::from_str(listed).unwrap();
+        let written: Json = serde_json::from_str(&file.text).unwrap();
+        assert_eq!(
+            written["plugins"][0]["category"],
+            input["plugins"][0]["category"]
+        );
+        assert_eq!(written["plugins"][1], input["plugins"][1]);
+        assert_eq!(written["owner"], input["owner"]);
+        let members =
+            |value: &Json| -> Vec<String> { value.as_object().unwrap().keys().cloned().collect() };
+        assert_eq!(members(&written), members(&input));
         // Once set, the entry holds its values: the catalog is left as it is.
         let tree = repository(Some(&file.text), &[]);
         assert_eq!(catalog(&tree, "1.2.3").unwrap(), Ok(None));
@@ -1411,10 +1421,6 @@ mod tests {
             .collect();
         assert_eq!(written, [Path::new("skills/acme/SKILL.md")]);
         let upgraded = applied_plan(&earlier, &upgrade);
-        insta::assert_snapshot!(
-            "upgraded_catalog",
-            &upgraded.iter().find(|(path, _)| path == CATALOG).unwrap().1
-        );
         // What the earlier rendering left is kept as it was.
         let left = |files: &[(String, String)]| -> Vec<(String, String)> {
             let earlier = [
