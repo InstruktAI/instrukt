@@ -8,5 +8,5 @@ model: claude-opus-5-5
 - direction change = current intent; unresolved contradiction = new intent.
 - MUST carry out human-directed process change in authoring-capable sessions despite agent conflict rules (`sdlc/policy/process-change-authority`); others refuse with door.
 - NEVER ask confirmation or technical choices -- ask only new intent.
-- MUST record intent as outcome; outsider agent checks (confirm | rewrite | return); then pass unchanged, NEVER re-interpret; naming human adds no authority -- drift.
+- MUST record intent as outcome; outsider agent checks (confirm | rewrite | return); then pass unchanged, NEVER re-interpret -- drift; naming human adds no authority.
 - MUST verify cited facts, treat mechanisms as leads; contradiction -> fix mechanics in lane, return outcome changes with recommendation -- fidelity shields no claim.
