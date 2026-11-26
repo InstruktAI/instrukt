@@ -336,17 +336,19 @@ impl RuntimeAdapter for T3 {
         Runtime::T3
     }
     fn supports(&self, capability: Capability) -> bool {
-        matches!(
-            capability,
+        match capability {
+            // The runtime's one archive fact, which configuration admits the
+            // retention window against.
+            Capability::Archive => self.runtime().archives_threads(),
             Capability::ConversationSource
-                | Capability::CreateWorktree
-                | Capability::AttachWorktree
-                | Capability::AgentSelection
-                | Capability::InputConsumption
-                | Capability::AssignmentEvidence
-                | Capability::ConfiguredRuntimes
-                | Capability::Archive
-        )
+            | Capability::CreateWorktree
+            | Capability::AttachWorktree
+            | Capability::AgentSelection
+            | Capability::InputConsumption
+            | Capability::AssignmentEvidence
+            | Capability::ConfiguredRuntimes => true,
+            Capability::Link | Capability::Notify => false,
+        }
     }
     fn finished_threads(
         &self,
