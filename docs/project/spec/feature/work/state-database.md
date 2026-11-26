@@ -69,12 +69,26 @@ meaning and the writes of the conversation tables.
   instead): it alone would put one database under two lock domains
   (`general/principle/trust-and-guardrails`: interference is a harm restoring state
   cannot repair).
+<!-- planned-change:github-human-agent-reflection -->
 - A separate per-computer reflection lock
   `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
   across GitHub requests and takes the writer lock only briefly for each local
   transaction that records what reflection learned. Lock order is always
   reflection → writer; a local writer releases the writer lock before acquiring
   the reflection lock. Current-schema local readers take neither lock. Readers
+<!-- change:github-human-agent-reflection -->
+- A separate per-computer reflection lock
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
+  across GitHub requests and takes the writer lock only briefly for each local
+  transaction that records what reflection learned. A command or runner tick
+  takes it only when it is free and never waits for it: a command that finds
+  it held returns once its local write is committed, with that write's
+  reflection pending, and a tick that finds it held flushes nothing that run.
+  What is left pending is reflected by the next flush that takes the lock.
+  Lock order is always reflection → writer; a local writer releases the writer
+  lock before trying the reflection lock. Current-schema local readers take
+  neither lock. Readers
+<!-- /planned-change:github-human-agent-reflection -->
   of an older database enter the same migration path under the writer lock
   before consuming it, except status inspection and documentation reads.
 - A withdrawal holds the per-computer withdrawal lock
