@@ -294,46 +294,68 @@ impl<'a> Executions<'a> {
                     .alive(&execution.session)
                     .unwrap_or_else(|err| Observation::Unobservable(err.to_string()))
             };
-            if observed == Observation::State(SessionState::Gone) {
-                let key=self.state.read(|conn,path| {
-                    use instrukt_core::state_db::rusqlite::OptionalExtension;
-                    conn.query_row("SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NULL",[execution.session.to_string()],|row|row.get::<_,String>(0)).optional().map_err(state::sql(path))
-                })?.flatten();
-                if let Some(key) = key {
-                    match sessions.adapter().and_then(|adapter| {
-                        let mut request =
-                            crate::keyed::request(self.state.home(), adapter.as_ref(), &key)?;
-                        request.title = if key.starts_with("instrukt:task:") {
-                            format!("task · {}", execution.todo)
-                        } else {
-                            format!("{} · {}", execution.role, execution.todo)
-                        };
-                        crate::keyed::succeed(
-                            adapter.as_ref(),
-                            &crate::runtime::FollowupAssignment {
-                                bindings: Some(bindings),
-                                original_request: None,
-                                invocation: cx.invocation,
-                                request: &request,
-                                session: &execution.session,
-                                worktree_path: None,
-                                project: Some(project.slug.as_str()),
-                                now: cx.now,
-                            },
-                        )
-                    }) {
-                        Ok(thread) => {
-                            execution.session = thread.session;
-                            execution.recovery_sent = false;
-                            execution.anomaly_raised = false;
-                        }
-                        Err(error) => {
-                            tracing::warn!(event="execution_successor_pending",%key,%error);
-                        }
+            let key=self.state.read(|conn,path| {
+                use instrukt_core::state_db::rusqlite::OptionalExtension;
+                conn.query_row("SELECT semantic_key FROM session_bindings WHERE session=?1 AND released_at IS NULL",[execution.session.to_string()],|row|row.get::<_,String>(0)).optional().map_err(state::sql(path))
+            })?.flatten();
+            // Besides a confirmed gone thread, an idle one in another runtime
+            // project than its checkout's own is succeeded.
+            let succeed = observed == Observation::State(SessionState::Gone)
+                || (matches!(
+                    observed,
+                    Observation::State(SessionState::InputReady | SessionState::EndedFailed)
+                ) && key.as_ref().is_some_and(|key| {
+                    sessions.adapter().is_ok_and(|adapter| {
+                        crate::keyed::request(self.state.home(), adapter.as_ref(), key)
+                            .and_then(|request| {
+                                let thread = adapter.read_state(&execution.session)?;
+                                crate::keyed::idle_misplaced(
+                                    adapter.as_ref(),
+                                    &request.checkout,
+                                    &thread,
+                                    Some(key),
+                                )
+                            })
+                            .unwrap_or_else(|error| {
+                                tracing::warn!(event="execution_placement_unverified",%key,%error);
+                                false
+                            })
+                    })
+                }));
+            if succeed && let Some(key) = key {
+                match sessions.adapter().and_then(|adapter| {
+                    let mut request =
+                        crate::keyed::request(self.state.home(), adapter.as_ref(), &key)?;
+                    request.title = if key.starts_with("instrukt:task:") {
+                        format!("task · {}", execution.todo)
+                    } else {
+                        format!("{} · {}", execution.role, execution.todo)
+                    };
+                    crate::keyed::succeed(
+                        adapter.as_ref(),
+                        &crate::runtime::FollowupAssignment {
+                            bindings: Some(bindings),
+                            original_request: None,
+                            invocation: cx.invocation,
+                            request: &request,
+                            session: &execution.session,
+                            worktree_path: None,
+                            project: Some(project.slug.as_str()),
+                            now: cx.now,
+                        },
+                    )
+                }) {
+                    Ok(thread) => {
+                        execution.session = thread.session;
+                        execution.recovery_sent = false;
+                        execution.anomaly_raised = false;
                     }
-                    kept.push(execution);
-                    continue;
+                    Err(error) => {
+                        tracing::warn!(event="execution_successor_pending",%key,%error);
+                    }
                 }
+                kept.push(execution);
+                continue;
             }
             let recovery_id = format!("recovery:{}:{}", execution.session, execution.state);
             // The recovery input's outcome is read only where it can decide

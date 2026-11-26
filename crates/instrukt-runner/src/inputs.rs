@@ -304,6 +304,9 @@ fn pump_inner(
             if thread.state == SessionState::Gone {
                 return Err(SessionsError::Gone(target.clone()));
             }
+            // A misplaced target is reported whatever its state, before any
+            // wait would hide it.
+            crate::keyed::verify_delivery_project(state, adapter, &thread, now)?;
             if entry_only
                 && !matches!(
                     thread.state,
@@ -312,7 +315,6 @@ fn pump_inner(
             {
                 return Ok(());
             }
-            crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
             // A selected or uncertain send retries its immutable content and target.
             adapter.send(target, &content)?;
             accept(state, target, &id, now)?;
@@ -334,12 +336,19 @@ fn pump_inner(
             Ok(())
         };
     }
+    // A misplaced target is reported whatever its state, before the
+    // unknown-readiness refusal would hide it, whenever this pass could send
+    // it something: a pending input, or the replay of an interrupted one.
+    let deliverable = (thread.interrupted && thread.run_id.is_some())
+        || state.read(|conn,path|conn.query_row("SELECT EXISTS(SELECT 1 FROM runtime_inputs WHERE runtime=?1 AND session=?2 AND state='pending')",params![target.runtime.as_str(),target.id.as_str()],|r|r.get::<_,bool>(0)).map_err(state::sql(path)))?.unwrap_or(false);
+    if deliverable {
+        crate::keyed::verify_delivery_project(state, adapter, &thread, now)?;
+    }
     if thread.state == SessionState::Unknown {
         return Err(SessionsError::Refused(
             "runtime input readiness is unknown; pending delivery retained".into(),
         ));
     }
-    crate::standing::verify_delivery_project(state, adapter, &thread, now)?;
     let idle = matches!(
         thread.state,
         SessionState::InputReady | SessionState::EndedFailed
