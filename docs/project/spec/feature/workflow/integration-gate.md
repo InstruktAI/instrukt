@@ -70,6 +70,7 @@ answer on the candidate commit
 evidence) and from the review status the commit carries. The first row that
 applies decides.
 
+<!-- planned-change:author-recorded-review-routing -->
 | Work's answer on the candidate commit, and its review status | The candidate's result |
 | --- | --- |
 | The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
@@ -86,6 +87,25 @@ recalled. On a
 project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
+<!-- change:author-recorded-review-routing -->
+| Work's answer on the candidate commit and on the heads covering it, and its review status | The candidate's result |
+| --- | --- |
+| The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
+| A head that covers content the candidate adds now has a current verdict of needs work (Review coverage of a candidate) | `failure`, whatever review status the commit still carries. |
+| The commit carries no review status | Pending. |
+| The review status is a failure | `failure`. |
+| Anything else | The CI result. |
+
+A status the reviewer bot published for an earlier version of a verdict
+therefore completes no result that the current verdict withholds. From the
+tick that finds needs work current, the result is a failure, before GitHub
+shows the failure status, and it stays a failure until the canonical branch
+contains the candidate: a result reported complete before the verdict changed
+is replaced by that failure, and the integrator is woken with it. On a
+project that has not opted in,
+classification reads every status and check run as before, a review status
+published earlier included.
+<!-- /planned-change:author-recorded-review-routing -->
 
 | Observed result | Integrator obligation |
 | --- | --- |
@@ -138,6 +158,13 @@ An approval in a todo's record covers the exact commit it names and no other:
 a head that changed after its approval, and one whose approval a later verdict
 replaced, is not an approved head.
 
+<!-- planned:author-recorded-review-routing -->
+A verdict that requests changes holds back what it judged. While a head's
+current verdict is needs work, an exemption covers no commit that head
+contains; such a commit is covered only by another approved head that contains
+it, such as one that addresses the findings.
+<!-- /planned:author-recorded-review-routing -->
+
 The commits a red head's promotion added are the first-parent commits after
 the canonical head it was promoted from, up to that head. Where work holds no
 evidence of the red head as a candidate, that extent is not known and no
@@ -146,23 +173,50 @@ promotion, or a tree some earlier point of the canonical branch once had,
 removes deliveries the red observation says nothing about and is not covered
 this way.
 
+<!-- planned-change:author-recorded-review-routing -->
 | Finding | What follows |
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
 | A commit is not covered | The candidate owes a review. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
+<!-- change:author-recorded-review-routing -->
+| Finding | What follows |
+| --- | --- |
+| Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
+| A commit is not covered because a head that covered it now has a current verdict of needs work | The candidate is held. A derived approval recorded earlier is withdrawn through work, also once GitHub shows it, and the candidate's result is a failure (Candidate and verification). Nothing is asked: the verdict's findings are its head's author's to address. |
+| Any other commit is not covered | The candidate is held: it owes that commit's coverage, not a review of its own. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. The commit's authoring session is asked to decide for it: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). Each tick derives the candidate again, and the decision on record covers the commit. Where the commit names no authoring session, or names one that was archived or deleted, the runner asks for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
+<!-- /planned-change:author-recorded-review-routing -->
 
+<!-- planned-change:author-recorded-review-routing -->
 A derived approval thus reaches GitHub only from a finding of the tick that
 publishes it: a covering head whose approval a needs-work version replaced
 gives the candidate no first approving status.
 Once GitHub shows the status, a later version of a covering head withdraws
 nothing.
+<!-- change:author-recorded-review-routing -->
+A derived approval thus reaches GitHub only from a finding of the tick that
+publishes it: a covering head whose approval a needs-work version replaced
+gives the candidate no first approving status.
+Once GitHub shows the status, a later approving version of a covering head
+withdraws nothing, and a needs-work version withdraws it for as long as the
+canonical branch does not contain the candidate.
+<!-- /planned-change:author-recorded-review-routing -->
 
+<!-- planned-change:author-recorded-review-routing -->
 A candidate is never approved on its covered part alone, and a different
 candidate commit is derived afresh. Whether a commit owes review stays its
 author's decision under `general/policy/commits`: a reviewed head and an
 exemption are that decision on record. A commit that carries neither is asked
 for, so nothing reaches the canonical branch because its author forgot to ask.
+<!-- change:author-recorded-review-routing -->
+A candidate is never approved on its covered part alone, and a different
+candidate commit is derived afresh. Whether a commit owes review stays its
+author's decision under `general/policy/commits`: a reviewed head and an
+exemption are that decision on record. A commit that carries neither goes back
+to its author, so nothing reaches the canonical branch because its author
+forgot to decide, and no review of it starts that its author did not ask for.
+<!-- /planned-change:author-recorded-review-routing -->
 
 Reproduction compares trees and judges no content
 (`general/principle/intelligence-boundaries`): a commit either equals what
@@ -222,11 +276,21 @@ building on the known-red baseline. The integrator judges whether the failure
 warrants a bug, deduplicates against existing work and files it once when
 warranted; the runner never turns every red check into a bug automatically.
 
+<!-- planned-change:author-recorded-review-routing -->
 On a project that requires the review status, a candidate that reverts the
 failing delivery of a red canonical head is covered by reproduction and carries
 the status without waiting for a review (Review coverage of a candidate). Which
 delivery to revert remains the integrator's judgment; a recovery that removes
 more than the red head's own promotion added is reviewed as an exact candidate.
+<!-- change:author-recorded-review-routing -->
+On a project that requires the review status, a candidate that reverts the
+failing delivery of a red canonical head is covered by reproduction and carries
+the status without waiting for a review (Review coverage of a candidate). Which
+delivery to revert remains the integrator's judgment; a recovery that removes
+more than the red head's own promotion added is not covered by reproduction,
+and the integrator, as its author, decides whether it owes review like the
+author of any other commit.
+<!-- /planned-change:author-recorded-review-routing -->
 
 When the integrator cannot restore the baseline, the condition is an anomaly
 that can require notification. Ordinary approval and new-intent requests
@@ -319,6 +383,29 @@ When their integrator assesses that evidence
 Then it judges whether the failure warrants a bug
 And when warranted it records the bug work once, reusing matching existing work
 ```
+
+<!-- planned:author-recorded-review-routing -->
+### UC-IG7: A developer's agent decides whether its commit owes review
+
+```gherkin
+Given a developer's project has opted in to automatic review
+And their agent committed a change it judged to owe no review and declared why when committing
+When the change reaches integration
+Then it is integrated without a review being started for it
+But when a commit reaches integration with neither a review nor a declared decision
+Then it is held back and the agent that authored it is asked to decide
+And no review of it starts unless that agent asks for one
+```
+
+### UC-IG8: A change its reviewer now rejects stays off the canonical branch
+
+```gherkin
+Given a developer's change was approved by its reviewer and waits for integration
+When its reviewer revises that verdict to request changes before the change reaches the canonical branch
+Then the change is held back from the canonical branch, also when its integration had already passed
+And it reaches the canonical branch only with a change that addresses the findings and whose own review approves it
+```
+<!-- /planned:author-recorded-review-routing -->
 
 ## Known caveats
 
