@@ -21,7 +21,7 @@ pub struct IdError {
 }
 
 macro_rules! identifier {
-    ($(#[$meta:meta])* $name:ident, $kind:literal, $check:path, $rule:literal) => {
+    ($(#[$meta:meta])* $name:ident, $kind:literal, $check:path, $rule:expr) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
         pub struct $name(String);
@@ -89,7 +89,7 @@ identifier!(
     GitHubOrganisation,
     "GitHub organisation",
     is_github_login,
-    "ASCII letters, digits and `-`, not empty"
+    GITHUB_LOGIN_RULE
 );
 
 identifier!(
@@ -97,7 +97,7 @@ identifier!(
     GitHubLogin,
     "GitHub login",
     is_github_login,
-    "ASCII letters, digits and `-`, not empty"
+    GITHUB_LOGIN_RULE
 );
 
 identifier!(
@@ -311,8 +311,10 @@ impl SnippetId {
     }
 }
 
-/// Whether `value` has the shape of a GitHub account login: ASCII letters,
-/// digits and `-`, not empty.
+/// The shape of a GitHub account's login, an organisation's or a person's.
+const GITHUB_LOGIN_RULE: &str = "ASCII letters, digits and `-`, not empty";
+
+/// Whether `value` has the shape [`GITHUB_LOGIN_RULE`] states.
 fn is_github_login(value: &str) -> bool {
     !value.is_empty()
         && value

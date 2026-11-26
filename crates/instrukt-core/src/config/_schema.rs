@@ -167,8 +167,7 @@ enum Shape {
     Bool,
     /// `github.org`: a [`Shape::Str`] with that key's contract.
     OwningOrganisation,
-    /// `company_repository`: a [`Shape::Bool`], off by default, with that
-    /// key's contract.
+    /// `company_repository`: a [`Shape::Bool`] with that key's contract.
     CompanyRepository,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,

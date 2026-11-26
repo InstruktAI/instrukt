@@ -42,11 +42,8 @@ fn kind_of(login: &str, record: &Value) -> Result<AccountKind, InterfaceError> {
 
 impl GitHubAccounts for GitHubAccess {
     fn account_kind(&self, login: &str) -> Result<AccountKind, InterfaceError> {
-        if login.is_empty()
-            || !login
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        {
+        // A text that is no login names no account.
+        if GitHubLogin::parse(login).is_err() {
             return Ok(AccountKind::Absent);
         }
         let config = Configuration::load_global(&self.home)
