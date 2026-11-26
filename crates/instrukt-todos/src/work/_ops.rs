@@ -988,13 +988,19 @@ impl Work {
             })
             .collect();
         let grounding = grounding_now(&mut s, index, name, content, &[])?;
-        let writer = s.actor()?;
-        // Content that does not change does not move: a write matching the
-        // current version's content, provenance and writer records nothing.
+        let version = Version {
+            digest: digest_of(content),
+            writer: s.actor()?,
+            created: s.now,
+            derived_from,
+            sequence: 0,
+            grounding,
+            remote: None,
+            content: Some(content.to_owned()),
+        };
+        // Content that does not change does not move: nothing is recorded.
         if let Some(current) = s.items[index].record.current_version(name)
-            && (&current.digest, &current.derived_from, &current.grounding)
-                == (&digest_of(content), &derived_from, &grounding)
-            && current.writer == writer
+            && current.repeats(&version)
         {
             let value = current.clone();
             let docs_changed = std::mem::take(&mut s.docs_changed);
@@ -1005,16 +1011,6 @@ impl Work {
                 docs_changed,
             });
         }
-        let version = Version {
-            digest: digest_of(content),
-            writer,
-            created: s.now,
-            derived_from,
-            sequence: 0,
-            grounding,
-            remote: None,
-            content: Some(content.to_owned()),
-        };
         s.commit("artifact written", |s| {
             let record = &mut s.items[index].record;
             let mut version = version;

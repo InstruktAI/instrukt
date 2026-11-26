@@ -375,6 +375,24 @@ pub struct Version {
     pub content: Option<String>,
 }
 
+impl Version {
+    /// Whether `other` changes nothing about this version: the same content,
+    /// provenance and writer, whenever it was written.
+    pub fn repeats(&self, other: &Version) -> bool {
+        (
+            &self.digest,
+            &self.derived_from,
+            &self.grounding,
+            &self.writer,
+        ) == (
+            &other.digest,
+            &other.derived_from,
+            &other.grounding,
+            &other.writer,
+        )
+    }
+}
+
 /// The item-level execution claim: held by a computer, through a session
 /// when one claimed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,6 +489,39 @@ pub(crate) fn valid_artifact_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_version_repeats_another_only_with_the_same_content_provenance_and_writer() {
+        let version = |content: &str, writer: &str| Version {
+            digest: digest_of(content),
+            writer: Actor::Person {
+                name: writer.into(),
+            },
+            created: Timestamp::from_second(1).unwrap(),
+            derived_from: Vec::new(),
+            sequence: 1,
+            grounding: Grounding::default(),
+            remote: None,
+            content: Some(content.into()),
+        };
+        let current = version("x", "dev");
+        let later = Version {
+            created: Timestamp::from_second(9).unwrap(),
+            sequence: 4,
+            ..version("x", "dev")
+        };
+        assert!(current.repeats(&later));
+        assert!(!current.repeats(&version("y", "dev")));
+        assert!(!current.repeats(&version("x", "other")));
+        let regrounded = Version {
+            grounding: Grounding {
+                referenced_paths: vec!["src".into()],
+                ..Grounding::default()
+            },
+            ..version("x", "dev")
+        };
+        assert!(!current.repeats(&regrounded));
+    }
 
     #[test]
     fn records_written_before_sequencing_are_numbered_in_time_then_stored_order() {

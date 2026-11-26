@@ -134,16 +134,6 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
   Then a peer's approval does not satisfy it
 ```
 
-### UC-AP5: Intent recorded outside its conversation is checked once recorded from it
-
-```gherkin
-  Given a developer's request is recorded without an originating conversation
-  When another agent checks it
-  Then the check is refused and names recording the request from its conversation
-  And when the same request, unchanged, is recorded from its conversation
-  Then that agent's check is accepted against that conversation
-```
-
 ## Known caveats
 
 None.

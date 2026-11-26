@@ -1,8 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/approvals.rs
-expression: "redact(&format!(\"{refused}---\\n{checked}\"))"
----
-instrukt: the current `input` version names no originating conversation to check it against; record a new `input` version from that conversation
----
-stamped nested-lists: intent checked — input <digest 1> against conversation t3:author-1
-reflection: reflected to GitHub

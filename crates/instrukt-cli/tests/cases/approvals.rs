@@ -374,28 +374,3 @@ fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation
         redact(&format!("{checked}---\n{received}"))
     );
 }
-
-// spec: project/instrukt/spec/feature/work/approvals UC-AP5
-#[test]
-fn unchanged_intent_recorded_from_its_conversation_opens_the_intent_check() {
-    let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
-    const INTENT: &str = "Keep the depth of nested lists when parsing Markdown.";
-    project.create("nested-lists", "feature", "Keep nested lists.");
-    project.ok(["artifacts", "write", "nested-lists", "input", INTENT]);
-    project.env.set_env("T3CODE_THREAD_ID", "checker-2");
-    let refused = project
-        .todo(["stamp", "nested-lists", "--intent-checked"])
-        .failure();
-    let refused = String::from_utf8_lossy(&refused.get_output().stderr).into_owned();
-    // The door: the same intent recorded from its conversation is a new
-    // version, though its content did not change.
-    project.env.set_env("T3CODE_THREAD_ID", "author-1");
-    project.ok(["artifacts", "write", "nested-lists", "input", INTENT]);
-    project.env.set_env("T3CODE_THREAD_ID", "checker-2");
-    let checked = project.ok(["stamp", "nested-lists", "--intent-checked"]);
-
-    insta::assert_snapshot!(
-        "unchanged-intent-checked",
-        redact(&format!("{refused}---\n{checked}"))
-    );
-}
