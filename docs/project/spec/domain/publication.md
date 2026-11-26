@@ -203,27 +203,27 @@ text, calls a model or judges whether a unit means what its source means.
    standing at its source's path relative to `docs/`:
    `docs/_compressed/general/…`, `docs/_compressed/domain/<x>/…`,
    `docs/_compressed/project/…`, and a company document's own path below it.
-   It lies outside every position, and its leading underscore keeps it out of
-   every snippet and position walk the docs context makes. In the home, a
-   published position's units stand under `_compressed/` inside that
-   position's published directory, at the source's path relative to the
-   position.
+   It lies outside every position; docs' walks skip it
+   (`project/instrukt/spec/domain/docs`). `_compressed` is reserved inside a
+   position too: a position that holds a folder of that name, at any depth,
+   is a finding, because in the home a published position's units stand
+   under `_compressed/` inside that position's published directory, at the
+   source's path relative to the position, and only units read from
+   `docs/_compressed/` and checked there may stand in that place.
 
 **Source**
 :  What an entrypoint rendering holds in full: a delivered snippet in the
-   closure of an entry index's `expanded` ids or of `general`'s `agents`
-   lists, or a company document in the closure of the company index's
-   `expanded` documents.
+   closure of the `expanded` ids or of an `agents` list of
+   `docs/general/index.yaml`, a delivered snippet in the closure of the
+   `expanded` ids of `docs/project/index.yaml`, or a company document in the
+   closure of the `expanded` documents of a company's `docs/index.yaml`.
 
 **Delivered prose**
-:  A source as a rendering holds it in full before anything the computer
-   supplies: its body after the frontmatter under the docs context's
-   current-contract lens — planned additions dropped, each planned change
-   reduced to its current side, marker lines removed — with configured-value
-   directives, references and required reads exactly as written and line
-   endings as line feeds. A company document's delivered prose is its body
-   after the frontmatter, the same way. It depends on the source's bytes
-   alone.
+:  A snippet's current-contract body
+   (`project/instrukt/spec/domain/docs`) with its line endings as line feeds;
+   a company document's body after its frontmatter, required reads included,
+   the same way. Nothing the computer supplies enters it, so it depends on
+   the source's bytes alone.
 
 **Source digest**
 :  The SHA-256 of a source's delivered prose, in lowercase hexadecimal. A
@@ -232,7 +232,9 @@ text, calls a model or judges whether a unit means what its source means.
 **Unit state**
 :  Current, stale, missing or orphaned, decided from a repository's content
    alone by comparing each unit's declared source digest with its source's
-   (`project/instrukt/spec/feature/publication/compressed-units`).
+   (`project/instrukt/spec/feature/publication/compressed-units`). A unit
+   with a finding stands in for nothing: every rendering and the eval
+   fingerprint treat its source as having no unit.
 
 **Unit framing**
 :  How a rendering holds a unit where it would hold its source: one heading
@@ -243,9 +245,13 @@ text, calls a model or judges whether a unit means what its source means.
    carries the document's prose. Framing reads nothing of the unit's prose.
 
 **Legend**
-:  One fixed passage of the release explaining the units' notation, carried
-   once, in visible text, immediately before the first unit a rendering
-   holds, and in no rendering that holds none.
+:  One fixed passage of the release explaining the units' notation. A
+   rendering that holds at least one unit carries it once, in visible text,
+   in the file's opening before its first document: after the generated line
+   (and, in a global agent file, after the line naming the uncompressed
+   copy), and in a company rendering after the company passage. A rendering
+   that holds none carries none. Publication assembles it with the file;
+   the docs context's section rendering and the domain read never carry it.
 
 **Uncompressed copy**
 :  The rendering of one runtime's global agent file with every source in its
@@ -253,10 +259,11 @@ text, calls a model or judges whether a unit means what its source means.
    runtime loads as an instruction file.
 
 **Lineage facts**
-:  What a sync records per published snippet in the global index: the
-   snippet's source digest and, when it has a unit, the source digest the
-   unit declares and the SHA-256 of the unit's body. Raw facts, never a
-   verdict on currency.
+:  What a sync records per published snippet in the global index:
+   `content_sha256`, the snippet's source digest, on every delivered entry;
+   and, when the snippet has a unit, `compressed_source_sha256`, the source
+   digest the unit declares, and `compressed_content_sha256`, the SHA-256 of
+   the unit's body. Raw facts, never a verdict on currency.
 <!-- /planned-change:compressed-global-entrypoints -->
 
 **Docs lock**
@@ -387,11 +394,18 @@ Compressed units extend each part of that boundary:
   - Every entry names exactly one owner.
   - A published position's entries all have the position's owner.
   - A patch by one project changes only entries that project owns.
-  - An entry's lineage facts were computed from the committed bytes its
-    owner's sync published, and no later read recomputes them. A pending
-    snippet carries no source digest. An entry without a unit carries none of
-    the unit's facts, and an entry written before lineage facts existed
-    carries none until its owner's next sync.
+  - Every delivered entry carries its source digest, computed from the
+    committed bytes its owner's sync published; a pending entry carries
+    none. An entry carries the unit's two facts exactly when its snippet had
+    a unit with no finding in that publication. No read recomputes them.
+  - The index is at schema version 3. An index of version 2 is brought
+    forward before anything reads its entries: each delivered entry gains
+    its source digest from the file it names under the home's published
+    tree, read through no symbolic link, and no entry gains unit facts,
+    since no earlier release published a unit. An entry whose published
+    file cannot be read is dropped and named, as an entry that cannot be
+    decoded is. Publication persists version 3 under its owner lock at its
+    next write; domain code reads only version 3.
 - **Identifier:** one per home.
 - **Lifecycle:** created by the first sync on a computer; patched by every
   sync that publishes; re-created from the projects if the home is deleted.
@@ -548,8 +562,9 @@ Compressed units extend each part of that boundary:
 - **Root:** the folder `plugins/<key>/` of a company's repository, `<key>`
   being the company's key.
 - **Contains:** the manifest with the plugin's version; the skill's main
-  file; one file for each other document the plugin carries; the plugin's
-  entry in the repository's plugin catalog.
+  file; one file for each other document the plugin carries, and for each
+  document the main file holds as a unit, that document's prose; the
+  plugin's entry in the repository's plugin catalog.
 - **Invariants:**
   - A function of the repository's company index, documents and units, the
     key and the name its caller gives, the plugin the repository already
@@ -587,20 +602,13 @@ Compressed units extend each part of that boundary:
   - instrukt never writes, moves or removes a unit; every unit is the
     repository's own content, committed like its sources.
   - A unit is read from the place for units alone, and never through a
-    symbolic link at, above or inside it; such a link is a finding naming it.
+    symbolic link at, above or inside it.
   - A unit's state depends on the repository's content alone, the same on
     every computer, in every view of it a rendering reads: the commit a sync
     publishes, the staged index the `pre-commit` section renders and the
     working tree `instrukt docs render` and `instrukt docs units` read.
-  - Only a current unit with no finding stands in for its source. A unit
-    whose frontmatter cannot be read, or lacks its source digest or model,
-    is a finding and no unit.
-  - A unit entering a rendering carries no `@exec` or `@include`, carries
-    exactly its source's `@config` directives under the current-contract
-    lens, carries no reference form its source does not carry, and meets
-    every rule the rendering applies to its source; in a company's
-    repository, it meets the company's standalone and visibility rules. A
-    break is a finding naming the unit.
+  - Only a current unit with no finding stands in for its source; the
+    findings and what each reader does with them are listed below.
   - No index entry, required read or reference of a company's knowledge
     names a path under the place for units: such a name is a finding, as a
     path not ending in `.md` is.
@@ -610,6 +618,32 @@ Compressed units extend each part of that boundary:
   published by the owning project's sync with the position its source
   belongs to, and retracted with it; orphaned units are never rendered and
   are removed by whoever maintains the repository.
+
+##### Unit findings
+
+Each finding names the unit, or the folder or link it concerns. The first
+three apply to every unit, the others to a current unit, compared with its
+source's delivered prose:
+
+| Finding | When |
+| --- | --- |
+| unreadable | the unit is not valid UTF-8, its frontmatter is not a mapping, carries a key other than `source_sha256` and `model`, or lacks either or holds a malformed one, or it cannot be read for any reason but absence |
+| link | a symbolic link at, above or inside the place the unit is read from: `docs/_compressed/` in a repository, a position's `_compressed/` in the home |
+| reserved folder | a position holds a folder named `_compressed` |
+| forbidden directive | the unit carries `@exec` or `@include` |
+| configured values | the unit's `@config` directives, as a multiset of paths, differ from its source's |
+| references | the unit carries a reference form its source does not: a reference link, an `@` reference in a reference's shape, a required read, or a company document reference |
+| rendering rule | the unit breaks a rule its rendering applies to its source: in a company's knowledge, the standalone and visibility rules; in a global agent file, a reference left for an agent program |
+
+What each reader does with a finding:
+
+| Reader | Outcome |
+| --- | --- |
+| `instrukt docs units` | reports every finding and exits 1 |
+| the committed `AGENTS.md`, a project's or a company's, and the company plugin | a finding on a unit of a source the rendering holds in full is a finding of the rendering, handled as a finding of that source: the file is left as it is and the check fails |
+| the sync of the project that publishes the unit's position | every finding on a unit of a position it publishes refuses the sync with its findings, and the previous publication stays (`project/instrukt/spec/feature/publication/docs-repositories`); the units a sync publishes therefore carry none |
+| a global agent file holding a unit another project published, read from the home | the sync goes on: that source is held in its prose and the sync reports the finding, as for a reference left in a snippet another project published (`project/instrukt/spec/feature/publication/agent-entrypoints`); a unit that is absent is missing, not a finding |
+| the eval fingerprint | a unit with a finding counts as no unit |
 <!-- /planned:compressed-global-entrypoints -->
 
 ### Domain events emitted
