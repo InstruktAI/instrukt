@@ -249,21 +249,29 @@ company context's proposal lookups (`project/instrukt/spec/domain/company`):
   eligible pull request is.
 - **Hands off.** When an open pull request's current head is an admitted
   proposal, holds an approving verdict that work answers is current and covers
-  the remote-tracking canonical branch, and is not contained in it, the
-  runner emits `runner.proposal_approved`.
-- **Reports.** It lists in `instrukt events status`, with their doors, the
-  unestablished entries the company context names, a proposal store whose
-  condition is not usable, and an opening GitHub refused, with GitHub's
-  answer. Each is current state, derived again on every tick. It raises each
-  as an anomaly through
+  the canonical branch, and is not contained in the remote-tracking canonical
+  branch, the runner emits `runner.proposal_approved`.
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's snapshot
+  lookups each time it runs. The runner raises each as an anomaly through
   `project/instrukt/spec/feature/runner/anomaly-notification` as that
   contract stands, once per running process.
 
 An opening or emission GitHub or the runtime cannot answer is retried and
 reported under `project/instrukt/spec/feature/runner/pull-request-review`,
-Availability. An opening GitHub refuses is reported as above and tried again
-on the next tick. Nothing of either is kept: the opening is driven by a live
-admitted head, so a repaired permission or branch heals it with no replay.
+Availability. An opening GitHub refuses makes the runner consult the
+proposal pull-request credential's readiness again: a credential that is not
+ready withholds the carrying, as above, and `instrukt events status` shows it
+among the admission findings it derives. A refusal for any other cause is a
+defect of the part (`project/instrukt/policy/checks-and-guards`): it is
+written to the runner's log with GitHub's answer, and the opening is tried
+again at an interval that grows, up to a bound, for as long as the head
+stays admitted. The interval is held in the running process's memory and
+starts again at a restart, which costs one more request GitHub refuses and
+changes nothing there. Nothing of either is kept: the opening is driven by a
+live admitted head, so a repaired permission or branch heals it with no
+replay.
 The verdict is work's, and what the integrator does with the head is
 workflow's integrator's.
 
@@ -532,7 +540,7 @@ commit stays in data.
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.proposal_approved` | In a company home admitted for automatic review and for carrying proposals, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the remote-tracking canonical branch, and is not contained in it | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
+| `runner.proposal_approved` | In a company home admitted for automatic review and for carrying proposals, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the remote-tracking canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
 
 <!-- /planned:company-home-integration -->
 Fleet attention's conditions are occurrences with a todo subject in their
