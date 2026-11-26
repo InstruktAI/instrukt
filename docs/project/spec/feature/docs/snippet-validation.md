@@ -215,12 +215,6 @@ When they validate without `--no-todo-lookup` against a home whose state databas
 Then validation succeeds without taking the writer lock or modifying the state database
 ```
 
-<!-- planned:docs-dependency-direction -->
-### UC-SV8: A developer learns where a reference points away from the generic (retired)
-
-Retired: references against the direction are findings of UC-SV1, under the References row above; this id is not reused.
-<!-- /planned:docs-dependency-direction -->
-
 ## Known caveats
 
 - Validation does not judge prose: a citation that no longer holds, a restated
