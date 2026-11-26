@@ -178,7 +178,7 @@ fn with_work_tracking_and_event_responses_off_the_runner_refuses_and_names_both(
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: demo\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     repo.commit("the developer's project");
@@ -254,7 +254,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
         &machine,
         format!(
             "schema_version: {}\nrunner: {{runtime: t3}}\nmodules: {{todos: true}}\nbogus: 1\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
         ),
     )
     .unwrap();

@@ -48,11 +48,12 @@ standing in a project; the global layer alone elsewhere.
 project overriding).
 
 **Schema version**
-: The `schema_version` every layer document carries, naming the schema it was
-written against.
+: The `schema_version` every layer document carries, naming the version of its
+own kind's schema — the global layer's, the project layer's or a company
+home's — that it was written against.
 
 **Migration**
-: Rewriting a document of an older schema version into the current one,
+: Rewriting a document of an older schema version into its kind's current one,
 preserving its settings.
 
 **Revision**

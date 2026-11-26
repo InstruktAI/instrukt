@@ -23,8 +23,8 @@ visibility: 'public'
 - **Human-directed ad-hoc process changes follow process-change authority.**
   When the human explicitly directs an ad-hoc process change in any
   orchestrator session covered by this policy (`todo-orchestrator`,
-  `integrator`, `coordinator`), that orchestrator is authorized to author it
-  outside its active slug or integration workspace under
+  `integrator`, `sdlc-coordinator`), that orchestrator is authorized to author
+  it outside its active slug or integration workspace under
   `sdlc/policy/process-change-authority`, leaving the active delivery or
   integration worktree untouched.
 - **The active slug is the focus.** Changes elsewhere in the repository belong to
@@ -42,7 +42,7 @@ same chain of custody holds.
 ## Scope
 
 - Every session holding an orchestrator role (`todo-orchestrator`, `integrator`,
-  `coordinator`), in every project.
+  `sdlc-coordinator`), in every project.
 
 ## Enforcement
 

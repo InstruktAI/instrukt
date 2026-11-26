@@ -100,13 +100,66 @@ impl Members {
     }
 }
 
+/// The editor schema of a company home's `members`, admitting what
+/// [`check_members`] admits but for an address two members list, which no
+/// JSON Schema can compare across entries.
+pub(super) fn members_schema() -> serde_json::Value {
+    use super::_schema::{non_blank_pattern, secret_reference};
+    serde_json::json!({
+        "type": "object",
+        "description": "The company's people, keyed by member: what a provider cannot supply, \
+            a person's own stored logins for the company's tools. An entry carries no role \
+            and grants nothing.",
+        "propertyNames": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "additionalProperties": {
+            "type": "object",
+            "description": "One person, under a member key unique within the company that \
+                follows the grammar of a project slug.",
+            "additionalProperties": false,
+            "required": ["email"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "pattern": non_blank_pattern(),
+                    "description": "The person's display name; the member key when omitted.",
+                },
+                "email": {
+                    "type": "string",
+                    "pattern": "@",
+                    "description": "The person's email address, by which a speaker's entry is \
+                        found; two addresses differing only in case are one, and an address is \
+                        listed by at most one member.",
+                },
+                "credentials": {
+                    "type": "object",
+                    "description": "The person's own logins for the company's tools, keyed by \
+                        the name an `mcp.<name>.credential` gives.",
+                    "additionalProperties": secret_reference(
+                        "The person's own login for that tool, never a literal value",
+                        super::LayerKind::Company,
+                    ),
+                },
+            },
+        },
+    })
+}
+
 /// The editor schema of a company home's `connectors` map: one named entry per
 /// connector, defaulting `kind` to the map key when omitted, plus common
 /// conversation settings (`role`, `admit`, `session_scope`, `reply_mode`) and
-/// the provider fields declared by its kind.
+/// the provider fields declared by its kind. Each kind's own entry carries
+/// the kind's setup, its manifest in full, as its description; a token field
+/// says where its value comes from and how that value is written.
 pub(super) fn connectors_schema() -> serde_json::Value {
-    let reference =
-        serde_json::json!({"type": "string", "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$"});
+    let reference = |source: &str| {
+        serde_json::json!({
+            "type": "string",
+            "pattern": "^\\$\\{[A-Za-z_][A-Za-z0-9_]*\\}$",
+            "description": format!(
+                "{source}; an exact ${{NAME}} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`"
+            ),
+        })
+    };
     let entry_schema = |declaration: &Declaration, kind_required: bool| {
         let mut properties = serde_json::Map::new();
         let mut required: Vec<&str> = Vec::new();
@@ -155,11 +208,14 @@ pub(super) fn connectors_schema() -> serde_json::Value {
         );
         for field in declaration.fields {
             let schema = match field.rule {
-                Rule::SecretReference { required: needed } => {
+                Rule::SecretReference {
+                    required: needed,
+                    source,
+                } => {
                     if needed {
                         required.push(field.name);
                     }
-                    reference.clone()
+                    reference(source)
                 }
                 Rule::PositiveCount { default, meaning } => serde_json::json!({
                     "type": "integer",
@@ -170,8 +226,17 @@ pub(super) fn connectors_schema() -> serde_json::Value {
             };
             properties.insert(field.name.to_owned(), schema);
         }
+        let description = if kind_required {
+            format!(
+                "a further `{key}` connector under its own name; set it up as `connectors.{key}` shows",
+                key = declaration.key
+            )
+        } else {
+            setup_text(declaration)
+        };
         serde_json::json!({
             "type": "object",
+            "description": description,
             "additionalProperties": false,
             "required": required,
             "properties": properties,
@@ -192,9 +257,21 @@ pub(super) fn connectors_schema() -> serde_json::Value {
     };
     serde_json::json!({
         "type": "object",
+        "description": "The connectors the company's people reach its agent through, one named \
+            entry each; an entry under a kind's own key, such as `slack`, is of that kind.",
         "additionalProperties": additional,
         "properties": kinds,
     })
+}
+
+/// A kind's setup as its schema entry describes it: the setup, then the
+/// manifest in full when the kind has one.
+fn setup_text(declaration: &Declaration) -> String {
+    let setup = declaration.setup.trim_end();
+    match declaration.manifest {
+        Some(manifest) => format!("{setup}\nManifest:\n{}", manifest.trim_end()),
+        None => setup.to_owned(),
+    }
 }
 
 fn finding(path: &str, kind: FindingKind, message: impl Into<String>) -> KeyFinding {
@@ -384,7 +461,7 @@ pub(super) fn check_connectors(value: &Value, path: &str, out: &mut Vec<KeyFindi
             },
         };
         for field in kind.fields {
-            if matches!(field.rule, Rule::SecretReference { required: true })
+            if matches!(field.rule, Rule::SecretReference { required: true, .. })
                 && !fields.contains_key(field.name)
             {
                 out.push(finding(

@@ -39,6 +39,37 @@ enum EventsCommand {
         /// The exact declared event type, as shown by `instrukt events list`.
         r#type: String,
     },
+    /// Raise a condition about active todos of the project this session
+    /// works in, for whoever answers the project's fleet attention: work
+    /// that converges or conflicts, an existing solution found mid-flight,
+    /// a decision a person owns, or a question its orchestrator cannot
+    /// answer. Prints the raise's identity.
+    Raise {
+        /// The todos the condition concerns; the first is its subject.
+        #[arg(required = true)]
+        todos: Vec<instrukt_core::ids::TodoSlug>,
+        /// The obligation at stake, in your own words.
+        #[arg(long)]
+        obligation: String,
+    },
+}
+
+/// The project a raise belongs to: a recorded assignment's project, never
+/// the directory's, or for a caller with no assignment the project it
+/// stands in. A caller neither places in a project is refused with its
+/// door.
+fn raise_project(
+    assignment: Option<&instrukt_core::capabilities::Assignment>,
+    standing_in: Option<instrukt_core::ids::ProjectSlug>,
+) -> Result<instrukt_core::ids::ProjectSlug, &'static str> {
+    match assignment {
+        Some(assignment) => assignment.project.clone().ok_or(
+            "a raise comes from a session working in the project it concerns; this session's assignment is not in a project. Return the condition to the session that dispatched you, or raise it from a session working in that project",
+        ),
+        None => standing_in.ok_or(
+            "a raise comes from a session working in the project it concerns; this directory is in no project. Run the raise from that project's checkout",
+        ),
+    }
 }
 
 #[derive(Debug, clap::Args)]
@@ -206,10 +237,84 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     .line(&format!("  instrukt events schema {}", declaration.name))?;
             }
         }
+        EventsCommand::Raise { todos, obligation } => {
+            let (session, recorded) = crate::authorization::caller_identity(ctx)?;
+            let standing_in = match recorded {
+                Some(_) => None,
+                None => {
+                    instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?.project()?
+                }
+            };
+            let project = raise_project(recorded.as_ref().map(|(a, _)| a), standing_in)
+                .map_err(|door| anyhow::anyhow!(door))?;
+            let fleet = crate::wiring::fleet_record(ctx)?;
+            let identity = instrukt_runner::fleet_attention::raise(
+                &ctx.home,
+                fleet.as_ref(),
+                &project,
+                session.as_ref(),
+                &todos,
+                &obligation,
+                ctx.clock.now(),
+            )?;
+            ctx.out.line(&format!("raised {identity}"))?;
+        }
         EventsCommand::Schema { r#type } => {
             let declaration = catalog.get(&r#type).ok_or_else(|| anyhow::anyhow!("unknown event type `{type}`; use `instrukt events list` to discover declared types"))?;
             ctx.out.line(&serde_json::to_string_pretty(declaration)?)?;
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, reason = "test: failed setup fails the test")]
+
+    use instrukt_core::capabilities::Assignment;
+    use instrukt_core::ids::{ProjectSlug, RoleName};
+
+    use super::raise_project;
+
+    fn slug(name: &str) -> ProjectSlug {
+        ProjectSlug::parse(name).unwrap()
+    }
+
+    fn assigned(project: Option<&str>) -> Assignment {
+        Assignment {
+            worker: false,
+            role: RoleName::parse("sdlc-coordinator").unwrap(),
+            project: project.map(slug),
+            procedure: None,
+            todo: None,
+            workspace: None,
+            key: "standing".into(),
+            platform: false,
+            company: None,
+            dispatcher: None,
+        }
+    }
+
+    #[test]
+    fn an_assigned_session_raises_in_its_assignments_project_wherever_it_stands() {
+        assert_eq!(
+            raise_project(Some(&assigned(Some("demo"))), Some(slug("other"))),
+            Ok(slug("demo"))
+        );
+    }
+
+    #[test]
+    fn an_assignment_outside_a_project_is_refused_without_falling_back_to_the_directory() {
+        assert!(raise_project(Some(&assigned(None)), Some(slug("demo"))).is_err());
+    }
+
+    #[test]
+    fn a_session_without_an_assignment_raises_in_the_project_it_stands_in() {
+        assert_eq!(raise_project(None, Some(slug("demo"))), Ok(slug("demo")));
+    }
+
+    #[test]
+    fn a_session_without_an_assignment_outside_any_project_is_refused() {
+        assert!(raise_project(None, None).is_err());
+    }
 }

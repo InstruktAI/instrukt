@@ -69,6 +69,9 @@ fn project(env: &TestEnv, slug: &str, modules: &str) -> Repo {
     };
     let repo = documented::project(env, slug, &[]);
     documented::sync(env, &repo);
+    // The selected runtime runs on this computer: installation asks it for
+    // the runtime projects of the roots sessions start in.
+    crate::fixtures::t3::FakeT3::create(env);
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
         "schema_version: 1\nrunner: {runtime: t3}\n",
@@ -81,6 +84,24 @@ fn project(env: &TestEnv, slug: &str, modules: &str) -> Repo {
         ),
     );
     repo
+}
+/// `text` with the test's folder shown as `[TMP]` and a runtime project's
+/// id, derived from its folder, as `[PROJECT]`: both differ per run.
+fn masked(env: &TestEnv, text: &str) -> String {
+    let folder = env.path("");
+    let canonical = folder.canonicalize().unwrap_or_else(|_| folder.clone());
+    let mut text = text
+        .replace(canonical.to_str().unwrap().trim_end_matches('/'), "[TMP]")
+        .replace(folder.to_str().unwrap().trim_end_matches('/'), "[TMP]");
+    while let Some(at) = text.find("project project-") {
+        let id = at + "project ".len();
+        let end = id + "project-".len() + 64;
+        if text.len() < end {
+            break;
+        }
+        text.replace_range(id..end, "[PROJECT]");
+    }
+    text
 }
 fn json(env: &TestEnv, args: &[&str]) -> serde_json::Value {
     let run = env.run(env.home(), args).success();
@@ -192,7 +213,7 @@ fn event_config(env: &TestEnv, local: Option<&str>, cluster: &str, ingress: Opti
     let local = local
         .map(|url| format!("  local: {{url: '{url}'}}\n"))
         .unwrap_or_default();
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 6\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{cluster}'}}\n{local}{}",ingress.unwrap_or(""))).unwrap();
 }
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI3
 // spec: project/instrukt/spec/feature/runner/module-installation UC-MI5
@@ -904,7 +925,7 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
             .assert()
             .success();
     }
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 6\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
+    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 7\nrunner: {{runtime: t3}}\nredis:\n  cluster: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n  local: {{url: '{}', username: '${{PROBE_USER}}', password: '${{PROBE_PASSWORD}}'}}\n",redis.url,redis.url)).unwrap();
     env.run(env.home(), ["install", "--check"]).failure();
     redis::cmd("ACL")
         .arg("SETUSER")
@@ -1150,7 +1171,7 @@ fi
     assert!(registration.exists());
     std::fs::write(
         another.join("instrukt.yaml"),
-        "schema_version: 6\nmodules: {history: false}\n",
+        "schema_version: 7\nmodules: {history: false}\n",
     )
     .unwrap();
     env.set_env("INSTRUKT_HOME", another.to_str().unwrap());
@@ -1272,7 +1293,7 @@ fn cron_withdrawal_removes_only_this_homes_marked_line_even_when_it_has_drifted(
     let report = String::from_utf8_lossy(&file_only.get_output().stdout)
         .replace(env.home().to_str().unwrap(), "[FIXTURE]")
         .replace(selected.to_str().unwrap(), "[TABLE]");
-    insta::assert_snapshot!("cron_file_only", report);
+    insta::assert_snapshot!("cron_file_only", masked(&env, &report));
     assert_eq!(
         std::fs::read_to_string(&selected).unwrap().lines().next(),
         Some(operator.trim_end())
@@ -1489,7 +1510,7 @@ fn an_earlier_releases_installation_record_is_left_by_inspection_and_removed_by_
     env.set_env("PATH", "");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 6\nrunner: {runtime: t3}\n",
+        "schema_version: 7\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let github = env.with_fake_github();
@@ -1783,7 +1804,20 @@ fn github_installation() -> (TestEnv, Repo, common::github::FakeGitHub) {
 fn github_check(env: &TestEnv, repo: &Repo, healthy: bool) -> serde_json::Value {
     let mut command = env.instrukt(repo.path());
     command.args(["install", "--check", "--module", "todos", "--json"]);
-    let guard = common::Snapshot::over(vec![], vec![env.path("")]);
+    // Inspection asks T3 for its projects: the token T3 issues and revokes
+    // for that read is T3's own state, not a change inspection made.
+    let trees = std::fs::read_dir(env.path(""))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            !path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("t3-")
+        })
+        .collect();
+    let guard = common::Snapshot::over(vec![], trees);
     let output = if healthy {
         command.assert().success()
     } else {
@@ -2598,7 +2632,7 @@ fn install_over_definitions_instrukt_wrote_without_its_records() {
     std::fs::write(
         &global,
         format!(
-            "schema_version: 6\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
+            "schema_version: 7\nrunner: {{runtime: t3}}\nticks: off\nredis:\n  cluster: {{url: '{url}', username: '${{INSTRUKT_REDIS_USERNAME}}', password: '${{INSTRUKT_REDIS_PASSWORD}}'}}\n"
         ),
     )
     .unwrap();
@@ -3070,6 +3104,9 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     let unmet = bare.env.run(bare.env.home(), ["install"]).failure();
     insta::assert_snapshot!(
         "runner-service-without-a-service-manager",
-        String::from_utf8_lossy(&unmet.get_output().stdout)
+        masked(
+            &bare.env,
+            &String::from_utf8_lossy(&unmet.get_output().stdout)
+        )
     );
 }

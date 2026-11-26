@@ -67,7 +67,7 @@ pub fn snippet(
 fn layer(slug: &str) -> String {
     format!(
         "schema_version: {}\nproject: {slug}\n",
-        instrukt_core::config::CURRENT_SCHEMA_VERSION
+        instrukt_core::config::PROJECT_SCHEMA_VERSION
     )
 }
 

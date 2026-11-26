@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/requested-review.rs
+expression: "project.redact(&stderr(&stale),\n&[(moved.as_str(), \"MOVED\"), (head.as_str(), \"HEAD\")], &[])"
+---
+instrukt: the branch feature is at [MOVED], not at the named head [HEAD]; name the head the branch is at

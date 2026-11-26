@@ -20,6 +20,22 @@ impl SourceDemand {
         format!("{} {}", self.kind, self.slug)
     }
 }
+/// The module whose dependency set holds an execution root's runtime
+/// project (`module-installation`, "Runtime projects of execution roots").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RuntimeProjectModule {
+    Conversations,
+    Events,
+    Todos,
+}
+/// One execution root whose sessions need the runtime's project rooted
+/// exactly there.
+pub(super) struct RuntimeProjectDemand {
+    pub checkout: std::path::PathBuf,
+    /// The home as demand and findings name it.
+    pub label: String,
+    pub module: RuntimeProjectModule,
+}
 pub(super) struct WorkDemand {
     pub project: instrukt_core::ids::ProjectSlug,
     pub repository: String,
@@ -44,6 +60,7 @@ pub(super) struct Demand {
     pub unreadable_homes: Vec<String>,
     pub complete: bool,
     pub redis_references: Vec<String>,
+    pub runtime_projects: Vec<RuntimeProjectDemand>,
 }
 impl Demand {
     pub fn projects(&self) -> Vec<String> {
@@ -72,6 +89,7 @@ pub(super) fn read(
         unreadable_homes: vec![],
         complete: true,
         redis_references: Vec::new(),
+        runtime_projects: Vec::new(),
     };
     let current = instrukt_core::git::worktree_root(cwd)?;
     let current_project = current
@@ -153,6 +171,21 @@ pub(super) fn read(
             if events {
                 demand.events.push(record.project.to_string());
             }
+            let runtime_project = |module| RuntimeProjectDemand {
+                checkout: record.checkout.clone(),
+                label: format!("project {}", record.project),
+                module,
+            };
+            if todos {
+                demand
+                    .runtime_projects
+                    .push(runtime_project(RuntimeProjectModule::Todos));
+            }
+            if events && !config.receives_only(home) {
+                demand
+                    .runtime_projects
+                    .push(runtime_project(RuntimeProjectModule::Events));
+            }
             let sources = config.webhooks()?;
             anyhow::ensure!(
                 events || sources.is_empty(),
@@ -193,7 +226,9 @@ pub(super) fn read(
 
 /// Company homes follow the machine's global switches: a nonempty valid
 /// source map demands events infrastructure and the receiver while events is
-/// on, and a declared connector demands the runner service. A company folder
+/// on, and a declared connector demands the runner service. A connector, or
+/// events on where this computer activates standing procedures, demands the
+/// home's runtime project, with or without sources. A company folder
 /// whose document cannot be read or is invalid makes demand incomplete, so
 /// shared resources are never withdrawn on its account; where no readable
 /// home declares a connector, it keeps the runner service unmet, since it may
@@ -214,6 +249,11 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                     return Err(error.into());
                 }
             };
+            let runtime_project = |module| RuntimeProjectDemand {
+                checkout: home.company_dir(&name),
+                label: format!("company {name}"),
+                module,
+            };
             if !config.connectors()?.is_empty() {
                 demand.conversations.push(label.clone());
                 let features = [Feature::Conversations];
@@ -222,6 +262,18 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                     blocker = Some(cause.clone());
                     anyhow::bail!("{cause}");
                 }
+                demand
+                    .runtime_projects
+                    .push(runtime_project(RuntimeProjectModule::Conversations));
+            }
+            if global.module_enabled(Module::Events)? && !global.receives_only(home) {
+                let features = [Feature::StandingAgents];
+                if let Some(unavailable) = global.unavailable(&features)? {
+                    anyhow::bail!("{}", unavailable.describe(&features));
+                }
+                demand
+                    .runtime_projects
+                    .push(runtime_project(RuntimeProjectModule::Events));
             }
             let sources = config.webhooks()?;
             if sources.is_empty() {

@@ -57,9 +57,10 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                     root,
                     shown["thread"]["projectId"].as_str().unwrap(),
                 )?;
+                let projects = release::project_boundary(root, &root.join("project"))?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"projects":projects}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -109,7 +110,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         fs::create_dir_all(env.instrukt_home()).unwrap();
         fs::write(
             env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 6\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+            "schema_version: 7\nrunner: {runtime: t3}\nmodules: {history: true}\n",
         )
         .unwrap();
         manifest["operation"] = json!("real CLI, readiness, projection and input boundaries");
@@ -158,6 +159,12 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         assert!(
             real["adapter"]["relationships"] == emulated["adapter"]["relationships"],
             "fake persisted input/run relationships differ"
+        );
+        manifest["operation"] = json!("project snapshot, project add and ancestor-only launch");
+        assert_eq!(real["projects"], emulated["projects"]);
+        manifest["projects"] = real["projects"].clone();
+        manifest["fake_operations"]["project add/snapshot"] = json!(
+            "compared check, ensure, duplicate refusal, reuse and ancestor-only pending launch"
         );
         manifest["operation"] = json!("WebSocket queued dispatch, replay, and required fields");
         assert_eq!(real["native_launch"], emulated["native_launch"]);

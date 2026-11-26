@@ -53,11 +53,14 @@ First read the sdlc principles that apply to this work, as `instrukt docs get --
   durable state the PRD's outcomes require under `sdlc/policy/state-storage`
   and place it: nature, owner, loss cost, medium, write isolation, scope and
   lifecycle. Step 2 compares the design against this classification.
-- `instrukt todo artifacts read {slug} architecture` — the index of the design
+- `instrukt todo artifacts read {slug} architecture` — the delivery reasoning
   under review.
-- Every indexed snippet in its pending view, `instrukt docs get <id> --target {slug}`,
-  compared with its current contract — the design under review is the pending
-  material, not the live text.
+- Discover the complete documentation change set directly from the worktree's
+  diff under `docs/` against its merge base with canonical main (covering new
+  pending snippets, companions, in-body pending markers, ADRs, frontmatter
+  edits, and `index.yaml`), then read each pending snippet in its pending view
+  via `instrukt docs get <id> --target {slug}` compared with its current
+  contract — the design under review is the pending material, not the live text.
 - Relevant code paths cited by the artifact.
 - Walk the governing-contracts entry points yourself before you read the
   artifact's Governing contracts section, then compare
@@ -84,10 +87,10 @@ the relationship only; it cannot be the sole home of a participating domain
 rule.
 
 For every piece of durable state the design introduces, relocates or changes,
-compare its placement in the indexed snippets with your own classification from
-step 1. A piece of state your classification did not anticipate is classified
-before you read its reasoning. Verify the design's loss cost, write pattern and
-existing store against source.
+compare its placement in the changed design snippets with your own
+classification from step 1. A piece of state your classification did not
+anticipate is classified before you read its reasoning. Verify the design's loss
+cost, write pattern and existing store against source.
 
 ### 3. Reject undocumented divergence and unsupported invention
 
@@ -130,6 +133,11 @@ Reject durable state the design leaves unclassified, and storage that breaks
 inside a derived store, is Critical. Any other breach is Important: a medium
 that does not fit the state's shape, a write-isolation unit shared with a path
 people or agents wait on, or an undeclared scope, bound or transfer.
+
+Verify that documentation edits stay within `architecture`'s structural-design
+ownership (`sdlc/procedure/lifecycle/prepare/architecture`): consequential
+reflection updates belong to plan drafting, and a needed feature-spec change
+returns to intake rather than editing intake's pending block in place.
 
 ### 4. Write the complete review report
 

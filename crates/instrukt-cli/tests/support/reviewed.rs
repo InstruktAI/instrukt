@@ -9,7 +9,7 @@
     reason = "test setup: a failed step fails the test; each test crate uses what it needs"
 )]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use assert_cmd::assert::Assert;
 use serde_json::json;
@@ -52,7 +52,7 @@ impl Reviewed {
             "instrukt.yaml",
             &format!(
                 "schema_version: {}\nproject: demo\nmodules: {{events: true}}\ngithub: {{repository: {REPOSITORY}}}\n",
-                instrukt_core::config::CURRENT_SCHEMA_VERSION
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         );
         repo.write(
@@ -209,5 +209,92 @@ impl Reviewed {
 
     pub fn root(&self) -> &Path {
         self.repo.path()
+    }
+
+    /// A linked worktree of the project at `name`, on a new branch `branch`
+    /// from `main`, with `file` committed on it; returns its path and head.
+    pub fn worktree(&self, name: &str, branch: &str, file: &str) -> (PathBuf, String) {
+        let path = self.env.path(name);
+        self.repo.git([
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            branch,
+            path.to_str().unwrap(),
+            "main",
+        ]);
+        let head = self.commit_in(&path, file);
+        (path, head)
+    }
+
+    /// Commits `file` in the worktree at `path`; returns the new head.
+    pub fn commit_in(&self, path: &Path, file: &str) -> String {
+        std::fs::write(path.join(file), format!("{file}\n")).unwrap();
+        self.env.git(path, ["add", "--all"]);
+        self.env
+            .git(path, ["commit", "--quiet", "-m", &format!("feat: {file}")]);
+        self.env.git(path, ["rev-parse", "HEAD"])
+    }
+
+    /// A file outside every worktree with `contents`, or only its path
+    /// when `contents` is `None`.
+    pub fn report(&self, name: &str, contents: Option<&str>) -> PathBuf {
+        let path = self.env.path("reports").join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        if let Some(contents) = contents {
+            std::fs::write(&path, contents).unwrap();
+        }
+        path
+    }
+
+    /// `instrukt review start` from `worktree` as the developer's agent
+    /// session, naming the head's merge base with main as the base, the
+    /// report destination `report` and the `extra` options.
+    pub fn ask(
+        &self,
+        worktree: &Path,
+        branch: &str,
+        head: &str,
+        report: &Path,
+        extra: &[&str],
+    ) -> Assert {
+        let base = self.repo.git(["merge-base", head, "main"]);
+        let mut command = self.env.instrukt(worktree);
+        command.env("T3CODE_THREAD_ID", "developer-agent");
+        command
+            .args(["review", "start", "--worktree"])
+            .arg(worktree)
+            .args([
+                "--branch", branch, "--head", head, "--base", &base, "--report",
+            ])
+            .arg(report)
+            .args(extra)
+            .assert()
+    }
+
+    /// The run's temporary paths, `commits` and the fake runtime's
+    /// `sessions` in `text`, replaced by stable placeholders.
+    pub fn redact(&self, text: &str, commits: &[(&str, &str)], sessions: &[&str]) -> String {
+        let base = self.env.path("");
+        let base = base.to_str().unwrap().trim_end_matches('/');
+        let canonical = std::fs::canonicalize(base).unwrap();
+        let mut text = text
+            .replace(canonical.to_str().unwrap(), "[TMP]")
+            .replace(base, "[TMP]");
+        for (sha, name) in commits {
+            text = text.replace(sha, &format!("[{name}]"));
+        }
+        for (index, session) in sessions.iter().enumerate() {
+            text = text.replace(
+                &self.rt.native_id(session),
+                &format!("[SESSION-{}]", index + 1),
+            );
+        }
+        let machine = self.env.instrukt_home().join("state/machine-id");
+        if let Ok(machine) = std::fs::read_to_string(machine) {
+            text = text.replace(machine.trim(), "[MACHINE]");
+        }
+        text
     }
 }

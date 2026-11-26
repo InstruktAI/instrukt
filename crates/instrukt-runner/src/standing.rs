@@ -377,11 +377,26 @@ fn deliver_group(
                 )?;
                 return Ok(());
             }
-            keyed::recover_binding(&guard, adapter.as_ref(), &assignment, &thread, true)?;
+            match keyed::recover_binding(&guard, adapter.as_ref(), &assignment, &thread, true) {
+                // An idle thread in another runtime project rolls over here,
+                // where the responsibility's key is held.
+                Err(SessionsError::ThreadMisplaced { idle: true, .. }) => {
+                    replace_deleted(
+                        &guard,
+                        invocation,
+                        adapter.as_ref(),
+                        &original.key,
+                        target,
+                        now,
+                    )?;
+                    return Ok(());
+                }
+                result => result?,
+            }
         }
         let thread = match keyed::start_owned(adapter.as_ref(), &assignment, &guard) {
             Ok(thread) => thread,
-            Err(SessionsError::Gone(_)) => {
+            Err(SessionsError::Gone(_) | SessionsError::ThreadMisplaced { idle: true, .. }) => {
                 replace_deleted(
                     &guard,
                     invocation,
@@ -437,7 +452,12 @@ fn deliver_group(
                 adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart),
             ),
             checkout: root.clone(),
-            title: standing_title(&first.procedure, subject, responsibility),
+            title: standing_title(
+                &first.procedure,
+                fixed.role.as_deref(),
+                subject,
+                responsibility,
+            ),
             key: responsibility.into(),
             brief: content,
             worktree: None,
@@ -534,35 +554,6 @@ fn start_and_bind(
         Ok(()),
     );
     Ok(thread)
-}
-
-/// The shared input pump can retry a selected standing input without a new
-/// activation. Check the same retained project before handing it over again.
-pub(crate) fn verify_delivery_project(
-    state: &RunnerState,
-    adapter: &dyn RuntimeAdapter,
-    thread: &Thread,
-    now: Timestamp,
-) -> Result<(), SessionsError> {
-    let key: Option<String> = state
-        .read(|conn, path| {
-            conn.query_row(
-                "SELECT semantic_key FROM procedure_responsibilities WHERE session=?1",
-                [thread.session.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(state::sql(path))
-        })?
-        .flatten();
-    if let Some(key) = key {
-        let result = keyed::verify_recorded_project(state, &key, thread);
-        if let Err(error) = &result {
-            keyed::note(state, adapter.runtime(), &key, now, Err(error));
-        }
-        result?;
-    }
-    Ok(())
 }
 
 fn settle_terminal(
@@ -807,7 +798,7 @@ pub fn reserve_manual(
             .into_iter()
             .next()
             .map(|selection| crate::runtime::adapter(runtime).native_selection(&selection)),
-        title: standing_title(entry.id.as_str(), None, &key),
+        title: standing_title(entry.id.as_str(), entry.role.as_deref(), None, &key),
         reservation: keyed::request_id()?,
         key: key.clone(),
         brief: initialized,
@@ -999,6 +990,9 @@ pub fn bind_manual(
         if keyed::retained_project(&state, &request.key, &thread.session)?.is_some() {
             keyed::verify_recorded_project(&state, &request.key, &thread)?;
         }
+        // A project listing returns threads of a containing project too: the
+        // evidence thread must run in the checkout's own project.
+        adapter.verify_thread_project(&request.checkout, &thread, Some(&request.key))?;
         Some(thread)
     } else {
         if reason.is_none_or(|reason| reason.trim().is_empty()) {
@@ -1026,20 +1020,24 @@ pub fn bind_manual(
             Err(_) if stopped.is_some() => Vec::new(),
             Err(error) => return Err(error),
         };
-        let mut same_key = listed.iter().filter(|thread| {
+        // A listed thread confirmed to run in another project is not this
+        // reservation's thread; any comparison that cannot be made stops the
+        // confirmation.
+        let mut candidates = Vec::new();
+        for entry in listed.iter().filter(|thread| {
             thread.presence != Presence::Absent && thread.title.as_deref() == Some(&reserved.title)
-        });
-        if let Some(thread) = same_key.next() {
-            if same_key.next().is_some() {
+        }) {
+            match adapter.verify_thread_project(&reserved.checkout, entry, Some(&reserved.key)) {
+                Ok(()) => candidates.push(entry),
+                Err(SessionsError::ThreadMisplaced { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(thread) = candidates.first().copied() {
+            if candidates.len() > 1 {
                 return Err(keyed::conflict(
                     &reserved.key,
-                    listed
-                        .iter()
-                        .filter(|entry| {
-                            entry.presence != Presence::Absent
-                                && entry.title.as_deref() == Some(&reserved.title)
-                        })
-                        .map(|entry| &entry.session),
+                    candidates.iter().map(|entry| &entry.session),
                 ));
             }
             if let Some(prior) = previously_seen
@@ -1152,10 +1150,10 @@ pub(crate) fn replace_deleted(
         } else {
             return Err(keyed::stopped_mismatch(key, stopped));
         };
-    if !resuming {
-        keyed::confirm_deleted(adapter, stopped)?;
-    }
     let (root, project) = checkout(&state, &home)?;
+    if !resuming {
+        keyed::confirm_succession(adapter, &root, stopped, key)?;
+    }
     let config = execution_config(state.home(), &home, &root)?;
     if config.runner_runtime()? != adapter.runtime()
         || !config.module_enabled(instrukt_core::config::Module::Events)?
@@ -1281,7 +1279,7 @@ fn prepare_successor(
         let mut pending=Vec::new();for item in pending_on(tx,&path)? {if responsibility(&item)?.0==cx.responsibility{pending.push(item);}}
         let newest=pending.iter().map(|p|p.position).max().unwrap_or(0);
         let content=compose_opening(tx,cx.now,&prefix,&mut pending)?;
-        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
+        let request=RuntimeStart{preferences:order,selection,selection_evidence:Some(realization),checkout:cx.root.into(),title:standing_title(cx.current.id.as_str(), cx.current.role.as_deref(), cx.subject, &next_key),key:next_key.clone(),brief:content,worktree:None,launch_modes:None,native_launch:None,profiles:crate::runtime::Profiles::default()};
         let encoded=serde_json::to_string(&request).map_err(|e|SessionsError::Refused(e.to_string()))?;
         let declaration=serde_json::to_string(cx.current).map_err(|e|SessionsError::Refused(e.to_string()))?;
         tx.execute("UPDATE procedure_responsibilities SET generation=?2,semantic_key=?3,session=NULL,request=?4,declaration=?5,terminal=NULL,seen_position=?6 WHERE responsibility=?1",params![cx.responsibility,next,next_key,encoded,declaration,newest]).map_err(state::sql(&path))?;
@@ -1325,8 +1323,64 @@ fn compose_opening(
     }
 }
 
-fn standing_title(procedure: &str, subject: Option<&str>, key: &str) -> String {
-    let name = procedure.rsplit('/').next().unwrap_or(procedure);
-    let label = subject.map_or_else(|| name.to_owned(), |subject| format!("{name} · {subject}"));
+/// The standing thread's display title names the actor answering the
+/// responsibility: its effective role, or the procedure's last ID segment when
+/// the assignment carries none. Identity never derives from it.
+fn standing_title(procedure: &str, role: Option<&str>, subject: Option<&str>, key: &str) -> String {
+    let actor = role
+        .map(str::trim)
+        .filter(|role| !role.is_empty())
+        .unwrap_or_else(|| procedure.rsplit('/').next().unwrap_or(procedure));
+    let label = subject.map_or_else(
+        || actor.to_owned(),
+        |subject| format!("{actor} · {subject}"),
+    );
     crate::runtime::thread_title(&label, key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::standing_title;
+
+    const PROCEDURE: &str = "sdlc/procedure/lifecycle/integrate";
+
+    #[test]
+    fn a_declared_role_titles_a_home_agent() {
+        insta::assert_snapshot!(
+            "declared-role-home",
+            standing_title(PROCEDURE, Some("integrator"), None, "k")
+        );
+    }
+
+    #[test]
+    fn a_declared_role_titles_a_subject_agent_with_its_subject() {
+        insta::assert_snapshot!(
+            "declared-role-subject",
+            standing_title(PROCEDURE, Some("integrator"), Some("todo:demo"), "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "absent-role-home",
+            standing_title(PROCEDURE, None, None, "k")
+        );
+    }
+
+    #[test]
+    fn a_blank_role_titles_a_home_agent_by_its_procedure() {
+        insta::assert_snapshot!(
+            "blank-role-home",
+            standing_title(PROCEDURE, Some("  "), None, "k")
+        );
+    }
+
+    #[test]
+    fn an_absent_role_titles_a_subject_agent_by_its_procedure_and_subject() {
+        insta::assert_snapshot!(
+            "absent-role-subject",
+            standing_title(PROCEDURE, None, Some("todo:demo"), "k")
+        );
+    }
 }

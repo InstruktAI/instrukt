@@ -1,6 +1,10 @@
-# instrukt
+<p align="center">
+  <img src="assets/logo.png" alt="instrukt logo" width="120">
+</p>
 
-**Give your agents a playbook, not a 2,000-line prompt.**
+<h1 align="center">instrukt</h1>
+
+<p align="center"><strong>Give your agents a playbook, not a 2,000-line prompt.</strong></p>
 
 instrukt turns the documentation in your git repositories into doctrine your coding agents read a piece at a time, right when a task calls for it. On that foundation it adds autonomous software delivery you can step into at any moment, event-driven standing procedures that react to real-world business and operational inputs, and a complete AI workspace for a team — all from one Rust binary, starting with nothing but git.
 

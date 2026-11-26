@@ -9,7 +9,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": 3
+      "const": 4
     },
     "default": {
       "$ref": "#/$defs/role",
@@ -882,7 +882,10 @@
             "installation-read",
             "installation-write",
             "runner-execute",
-            "conversation-link"
+            "conversation-link",
+            "mcp-access",
+            "company-reply",
+            "attention-raise"
           ]
         },
         "scope": {

@@ -41,6 +41,17 @@ It records observed human involvement and supplies no authorization.
 GitHub reflection is owned by
 `project/instrukt/spec/feature/work/github-record`.
 
+Creation places the todo by what it waits on, and its help and admission
+questions name the three placements apart:
+
+- `--after <slugs>` makes it wait for other todos and leaves it ready once they
+  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`).
+- `--hold --reason <text>` files converged work held for a condition outside
+  the project's todos, the hold committed with the todo
+  (`project/instrukt/spec/feature/work/dependencies-and-holds`).
+- `--icebox` parks work whose outcome has not converged, outside the
+  lifecycle (Parking, withdrawal and delivery, below).
+
 ### Kinds
 
 | Kind | Purpose | Completion evidence |
@@ -212,12 +223,13 @@ gap; resolve that assignment before admitting work.
 
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
 `planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
-`deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
+`verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
 outstanding workspace-role attempt at a time (`task-preparer` runs without a
 worktree on `kind: task`). Completion stamps release writing
-attempts atomically; review verdicts and deferral-processing stamps release their
-read-only attempts. Released bindings remain tracking and evaluation evidence.
-Native parent linkage and child attention remain runtime-owned.
+attempts atomically; review verdicts, verification dispositions and
+deferral-processing stamps release their read-only attempts. Released bindings
+remain tracking and evaluation evidence. Native parent linkage and child
+attention remain runtime-owned.
 
 ### Role completion and failed attempts
 

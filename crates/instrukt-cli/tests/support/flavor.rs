@@ -39,7 +39,20 @@ roles:
   - fixer
   - finalizer
   - build-reviewer
+  - verifier
 ";
+
+/// Records an approved change `slug` in `project`.
+pub fn change(project: &Tracked, slug: &str) {
+    project.todo([
+        "create",
+        slug,
+        "Improve the parser.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+}
 
 /// The project, its fake GitHub and the machine's fake runtime.
 pub struct Tracked {
@@ -115,7 +128,7 @@ impl Tracked {
                 "schema_version: {schema}\nproject: demo\nboard: acme/1\nmodules: {{{project_modules}}}\n\
                  runner: {{autostart: {autostart}}}\nworkflow: {{domain: acme}}\n\
                  github: {{repository: {REPOSITORY}}}\n",
-                schema = instrukt_core::config::CURRENT_SCHEMA_VERSION
+                schema = instrukt_core::config::PROJECT_SCHEMA_VERSION
             ),
         );
         repo.write("docs/domain/acme/workflow/workflow.yaml", WORKFLOW);
@@ -127,6 +140,7 @@ impl Tracked {
             ("build", "builder", true),
             ("finalize", "finalizer", true),
             ("review-build", "build-reviewer", true),
+            ("verify", "verifier", true),
         ] {
             let (path, text) = procedure(name, role, parameters);
             repo.write(&path, &text);

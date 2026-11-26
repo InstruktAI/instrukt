@@ -71,7 +71,7 @@ fn company_home(computer: &Computer, name: &str, document: &str) {
         dir.join("instrukt.yaml"),
         format!(
             "schema_version: {}\n{document}",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     )
     .unwrap();
@@ -151,7 +151,7 @@ fn registration_and_the_source_are_both_required_for_a_route() {
         "misnamed",
         &format!(
             "schema_version: {}\ncompany: acme\nwebhooks: {{erp: {{secret: '${{ACME_HOOK}}'}}}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     );
     company_home(
@@ -166,7 +166,7 @@ fn registration_and_the_source_are_both_required_for_a_route() {
         "numbered",
         &format!(
             "schema_version: {}\ncompany: 17\nwebhooks: {{erp: {{secret: '${{ACME_HOOK}}'}}}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::COMPANY_SCHEMA_VERSION
         ),
     );
     invalid_company_home(
@@ -645,7 +645,7 @@ fn source_declarations_with_events_off_are_a_finding_and_create_no_endpoint() {
         "instrukt.yaml",
         &format!(
             "schema_version: {}\nproject: fork\nmodules: {{events: false}}\nwebhooks: {{erp: {{secret: '${{HOOK_KEY}}'}}}}\n",
-            instrukt_core::config::CURRENT_SCHEMA_VERSION
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
         ),
     );
     let result = computer

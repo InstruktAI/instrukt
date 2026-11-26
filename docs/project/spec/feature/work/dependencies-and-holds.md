@@ -78,11 +78,42 @@ starting any session. `claim.held` exposes that claim. Session identities are
 retained only in per-todo, per-role bindings. A dispatch hold pauses automatic
 pickup without establishing or transferring the claim.
 
+A todo's recorded orchestrator is its latest driver binding for the
+orchestrator role that has not failed. That binding's own native session
+re-enters through `instrukt todo work <slug>` without `--placement-evidence`
+when it calls on the same computer, under the selected runtime the binding
+recorded, from the binding's worktree on its branch: the same binding is
+reopened with its key, attempt, title and worktree, and that session holds the
+todo's claim. A claim on this computer that no session holds yet passes to that
+session, and the todo is then no longer offered for automatic pickup. Any other
+caller — another session, a caller with no native session, an orchestrator a
+later binding superseded, or one outside the binding's worktree or branch —
+still supplies placement evidence, and a claim held by another session or
+computer refuses entry, leaving the record unchanged.
+
 `instrukt todo update <slug> --hold --reason <reason>` sets a hold with its
 source, causal reason, time and recording session. A missing or blank reason
 is refused. An automatic hold records the cause that produced it, such as a
 failed task or unresolved diagnosis. `instrukt todo show` exposes the hold's
 reason and source.
+
+`instrukt todo create <slug> <content> --kind <kind> --hold --reason <reason>`
+places the same manual hold as the todo is created, in the creation's one
+transaction: the first revision of the record already carries the hold, so no
+reader of the record, the runner included, ever finds the todo unheld. The
+hold carries its source, reason, time and recording session and raises the
+attention any placed hold raises
+(`project/instrukt/spec/feature/runner/fleet-attention`). `--hold` and
+`--reason` require each other, a blank reason is refused, and a hold is
+refused together with `--icebox`; a refused creation records nothing.
+
+A dispatch hold is the wait on a condition outside the project's todos, such
+as an unmerged one-off branch, a binary rollout or an external gate, and its
+reason names that condition. A wait on another todo is a prerequisite, which
+the dependent leaves on its own when the prerequisite delivers. Work whose
+outcome has not converged is parked in the icebox, which takes it out of the
+lifecycle (`project/instrukt/spec/feature/work/todos`), while a hold keeps
+converged work in it.
 
 `instrukt todo update <slug> --release` releases the dispatch hold while
 preserving the todo's intent, artifacts, dependencies and execution-claim
@@ -132,6 +163,46 @@ belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
   And they are told which documentation files to commit
   But when filing the work under that todo is refused
   Then the documentation still belongs to the original todo
+```
+
+### UC-DH4: A developer's orchestrator continues in its own conversation after they approve there
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim to wait for their approval
+  When the developer approves in that orchestrator's conversation
+  And the orchestrator picks the todo up again from its worktree without placement evidence
+  Then the orchestrator holds the todo's claim under its same recorded assignment and worktree
+  And the todo is no longer offered for automatic pickup
+```
+
+### UC-DH5: A resuming orchestrator takes over the runner's pending claim on its todo
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim
+  And the runner on the same computer claimed the todo but has not given it to a conversation
+  When the orchestrator picks the todo up again from its worktree without placement evidence
+  Then the orchestrator holds the todo's claim under its same recorded assignment
+  And the todo is no longer offered for automatic pickup
+```
+
+### UC-DH6: Only the recorded orchestrator resumes without placement evidence
+
+```gherkin
+  Given a developer's todo orchestrator released its todo's claim
+  When another conversation picks the todo up from that worktree without placement evidence
+  Then the pickup is refused
+  And the todo stays unclaimed with its recorded assignment unchanged
+```
+
+### UC-DH7: File converged work that waits on something outside the project's todos
+
+```gherkin
+  Given a developer has converged work that must wait for a condition outside the project's todos
+  When they file it on hold with the reason it must wait
+  Then the todo is on hold from its first recorded revision
+  And the reason is visible with the todo in the project's work listing and in its record
+  But when the reason is blank, or the work is also parked in the icebox
+  Then the filing is refused, names why, and records nothing
 ```
 
 ## Known caveats

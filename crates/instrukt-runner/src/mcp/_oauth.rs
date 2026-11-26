@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::_discover::{DiscoveredAuth, discover_auth};
-use super::_issuer::{bearer_logins, is_token_fresh, obtain_issuer_login};
+use super::_issuer::{bearer_logins, cached_login_usable, is_token_fresh, obtain_issuer_login};
 use super::_redis_mcp::{claim_sign_in_return, ping_cluster};
 use super::_registrations::{
     Registration, ensure_company_client_registration, ensure_dynamic_registration,
@@ -383,12 +383,13 @@ fn best_effort_revoke_token(
 
 /// Obtain a speaker's Bearer login for a `speaker_login: sign-in` server,
 /// dispatching by `sign_in.mode` (`authorization-code` or `issuer`).
+/// `rejected_access_token` is the access token the server just refused, on a retry.
 pub(crate) fn resolve_sign_in_login(
     home: &Home,
     company: &ProjectSlug,
     server: &McpServer,
     speaker: &Speaker,
-    force_refresh: bool,
+    rejected_access_token: Option<&str>,
     now: Timestamp,
 ) -> Result<(Login, Vec<Login>), McpError> {
     let mode = server
@@ -398,11 +399,16 @@ pub(crate) fn resolve_sign_in_login(
         .unwrap_or(SignInMode::AuthorizationCode);
     match mode {
         SignInMode::Issuer => {
-            obtain_issuer_login(home, company, server, speaker, force_refresh, now)
+            obtain_issuer_login(home, company, server, speaker, rejected_access_token, now)
         }
-        SignInMode::AuthorizationCode => {
-            obtain_authorization_code_login(home, company, server, speaker, force_refresh, now)
-        }
+        SignInMode::AuthorizationCode => obtain_authorization_code_login(
+            home,
+            company,
+            server,
+            speaker,
+            rejected_access_token,
+            now,
+        ),
     }
 }
 
@@ -411,7 +417,7 @@ fn obtain_authorization_code_login(
     company: &ProjectSlug,
     server: &McpServer,
     speaker: &Speaker,
-    force_refresh: bool,
+    rejected_access_token: Option<&str>,
     now: Timestamp,
 ) -> Result<(Login, Vec<Login>), McpError> {
     let email = speaker
@@ -509,11 +515,15 @@ fn obtain_authorization_code_login(
 
     if let Some((ref resource, _, ref ret_id, ref access_token, ref expires_at, checked, _)) =
         cached
-        && !force_refresh
         && resource == &server.url
         && cached_matches_reg(ret_id)
-        && checked != 0
-        && is_token_fresh(expires_at.as_deref(), now)
+        && cached_login_usable(
+            access_token,
+            checked,
+            expires_at.as_deref(),
+            rejected_access_token,
+            now,
+        )
     {
         return Ok(bearer_logins(&server.name, access_token.clone()));
     }
@@ -660,7 +670,7 @@ fn obtain_authorization_code_login(
                 &registration,
                 client_secret.as_deref(),
                 sign_in_cfg.identity.as_ref(),
-                force_refresh.then_some(access_token.as_str()),
+                rejected_access_token,
             )?
         {
             return Ok(renewed);

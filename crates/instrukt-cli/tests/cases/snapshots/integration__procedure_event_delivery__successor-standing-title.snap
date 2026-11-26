@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/procedure-event-delivery.rs
+expression: "r.runtime.title(\"s2\")"
+---
+responder

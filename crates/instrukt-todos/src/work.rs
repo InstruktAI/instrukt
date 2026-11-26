@@ -23,6 +23,7 @@ mod _board;
 mod _diff;
 mod _envelope;
 mod _error;
+mod _fleet;
 mod _github;
 mod _graph;
 pub(crate) mod _grounding;

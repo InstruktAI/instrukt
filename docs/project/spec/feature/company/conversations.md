@@ -251,10 +251,10 @@ gives.
 
 - Under `reply_mode: turn_output` (the default), when a turn started by an
   addressed message finishes, the agent's conversational output of that turn is
-  posted to the conversation as the agent wrote it (with resolved credentials
-  scrubbed), in parts where the connector's message size limit requires, in
-  order. Tool calls, tool results, thinking and control input are not posted. A
-  bare `NOOP` posts nothing.
+  posted to the conversation exactly as the agent wrote it, in parts where the
+  connector's message size limit requires, in order. No secret value is
+  searched for or replaced in it. Tool calls, tool results, thinking and
+  control input are not posted. A bare `NOOP` posts nothing.
 - Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
   turn output (and suppresses relaying raw turn text to the connector's status
   line, showing only the generic working or unavailable state) so internal
@@ -273,11 +273,13 @@ gives.
   under `session_scope: company`, `--conversation <id>` is required and must
   name an admitted conversation (one with an admitted, non-refused message and
   no conflicting conversation-scoped binding) of that `(company, connector)`.
-  The command scrubs resolved company/machine secrets and stored MCP credentials
-  (at least 8 characters long) from the reply text and its own CLI output,
-  splits the reply to the connector kind's declared message limit, and writes
-  ordered pieces into `conversation_answers`, so the runner's existing
-  answer-posting relay delivers them with full retry and recovery.
+  The command takes the reply text exactly as the agent wrote it, searching for
+  and replacing no secret value in it, splits it to the connector kind's
+  declared message limit, and writes ordered pieces into
+  `conversation_answers`, so the runner's existing answer-posting relay
+  delivers them with full retry and recovery. Its own output is the queued
+  reply's summary (company, connector, conversation, turn and piece count),
+  never the reply text.
 - The turn relay `instrukt run` already hosts does this: the same durable
   conversation source, completed-turn evidence and retained positions as
   conversation links. The relay advances its position in the transaction
@@ -326,8 +328,9 @@ gives.
   recovery can establish an identity; a copied or moved source is never adopted
   automatically. Retained answer pieces can still post while native work is
   blocked. No implementation diagnostics are sent to the member.
-- A turn someone starts directly in the session's thread is not posted. The
-  agent posts only as the answer to an addressed message.
+- A turn someone starts directly in the session's thread, a person or another
+  agent, posts no turn output. In such a turn the agent posts only an explicit
+  reply queued through `instrukt company reply`, under the admission above.
 - From the admission of an addressed message until it is complete — its
   answer posted, or its turn completed successfully with a bare `NOOP` or blank
   output — the connector shows the message's state where the provider supports
@@ -666,8 +669,8 @@ Given a company home declares a named connector with reply_mode set to explicit
 When a member addresses that connector and the agent finishes its turn with raw output
 Then the raw turn output is not posted to the conversation
 When the active conversation session runs instrukt company reply for an admitted conversation
-Then credentials are scrubbed from the queued reply and CLI output
-And the connector posts the explicit reply to that conversation through the durable answer outbox
+Then the command outputs only the queued reply summary without the reply text
+And the connector posts the explicit reply to that conversation through the durable answer outbox exactly as the agent wrote it, without searching for or replacing any secret value
 ```
 
 ## Known caveats
@@ -687,9 +690,10 @@ And the connector posts the explicit reply to that conversation through the dura
   access and rate limits are its only limits.
 - A turn that failed may already have acted; its message is delivered again and
   the agent checks before acting again.
-- The agent cannot start a conversation or post anything that is not the
-  answer to an addressed message. The direct messages instrukt sends about a
-  person's sign-ins are instrukt's own, not the agent's.
+- The agent cannot start a conversation. Outside the answer to an addressed
+  message it posts only an explicit reply, into a conversation its binding
+  already admits. The direct messages instrukt sends about a person's sign-ins
+  are instrukt's own, not the agent's.
 - A conversation session loads its procedure, and its agent program reads
   the company's knowledge from the home's committed `AGENTS.md`, when the
   session starts. A later change to either
