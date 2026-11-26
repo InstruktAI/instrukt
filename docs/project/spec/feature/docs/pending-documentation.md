@@ -94,6 +94,17 @@ But when it reads a pending snippet its todo does not deliver
 Then the body is withheld with a notice
 ```
 
+<!-- planned:fix-docs-get-target-delivery-commit -->
+### UC-PD3: An agent reading through the lens of an undelivered todo without a worktree is told the lens cannot be read
+
+```gherkin
+Given a todo has not delivered and has no worktree
+When an agent acting for a developer reads a live snippet through that todo's lens
+Then the read is refused, naming the todo and that its worktree is missing and its delivery unconfirmed
+And no documentation from the main checkout is shown in its place
+```
+<!-- /planned:fix-docs-get-target-delivery-commit -->
+
 ## Known caveats
 
 - A withheld pending snippet exits zero with its notice because the id exists; an unknown id exits non-zero.
