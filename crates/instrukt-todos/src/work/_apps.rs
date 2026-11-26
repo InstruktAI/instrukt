@@ -81,7 +81,7 @@ enum Method {
 /// One invocation's work-owned GitHub capabilities. The CLI shares this object
 /// between work, repository and runner; no credential or key is persisted.
 pub struct GitHubAccess {
-    home: Home,
+    pub(super) home: Home,
     state: Mutex<Option<Apps>>,
 }
 impl GitHubAccess {
@@ -424,22 +424,10 @@ impl Apps {
         let config = Configuration::load_global(home)
             .map_err(|_| setup("cannot read machine-global configuration"))?;
         let identity = IdentitySettings::read(&config, home)?;
-        let api = config
-            .github_api_url()
-            .map_err(|_| setup("cannot read github.api_url"))?
-            .to_owned();
-        let url = url::Url::parse(&api).map_err(|_| setup("invalid github.api_url"))?;
-        if url.scheme() != "https"
-            && !(url.scheme() == "http"
-                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
-        {
-            return Err(setup(
-                "github.api_url requires HTTPS (HTTP only on loopback)",
-            ));
-        }
+        let api = api_base(&config)?;
         Ok(Self {
             home: home.clone(),
-            api: api.trim_end_matches('/').into(),
+            api,
             identity,
             agent: agent(),
             auth_deferrals: Default::default(),
@@ -680,7 +668,25 @@ impl Apps {
         Ok(answer)
     }
 }
-fn agent() -> ureq::Agent {
+/// The GitHub API address `config` declares, without a trailing `/`: HTTPS,
+/// or HTTP on loopback only.
+pub(super) fn api_base(config: &Configuration) -> Result<String, AppError> {
+    let api = config
+        .github_api_url()
+        .map_err(|_| setup("cannot read github.api_url"))?;
+    let url = url::Url::parse(api).map_err(|_| setup("invalid github.api_url"))?;
+    if url.scheme() != "https"
+        && !(url.scheme() == "http"
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
+    {
+        return Err(setup(
+            "github.api_url requires HTTPS (HTTP only on loopback)",
+        ));
+    }
+    Ok(api.trim_end_matches('/').into())
+}
+
+pub(super) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(30)))

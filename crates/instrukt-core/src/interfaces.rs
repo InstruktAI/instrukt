@@ -217,6 +217,7 @@ pub trait ConfiguredAgentRuntimes: Send + Sync {
 pub struct CoreWiring {
     pub caller_identity: Option<Arc<dyn CallerIdentityLookup>>,
     pub github_actors: Option<Arc<dyn GitHubActors>>,
+    pub github_accounts: Option<Arc<dyn GitHubAccounts>>,
     pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
@@ -230,6 +231,7 @@ impl std::fmt::Debug for CoreWiring {
         f.debug_struct("CoreWiring")
             .field("caller_identity", &self.caller_identity.is_some())
             .field("github_actors", &self.github_actors.is_some())
+            .field("github_accounts", &self.github_accounts.is_some())
             .field("session_role", &self.session_role.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
@@ -259,6 +261,24 @@ pub enum ReviewReadiness {
 /// credentials and writes no state.
 pub trait AutomaticReviewReadiness: Send + Sync {
     fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
+/// What kind of account a GitHub login names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountKind {
+    /// An organisation.
+    Organisation,
+    /// A person's own account.
+    Personal,
+    /// No account of that login.
+    Absent,
+}
+
+/// Work's answer to what kind of account a GitHub login names, read from
+/// GitHub's public account record
+/// (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+pub trait GitHubAccounts: Send + Sync {
+    fn account_kind(&self, login: &str) -> Result<AccountKind, InterfaceError>;
 }
 
 /// Setup-verified stable actor facts for local author attribution. No repository

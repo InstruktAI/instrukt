@@ -101,6 +101,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
         github_actors: Some(ctx.github.clone()),
+        github_accounts: Some(ctx.github.clone()),
         session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::todo_existence(ctx)?,
         flavor_roles: _workflow::flavor_roles(ctx)?,
@@ -117,6 +118,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
     Ok(CoreWiring {
         caller_identity: caller_lookup(ctx)?,
         github_actors: Some(ctx.github.clone()),
+        github_accounts: Some(ctx.github.clone()),
         session_role: Some(Arc::new(RecordedRole(ctx.home.clone()))),
         todo_existence: _work::available_todo_existence(ctx)?,
         flavor_roles: Some(_workflow::available_flavor_roles(ctx)),

@@ -223,6 +223,9 @@ fn schema() -> Node {
                 ("api_url", Leaf(GlobalOnly, Shape::Str)),
                 ("apps", Leaf(GlobalOnly, Shape::Apps)),
                 ("project_app", Leaf(GlobalOnly, Shape::Str)),
+                // The GitHub organisation that owns this computer's company
+                // repositories (`company-homes`, Generation).
+                ("org", Leaf(GlobalOnly, Shape::Str)),
             ]),
         ),
         (

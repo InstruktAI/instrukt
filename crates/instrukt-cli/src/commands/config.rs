@@ -381,6 +381,10 @@ fn patch(
             ])))
         })?;
     }
+    // Whether `github.org` names an organisation is GitHub's to answer, so
+    // it too is asked before the lock; the revision check binds it.
+    let accounts: &dyn instrukt_core::interfaces::GitHubAccounts = ctx.github.as_ref();
+    config::admit_github_org(&ctx.home, &layer, &expected, &patch, Some(accounts))?;
     config::patch(&ctx.home, &layer, &expected, &patch)?;
     Ok(ExitCode::SUCCESS)
 }

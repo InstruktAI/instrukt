@@ -18,6 +18,7 @@ mod _edit;
 mod _effective;
 mod _error;
 mod _features;
+mod _github_org;
 mod _interpolate;
 mod _layer;
 mod _mcp;
@@ -56,6 +57,7 @@ pub use _connectors::{
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
+pub use _github_org::{GITHUB_ORG_KEY, admit_github_org};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,

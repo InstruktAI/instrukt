@@ -526,7 +526,7 @@ fn refused_findings(
 /// The document `doc` of `layer` at `path` as it stands, converted to its
 /// kind's current version in memory when older, and the document `patch` makes of
 /// it.
-fn patched(
+pub(super) fn patched(
     layer: &Layer,
     path: &Path,
     doc: &Document,
