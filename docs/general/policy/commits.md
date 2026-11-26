@@ -122,8 +122,7 @@ All Committizen types are allowed.
   exemption. The integration gate reads these records: an approved head and an
   exemption are the author's decision on record.
   This author-decided routing is listed in the general baseline (loaded on demand or through procedure required reads);
-  it adds no gate before or at commit time. A commit that reaches integration
-  carrying no decision is held there for its author.
+  it adds no gate before or at commit time.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 <!-- /planned-change:author-recorded-review-routing -->
 
