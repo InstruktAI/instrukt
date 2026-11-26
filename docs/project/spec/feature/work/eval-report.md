@@ -19,9 +19,9 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 report uses recorded evidence rather than a separate eval log. There is only
 something to evaluate where work passes through the record.
 <!-- change:fleet-eval-aggregation -->
-`instrukt eval report` produces HTML from the work record of this computer and
-of each other computer the request names. The report uses recorded evidence
-rather than a separate eval log. There is only something to evaluate where
+`instrukt eval report` produces HTML from the work record of each computer the
+report covers. The report uses recorded evidence rather than a separate eval
+log. There is only something to evaluate where
 work passes through the record.
 <!-- /planned-change:fleet-eval-aggregation -->
 
@@ -41,7 +41,7 @@ project recorded on several computers under the same project slug is one
 project in the report. Each computer's part of a project's record is read
 from that computer's own work record; the report reads nothing from GitHub,
 from an agent runtime's own state or from history. Beyond `--since` and
-`--out`, the report takes only the other computers to include, named by their
+`--out`, the report takes only the computers to narrow it to, named by their
 instrukt computer identities.
 <!-- /planned-change:fleet-eval-aggregation -->
 
@@ -96,15 +96,21 @@ separate logging service.
 <!-- planned:fleet-eval-aggregation -->
 ### Computers in a report
 
-A report that names no other computer is this computer's alone: it reads as
-described above, with its windows in time order and a restored eval set a
-window of its own, and needs no cluster Redis.
+A report covers the whole fleet unless computers are named: every computer
+on the runner's fleet membership record (`project/instrukt/spec/domain/runner`)
+and this one. Naming computers narrows the report to the named ones. On a
+computer with no cluster connection configured, the report covers only this
+computer and needs no cluster Redis. When the cluster store cannot be reached
+at report time, the report covers only this computer and carries the
+limitation that the fleet could not be reached; it is never refused for that
+reason. A report covering only this computer reads as described above, with
+its windows in time order and a restored eval set a window of its own.
 
 Requests and answers travel through the runner's bounded fleet query
-(`project/instrukt/spec/domain/runner`), which decides which named computers
-answer. A computer answers over the cluster connection it already has, from
+(`project/instrukt/spec/domain/runner`), which decides which of the covered
+computers answer. A computer answers over the cluster connection it already has, from
 its own work record and publication state, applying the requested range,
-whether or not history is switched on there; a named computer without a
+whether or not history is switched on there; a covered computer without a
 cluster connection of its own does not answer.
 For each project it counts its outcomes per eval set and model across all of
 its stamps under that eval set, counting each todo, review and findings report
@@ -115,8 +121,8 @@ eval set, and the limitations it found. No stamp, artifact,
 findings report or conversation leaves the computer, and no computer but the
 requesting one writes a report.
 
-A report that names another computer pools by eval set, whether or not any
-named computer answers. Within each project it shows one window per eval set,
+A report covering more than this computer pools by eval set, whether or not
+any other computer answers. Within each project it shows one window per eval set,
 holding the outcomes of every answering computer, this one included: the
 window spans the earliest to the latest stamp under that eval set across
 those computers, its measures add per model and in the human row, and it
@@ -132,11 +138,13 @@ process change and no restoration between them; a restored eval set's periods
 form its one window. Model and version remain rows within each window, so a
 model change stays distinguishable from a process-document change.
 
-Every named computer appears in the report, either among the computers whose
-answer it holds or as a limitation of the report with its reason, whatever
-made its answer missing or unusable: one the fleet query reports as not
-answering carries the reason the fleet query gives, and one whose answer this
-computer cannot read is named as answering in a form it cannot read. Each
+Every computer the report covers appears in it, either among the computers
+whose answer it holds or as a limitation of the report with its reason,
+whatever made its answer missing or unusable: one the fleet query reports as
+not answering carries the reason the fleet query gives, together with when the
+membership record last saw it where the record holds it, and one whose answer
+this computer cannot read
+is named as answering in a form it cannot read. Each
 limitation a computer reports appears under that computer's identity, and the
 report is written from the answers it has.
 <!-- /planned:fleet-eval-aggregation -->
@@ -157,13 +165,13 @@ report is written from the answers it has.
 
 ```gherkin
   Given a developer records work on several of their computers
-  When they request an evaluation report that includes those computers
-  Then they receive one report giving each project one figure per process-document set, pooled from every answering computer
+  When they request an evaluation report without naming any computer
+  Then they receive one report covering every computer of their fleet, giving each project one figure per process-document set pooled from every answering computer
   And the report names the computers whose outcomes it holds
   And can distinguish process-document sets from the models used
-  But when an included computer does not answer
+  But when one of their computers is offline
   Then the report is still written from the computers that answered
-  And it names the computer that did not answer as a limitation of the comparison
+  And it names the offline computer, with when it was last seen, as a limitation of the comparison
 ```
 <!-- /planned:fleet-eval-aggregation -->
 
