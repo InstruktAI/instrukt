@@ -100,6 +100,7 @@ fn a_pipeline_learns_offline_exactly_which_units_to_write() {
     insta::assert_snapshot!("units_name_the_work", text);
     let (code, json) = units(&env, &clone, &["--json"]);
     assert_eq!(code, Some(3));
+    insta::assert_snapshot!("units_name_the_work_as_json", json);
     let report: serde_json::Value = serde_json::from_str(&json).unwrap();
     let digests = |list: &str| -> Vec<(String, String, String)> {
         report[list]
@@ -117,26 +118,12 @@ fn a_pipeline_learns_offline_exactly_which_units_to_write() {
     };
     let stale = digests("stale");
     let missing = digests("missing");
-    assert_eq!(
-        stale,
-        [(
-            "general/policy/alpha".to_owned(),
-            "docs/_compressed/general/policy/alpha.md".to_owned(),
-            prose_digest(&alpha),
-        )]
-    );
-    assert_eq!(
-        missing,
-        [(
-            "general/policy/beta".to_owned(),
-            "docs/_compressed/general/policy/beta.md".to_owned(),
-            prose_digest(&beta),
-        )]
-    );
-    assert_eq!(
-        report["orphaned"][0]["unit"],
-        "docs/_compressed/general/policy/gone.md"
-    );
+    // Each renewed unit declares the digest of the prose this test wrote.
+    let declared = |work: &[(String, String, String)]| -> Vec<String> {
+        work.iter().map(|(_, _, digest)| digest.clone()).collect()
+    };
+    assert_eq!(declared(&stale), [prose_digest(&alpha)]);
+    assert_eq!(declared(&missing), [prose_digest(&beta)]);
     assert!(!home.exists(), "the inspection created a home");
     assert!(!logs.exists(), "the inspection wrote a log");
     assert_eq!(files_below(clone.path()), before, "the inspection wrote");
