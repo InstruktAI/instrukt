@@ -16,7 +16,7 @@ use instrukt_core::ids::ProjectSlug;
 use instrukt_core::machine::{self, MachineError, MachineId};
 use instrukt_core::publication::{PublicationError, PublicationStateError};
 use instrukt_runner::computer_fleet::{
-    self, LastSeen, MAX_DEADLINE, Members, MembersUnread, Outcome, Unopened,
+    self, LastSeen, MAX_DEADLINE, Members, MembersUnread, Outcome, Reachability, Unopened,
 };
 use jiff::Timestamp;
 
@@ -71,12 +71,14 @@ pub fn covering(asked: &Asked<'_>) -> Result<Report, Refused> {
     // a connection that cannot be used does.
     let fleet = Configuration::load_global(asked.home)
         .map_err(|error| tracing::warn!(event = "eval_fleet_unusable", %error))
-        .and_then(|config| match computer_fleet::open(&config, asked.home) {
-            Ok(fleet) => Ok(Some(fleet)),
-            Err(Unopened::NotConfigured) => Ok(None),
-            Err(Unopened::Unusable(error)) => {
-                tracing::warn!(event = "eval_fleet_unusable", %error);
-                Err(())
+        .and_then(|config| {
+            match computer_fleet::open(&config, asked.home, Reachability::Unrecorded) {
+                Ok(fleet) => Ok(Some(fleet)),
+                Err(Unopened::NotConfigured) => Ok(None),
+                Err(Unopened::Unusable(error)) => {
+                    tracing::warn!(event = "eval_fleet_unusable", %error);
+                    Err(())
+                }
             }
         });
     let fleet = match fleet {

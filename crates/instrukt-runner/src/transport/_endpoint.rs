@@ -7,7 +7,7 @@ use instrukt_core::config::RedisEndpoint;
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use redis::{ConnectionAddr, FromRedisValue, IntoConnectionInfo};
 
-use super::{RedisFailure, TransportError};
+use super::{Reachability, RedisFailure, TransportError};
 use crate::state::{self, RunnerState, StateError};
 
 pub(crate) struct Endpoint {
@@ -19,6 +19,8 @@ pub(crate) struct Endpoint {
     available: Condvar,
     state: RunnerState,
     reachability: Mutex<()>,
+    /// Whether this endpoint keeps its source's reachability record.
+    records: Reachability,
 }
 
 #[derive(Default)]
@@ -93,7 +95,15 @@ impl Endpoint {
             available: Condvar::new(),
             state: state.clone(),
             reachability: Mutex::new(()),
+            records: Reachability::Recorded,
         })
+    }
+
+    /// This endpoint keeping, or not keeping, its source's reachability
+    /// record in the state database.
+    pub fn with_reachability(mut self, records: Reachability) -> Self {
+        self.records = records;
+        self
     }
 
     pub fn command<T: FromRedisValue>(
@@ -233,6 +243,9 @@ impl Endpoint {
     }
 
     fn record_reachability(&self, reachable: bool) {
+        if self.records == Reachability::Unrecorded {
+            return;
+        }
         let _guard = self
             .reachability
             .lock()

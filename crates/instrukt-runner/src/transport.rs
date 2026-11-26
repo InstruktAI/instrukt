@@ -97,6 +97,16 @@ impl TransportError {
     }
 }
 
+/// Whether a transport's uses of a Redis keep that Redis's reachability
+/// record in the state database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reachability {
+    /// Each use that succeeds or fails to reach the Redis keeps the record.
+    Recorded,
+    /// Its uses write nothing into the state database.
+    Unrecorded,
+}
+
 #[derive(Debug, Clone)]
 pub struct ScopedTransport {
     local: Arc<Endpoint>,
@@ -109,7 +119,20 @@ impl ScopedTransport {
         config: &Configuration,
         state: &RunnerState,
     ) -> Result<Self, TransportError> {
-        let endpoint = Arc::new(Endpoint::new(&config.cluster_redis()?, "cluster", state)?);
+        Self::cluster_with(config, state, Reachability::Recorded)
+    }
+
+    /// A cluster-only transport whose uses keep, or do not keep, the
+    /// cluster Redis's reachability record.
+    pub fn cluster_with(
+        config: &Configuration,
+        state: &RunnerState,
+        reachability: Reachability,
+    ) -> Result<Self, TransportError> {
+        let endpoint = Arc::new(
+            Endpoint::new(&config.cluster_redis()?, "cluster", state)?
+                .with_reachability(reachability),
+        );
         Ok(Self {
             local: Arc::clone(&endpoint),
             cluster: endpoint,

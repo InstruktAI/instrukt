@@ -20,6 +20,7 @@ pub(crate) use _evaluation::{EvaluationHost, tick_step};
 
 pub use _members::{LastSeen, Member, Members, MembersUnread};
 
+pub use crate::transport::Reachability;
 pub(crate) use _query::HISTORY;
 pub use _query::{AskError, EVALUATION, Fleet, Kind, MAX_DEADLINE, Outcome, Unopened, open};
 pub(crate) use _responder::{Answering, Responder, ResponderSpec, StartError};

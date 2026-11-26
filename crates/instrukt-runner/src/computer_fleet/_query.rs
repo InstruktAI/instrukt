@@ -11,7 +11,7 @@ use instrukt_core::machine::{self, MachineId};
 use serde::{Deserialize, Serialize};
 
 use crate::state::RunnerState;
-use crate::transport::{EventScope, ScopedTransport, TransportError};
+use crate::transport::{EventScope, Reachability, ScopedTransport, TransportError};
 
 /// How long a request lives, and the longest a consumer may wait.
 pub(crate) const REQUEST_LIFETIME: Duration = Duration::from_secs(120);
@@ -107,16 +107,22 @@ pub struct Fleet {
     transport: ScopedTransport,
 }
 
-/// Opens the fleet query on `config`'s cluster connection. This is the one
-/// reading of whether a cluster connection is configured: an address that
-/// is present but cannot be used is never treated as absent.
-pub fn open(config: &Configuration, home: &Home) -> Result<Fleet, Unopened> {
+/// Opens the fleet query on `config`'s cluster connection, keeping the
+/// cluster Redis's reachability record in the state database or not, as
+/// `reachability` says. This is the one reading of whether a cluster
+/// connection is configured: an address that is present but cannot be used
+/// is never treated as absent.
+pub fn open(
+    config: &Configuration,
+    home: &Home,
+    reachability: Reachability,
+) -> Result<Fleet, Unopened> {
     match config.cluster_redis_url() {
         Ok(None) => return Err(Unopened::NotConfigured),
         Ok(Some(_)) => {}
         Err(error) => return Err(Unopened::Unusable(TransportError::Config(error))),
     }
-    ScopedTransport::cluster_only(config, &RunnerState::new(home))
+    ScopedTransport::cluster_with(config, &RunnerState::new(home), reachability)
         .map(|transport| Fleet { transport })
         .map_err(Unopened::Unusable)
 }

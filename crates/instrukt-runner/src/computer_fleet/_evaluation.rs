@@ -20,7 +20,7 @@ use super::_members;
 use super::_query::{EVALUATION, Unopened, open};
 use super::_responder::{Answering, PollError, Responder, ResponderSpec, answer_request};
 use crate::interfaces::{EvaluationAnswers, RunnerWiring};
-use crate::transport::{Endpoint, EventScope, TransportError};
+use crate::transport::{Endpoint, EventScope, Reachability, TransportError};
 
 /// The row the evaluation responder and the tick's fleet step record their
 /// failure under in `runner_workers`.
@@ -89,7 +89,7 @@ pub(crate) fn tick_step(
     let Some(answers) = &wiring.evaluation else {
         return;
     };
-    let fleet = match open(config, home) {
+    let fleet = match open(config, home, Reachability::Unrecorded) {
         Ok(fleet) => fleet,
         Err(Unopened::NotConfigured) => {
             crate::state::worker_state(home, WORKER, None);
@@ -186,7 +186,7 @@ impl EvaluationHost {
         if self.responder.is_some() {
             return;
         }
-        let fleet = match open(admitted.global(), home) {
+        let fleet = match open(admitted.global(), home, Reachability::Unrecorded) {
             Ok(fleet) => fleet,
             Err(Unopened::NotConfigured) => {
                 crate::state::worker_state(home, WORKER, None);
