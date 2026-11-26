@@ -807,7 +807,7 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
         confirmation.starts_with("instrukt events bind "),
         "{confirmation}"
     );
-    r.runtime.set_status("unverified[1]", "completed");
+    r.runtime.set_status("unverified[1]", "stopped");
     r.runtime.delete("unverified[1]");
     std::fs::write(root.join("t3:unverified1"), "").unwrap();
     r.runtime.flag("list-failure", true);

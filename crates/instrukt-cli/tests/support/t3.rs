@@ -722,7 +722,7 @@ impl FakeT3 {
     pub fn set_status(&self, id: &str, value: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
-        if matches!(value, "idle" | "completed" | "failed") {
+        if matches!(value, "idle" | "completed" | "stopped" | "failed") {
             self.consume(id);
         }
         self.change(id, "status", value.into());
