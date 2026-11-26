@@ -36,14 +36,18 @@ it; any other caller uses it the same way.
 | --- | --- |
 | Prompt | The complete text the model receives. It is the call's only input. |
 | Answer shape | The fixed shape the caller declares the answer must have. |
-| Answer | One answer of the declared shape, within the call's size and time bounds. |
-| Outcome | `answered` with the answer, or `refused` with its reason. |
+| Answer | One answer of the declared shape, within the call's size bound. |
+| Outcome | `answered` with the answer, `waiting` while its model service is unavailable, or `refused` with its reason. |
 
 A call is refused, and returns no answer, when no admitted CLI is available on
-the computer, when its confinement cannot be established, when the model
-service cannot be reached, when the answer does not have the declared shape,
-or when the answer exceeds its size bound or the call its time bound. An
+the computer, when its confinement cannot be established, when the answer does
+not have the declared shape, or when the answer exceeds its size bound. An
 answer is never repaired, truncated or partially returned.
+
+A model service that cannot be reached or does not answer in time is an
+outage, not a refusal: the call waits and is tried again until the service
+returns, and the operator can see that it waits and why
+(`project/instrukt/policy/checks-and-guards`).
 
 ### What the model can reach
 
@@ -61,7 +65,9 @@ A CLI is admitted per computer and per installed version. Admission runs the
 CLI under exactly the confinement and settings a call uses and prompts it to
 use a tool, to read a file outside its folder and to reach a network host other
 than its model service. The CLI is admitted only when every attempt fails and
-it still returns an answer of the requested shape.
+it still returns an answer of the requested shape under that confinement; a
+CLI that cannot answer there, for instance because it cannot reach its own
+model service, is refused.
 
 A CLI that offers the model any tool in its call mode is refused even when
 confinement would contain that tool's effect, because the model has no tools

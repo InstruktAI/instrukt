@@ -33,19 +33,22 @@ model on its side has read.
 | Fragments | The complete text cut at random-length boundaries and shuffled, carrying no original position. Each classification cuts and shuffles independently. |
 | Classification | One capability-free call that sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
 | Verdict | `benign` or `flagged`, with reasons from a bounded set. A classifier passes on no free text. |
-| Outcome | `released` or `held`, with every verdict and the reason for holding. |
+| Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, or `pending` while a model service is unavailable. A held outcome never carries the text. |
 
 ### Release and holding
 
 A text is `released` only when every classification returns `benign`. It is
-`held` when any classification is flagged, malformed, timed out or refused,
-when classifications disagree, when no capability-free call is available, and
-when the text exceeds the size screening judges. A text is never truncated,
-judged in part or partly released.
+`held` when any classification is flagged, malformed or refused, when
+classifications disagree, and when the text exceeds the size screening judges.
+A text is never truncated, judged in part or partly released. While a
+classification waits on an unavailable model service
+(`project/instrukt/spec/feature/runner/capability-free-calls`), the text is
+`pending`: neither released nor held.
 
-A held text is kept durably with its verdicts and reasons, and a person can
-retrieve it by the reference its outcome carries. Screening never releases or
-deletes a held text by itself.
+A held text is kept durably with its verdicts and reasons. Only a person can
+see it through the reference its outcome carries; no instrukt surface returns
+it to an agent, so retrieval never releases what screening held. Screening
+never releases or deletes a held text by itself.
 
 ## Use cases
 
@@ -69,5 +72,6 @@ When the agent has the text screened
 And a classification flags it
 Then the agent receives the outcome held, without the text
 And the text with every verdict and reason remains available to a person
+And no agent can retrieve the text
 And the text is neither released nor deleted
 ```
