@@ -206,17 +206,19 @@ history.
 <!-- planned:commit-rereview-reuses-reviewer -->
 The session that recorded the current version of a commit's verdict that
 stands here is that commit's reviewer of record. Work answers it with the
-commit's verdict, together with the current version's report digest and
-moment, which name and date the version (Verdict publication), and
-`instrukt review show` names it. Work also answers which commit's verdict
-standing here has a version whose report has a given digest. A verdict this
-computer handed off or set aside has no reviewer of record here. The runner
-wakes a reviewer of record to review later work
+commit's verdict, and `instrukt review show` names it. Work also answers which
+commit's verdict standing here has a version whose report has a given digest
+(Verdict publication names a version by that digest). A verdict this computer
+handed off or set aside has no reviewer of record here. The runner wakes a
+reviewer of record to review later work
 (`project/instrukt/spec/feature/runner/requested-review`). A wake records
-nothing of the commit's evidence and
-changes nothing of who may record a version (Admission of review evidence,
-Settlement): a verdict the woken session records for another commit is that
-commit's own and admitted as that commit's.
+nothing of the commit's evidence and changes nothing of who may record a
+version (Admission of review evidence, Settlement): a verdict the woken session
+records for another commit is that commit's own and admitted as that commit's.
+Once `instrukt review record` has recorded a version, it hands the version to
+the runner, which queues the verdict notices of that head's requested reviews
+(`project/instrukt/spec/feature/runner/requested-review`). The recording does
+not wait for them and is not undone when they fail.
 <!-- /planned:commit-rereview-reuses-reviewer -->
 
 A verdict and an exemption are separate facts of a commit. Recording, importing
