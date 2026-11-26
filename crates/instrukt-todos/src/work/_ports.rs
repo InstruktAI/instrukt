@@ -150,8 +150,9 @@ impl Claims for Work {
                 return Ok(ClaimOutcome::ClaimedElsewhere);
             }
             // This computer's unassigned claim passes to the todo's live
-            // driver session taking it up (`work-dispatch`, Deliberate
-            // pickup), as `record_dispatch` assigns it to a started session.
+            // driver session taking it up
+            // (`project/instrukt/spec/feature/work/dependencies-and-holds`),
+            // as `record_dispatch` assigns it to a started session.
             if let Some(session) = &session
                 && claim.session.is_none()
                 && super::_attempts::live_driver(record, session).is_some()

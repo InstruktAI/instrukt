@@ -1,5 +1,5 @@
 ---
-source: crates/instrukt-cli/tests/cases/session-continuity.rs
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
 expression: "support::redact(&p.todo([\"show\", \"parser\"]))"
 ---
 parser · change · active

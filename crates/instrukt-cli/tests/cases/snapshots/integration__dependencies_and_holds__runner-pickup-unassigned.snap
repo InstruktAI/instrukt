@@ -1,17 +1,17 @@
 ---
-source: crates/instrukt-cli/tests/cases/session-continuity.rs
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
 expression: "support::redact(&p.todo([\"show\", \"parser\"]))"
 ---
 parser · change · active
 identity: <id 1>
 record status: active
 created: <time> by Test Developer
-revision: 8
+revision: 7
 intent:
   Improve the parser.
 reflection: reflected to GitHub
 issue: #1
-claim: held since <time> by session t3:instrukt:launch:<event 1>
+claim: held since <time>
 hold: none
 sessions:
   todo-orchestrator/1: t3:instrukt:launch:<event 1>

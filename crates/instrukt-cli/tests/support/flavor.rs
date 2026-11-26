@@ -42,6 +42,18 @@ roles:
   - verifier
 ";
 
+/// Records an approved change `slug` in `project`.
+pub fn change(project: &Tracked, slug: &str) {
+    project.todo([
+        "create",
+        slug,
+        "Improve the parser.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+}
+
 /// The project, its fake GitHub and the machine's fake runtime.
 pub struct Tracked {
     pub env: TestEnv,
