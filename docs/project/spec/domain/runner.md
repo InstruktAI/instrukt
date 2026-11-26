@@ -275,12 +275,12 @@ review's: met, unmet with a finding, or GitHub cannot be asked
 Automatic review of the home's other pull requests, the handoff of heads
 already approved and CI observation never wait on this credential. An opening
 GitHub or the runtime cannot answer falls under
-`project/instrukt/spec/feature/runner/pull-request-review`, Availability: the
-source's cause is recorded, a warning is logged and the next tick tries again.
-An opening GitHub refuses while the credential is met is a defect of the part
+`project/instrukt/spec/feature/runner/pull-request-review`, Availability: a
+warning is logged and the next tick tries again. An opening GitHub refuses
+while the credential is met is a defect of the part
 (`project/instrukt/policy/checks-and-guards`): a warning carries GitHub's
-answer and the source's cause is recorded, as the review pass does with its
-own failures. No state of its own is kept for either. The verdict is work's,
+answer, as the review pass warns of its own failures. Neither writes any
+state. The verdict is work's,
 and what the integrator does with the head is workflow's integrator's.
 
 <!-- /planned:company-home-integration -->
