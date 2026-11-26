@@ -36,10 +36,17 @@ validation errors, not missing fields. This read-time resolution preserves the
 edited file. Shipped named bundle definitions supply omitted definitions needed
 by resolved grants; an explicitly configured bundle wins.
 
+<!-- planned-change:company-home-generation -->
 The default role of conversation sessions is `company-agent`; a named connector
 may declare a different `role` in its company home's `instrukt.yaml`, which is
 recorded on the session's `connected_conversations` binding and returned by
 caller assignment lookup. An agents file of schema
+<!-- change:company-home-generation -->
+The default role of conversation sessions is `company-agent`; a named connector
+may declare a different `role` in its company home's `company.yaml`, which is
+recorded on the session's `connected_conversations` binding and returned by
+caller assignment lookup. An agents file of schema
+<!-- /planned-change:company-home-generation -->
 version 2 converts to version 3 on the owned migration path
 (`project/instrukt/spec/feature/configuration/owned-files`): its
 `roles.conversation` entry becomes `roles.company-agent` with every field as

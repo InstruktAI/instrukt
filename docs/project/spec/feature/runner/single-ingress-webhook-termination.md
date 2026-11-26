@@ -90,10 +90,17 @@ activates only on that computer, whatever `ingress.reactions` names.
 
 When the ingress and the reacting computer differ, they need different things:
 
+<!-- planned-change:company-home-generation -->
 | Computer | Needs | Does not need |
 | --- | --- | --- |
 | Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `instrukt.yaml`, and the signing values in the declaring home's owner-only secrets file, with events enabled for the declaring home | A runtime (`project/instrukt/spec/feature/runner/session-continuity`), or any procedure run for an external fact |
 | Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+<!-- change:company-home-generation -->
+| Computer | Needs | Does not need |
+| --- | --- | --- |
+| Ingress | What verification reads: each declaring project adopted and registered with its checkout, each declaring company home's `company.yaml`, and the signing values in the declaring home's owner-only secrets file, with events enabled for the declaring home | A runtime (`project/instrukt/spec/feature/runner/session-continuity`), or any procedure run for an external fact |
+| Reacting computer | The homes the procedures run in: the registered project checkout or company home the fact's origin names, with its published procedures, the chosen runtime and events enabled for that home | Signing values, or a receiver |
+<!-- /planned-change:company-home-generation -->
 
 Changing `ingress.reactions` or `ingress.computer` is a change the operator
 coordinates while nothing is in flight. It is supported only when no

@@ -1,5 +1,5 @@
 ---
-description: Creating, reading and changing `instrukt.yaml` through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
+description: Creating, reading and changing instrukt's configuration documents through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
 ---
 
 # Configuration Editing — Spec

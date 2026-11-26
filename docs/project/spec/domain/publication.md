@@ -265,8 +265,8 @@ of the plugin as Claude loads it.
   rendering, with `--check` for a check and with `--validate` for a
   validation, the two flags excluding each other
   (`project/instrukt/spec/feature/publication/company-plugin`); whether a
-  repository's `docs/index.yaml` is its company index, which docs
-  validation asks before reading the file; the global
+  repository is a company's, which docs validation asks before reading
+  anything under its `docs/`; the global
   agent files; `.instrukt/schemas/` and the modeline
   form (`project/instrukt/spec/feature/publication/editor-schemas`);
   `instrukt status [--json]` and its report
@@ -475,12 +475,22 @@ This context emits no events.
 
 ## Context map position
 
+<!-- planned-change:company-home-generation -->
 - **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
   the `index.yaml` and `schema.yaml` model and validation publication renders
   and refuses by; publication supplies the home's published tree and global
   index that retrieval reads, the published commit the behind-main
   warning compares with, and whether a repository's `docs/index.yaml` is
   its company index, which validation leaves to publication.
+<!-- change:company-home-generation -->
+- **docs** — Customer / Supplier, both ways. Docs supplies the snippet model,
+  the `index.yaml` and `schema.yaml` model and validation publication renders
+  and refuses by; publication supplies the home's published tree and global
+  index that retrieval reads, the published commit the behind-main
+  warning compares with, and whether a repository is a company's, in which
+  validation reads nothing under `docs/` and leaves the company's knowledge
+  to publication.
+<!-- /planned-change:company-home-generation -->
 - **configuration** — Customer / Supplier. Configuration supplies the project
   slug, the runtime choice and the migration operation invoked before
   publication.

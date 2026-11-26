@@ -259,6 +259,7 @@ Assertion JWT Authorization Grant, `urn:ietf:params:oauth:grant-type:jwt-bearer`
 a company home may enable instrukt's built-in lightweight OIDC issuer without
 running an external IdP (such as Keycloak or Okta):
 
+<!-- planned-change:company-home-generation -->
 - `instrukt mcp issuer init --company <name>` verifies cluster Redis and
   `ingress.url` first, generates an ES256 signing keypair, publishes the public
   discovery and JWKS documents to cluster Redis before storing the private key
@@ -266,6 +267,15 @@ running an external IdP (such as Keycloak or Okta):
   repository, state database, or cluster Redis), records a stable 128-bit
   `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
   the company home's `instrukt.yaml`.
+<!-- change:company-home-generation -->
+- `instrukt mcp issuer init --company <name>` verifies cluster Redis and
+  `ingress.url` first, generates an ES256 signing keypair, publishes the public
+  discovery and JWKS documents to cluster Redis before storing the private key
+  in the company home's `secrets.env` under a `${NAME}` reference (never in the
+  repository, state database, or cluster Redis), records a stable 128-bit
+  `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
+  the company home's `company.yaml`.
+<!-- /planned-change:company-home-generation -->
 - Cluster Redis holds derived public issuer metadata rebuilt idempotently from
   authoritative `company_issuers` + `ingress.url` without rotating keys on
   ingress receiver startup, when `ingress.url` changes, or via
