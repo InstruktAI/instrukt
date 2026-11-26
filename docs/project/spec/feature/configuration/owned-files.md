@@ -14,6 +14,7 @@ migration rules. A valid older configuration remains usable after an upgrade.
 
 ### Machine-local secrets
 
+<!-- planned-change:capability-free-model-call -->
 `<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
 instrukt uses, including webhook signing material, Redis credentials and GitHub
 App private keys. App profiles carry protected references; installation tokens
@@ -24,6 +25,20 @@ never secret values. Every instrukt path resolves such secrets from this file,
 including noninteractive ticks; a process environment or project `.env` cannot
 supply or override them. Names are shared within the selected home, so projects requiring distinct
 values there use distinct reference names.
+<!-- change:capability-free-model-call -->
+`<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
+instrukt uses, including webhook signing material, Redis credentials, GitHub
+App private keys and the API key of the endpoint that serves capability-free
+calls (`project/instrukt/spec/feature/screening/capability-free-calls`). App
+profiles carry protected references; installation tokens are issued in memory
+under `project/instrukt/spec/feature/work/github-apps`, not saved as
+long-lived secrets.
+The model-provider keys of agent runtimes remain with T3. Configuration holds `${NAME}` references,
+never secret values. Every instrukt path resolves such secrets from this file,
+including noninteractive ticks; a process environment or project `.env` cannot
+supply or override them. Names are shared within the selected home, so projects requiring distinct
+values there use distinct reference names.
+<!-- /planned-change:capability-free-model-call -->
 
 A company home has its own secrets file, `~/.instrukt/companies/<name>/secrets.env`,
 under the same protection, write and disclosure rules. References in that

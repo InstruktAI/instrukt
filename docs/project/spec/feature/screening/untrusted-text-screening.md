@@ -31,7 +31,7 @@ model on its side has read.
 | --- | --- |
 | Text | The complete untrusted text. |
 | Fragments | The complete text cut into fragments of 3 to 8 words, of random length within that range, and shuffled, carrying no original position. |
-| Classification | One capability-free call that sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
+| Classification | One capability-free call that judges for manipulation and sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
 | Verdict | `benign` or `flagged`, with reasons from a bounded set. A classifier passes on no free text. |
 | Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, `pending` while the endpoint is unavailable, or `refused` when no endpoint is configured. A held outcome never carries the text. |
 
@@ -43,7 +43,9 @@ verdict's shape or was cut off, when classifications disagree, and when the
 text exceeds the size screening judges. A text is never truncated, judged in
 part or partly released. While a classification waits on an unavailable
 endpoint (`project/instrukt/spec/feature/screening/capability-free-calls`),
-the text is `pending`: neither released nor held. Without a configured
+the text is `pending`: neither released nor held. instrukt retries, and the
+caller receives the eventual outcome, released or held, without asking
+again. Without a configured
 endpoint, screening is refused before any text is taken, and nothing is
 released.
 

@@ -17,10 +17,12 @@ put text written outside the project in front of a model without giving that
 text any capability.
 
 The endpoint is the operator's choice, made in configuration: a local server
-such as LM Studio, or a cloud provider's endpoint. Its API key, when it needs
-one, is a protected instrukt secret
+such as LM Studio, or a cloud provider's endpoint. The endpoint must run only
+what the request asks: a model that invokes tools of its own accord, such as a
+search model that searches before it answers, is not a supported endpoint for
+these calls. Its API key, when it needs one, is a protected instrukt secret
 (`project/instrukt/spec/feature/configuration/owned-files`), never a value in a
-configuration document.
+configuration document; agent runtimes keep their model-provider keys in T3.
 
 The call carries no knowledge of where its prompt came from or what its answer
 is for. Untrusted-text screening
@@ -38,9 +40,9 @@ on it, and any other caller uses it the same way.
 | Answer | One answer of the declared shape, within the call's size bound. |
 | Outcome | `answered` with the answer, `waiting` while the endpoint is unavailable, or `refused` with its reason. |
 
-The request carries the prompt, the configured model and the answer shape, and
-nothing else: no tool definitions, no earlier messages and no data beyond the
-prompt.
+The request defines no tools, carries no earlier conversation and no data
+beyond the prompt, and asks only for an answer of the declared shape within its
+size bound.
 
 A call is refused, and returns no answer, when no endpoint is configured, when
 the answer does not have the declared shape, or when the model stopped before
@@ -55,10 +57,13 @@ repaired, truncated or partly returned.
 | Model | The model the endpoint serves the call with. |
 | API key | A reference to a protected instrukt secret; absent for an endpoint that needs none. |
 
-An endpoint that cannot be reached, does not answer in time, rejects the
-configured key or does not know the configured model is unavailable, not a
-refusal: the call waits and is tried again, and the operator can see that it
-waits and why (`project/instrukt/policy/checks-and-guards`).
+An endpoint that reports or shows that it cannot serve the request now is
+unavailable, not a refusal: it cannot be reached, does not answer in time,
+limits the rate, has exhausted its quota or spend limit, is overloaded, answers
+with a server error, rejects the configured key or does not know the configured
+model. The call waits and instrukt, not the caller, tries it again; the
+operator can see that it waits and why, and the caller receives the eventual
+outcome without asking again (`project/instrukt/policy/checks-and-guards`).
 
 ## Use cases
 
