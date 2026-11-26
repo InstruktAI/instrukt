@@ -9,7 +9,7 @@ use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
-use super::_render::{GENERATED_LINE, Renderer};
+use super::_render::{GENERATED_LINE, Renderer, UnitRendering};
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
@@ -482,7 +482,7 @@ fn publish(
         index: &patched,
         indexes: &indexes,
         values: &values,
-        units: true,
+        units: UnitRendering::Compressed,
     };
     let GlobalPlan {
         global,
@@ -743,7 +743,7 @@ fn global_files(
     // written from it is named with them.
     let mut rendered = BTreeMap::new();
     let prose = Renderer {
-        units: false,
+        units: UnitRendering::Prose,
         ..*renderer
     };
     let mut copies: BTreeMap<&str, String> = BTreeMap::new();

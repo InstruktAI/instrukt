@@ -97,9 +97,17 @@ pub(super) struct Renderer<'a> {
     /// included); a position without one is absent.
     pub indexes: &'a BTreeMap<DomainName, PositionIndex>,
     pub values: &'a Values<'a>,
-    /// Whether sources are held as their current units; `false` renders
-    /// every source in prose, as the uncompressed copy holds it.
-    pub units: bool,
+    /// How the sources of the global files are held.
+    pub units: UnitRendering,
+}
+
+/// How a global file holds the sources it holds in full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnitRendering {
+    /// Each source as its current unit, in prose where it has none.
+    Compressed,
+    /// Every source in prose, as the uncompressed copy holds it.
+    Prose,
 }
 
 /// What one rendered file holds so far, in traversal order — each snippet
@@ -530,7 +538,7 @@ struct Published<'a> {
     owned: &'a BTreeSet<DomainName>,
     indexes: &'a BTreeMap<DomainName, PositionIndex>,
     values: &'a Values<'a>,
-    units: bool,
+    units: UnitRendering,
 }
 
 impl Published<'_> {
@@ -593,7 +601,7 @@ impl Source for Published<'_> {
     /// agent program, is held in prose and reported; a global file is
     /// written despite it.
     fn unit(&self, id: &SnippetId) -> Result<UnitText, PublicationError> {
-        if !self.units {
+        if self.units == UnitRendering::Prose {
             return Ok(UnitText::Prose);
         }
         let Some((source, read)) = self.unit_read(id)? else {
@@ -1508,7 +1516,7 @@ mod tests {
             owned: &owned,
             indexes: &indexes,
             values: &values,
-            units: true,
+            units: UnitRendering::Compressed,
         };
         source
             .unit(&SnippetId::parse("general/policy/care").unwrap())
