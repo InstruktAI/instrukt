@@ -1152,9 +1152,14 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
         Shape::Regenerable => {
             json!({ "type": "array", "items": { "type": "string", "minLength": 1 } })
         }
-        Shape::RetentionWindow => {
-            json!({ "type": "string", "pattern": super::_thread_retention::WINDOW_PATTERN })
-        }
+        Shape::RetentionWindow => described(
+            json!({
+                "type": "string",
+                "pattern": super::_thread_retention::WINDOW_PATTERN,
+                "default": super::_thread_retention::OFF,
+            }),
+            super::_thread_retention::WINDOW_CONTRACT,
+        ),
     }
 }
 
@@ -1181,7 +1186,7 @@ pub(crate) fn defaults(layer: LayerKind) -> Value {
             insert_at(
                 &mut root,
                 &["runner", "archive_finished_after"],
-                text("off"),
+                text(super::_thread_retention::OFF),
             );
         }
         LayerKind::Project => {

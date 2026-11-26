@@ -12,8 +12,14 @@ use super::_schema::KeyFinding;
 /// The global-layer key that holds the retention window.
 pub const ARCHIVE_FINISHED_AFTER_KEY: &str = "runner.archive_finished_after";
 
-/// The value that switches thread retention off.
-const OFF: &str = "off";
+/// The value that switches thread retention off, and the key's default.
+pub(super) const OFF: &str = "off";
+
+/// The key's contract, as schema discovery prints it.
+pub(super) const WINDOW_CONTRACT: &str = "How long a finished runtime thread of a registered \
+     project stays quiet before the runner archives it: a whole number from 1 with a unit \
+     s, m, h, d or w naming a span instrukt can represent, or `off`, under which no thread \
+     is archived.";
 
 /// The published grammar of the key, as a JSON Schema pattern; [`parse`]
 /// reads the same grammar and adds the representability bound.
