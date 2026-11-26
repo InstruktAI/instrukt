@@ -5,12 +5,12 @@
 //! (`project/instrukt/spec/feature/configuration/company-homes`,
 //! Generation).
 //!
-//! The run takes `state/company-generation.lock`, so adoptions take turns.
-//! A creation writes its intent, `state/company-generation/<key>/intent.yaml`,
-//! before the root commit is composed and before GitHub is asked anything;
-//! an adoption that finds it resumes that creation. The root commit is
-//! composed in `…/<key>/skeleton`, the home's clone made ready in
-//! `…/<key>/home` and moved into place whole, then synced.
+//! Adoptions take turns under one lock. A creation checks its
+//! prerequisites, then records its intent before the root commit is
+//! composed and before anything on GitHub is changed; an adoption that
+//! finds the intent resumes that creation. The root commit is composed in a
+//! staging checkout, and the home's clone is made ready beside it, moved
+//! into place whole and then synced.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -37,9 +37,6 @@ const MAIN: &str = "main";
 
 /// The skeleton's knowledge index: it selects nothing yet.
 const EMPTY_INDEX: &str = "expanded: []\nlisted: []\n";
-
-/// The root commit's message.
-const ROOT_MESSAGE: &str = "feat: start the company's repository\n\nThe company skeleton every company receives: the project layer, the ignore\nfile, the knowledge index, the AGENTS.md rendered from it, and the\ncompany's skill with the catalog that lists it.";
 
 /// What the caller asks of `instrukt init --company`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,7 +100,8 @@ pub struct CompanyReport {
 }
 
 /// The creation intent: what a creation under way needs to complete,
-/// recorded before anything on GitHub is asked.
+/// recorded once its prerequisites are checked, before the root commit is
+/// composed and before anything on GitHub is changed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Intent {
@@ -407,7 +405,7 @@ fn compose_root(
         skeleton,
         ports.env,
         ports.wiring,
-        ROOT_MESSAGE,
+        "feat: start the company's repository\n\nThe company skeleton every company receives: the project layer, the ignore\nfile, the knowledge index, the AGENTS.md rendered from it, and the\ncompany's skill with the catalog that lists it.",
         intent.human_involved,
     )?;
     Ok(sha.to_string())
@@ -552,7 +550,9 @@ fn write_intent(path: &Path, intent: &Intent) -> Result<(), RepositoryError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        Creation, Intent, Pushed, RepositoryError, Step, next_step, read_intent, write_intent,
+    };
 
     #[test]
     fn a_fresh_creation_that_finds_the_repository_takes_it_by_contract_and_pushes_nothing() {

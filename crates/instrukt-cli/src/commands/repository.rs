@@ -91,8 +91,6 @@ fn run_init_company(args: InitArgs, key: ProjectSlug, ctx: &mut Ctx) -> anyhow::
     let wiring = instrukt_core::interfaces::CoreWiring {
         caller_identity: crate::wiring::caller_lookup(ctx)?,
         github_actors: Some(ctx.github.clone()),
-        github_accounts: Some(ctx.github.clone()),
-        company_repositories: Some(ctx.github.clone()),
         session_role: Some(std::sync::Arc::new(crate::wiring::RecordedRole(
             ctx.home.clone(),
         ))),

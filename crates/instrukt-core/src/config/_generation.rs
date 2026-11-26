@@ -113,9 +113,9 @@ pub fn decide(
     })
 }
 
-/// The company skeleton's project layer: the repository is the project
-/// `company-<key>`, a company's repository, with todos off and automatic
-/// review on.
+/// The company skeleton's project layer: the project [`company_repository`]
+/// names, declared a company's repository, with the module and review
+/// switches every company's repository starts with.
 pub fn skeleton_layer(key: &ProjectSlug) -> Result<Value, ConfigError> {
     let mut layer = Mapping::new();
     let mut set = |key: &str, value: Value| {
@@ -156,7 +156,10 @@ pub fn write_skeleton(root: &Path, key: &ProjectSlug) -> Result<(), ConfigError>
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        AccountKind, Generation, GenerationRefusal, PROJECT_SCHEMA_VERSION, Path, PathBuf,
+        ProjectSlug, company_repository, decide, skeleton_layer,
+    };
 
     fn acme() -> ProjectSlug {
         ProjectSlug::parse("acme").unwrap()

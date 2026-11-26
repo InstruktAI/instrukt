@@ -392,8 +392,9 @@ impl FakeGitHub {
         self
     }
 
-    /// Installs the project App (id 1) on the organisation `org`; its
-    /// permissions are App 1's ([`Self::set_installation_permissions`]).
+    /// Installs the project App on the organisation `org`, with the
+    /// permissions its installation holds
+    /// ([`Self::set_installation_permissions`]).
     pub fn install_on_org(&self, org: &str) -> &Self {
         self.lock().org_installations.insert(org.to_owned());
         self

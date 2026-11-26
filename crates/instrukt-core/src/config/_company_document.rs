@@ -50,8 +50,7 @@ pub(crate) fn resolve(home: &Home, name: &ProjectSlug) -> Result<CompanyDocument
 
 /// Where the settings document of the company home at `dir` stands. A root
 /// `instrukt.yaml` that cannot be read is no company document beside a
-/// `company.yaml`; without one, its error is the answer, as reading it was
-/// before `company.yaml`.
+/// `company.yaml`; without one, its error is the answer.
 pub(crate) fn resolve_in(dir: &Path) -> Result<CompanyDocument, ConfigError> {
     let company = dir.join(COMPANY_DOCUMENT);
     let legacy = dir.join(CONFIG_FILE_NAME);
@@ -192,7 +191,11 @@ pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        COMPANY_DOCUMENT, COMPANY_SCHEMA_VERSION, CONFIG_FILE_NAME, CompanyDocument, ConfigError,
+        Home, PathBuf, ProjectSlug, convert, declares_company, lock_path, resolve,
+        write_company_settings,
+    };
 
     fn acme() -> ProjectSlug {
         ProjectSlug::parse("acme").unwrap()

@@ -41,10 +41,6 @@ const SKILLS: &str = "skills";
 /// The repository's plugin catalog, from its root.
 pub(super) const CATALOG: &str = ".claude-plugin/marketplace.json";
 
-/// The catalog's own repository as an entry's source: its root, in the form
-/// Claude's catalog format gives it.
-const ROOT_SOURCE: &str = "./";
-
 /// The skill's main file, inside the skill's folder.
 const SKILL_FILE: &str = "SKILL.md";
 
@@ -904,7 +900,9 @@ fn wanted_entry(
 ) -> [(&'static str, Json); 7] {
     [
         ("name", Json::from(key.as_str())),
-        ("source", Json::from(ROOT_SOURCE)),
+        // The catalog's own repository, its root, as Claude's catalog
+        // format names it.
+        ("source", Json::from("./")),
         ("strict", Json::from(false)),
         ("skills", serde_json::json!([format!("./{}", folder(key))])),
         ("version", Json::from(version.to_string())),

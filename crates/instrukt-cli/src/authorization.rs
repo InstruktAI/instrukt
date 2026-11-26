@@ -120,13 +120,6 @@ fn command_path(matches: &ArgMatches) -> (Vec<&str>, &ArgMatches) {
     (path, leaf)
 }
 
-/// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `docs plugin
-/// [--check | --validate]`, `hooks run`, the
-/// detached `hooks worker` a run starts, and `hooks status`. They load no
-/// project layer and skip the layer notices, so a root document that cannot
-/// be read still has its runs recorded and shown; whether the caller is in
-/// its project comes from what the working tree's root document is.
 /// Whether the command is `instrukt init --company`: adding a company,
 /// which addresses a machine-wide object and reads no working directory.
 pub fn company_init(matches: &ArgMatches) -> bool {
@@ -134,6 +127,13 @@ pub fn company_init(matches: &ArgMatches) -> bool {
     path == ["init"] && leaf.try_get_raw("company").ok().flatten().is_some()
 }
 
+/// The commands that work on the repository the caller stands in and need
+/// nothing else of the computer: `docs render [--check]`, `docs plugin
+/// [--check | --validate]`, `hooks run`, the
+/// detached `hooks worker` a run starts, and `hooks status`. They load no
+/// project layer and skip the layer notices, so a root document that cannot
+/// be read still has its runs recorded and shown; whether the caller is in
+/// its project comes from what the working tree's root document is.
 pub fn repository_local(matches: &ArgMatches) -> bool {
     matches!(
         command_path(matches).0.as_slice(),

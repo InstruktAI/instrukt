@@ -94,7 +94,10 @@ fn refusal(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{
+        AccountKind, ConfigError, Findings, GITHUB_ORG_KEY, GitHubAccounts, Home, Layer, Revision,
+        Value, admit_github_org,
+    };
     use crate::interfaces::InterfaceError;
 
     struct Stub(Result<AccountKind, &'static str>);

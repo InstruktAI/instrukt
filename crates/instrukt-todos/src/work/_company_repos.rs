@@ -224,7 +224,7 @@ impl CompanyRepositories for GitHubAccess {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{AccountKind, already_exists, json, kind_of};
 
     #[test]
     fn only_a_name_that_already_exists_is_an_existing_repository() {
