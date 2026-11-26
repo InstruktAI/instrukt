@@ -346,44 +346,70 @@ mod tests {
     use super::{Limitation, Stored, Why};
     use std::path::PathBuf;
 
-    #[test]
-    fn every_cause_has_a_public_wording_and_a_redacted_log_detail() {
-        let path = || PathBuf::from("/sentinel/checkout/path");
-        let error = || "sentinel error text".to_owned();
-        let url_error = || {
-            "remote https://sentinel-user:sentinel-secret@host.example/org/repo.git is elsewhere"
-                .to_owned()
-        };
+    /// Every cause, its path and error fields set to `path` and `error`.
+    fn every_cause(path: &str, error: &str) -> Vec<Limitation> {
         let mut causes = Vec::new();
         for stored in [Stored::Shown, Stored::Unread] {
             for why in [
-                Why::CheckoutMissing { checkout: path() },
-                Why::NoConfiguration { checkout: path() },
+                Why::CheckoutMissing {
+                    checkout: PathBuf::from(path),
+                },
+                Why::NoConfiguration {
+                    checkout: PathBuf::from(path),
+                },
                 Why::TrackingOff,
-                Why::ConfigurationUnreadable { error: error() },
-                Why::RecordUnreadable { error: url_error() },
+                Why::ConfigurationUnreadable {
+                    error: error.into(),
+                },
+                Why::RecordUnreadable {
+                    error: error.into(),
+                },
             ] {
                 causes.push(Limitation::Project { why, stored });
             }
         }
         causes.extend([
-            Limitation::StoredUnreadable { error: error() },
-            Limitation::PublicationUnreadable { error: url_error() },
-            Limitation::FingerprintsUnreadable { error: error() },
+            Limitation::StoredUnreadable {
+                error: error.into(),
+            },
+            Limitation::PublicationUnreadable {
+                error: error.into(),
+            },
+            Limitation::FingerprintsUnreadable {
+                error: error.into(),
+            },
             Limitation::UntimedFingerprints { count: 2 },
             Limitation::UnknownRequestFormat,
         ]);
-        let shown: Vec<String> = causes
-            .iter()
-            .map(|cause| {
-                format!(
-                    "{}\n  public: {}\n  log:    {}",
-                    cause.cause(),
-                    cause.public(),
-                    cause.log_detail()
-                )
-            })
-            .collect();
-        insta::assert_snapshot!("limitation-wordings", shown.join("\n"));
+        causes
+    }
+
+    #[test]
+    fn a_public_wording_carries_none_of_its_causes_detail() {
+        let one = every_cause(
+            "/sentinel/one",
+            "sentinel error https://sentinel-user:sentinel-secret@one.example/repo",
+        );
+        let two = every_cause("/sentinel/two", "another sentinel error");
+        for (a, b) in one.iter().zip(&two) {
+            assert!(!a.public().is_empty(), "{}", a.cause());
+            assert_eq!(a.public(), b.public(), "{}", a.cause());
+        }
+    }
+
+    #[test]
+    fn a_log_detail_is_the_local_wording_with_url_credentials_masked() {
+        let path = "/sentinel/checkout/path";
+        let with = every_cause(
+            path,
+            "remote https://sentinel-user:sentinel-secret@host.example/org/repo.git is elsewhere",
+        );
+        let masked = every_cause(
+            path,
+            "remote https://***@host.example/org/repo.git is elsewhere",
+        );
+        for (a, b) in with.iter().zip(&masked) {
+            assert_eq!(a.log_detail(), b.local(), "{}", a.cause());
+        }
     }
 }

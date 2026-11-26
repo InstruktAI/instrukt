@@ -330,6 +330,7 @@ mod tests {
     use jiff::Timestamp;
     use serde_json::Value;
     use serde_json::json;
+    use std::collections::BTreeSet;
 
     fn at(seconds: i64) -> Timestamp {
         Timestamp::from_second(1_900_000_000 + seconds).unwrap()
@@ -463,28 +464,69 @@ mod tests {
             &reading(vec![project("demo", records, Vec::new())], fingerprints),
             Wording::Public,
         );
-        insta::assert_json_snapshot!("answer-wire-payload", answered);
+        let wire = serde_json::to_value(&answered).unwrap();
+        let keys = |value: &Value| -> BTreeSet<String> {
+            value.as_object().unwrap().keys().cloned().collect()
+        };
+        let named = |names: &[&str]| -> BTreeSet<String> {
+            names.iter().map(|name| (*name).to_owned()).collect()
+        };
+        let project = &wire["projects"][0];
+        let set = &project["sets"][0];
+        let row = &set["models"][0];
+        for (value, fields) in [
+            (&wire, named(&["format", "limitations", "projects"])),
+            (project, named(&["project", "limitations", "sets"])),
+            (
+                set,
+                named(&["fingerprint", "changed_by", "order_unknown", "models"]),
+            ),
+            (row, named(&["model", "first", "last", "tally"])),
+            (&row["model"], named(&["kind", "model", "version"])),
+            (
+                &row["tally"],
+                named(&[
+                    "todos",
+                    "stamps",
+                    "approved",
+                    "not_approved",
+                    "reviews",
+                    "rounds",
+                    "findings",
+                    "returns",
+                    "human",
+                ]),
+            ),
+        ] {
+            assert_eq!(keys(value), fields);
+        }
     }
 
     #[test]
     fn a_missing_checkout_is_a_public_limitation_in_an_answer_and_local_in_a_report() {
-        let missing = Limitation::Project {
+        let missing = |path: &str| Limitation::Project {
             why: Why::CheckoutMissing {
-                checkout: "/sentinel/checkout/path".into(),
+                checkout: path.into(),
             },
             stored: Stored::Shown,
         };
-        let read = || {
+        let read = |path: &str| {
             reading(
-                vec![project("demo", Vec::new(), vec![missing.clone()])],
+                vec![project("demo", Vec::new(), vec![missing(path)])],
                 Vec::new(),
             )
         };
-        let public = answer(&request(), &read(), Wording::Public);
-        assert_eq!(public.projects[0].limitations, vec![missing.public()]);
-        insta::assert_json_snapshot!("answer-with-a-missing-checkout", public);
-        let local = answer(&request(), &read(), Wording::Local);
-        assert_eq!(local.projects[0].limitations, vec![missing.local()]);
+        let one = "/sentinel/checkout/one";
+        let public = answer(&request(), &read(one), Wording::Public);
+        assert_eq!(public.projects[0].limitations, vec![missing(one).public()]);
+        let elsewhere = answer(&request(), &read("/sentinel/checkout/two"), Wording::Public);
+        assert_eq!(
+            serde_json::to_value(&public).unwrap(),
+            serde_json::to_value(&elsewhere).unwrap(),
+            "the answer carries nothing of the checkout's path"
+        );
+        let local = answer(&request(), &read(one), Wording::Local);
+        assert_eq!(local.projects[0].limitations, vec![missing(one).local()]);
     }
 
     #[test]
