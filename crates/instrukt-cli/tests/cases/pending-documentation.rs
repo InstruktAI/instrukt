@@ -13,11 +13,17 @@ use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
 use documented::{project, snippet, sync};
 
-fn stdout(env: &TestEnv, assert: &Assert) -> String {
+fn shown(env: &TestEnv, bytes: &[u8]) -> String {
     let base = env.home().parent().unwrap().display().to_string();
-    common::mask_published_commits(
-        &String::from_utf8_lossy(&assert.get_output().stdout).replace(&base, "[TMP]"),
-    )
+    common::mask_published_commits(&String::from_utf8_lossy(bytes).replace(&base, "[TMP]"))
+}
+
+fn stdout(env: &TestEnv, assert: &Assert) -> String {
+    shown(env, &assert.get_output().stdout)
+}
+
+fn stderr(env: &TestEnv, assert: &Assert) -> String {
+    shown(env, &assert.get_output().stderr)
 }
 
 /// Configured values inside the todos' planned blocks. `build-it`'s
@@ -201,5 +207,17 @@ fn a_builder_reads_the_documentation_as_its_todo_will_deliver_it() {
         )
         .success();
     insta::assert_snapshot!("other-todos-snippet-withheld", stdout(&env, &not_mine));
+
+    // Once its worktree is gone, a todo whose delivery is unconfirmed has no
+    // lens to read: the read is refused instead of falling back to the main
+    // checkout.
+    demo.git(["worktree", "remove", worktree.to_str().unwrap()]);
+    let unresolved = env
+        .run(
+            demo.path(),
+            ["docs", "get", "--target", "build-it", "acme/spec/fresh"],
+        )
+        .failure();
+    insta::assert_snapshot!("unresolved-workspace-refused", stderr(&env, &unresolved));
     assert!(runtime.calls().is_empty());
 }
