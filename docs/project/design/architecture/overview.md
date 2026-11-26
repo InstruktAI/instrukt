@@ -392,8 +392,9 @@ sent through `runner.notify`.
 <!-- planned:archive-finished-threads -->
 While the computer's retention window is set, each runner invocation also has
 the runtime archive the finished threads of its registered projects that have
-been quiet past it, after dispatch and event work and off every waiting path
-(`project/instrukt/spec/feature/runner/thread-retention`).
+been quiet past it, after dispatch and event work. No pickup, event reaction or
+other command waits on it; the `instrukt tick` that runs it returns once it is
+done (`project/instrukt/spec/feature/runner/thread-retention`).
 <!-- /planned:archive-finished-threads -->
 
 Procedure activation is durably accepted before runtime execution. The adapter
