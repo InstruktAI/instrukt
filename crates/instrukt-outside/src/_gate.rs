@@ -69,7 +69,7 @@ pub struct Settings<'a> {
     pub backoff: Backoff,
     /// What counts as temporarily unavailable for this service beyond the
     /// protocol's standard, applied before the standard rules.
-    pub rules: &'a [&'a Rule],
+    pub rules: &'a [&'a Rule<'a>],
 }
 
 impl Default for Settings<'_> {
@@ -89,9 +89,12 @@ pub enum CallerWait {
 }
 
 /// A wait the gate gave: what is waited on, why, and the moment of the next
-/// possible try. Only the gate makes one.
+/// possible try. Only the gate makes one; clones share it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Wait {
+pub struct Wait(Arc<Waited>);
+
+#[derive(Debug, PartialEq, Eq)]
+struct Waited {
     service: &'static str,
     level: String,
     extent: Extent,
@@ -103,29 +106,29 @@ pub struct Wait {
 
 impl Wait {
     pub fn reason(&self) -> Reason {
-        self.reason
+        self.0.reason
     }
 
     pub fn extent(&self) -> Extent {
-        self.extent
+        self.0.extent
     }
 
     /// Whether the service named the moment.
     pub fn named(&self) -> bool {
-        self.named
+        self.0.named
     }
 
     /// The moment of the next try on the host's clock, fixed when the wait
     /// started; what a part displays and persists.
     pub fn at(&self) -> Timestamp {
-        self.at
+        self.0.at
     }
 
     /// Where a pacing part sleeps to on the monotonic source: a pause's
     /// deadline, or for a named moment an estimate taken when the gate
     /// answered, which the next attempt checks again.
     pub fn until(&self) -> Instant {
-        self.until
+        self.0.until
     }
 }
 
@@ -133,11 +136,14 @@ impl Wait {
 /// the next try.
 impl fmt::Display for Wait {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{} {} {}; next try at {}",
-            self.service, self.level, self.reason, self.at
-        )
+        let Waited {
+            service,
+            level,
+            reason,
+            at,
+            ..
+        } = &*self.0;
+        write!(f, "{service} {level} {reason}; next try at {at}")
     }
 }
 
@@ -183,7 +189,7 @@ impl Entry {
     }
 
     fn wait(&self, key: &Key, now: Timestamp, monotonic: Instant) -> Wait {
-        Wait {
+        Wait(Arc::new(Waited {
             service: key.service(),
             level: key.to_string(),
             extent: self.extent,
@@ -191,7 +197,7 @@ impl Entry {
             named: self.deadline.is_none(),
             at: self.at,
             until: self.until(now, monotonic),
-        }
+        }))
     }
 }
 
@@ -208,6 +214,12 @@ pub struct Gate {
     inner: Arc<Inner>,
 }
 
+impl fmt::Debug for Gate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Gate").finish_non_exhaustive()
+    }
+}
+
 impl Gate {
     pub fn new(clock: Clock, monotonic: Monotonic, report: Report) -> Self {
         Self {
@@ -218,6 +230,11 @@ impl Gate {
                 entries: Mutex::default(),
             }),
         }
+    }
+
+    /// The host's clock now: what a part stamps an answer's receipt with.
+    pub fn now(&self) -> Timestamp {
+        (self.inner.clock)()
     }
 
     /// One try at most, never a pause: a key or scope inside a wait is

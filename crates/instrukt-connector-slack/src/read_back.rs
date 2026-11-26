@@ -293,10 +293,19 @@ fn failed(error: impl std::fmt::Display) -> ReadBackError {
     }
 }
 
+/// A Slack failure of a read, with the outside gate's wait when Slack was
+/// unavailable.
 fn web_error(error: SlackError) -> ReadBackError {
-    ReadBackError {
-        cause: error.to_string(),
-        wait: None,
+    match error {
+        SlackError::Unavailable {
+            method,
+            cause,
+            wait,
+        } => ReadBackError {
+            cause: super::unavailable_cause(&method, cause.as_deref()),
+            wait: Some(wait),
+        },
+        other => failed(other),
     }
 }
 

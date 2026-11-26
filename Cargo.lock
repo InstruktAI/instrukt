@@ -947,6 +947,7 @@ name = "instrukt-connector-slack"
 version = "0.1.0"
 dependencies = [
  "instrukt-connector",
+ "instrukt-outside",
  "jiff",
  "serde",
  "serde_json",

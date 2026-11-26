@@ -28,7 +28,7 @@ pub enum HttpAnswer<'a> {
 /// A part's service rule: whether an answer is temporarily unavailable beyond
 /// HTTP's own rules, its reason and its extent; `None` leaves the answer to
 /// the next rule and then to the table.
-pub type Rule = dyn Fn(&HttpAnswer<'_>) -> Option<Unavailable> + Send + Sync;
+pub type Rule<'a> = dyn Fn(&HttpAnswer<'_>) -> Option<Unavailable> + Send + Sync + 'a;
 
 /// What an HTTP outcome is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
