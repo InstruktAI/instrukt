@@ -547,10 +547,9 @@ next success removes the file, a configured cluster connection that cannot be
 used is recorded the same way, and the file is removed when no cluster
 connection is configured. A failure to write or remove the file is logged and
 leaves what the writer has recorded as it was, so the next outcome writes it
-again; it is never taken as a recorded success. `instrukt install --check`
-and `instrukt events status` report the file as they report the runner's other
-workers, under the name `computer-fleet`, and report a file they cannot read
-as that worker's failure. The file is written whole beside its previous
+again; it is never taken as a recorded success. `instrukt events status`
+reports the file as it reports the runner's other workers, under the name
+`computer-fleet`, and reports a file it cannot read as that worker's failure. The file is written whole beside its previous
 version and renamed over it, by `instrukt run`'s responder or by
 `instrukt tick`'s fleet step, which the runner lock never lets run at once;
 readers take no lock. It is current state the runner owns for this home, and
