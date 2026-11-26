@@ -69,8 +69,8 @@ serving people and instrukt's other work while it does.
 ### Runtime capability
 
 Archiving a thread is a capability a runtime adapter states in instrukt's own
-terms (`project/instrukt/spec/feature/runner/session-continuity`, Runtime
-choice and feature availability). Archiving a thread that is already archived
+terms, and a feature needing it is available only on a runtime that states it
+(`project/instrukt/spec/feature/runner/session-continuity`). Archiving a thread that is already archived
 counts as done.
 
 A window set on a runtime whose adapter cannot archive is a configuration

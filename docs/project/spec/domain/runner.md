@@ -398,9 +398,8 @@ project switches on. The contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
 
 A pass reads, for each such project, the finished threads the selected runtime
-lists for it through the adapter
-(`project/instrukt/spec/feature/runner/session-continuity`, Adapter
-primitives). It keeps every thread a standing responsibility holds — the
+lists for it through the adapter's finished-thread listing
+(`project/instrukt/spec/feature/runner/session-continuity`). It keeps every thread a standing responsibility holds — the
 session of its current binding, of its standing runtime binding, or of its
 manual reservation, observed or bound — and every thread work associates with
 one of the project's todos without a terminal outcome. When the standing
