@@ -104,7 +104,7 @@ fn report_leftovers(ctx: &mut Ctx, leftovers: &[PathBuf]) -> anyhow::Result<()> 
 /// One line per global agent file a sync wrote or found current, with its
 /// runtime and the instances it serves; per link it ensured; per link it
 /// replaced at one of its own destinations; and per finding about an agent
-/// file.
+/// file or about the index it persists.
 fn global_lines(
     global_files: &[GlobalDestination],
     links: &[EnsuredLink],
@@ -153,6 +153,9 @@ fn global_lines(
             },
             SyncFinding::RuntimeUnreachable { runtime, cause } => format!(
                 "notice: runtime `{runtime}` could not be asked which agent runtimes are configured ({cause}); no global agent file was written, and the next sync writes them"
+            ),
+            SyncFinding::EntryUndigested { id, owner } => format!(
+                "notice: index entry `{id}` of project `{owner}` is kept without its source digest, because its published file cannot be read; it gains one when `{owner}` next syncs"
             ),
         });
     }

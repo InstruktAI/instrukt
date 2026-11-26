@@ -4951,7 +4951,7 @@ mod tests {
             ""
         };
         serde_yaml_ng::from_str(&format!(
-                "schema_version: 2\nsnippets:\n- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n{delivered_by}"
+                "schema_version: 3\nsnippets:\n- id: general/procedure/company-assistance\n  description: Assist.\n  type: procedure\n  scope: global\n  domain: general\n  path: general/procedure/company-assistance.md\n  source_project: demo\n  role: company-agent\n{delivered_by}"
             ),
         )
         .unwrap()
@@ -5034,11 +5034,14 @@ mod tests {
                     required_reads: Vec::new(),
                     parameters: Vec::new(),
                     interruptible: false,
+                    content_sha256: None,
+                    compressed_source_sha256: None,
+                    compressed_content_sha256: None,
                 }
             })
             .collect();
         let index = instrukt_core::index::GlobalIndex {
-            schema_version: 2,
+            schema_version: 3,
             snippets,
             third_party: Vec::new(),
         };

@@ -1468,6 +1468,9 @@ mod tests {
             required_reads: Vec::new(),
             parameters: Vec::new(),
             interruptible: false,
+            content_sha256: None,
+            compressed_source_sha256: None,
+            compressed_content_sha256: None,
         }
     }
 

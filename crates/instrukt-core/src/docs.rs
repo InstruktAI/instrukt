@@ -140,6 +140,15 @@ pub(crate) fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
     (split.frontmatter, split.body)
 }
 
+/// The current-contract body of a snippet's whole `text`
+/// (`project/instrukt/spec/domain/docs`, Current-contract body): its body
+/// after its frontmatter with every pending block resolved to its current
+/// side and the marker lines removed, nothing resolved from the computer.
+pub(crate) fn current_contract_body(text: &str) -> String {
+    let body = _text::split_frontmatter(text).body;
+    _markers::resolve(body, &_markers::scan(body), |_| _markers::Side::Current)
+}
+
 /// The `@config`, `@exec` and `@include` directives of `text`, outside
 /// fenced and inline code, read as one body: no frontmatter split, no lens.
 pub(crate) fn directives(text: &str) -> Vec<Directive> {

@@ -57,6 +57,16 @@ pub(super) fn source_digest(prose: &str) -> String {
     sha256_hex(prose.replace("\r\n", "\n").as_bytes())
 }
 
+/// The source digest of the snippet whose whole published text stands at
+/// `rel` below the home's published tree `docs`, read through no symbolic
+/// link; why it cannot be read otherwise.
+pub(crate) fn published_digest(docs: &Path, rel: &Path) -> Result<String, String> {
+    let path = super::_tx::confined(docs, rel).map_err(|err| err.to_string())?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+    Ok(source_digest(&docs::current_contract_body(&text)))
+}
+
 /// Where the unit of the source at `source`, a repository-relative path
 /// below `docs/`, belongs; `None` for a path outside `docs/`.
 pub(super) fn unit_path(source: &str) -> Option<String> {

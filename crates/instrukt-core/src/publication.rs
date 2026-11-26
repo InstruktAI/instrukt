@@ -32,6 +32,7 @@ mod _sync;
 mod _tree;
 mod _tx;
 mod _units;
+pub(crate) use _units::published_digest;
 
 use std::path::{Path, PathBuf};
 

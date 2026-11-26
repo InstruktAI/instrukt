@@ -22,7 +22,7 @@ use crate::docs::{
 use crate::fsx::LockGuard;
 use crate::git;
 use crate::home::Home;
-use crate::ids::{CommitSha, DomainName, ProjectSlug};
+use crate::ids::{CommitSha, DomainName, ProjectSlug, SnippetId};
 use crate::index::GlobalIndex;
 use crate::interfaces::{Answer, CoreWiring};
 
@@ -164,7 +164,7 @@ pub enum LinkState {
     Current,
 }
 
-/// What a sync reports about an agent file without refusing.
+/// What a sync reports about an agent file, or about the index it persists, without refusing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncFinding {
     /// A runtime's settings file left untouched: the user's, unparseable or
@@ -178,6 +178,10 @@ pub enum SyncFinding {
     /// The selected runtime could not be asked which agent runtimes are
     /// configured: no global agent file was written in this sync.
     RuntimeUnreachable { runtime: String, cause: String },
+    /// Another project's index entry, brought forward to the current index
+    /// version, persisted without its source digest: its published file
+    /// could not be read. It gains one when its owner next publishes it.
+    EntryUndigested { id: SnippetId, owner: ProjectSlug },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -405,7 +409,19 @@ fn publish(
         })));
     }
     let owners = _tree::claims(home)?;
-    let index = GlobalIndex::load(home)?.unwrap_or_default();
+    let (index, undigested) = GlobalIndex::load_with_undigested(home)?.unwrap_or_default();
+    // The invoking project's own entries are replaced by its patch; every
+    // other project's entry left without a digest is persisted so, and named.
+    report.findings.extend(
+        index
+            .snippets
+            .iter()
+            .filter(|entry| undigested.contains(&entry.id) && entry.source_project != project.slug)
+            .map(|entry| SyncFinding::EntryUndigested {
+                id: entry.id.clone(),
+                owner: entry.source_project.clone(),
+            }),
+    );
     let patched = match patch(&index, &owners, &contribution) {
         Ok(patched) => patched,
         Err(claim) => return Ok(refused(Refusal::Claim(claim))),
@@ -443,7 +459,7 @@ fn publish(
     } else {
         GlobalPlan::default()
     };
-    *report.findings = findings;
+    report.findings.extend(findings);
     notices.sort();
     notices.dedup();
     *report.notices = notices;
