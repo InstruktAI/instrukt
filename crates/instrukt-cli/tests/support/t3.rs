@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 
 use crate::common::TestEnv;
 
-const SCRIPT: &str = r###"#!/usr/bin/env python3
+const SCRIPT: &str = r###"#!__PYTHON__
 import hashlib, json, os, pathlib, sqlite3, subprocess, sys, time
 root=pathlib.Path('__STATE__')
 root.mkdir(parents=True,exist_ok=True)
@@ -90,6 +90,42 @@ if args[:3]==['auth','session','revoke']:
     if record.exists():
         session=json.loads(record.read_text()); session['revoked']=True; record.write_text(json.dumps(session))
     print('Revoked session.'); sys.exit(0)
+# T3's project table: a project exists only where a fixture or `project add`
+# placed it. Thread commands resolve a path to its deepest containing live
+# project; `project add` registers exactly the root it names.
+def read_projects():
+    table=root/'projects.table'
+    return json.loads(table.read_text()) if table.exists() else []
+def project_for(checkout):
+    path=pathlib.Path(checkout).resolve()
+    best=None
+    for project in read_projects():
+        if project.get('deletedAt') is not None: continue
+        workspace=pathlib.Path(project['workspaceRoot'])
+        if path==workspace or workspace in path.parents:
+            if best is None or len(workspace.parts)>len(pathlib.Path(best['workspaceRoot']).parts): best=project
+    return best['id'] if best else None
+if args[:2]==['project','add']:
+    import fcntl
+    rest=args[2:]; title=None; operands=[]
+    i=0
+    while i<len(rest):
+        if rest[i]=='--title': title=rest[i+1]; i+=2
+        elif rest[i]=='--': operands.extend(rest[i+1:]); break
+        else: operands.append(rest[i]); i+=1
+    if len(operands)!=1: sys.exit(2)
+    if (root/'down').exists(): print('connect ECONNREFUSED 127.0.0.1:3773',file=sys.stderr); sys.exit(1)
+    workspace=str(pathlib.Path(operands[0]).resolve())
+    with open(root/'projects.lock','a') as lock:
+        fcntl.flock(lock,fcntl.LOCK_EX)
+        projects=read_projects()
+        if any(p['workspaceRoot']==workspace and p.get('deletedAt') is None for p in projects):
+            print('Project already exists for workspace root '+workspace+'.',file=sys.stderr); sys.exit(1)
+        projects=[p for p in projects if p['workspaceRoot']!=workspace]
+        projects.append({'id':'project-'+hashlib.sha256(workspace.encode()).hexdigest(),'workspaceRoot':workspace,'deletedAt':None,'title':title or pathlib.Path(workspace).name})
+        temporary=root/('projects.table.'+str(os.getpid())+'.tmp')
+        temporary.write_text(json.dumps(projects)); temporary.replace(root/'projects.table')
+    print('Added project '+workspace+'.'); sys.exit(0)
 if len(args)<2 or args[0]!='thread': sys.exit(2)
 command=args[1]; args=args[2:]
 flags={}; operands=[]
@@ -166,16 +202,11 @@ def create_worktree(t,folder,base,branch):
     folder.parent.mkdir(exist_ok=True)
     subprocess.run(['git','-C',t['checkout'],'worktree','add','--quiet']+(['-b',branch] if branch is not None else [])+[str(folder),base],check=True)
     t['worktreePath']=str(folder); t['branch']=base if branch is None else branch; t['base']=base
-def project_for(checkout):
-    path=str(pathlib.Path(checkout).resolve())
-    default_id='project-'+hashlib.sha256(path.encode()).hexdigest()
-    registration=root/(default_id+'.id')
-    return registration.read_text() if registration.exists() else default_id
 if command=='list':
     threads=all_threads()
     if '--project' in flags:
         project=project_for(flags['--project'])
-        threads=[t for t in threads if (t.get('projectId') or project_for(t['checkout']))==project]
+        threads=[t for t in threads if project is not None and (t.get('projectId') or project_for(t['checkout']))==project]
     if (root/'hide-project-id').exists():
         for t in threads: t.pop('projectId',None)
     if (root/'duplicate').exists() and threads:
@@ -211,7 +242,9 @@ elif command=='start':
     if launch: id=launch['threadId']
     checkout=str(pathlib.Path(operands[0]).resolve())
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
-    t={'runtimeMode':'full-access','interactionMode':'default','threadId':id,'projectId':project_for(checkout),'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    project=project_for(checkout)
+    if project is None: print('No project contains '+checkout+'.',file=sys.stderr); sys.exit(1)
+    t={'runtimeMode':'full-access','interactionMode':'default','threadId':id,'projectId':project,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
     # With `queued-start`, the runtime accepts the thread's opening input
     # and keeps it queued: neither entered nor completed.
     if (root/'queued-start').exists(): t['status']='queued'
@@ -366,12 +399,11 @@ impl FakeT3 {
         env.readiness_server();
         let bin = env.path("runtime-bin");
         let state = env.path("t3-state");
-        let fresh = !state.exists();
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::create_dir_all(&state).unwrap();
-        if fresh {
-            let database =
-                Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/statev2.sqlite");
+        let database =
+            Path::new(env.injected("T3CODE_HOME").unwrap()).join("userdata/statev2.sqlite");
+        if !database.exists() {
             std::fs::create_dir_all(database.parent().unwrap()).unwrap();
             let db = instrukt_core::state_db::rusqlite::Connection::open(database).unwrap();
             db.execute_batch("CREATE TABLE IF NOT EXISTS orchestration_command_receipts(command_id TEXT PRIMARY KEY,aggregate_kind TEXT,aggregate_id TEXT,command_type TEXT,status TEXT);").unwrap();
@@ -379,7 +411,16 @@ impl FakeT3 {
         let script = bin.join("t3");
         std::fs::write(
             &script,
-            SCRIPT.replace("__STATE__", &state.display().to_string()),
+            // The interpreter is named in full: a test may run instrukt
+            // with an empty `PATH`, and T3 still answers.
+            SCRIPT
+                .replace("__STATE__", &state.display().to_string())
+                .replace(
+                    "__PYTHON__",
+                    &crate::common::tool_executable("python3")
+                        .display()
+                        .to_string(),
+                ),
         )
         .unwrap();
         std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -389,13 +430,30 @@ impl FakeT3 {
             environment: env.environment().clone(),
         }
     }
-    fn default_project_id(checkout: &std::path::Path) -> String {
-        use sha2::{Digest, Sha256};
-        let root = checkout.canonicalize().unwrap();
-        format!(
-            "project-{}",
-            hex::encode(Sha256::digest(root.to_string_lossy().as_bytes()))
-        )
+    /// The test's root, where T3's project table lives.
+    fn root(&self) -> &Path {
+        self.state.parent().unwrap()
+    }
+
+    /// The live project whose root contains `checkout` most deeply, as T3
+    /// resolves a path for `thread start`.
+    fn containing_project(&self, checkout: &Path) -> Option<String> {
+        let checkout = checkout.canonicalize().unwrap();
+        let table: Vec<serde_json::Value> =
+            std::fs::read(crate::common::t3_readiness::projects_file(self.root()))
+                .ok()
+                .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+                .unwrap_or_default();
+        table
+            .iter()
+            .filter(|project| project["deletedAt"].is_null())
+            .filter(|project| checkout.starts_with(project["workspaceRoot"].as_str().unwrap()))
+            .max_by_key(|project| {
+                Path::new(project["workspaceRoot"].as_str().unwrap())
+                    .components()
+                    .count()
+            })
+            .map(|project| project["id"].as_str().unwrap().to_owned())
     }
 
     pub fn next_thread_id(&self, id: &str) {
@@ -404,9 +462,57 @@ impl FakeT3 {
         std::fs::write(self.state.join("next-thread-id"), id).unwrap();
     }
 
+    /// Places a live project with id `project` rooted exactly at `checkout`.
     pub fn register_project(&self, checkout: &std::path::Path, project: &str) {
-        let id = Self::default_project_id(checkout);
-        std::fs::write(self.state.join(format!("{id}.id")), project).unwrap();
+        crate::common::t3_readiness::place_project(self.root(), checkout, project);
+    }
+
+    /// Places a live project rooted exactly at `root`, as `t3 project add`
+    /// does; its id is the one the fake gives an added project.
+    pub fn add_project(&self, root: &Path) {
+        crate::common::t3_readiness::place_project(
+            self.root(),
+            root,
+            &crate::common::t3_readiness::default_project_id(root),
+        );
+    }
+
+    /// Deletes the project rooted exactly at `root`, as `t3 project remove`.
+    pub fn remove_project(&self, root: &Path) {
+        crate::common::t3_readiness::withdraw_project(self.root(), root);
+    }
+
+    /// The id of the live project containing `checkout` most deeply; the
+    /// fixture places one at `checkout` when none does.
+    pub fn containing_project_id(&self, checkout: &Path) -> String {
+        self.containing_project(checkout).unwrap_or_else(|| {
+            self.add_project(checkout);
+            crate::common::t3_readiness::default_project_id(checkout)
+        })
+    }
+
+    /// Thread `id` now belongs to the live project rooted exactly at
+    /// `root`, as a thread T3 placed there.
+    pub fn place_thread(&self, id: &str, root: &Path) {
+        let project = self.project_at(root).unwrap();
+        self.change(id, "projectId", project.into());
+    }
+
+    /// The id of the live project rooted exactly at `root`, if any.
+    pub fn project_at(&self, root: &Path) -> Option<String> {
+        let root = root.canonicalize().unwrap();
+        let table: Vec<serde_json::Value> =
+            std::fs::read(crate::common::t3_readiness::projects_file(self.root()))
+                .ok()
+                .map(|bytes| serde_json::from_slice(&bytes).unwrap())
+                .unwrap_or_default();
+        table
+            .iter()
+            .find(|project| {
+                project["deletedAt"].is_null()
+                    && Path::new(project["workspaceRoot"].as_str().unwrap()) == root
+            })
+            .map(|project| project["id"].as_str().unwrap().to_owned())
     }
 
     pub fn project_id(&self, thread: &str) -> String {
@@ -416,9 +522,9 @@ impl FakeT3 {
     pub fn seed(&self, id: &str, checkout: &std::path::Path, key: &str, brief: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
-        let default_id = Self::default_project_id(checkout);
-        let project = std::fs::read_to_string(self.state.join(format!("{default_id}.id")))
-            .unwrap_or(default_id);
+        // A thread belongs to a project: the one containing its checkout,
+        // which the fixture places at the checkout when there is none.
+        let project = self.containing_project_id(checkout);
         let thread = serde_json::json!({"runtimeMode":"full-access","interactionMode":"default","threadId":id,"projectId":project,"checkout":checkout.to_string_lossy(),"title":key,"status":"running","latestRunId":format!("run:{id}:1"),"activeRunId":format!("run:{id}:1"),"updatedAt":"2026-11-06T10:00:00Z","pendingRequestCount":0,"archived":false,"settled":false,"worktreePath":null,"branch":null,"messages":[{"role":"user","text":brief,"runId":format!("run:{id}:1")}]});
         std::fs::write(
             self.state.join(format!("{id}.fixture")),
@@ -793,7 +899,15 @@ impl FakeT3 {
             .map(str::to_owned)
             .collect()
     }
+    /// A developer's folder is one of their T3 projects: the fixture places
+    /// one at `folder` unless a project already contains it.
+    fn developer_folder(&self, folder: &Path) {
+        if self.containing_project(folder).is_none() {
+            self.add_project(folder);
+        }
+    }
     pub fn developer_starts_in(&self, checkout: &std::path::Path) -> String {
+        self.developer_folder(checkout);
         let out = std::process::Command::new(&self.script)
             .envs(&self.environment)
             .args([
@@ -808,6 +922,7 @@ impl FakeT3 {
         String::from_utf8(out.stdout).unwrap().trim().into()
     }
     pub fn developer_starts_thread(&self) -> String {
+        self.developer_folder(&self.state);
         let out = std::process::Command::new(&self.script)
             .envs(&self.environment)
             .args([

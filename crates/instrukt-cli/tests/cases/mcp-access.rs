@@ -94,6 +94,8 @@ impl Unattended {
                     ["config", "init", "--company", company],
                 )
                 .success();
+            // An onboarded company's home has its runtime project.
+            computer.env.place_company_project(company);
         }
         computer.tick();
         // The companies' facts are external: this computer is the ingress, so
@@ -716,6 +718,7 @@ fn a_host_oauth_client_is_shared_across_companies_with_isolated_speaker_tokens()
     c.env
         .run(&c.env.path(""), ["config", "init", "--company", "beta"])
         .success();
+    c.env.place_company_project("beta");
     patch_company(
         &c.env,
         "beta",
@@ -1301,6 +1304,7 @@ fn company_admin_in_dm_can_manage_mcp_config_while_non_admin_channel_and_other_k
     c.env
         .run(&c.env.path(""), ["config", "init", "--company", "beta"])
         .success();
+    c.env.place_company_project("beta");
 
     let home = c.env.instrukt_home().join("companies").join(COMPANY);
     c.runtime.flag("lifecycle", true);
