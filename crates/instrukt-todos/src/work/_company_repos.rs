@@ -104,6 +104,27 @@ fn failed(what: &str, answer: &Answer) -> CompanyRepositoryError {
     CompanyRepositoryError::Failed(format!("GitHub refused {what} ({}{said})", answer.status))
 }
 
+/// The record of one company-repository mutation GitHub answered: which
+/// operation, on which repository, with which status. Nothing of the
+/// request, the credential or the administrator is recorded.
+fn mutated(operation: &str, org: &str, repo: &str, status: u16, succeeded: bool) {
+    if succeeded {
+        tracing::info!(
+            event = "company_repository_mutated",
+            operation,
+            repository = %format_args!("{org}/{repo}"),
+            status,
+        );
+    } else {
+        tracing::warn!(
+            event = "company_repository_mutation_refused",
+            operation,
+            repository = %format_args!("{org}/{repo}"),
+            status,
+        );
+    }
+}
+
 fn unreached(what: &str, error: &AppError) -> CompanyRepositoryError {
     CompanyRepositoryError::Failed(format!("GitHub could not be asked {what}: {error}"))
 }
@@ -162,11 +183,13 @@ impl CompanyRepositories for GitHubAccess {
                     clock,
                 )
                 .map_err(|error| unreached(&what, &error))?;
-            match answer.status {
+            let outcome = match answer.status {
                 201 => Ok(Creation::Created),
                 422 if already_exists(&answer.body) => Ok(Creation::AlreadyExists),
                 _ => Err(failed(&what, &answer)),
-            }
+            };
+            mutated("create", org, repo, answer.status, outcome.is_ok());
+            outcome
         })
     }
 
@@ -189,10 +212,12 @@ impl CompanyRepositories for GitHubAccess {
                 )
                 .map_err(|error| unreached(&what, &error))?;
             // 201: GitHub invited them; 204: a member, added at once.
-            match answer.status {
+            let outcome = match answer.status {
                 201 | 204 => Ok(()),
                 _ => Err(failed(&what, &answer)),
-            }
+            };
+            mutated("grant_admin", org, repo, answer.status, outcome.is_ok());
+            outcome
         })
     }
 
@@ -214,10 +239,18 @@ impl CompanyRepositories for GitHubAccess {
                     clock,
                 )
                 .map_err(|error| unreached(&what, &error))?;
-            match answer.status {
+            let outcome = match answer.status {
                 200 => Ok(()),
                 _ => Err(failed(&what, &answer)),
-            }
+            };
+            mutated(
+                "set_default_branch",
+                org,
+                repo,
+                answer.status,
+                outcome.is_ok(),
+            );
+            outcome
         })
     }
 }

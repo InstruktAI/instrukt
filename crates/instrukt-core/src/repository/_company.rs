@@ -256,10 +256,24 @@ pub fn adopt_company(
             publication::SyncOutcome::Published { .. } => CompanySync::Published,
             publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
             publication::SyncOutcome::Refused { refusal, .. } => {
+                tracing::warn!(
+                    event = "company_home_publication_refused",
+                    company = %key,
+                    reason = %refusal,
+                    "the company's home is in place and not published; `instrukt sync` in it publishes it"
+                );
                 CompanySync::NotPublished(refusal.to_string())
             }
         },
-        Err(error) => CompanySync::NotPublished(error.to_string()),
+        Err(error) => {
+            tracing::warn!(
+                event = "company_home_publication_failed",
+                company = %key,
+                error = %error,
+                "the company's home is in place and not published; `instrukt sync` in it publishes it"
+            );
+            CompanySync::NotPublished(error.to_string())
+        }
     };
     tracing::info!(
         event = "company_home_adopted",
