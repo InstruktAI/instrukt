@@ -297,6 +297,7 @@ One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.89, `unsafe`
 ```sh
 make hooks          # once per clone: pre-commit runs the checks the staged files need
 make commit-checks  # every commit check over every file, as CI runs it
+make ratchet        # lower the size and suppression baseline after shrinking a file or removing a suppression
 make check          # lint, the whole test suite, coverage and the audit by hand
 ```
 
