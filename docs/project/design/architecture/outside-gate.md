@@ -38,12 +38,20 @@ The crate `instrukt-outside`, which depends on nothing of instrukt
 A part names what a call reaches by a key: a service name the operator
 recognises (`slack`, an MCP server's declared name), the scope it reaches (such
 as a company and a connector), and optionally what within that scope the call
-uses (such as a Web API method). A temporary unavailability applies either to
-the whole scope — the service cannot be reached or says it is unavailable — or
-only to what within it the call used, such as a method the service limited. The
-gate keeps waits at both levels: a call is not tried while its scope or its own
-key is inside a wait, and a wait on one key never delays another key of the
-same scope.
+uses (such as a Web API method). A temporary unavailability applies to one of
+three extents, as the service's answer says:
+
+- **the scope**: the service cannot be reached or says it is unavailable;
+- **the key**: what within the scope the call used, such as a method the
+  service limited;
+- **the call**: only the request that received it, which the service says it
+  could not complete; it says nothing about any other request.
+
+The gate keeps waits for the scope and the key: a call is not tried while its
+scope or its own key is inside a wait, and a wait on one key never delays
+another key of the same scope. A failure of the call holds back no other call;
+the part that made it receives a wait whose moment follows its key's backoff
+and paces its own next try by it.
 
 ### The judgment a part's adapter gives
 
@@ -101,7 +109,7 @@ transport failure the part's service rules left unjudged:
 | --- | --- | --- |
 | `429 Too Many Requests` (RFC 6585) | rate limited | the key |
 | `503 Service Unavailable` (RFC 9110) | unavailable | the scope |
-| `408 Request Timeout`, `425 Too Early` | unavailable | the key |
+| `408 Request Timeout`, `425 Too Early`, `500 Internal Server Error` | unavailable | the call |
 | `502`, `504`, any other `5xx` | unavailable | the scope |
 | any other `4xx` | defect | — |
 | name not resolved, connection not opened | unreachable | the scope |
@@ -122,7 +130,8 @@ taken as the farthest representable one.
   part's backoff.
 - **One report per wait.** While a key or a scope is waited on, the operator is
   told once: when its first unavailability starts the wait, and when a try at
-  that level next succeeds, with how long the wait lasted. No record is written
+  that level next succeeds, with how long the wait lasted. A failure of the
+  call is reported on its key the same way, without holding the key. No record is written
   per try. The report names the service, the key or scope, the reason and the
   moment of the next try, and never a credential, a request body or an answer
   body.

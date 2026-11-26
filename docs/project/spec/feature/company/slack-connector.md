@@ -124,11 +124,12 @@ refuses later is retried and reported like a lost connection.
 <!-- planned:outside-gate-foundation -->
 Slack's answers are judged by the outside gate
 (`project/instrukt/design/architecture/outside-gate`). Beyond HTTP's own rules,
-the body code `ratelimited` limits the method that received it, and
-`request_timeout`, `internal_error`, `service_unavailable` and `fatal_error`
-make Slack unavailable for every method the connector calls with the same
-token, and a token Slack refuses is waited out for every method called with
-it. At admission a scope list Slack cannot provide and a missing scope are
+the body code `ratelimited` limits the method that received it;
+`service_unavailable` makes Slack unavailable for every method the connector
+calls with the same token; `request_timeout`, `internal_error` and
+`fatal_error`, which say Slack could not complete that request, are waited out
+by that call alone; and a token Slack refuses is waited out for every method
+called with it. At admission a scope list Slack cannot provide and a missing scope are
 waited out as the scope check: the connector stays withheld with its finding
 and is checked again when the wait ends.
 <!-- /planned:outside-gate-foundation -->
