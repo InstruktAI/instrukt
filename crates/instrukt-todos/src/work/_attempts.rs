@@ -475,7 +475,7 @@ impl Work {
                 .attempt
                 .lane
                 .unwrap_or(instrukt_runner::interfaces::Lane::Work);
-            if matches!(role.as_str(), "builder" | "fixer" | "finalizer") {
+            if matches!(role.as_str(), "builder" | "finalizer") {
                 let prd_approver = s
                     .config
                     .approver(instrukt_core::config::ApprovalGate::Prd)?;
@@ -970,7 +970,7 @@ pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
         },
         StampRequest::BuildComplete => Completion {
             completes: Completes::CallerRole {
-                roles: &["builder", "fixer"],
+                roles: &["builder"],
                 unbound: Unbound::Refused,
             },
             read_only: false,
@@ -2273,11 +2273,11 @@ mod tests {
     }
 
     #[test]
-    fn a_completion_completes_the_callers_latest_attempt_of_its_roles() {
+    fn a_completion_completes_the_callers_latest_attempt_of_its_role() {
         let record = task_record(vec![
             child_binding("builder", 1, "worker"),
-            child_binding("fixer", 2, "worker"),
-            child_binding("fixer", 3, "other"),
+            child_binding("builder", 2, "worker"),
+            child_binding("builder", 3, "other"),
         ]);
         assert_eq!(
             admit(

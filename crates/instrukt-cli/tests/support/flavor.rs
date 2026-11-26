@@ -36,7 +36,6 @@ roles:
   - task-runner
   - integrator
   - builder
-  - fixer
   - finalizer
   - build-reviewer
   - verifier

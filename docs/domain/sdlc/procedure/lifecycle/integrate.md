@@ -142,7 +142,7 @@ builders, reviewers and the evaluator add no suite execution of their own.
   (which resets the finalized handoff so the runner wakes `todo-orchestrator`
   even when no new commit was pushed yet; note that `--kickback` also marks any
   existing `plan_review` invalidated in the ledger, so `todo-orchestrator`
-  inspects the recorded reason and routes directly to `builder`/`fixer` for
+  inspects the recorded reason and routes directly to a `builder` round for
   code-only or CI failures rather than re-planning unless the contract or plan
   itself is defective), make a trivial fix within integration scope, or isolate
   the culprit among a batch. A change to intent or the prepared contract returns

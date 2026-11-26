@@ -73,10 +73,11 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      Step 4b (`sdlc/policy/live-verification`, pushing `origin/<slug>/work`
      first whenever the resolved execution host is `ci`).
   4. If static review returns `changes_requested` or `verifier` records `fail`,
-     dispatch an admitted `fixer` (`instrukt todo attempt <slug> --role fixer
-     --procedure sdlc/procedure/lifecycle/fix-review-findings`, naming
-     `review-findings` or `verification-findings`) to adjudicate and remediate
-     findings, then
+     dispatch an admitted `builder` remediation round (`instrukt todo attempt
+     <slug> --role builder --procedure sdlc/procedure/lifecycle/work/build`,
+     its brief naming `review-findings` or `verification-findings`) to
+     adjudicate and remediate findings under
+     `sdlc/procedure/lifecycle/fix-review-findings`, then
      re-run independent `build-reviewer` and a new `verifier` attempt (Step 4b)
      on the resulting exact HEAD (or on the unchanged exact HEAD after an
      evidence-only rejection pass). If `verifier` records `blocked`, resolve the
@@ -269,7 +270,7 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
        fills) without ad hoc merges during preparation.
 3. **Select and route the next primitive.** Every admitted role that shares
    `<slug>/work` (`intaker`, `architect`, `planner`, `diagnoser`,
-   `drift-analyzer`, `builder`, `fixer`, `build-reviewer`, `verifier`,
+   `drift-analyzer`, `builder`, `build-reviewer`, `verifier`,
    `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `deferrer`,
    `finalizer`) reserves each round with
    `instrukt todo attempt {slug} --role <role> --procedure <id> --args {slug} --brief -`
@@ -300,7 +301,7 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
    - **4b. Live verification disposition for the exact candidate HEAD.** Load
      `sdlc/policy/live-verification` (`instrukt docs get sdlc/policy/live-verification`)
      and classify every clean candidate HEAD (including any replacement HEAD
-     produced by `fixer` or `finalizer`). Its disposition is a stamp bound to
+     produced by `builder` or `finalizer`). Its disposition is a stamp bound to
      that exact HEAD and the current `verification-findings` report, and
      `--finalize-ready` is refused until the HEAD carries a current `pass`,
      `tier_0_skip` or `hotfix_deferred`; the ledger's handoff gate line names
@@ -346,12 +347,13 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
          preserving all existing `deferrals` entries — so `deferrer` triages
          every build and live-verification observation together before
          finalization.
-       - On `fail`, dispatch an admitted `fixer` (`instrukt todo attempt
-         {slug} --role fixer --procedure
-         sdlc/procedure/lifecycle/fix-review-findings`, then `bind`) naming
-         `verification-findings`, then re-run static `build-reviewer` and a new
-         `verifier` attempt (Step 4b) on the resulting exact HEAD. While a
-         verifier's `fail` stands for a HEAD, your Tier 0 skip or hotfix
+       - On `fail`, dispatch an admitted `builder` remediation round
+         (`instrukt todo attempt {slug} --role builder --procedure
+         sdlc/procedure/lifecycle/work/build`, then `bind`), its brief naming
+         `verification-findings` for
+         `sdlc/procedure/lifecycle/fix-review-findings`, then re-run static
+         `build-reviewer` and a new `verifier` attempt (Step 4b) on the
+         resulting exact HEAD. While a verifier's `fail` stands for a HEAD, your Tier 0 skip or hotfix
          deferral for that HEAD is refused; a new candidate commit or a new
          `verifier` attempt on it clears the `fail`.
        - On `blocked`, resolve the named blocker below, then dispatch a new
@@ -484,11 +486,10 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
   `instrukt todo attempt {slug} --role <role> --attempt <n> --failed ...` (or
   `--not-started` if it never started) before dispatching a replacement.
 - If `integrate` returns red CI or conflicts, re-enter `<slug>/work`, resolve
-  through `builder` (`--role builder --procedure
-  sdlc/procedure/lifecycle/work/build`) or `fixer` (`--role fixer --procedure
-  sdlc/procedure/lifecycle/fix-review-findings`), obtain a fresh independent
-  exact-SHA review approval and live verification disposition (Step 4b), push,
-  and re-stamp `--finalize-ready`.
+  through a `builder` round (`--role builder --procedure
+  sdlc/procedure/lifecycle/work/build`, its brief naming the returned failure),
+  obtain a fresh independent exact-SHA review approval and live verification
+  disposition (Step 4b), push, and re-stamp `--finalize-ready`.
 
 ## See also
 

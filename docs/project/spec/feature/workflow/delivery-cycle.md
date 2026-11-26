@@ -26,7 +26,7 @@ build, review, verify, fix, process deferrals, and finalize.
    atomically.
 2. **Independent exact-SHA handoff gate:** `--verdict approve --phase build_review`
    requires an independent reviewer session distinct from the orchestrator and
-   all writer roles (`builder`, `fixer`, `setup`, `finalizer`, `intaker`,
+   all writer roles (`builder`, `setup`, `finalizer`, `intaker`,
    `architect`, `planner`). `--finalize-ready` (callable by a retained completed
    `finalizer` or directly by the claim-holding `todo-orchestrator`) requires
    no open workspace attempt, a clean worktree matching local and published
@@ -36,7 +36,7 @@ build, review, verify, fix, process deferrals, and finalize.
    admits handoff (Live verification disposition below). `--finalize-ready`
    appends `workflow.finalized` atomically.
 3. **Human-owned approval gates:** configured `approvals.prd` is enforced on
-   `builder`, `fixer`, and `finalizer` reservations and on `--finalize-ready`
+   `builder` and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact.
 
 ### Live verification disposition
@@ -160,12 +160,12 @@ And findings requiring changes return to implementation before that handoff
 
 ```gherkin
 Given a developer's change has review findings requiring fixes
-When the orchestrator dispatches a shared fixer after reviewer release
+When the orchestrator dispatches a shared builder remediation round after reviewer release
 Then it commits corrections directly on the todo branch in the same worktree
 When it records build completion at the clean head
 Then completion and attempt release commit together
 And the next independent reviewer sees those corrections at the current shared head
-And retained attempt evidence identifies the fixer and completed commit
+And retained attempt evidence identifies the builder and completed commit
 ```
 
 ### UC-DC3: Role-branch handoff (retired)
