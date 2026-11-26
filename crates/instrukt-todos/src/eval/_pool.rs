@@ -243,11 +243,30 @@ mod tests {
     }
 
     fn row(model: Model, first: i64, last: i64, todos: usize) -> ModelAnswer {
+        counted(model, first, last, tally(todos))
+    }
+
+    fn counted(model: Model, first: i64, last: i64, tally: Tally) -> ModelAnswer {
         ModelAnswer {
             model,
             first: at(first),
             last: at(last),
-            tally: tally(todos),
+            tally,
+        }
+    }
+
+    /// A tally of the nine measures in their declared order.
+    fn measures(m: [usize; 9]) -> Tally {
+        Tally {
+            todos: m[0],
+            stamps: m[1],
+            approved: m[2],
+            not_approved: m[3],
+            reviews: m[4],
+            rounds: m[5],
+            findings: m[6],
+            returns: m[7],
+            human: m[8],
         }
     }
 
@@ -315,7 +334,15 @@ mod tests {
                         Some("A"),
                         vec![commit('1')],
                         false,
-                        vec![row(reported("m1"), 10, 20, 1), row(Model::Human, 15, 15, 1)],
+                        vec![
+                            counted(
+                                reported("m1"),
+                                10,
+                                20,
+                                measures([1, 2, 1, 1, 1, 2, 1, 1, 0]),
+                            ),
+                            counted(Model::Human, 15, 15, measures([1, 1, 0, 0, 0, 0, 0, 1, 1])),
+                        ],
                     )],
                 )],
             ),
@@ -329,7 +356,10 @@ mod tests {
                         Some("A"),
                         vec![commit('1'), commit('2')],
                         false,
-                        vec![row(reported("m1"), 5, 12, 2), row(Model::Human, 30, 30, 1)],
+                        vec![
+                            counted(reported("m1"), 5, 12, measures([2, 5, 2, 3, 2, 5, 4, 2, 3])),
+                            counted(Model::Human, 30, 30, measures([1, 2, 0, 0, 0, 0, 0, 2, 2])),
+                        ],
                     )],
                 )],
             ),
@@ -342,11 +372,11 @@ mod tests {
             vec![
                 ModelRow {
                     model: reported("m1"),
-                    tally: tally(1) + &tally(2),
+                    tally: measures([3, 7, 3, 4, 3, 7, 5, 3, 3]),
                 },
                 ModelRow {
                     model: Model::Human,
-                    tally: tally(1) + &tally(1),
+                    tally: measures([2, 3, 0, 0, 0, 0, 0, 3, 3]),
                 },
             ]
         );

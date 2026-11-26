@@ -170,14 +170,6 @@ impl std::ops::AddAssign<&Tally> for Tally {
     }
 }
 
-impl std::ops::Add<&Tally> for Tally {
-    type Output = Tally;
-    fn add(mut self, other: &Tally) -> Tally {
-        self += other;
-        self
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRow {
     pub model: Model,
