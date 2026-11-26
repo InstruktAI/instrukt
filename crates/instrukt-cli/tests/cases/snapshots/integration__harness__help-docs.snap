@@ -14,6 +14,7 @@ Commands:
   get       Read snippets through the read pipeline (phase 2)
   render    Render the repository's root `AGENTS.md` from its working tree
   plugin    Render the company's Claude plugin from the repository's working tree
+  units     Report which compressed units of the repository need writing
   help      Print this message or the help of the given subcommand(s)
 
 Options:

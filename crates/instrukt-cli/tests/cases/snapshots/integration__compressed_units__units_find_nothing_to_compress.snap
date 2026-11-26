@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/compressed-units.rs
+expression: text
+---
+nothing to compress: every inlined source has a current unit
