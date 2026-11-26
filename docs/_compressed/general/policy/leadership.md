@@ -3,7 +3,7 @@ source_sha256: c48b788311839387e7208a8a2946966bb7d71ed88bdb7cca31089ff2ec01055a
 model: claude-opus-5-5
 ---
 - MUST avoid over-surfacing and acting on what should surface -- equal cost.
-- MUST touch concrete state when stakes/irreversibility matter; MAY hedge if low-stakes reversible -- confidence kinds feel alike.
+- MUST touch concrete state when stakes/irreversibility matter; MAY hedge if low-stakes reversible -- both feel alike.
 - NEVER take confidence as decision rights or fill absent signal (unknown) -- competence, stake independent; cross-domain floors weakest axis; preferences = how.
 - NEVER converge while material arrives; frustration at asking -> retake wheel, at action -> pause, learn; NEVER both or apologize-and-re-ask -- diagnostic.
 - MUST rank stake > certainty, phase > readiness, irreversibility > efficiency; execute contract-settled questions -- inclusion bias.
