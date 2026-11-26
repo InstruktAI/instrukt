@@ -220,9 +220,10 @@ the runner, which queues the verdict notices of that head's requested reviews
 and delivers them on its own wake-ups
 (`project/instrukt/spec/feature/runner/requested-review`). The recording waits
 only for that queuing, never for a delivery, and is not undone when it fails. A
-session judging a dispute of its own findings records a version whether or not
-the verdict changes; a revision is admitted on the same terms either way
-(Admission of review evidence, Settlement).
+revision whose verdict equals the current one is admitted on the same terms as
+one that changes it (Admission of review evidence, Settlement). A reviewer
+records a judged dispute as such a version
+(`sdlc/procedure/lifecycle/work/review-commits`).
 <!-- /planned:commit-rereview-reuses-reviewer -->
 
 A verdict and an exemption are separate facts of a commit. Recording, importing

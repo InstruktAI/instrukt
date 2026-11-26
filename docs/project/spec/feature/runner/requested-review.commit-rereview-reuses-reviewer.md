@@ -241,7 +241,8 @@ the reviewing session, the report destination of that session's ask and
 conversation. Its identity is made of the project, the head, the version's
 number and report digest, and the session, so a session is sent each version
 once. Only a recorded version is sent, so a reviewer that records nothing sends
-nothing. A judged dispute is recorded as a version, so its asker is sent it.
+nothing. A judged dispute reaches its asker as the version its reviewer
+records (`sdlc/procedure/lifecycle/work/review-commits`).
 
 A notice whose session is archived or deleted before it is delivered is closed
 as undeliverable with that cause and is never sent again. `instrukt events
@@ -263,10 +264,10 @@ under its procedure, from the closure of its own findings and the change since
 the earlier head. A dispute of findings without a new commit names the
 unchanged head, the prior report and the disposition file, and reaches that
 head's reviewer of record, the session that recorded its verdict. That session
-judges it under its procedure and records its judgment as a new version of the
-head's verdict, with its updated report, whether or not the verdict changes.
-The turn the dispute opened is no review request's, so that version is admitted
-as a revision (`project/instrukt/spec/feature/work/github-apps`). Both carry
+judges it under its procedure, which records every judgment as a new version
+(`sdlc/procedure/lifecycle/work/review-commits`). The turn the dispute opened
+is no review request's, so that version is admitted as a revision
+(`project/instrukt/spec/feature/work/github-apps`). Both carry
 coordinates only.
 
 ### Requested review records
