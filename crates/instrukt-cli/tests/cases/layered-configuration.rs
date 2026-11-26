@@ -461,11 +461,11 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     docs render:
     stdout:
     stderr:
-    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 7 is newer than this instrukt supports (6); run `instrukt config validate --global` to see what to fix
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 8 is newer than this instrukt supports (7); run `instrukt config validate --global` to see what to fix
     config validate --global:
     stdout:
     stderr:
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 8, newer than this instrukt supports (7); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
     "
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);
