@@ -44,7 +44,7 @@ untouched, declaring human presence at each commit under
 independent commit reviewer. A delivery whose own stated purpose is a process
 change has its pending contract written where `general/policy/commits` places
 it — ahead, by the human-directed session in that one-off worktree, or by its
-orchestrator in its own worktree — and a role whose grants forbid authoring
+orchestrator and the workers it dispatches in its own worktree — and a role whose grants forbid authoring
 refuses with the door to an eligible session.
 
 The process artifact creates no human decision. Apply

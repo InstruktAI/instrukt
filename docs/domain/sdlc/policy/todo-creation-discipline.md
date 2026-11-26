@@ -78,7 +78,7 @@ Apply these configured action values to the identified assignment and session.
 
 ### Ad hoc work and workspace placement
 
-- **Where repository work is authored is `general/policy/commits`.** A todo's orchestrator works in the todo's worktree, created when it starts; ad hoc work, pending documentation written ahead for a todo included, uses a short-lived one-off worktree whose exact head is reviewed before the integrator merges it through the normal gate, and is removed after. No agent other than the integrator commits on main.
+- **Where repository work is authored is `general/policy/commits`.** A todo's orchestrator and the workers it dispatches work in the todo's worktree, created when the orchestrator starts; ad hoc work, pending documentation written ahead for a todo included, uses a short-lived one-off worktree whose exact head is reviewed before the integrator merges it through the normal gate, and is removed after. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 
@@ -95,7 +95,8 @@ once, deduplicated, while preserving the existing restoration obligation.
 - **Pending contracts are written before the plan.** Who writes them is
   `general/policy/documentation-discipline` (Functionality is doc-driven): the
   creating session when it holds context a handoff would lose, otherwise the
-  claimant at preparation entry, in the todo's worktree. A creating session
+  claimant at preparation entry, through the workers it dispatches in the
+  todo's worktree. A creating session
   writes them as pending carriers naming the todo, in a one-off worktree under
   `general/policy/commits`, commits with `instrukt repo commit --todo <slug>`,
   has the head independently reviewed and merged by the integrator, and
@@ -294,7 +295,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   project, repeat the bounded creation check, apply the governing creation and
   process-authority contracts, and confirm that functionality work carries its
   required pending documentation, written by whoever holds the awareness —
-  the claimant writes it now when the creating session did not
+  the claimant has it written now when the creating session did not
   (`general/policy/documentation-discipline`). The record establishes the
   filing actor, originating session, observed human involvement and input
   version; it does not prove which sources or queries the creator consulted.
@@ -614,7 +615,7 @@ records no condition, so converged work parked there drops out of the fleet's
 attention and is found again only by chance. Contracts still to be written are
 work, not a forming outcome. Parked in the icebox, the todo waits on nobody;
 held on the merge of the branch that carries them, it waits visibly on a named
-condition; unheld, its claimant writes them. Pending carriers on main need no
+condition; unheld, its claimant has them written. Pending carriers on main need no
 open worktree: the todo's worktree is created when its orchestrator starts, so
 written-ahead work leaves no checkout waiting for a worker. Holding the work as
 it is created leaves no moment in which the runner can pick it up unheld. A hold whose
