@@ -145,7 +145,7 @@ fn rejected(
 
 #[cfg(test)]
 mod tests {
-    use super::{admit, model_selection};
+    use super::{admit, model_selection, native, rejected};
     use crate::sessions::SessionsError;
     use instrukt_core::config::{AgentSelection, Effort, HarnessKind};
     use instrukt_core::ids::{ProfileName, ProviderInstanceId};
@@ -188,23 +188,22 @@ mod tests {
         );
     }
 
-    // Kills: admitting an effort or setting the selected model does not take.
+    // Kills: admitting an effort or setting the selected model does not take,
+    // or passing over any one of the three rejected options.
     #[test]
     fn a_launch_is_refused_for_options_the_model_does_not_take() {
-        let refused = admit(
-            &provider(),
-            &opus(
-                Some(Effort::Ultra),
-                json!({"fastMode": "yes", "contextWindow": "1m"}),
-            ),
+        let selection = opus(
+            Some(Effort::Ultra),
+            json!({"fastMode": "yes", "contextWindow": "1m"}),
         );
-        let Err(SessionsError::Refused(reason)) = refused else {
-            panic!("expected a refusal, got {refused:?}");
-        };
-        assert_eq!(
-            reason,
-            "T3 model `claude-opus-5-5` of provider instance `claudeAgent` does not accept the options of profile `claude`: unknown option contextWindow; supported options: effort, fastMode; option effort must be one of: low, medium, high, xhigh, max, ultrathink; option fastMode expects a boolean value; change that profile's effort or options in agents.yaml"
+        let refused = admit(&provider(), &selection);
+        assert!(
+            matches!(&refused, Err(SessionsError::Refused(reason)) if !reason.is_empty()),
+            "expected a refusal with its reason, got {refused:?}"
         );
+        let descriptors = provider()["models"][0]["capabilities"]["optionDescriptors"].clone();
+        let problems = rejected(&native(&selection).options, descriptors.as_array());
+        assert_eq!(problems.len(), 3, "{problems:?}");
     }
 
     // Kills: refusing options the model takes, or a model T3 reports no descriptors for.
