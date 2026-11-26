@@ -163,7 +163,12 @@ struct Entry {
 }
 
 impl Entry {
+    /// Whether the entry holds back the next call at its level: a failure
+    /// of only the request that received it holds back nothing.
     fn holds(&self, now: Timestamp, monotonic: Instant) -> bool {
+        if self.extent == Extent::Call {
+            return false;
+        }
         match self.deadline {
             Some(deadline) => monotonic < deadline,
             None => now < self.at,
@@ -326,7 +331,7 @@ impl Gate {
         let now = (self.inner.clock)();
         let monotonic = (self.inner.monotonic)();
         let level = match unavailable.extent {
-            Extent::Key => key.clone(),
+            Extent::Key | Extent::Call => key.clone(),
             Extent::Scope => key.scope_key(),
         };
         let (wait, started) = {
@@ -341,6 +346,7 @@ impl Gate {
                 started: monotonic,
             });
             entry.reason = unavailable.reason;
+            entry.extent = unavailable.extent;
             match unavailable.named {
                 Some(named) => {
                     entry.at = named.moment();
@@ -502,6 +508,53 @@ mod tests {
             f.attempt(&scope().item("c"), Outcome::Done),
             Attempted::Wait { error: None, .. }
         ));
+    }
+
+    #[test]
+    fn a_failed_call_holds_back_no_call_and_follows_the_backoff() {
+        let f = Fixture::new();
+        let (a, b) = (scope().item("a"), scope().item("b"));
+        let start = *f.mono.lock().unwrap();
+        let Attempted::Wait { wait, .. } = f.attempt(&a, Outcome::Down(Extent::Call, None)) else {
+            panic!("a wait");
+        };
+        assert_eq!(wait.until() - start, Backoff::DEFAULT.first);
+        for key in [&a, &b] {
+            let mut tried = false;
+            let answer = f.gate.attempt(key, &Settings::default(), || {
+                tried = true;
+                Tried::<(), ()>::Done(())
+            });
+            assert!(tried);
+            assert!(matches!(answer, Attempted::Done(())));
+        }
+    }
+
+    #[test]
+    fn a_failed_call_is_reported_once_on_its_key_with_the_call_extent() {
+        let f = Fixture::new();
+        let key = scope().item("a");
+        let start = f.wall();
+        f.attempt(&key, Outcome::Down(Extent::Call, None));
+        assert!(matches!(
+            f.attempt(&key, Outcome::Done),
+            Attempted::Done(())
+        ));
+        let started = Record {
+            episode: Episode::Started,
+            service: "svc",
+            key: "acme/one a".into(),
+            extent: Extent::Call,
+            reason: Reason::Unavailable { status: None },
+            next_try: start + jiff::SignedDuration::from_secs(1),
+        };
+        let ended = Record {
+            episode: Episode::Ended {
+                waited: Duration::ZERO,
+            },
+            ..started.clone()
+        };
+        assert_eq!(*f.records.lock().unwrap(), [started, ended]);
     }
 
     #[test]

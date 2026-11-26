@@ -46,8 +46,9 @@ pub(crate) fn slack_rule(answer: &HttpAnswer<'_>) -> Option<Unavailable> {
     };
     let (reason, extent) = match *code {
         "ratelimited" => (Reason::RateLimited, Extent::Key),
-        "request_timeout" | "internal_error" | "service_unavailable" | "fatal_error" => {
-            (Reason::Unavailable { status: None }, Extent::Scope)
+        "service_unavailable" => (Reason::Unavailable { status: None }, Extent::Scope),
+        "request_timeout" | "internal_error" | "fatal_error" => {
+            (Reason::Unavailable { status: None }, Extent::Call)
         }
         "invalid_auth" | "not_authed" | "account_inactive" | "token_revoked" | "token_expired" => {
             (Reason::Refused, Extent::Scope)
@@ -300,6 +301,23 @@ mod tests {
         assert!(!requested);
         assert!(matches!(answer, Attempted::Wait { error: None, .. }));
         assert!(reaches(&gate, true, "apps.connections.open"));
+    }
+
+    #[test]
+    fn a_timed_out_post_does_not_hold_back_another_post_on_the_token() {
+        let gate = gate();
+        let key = token_key("acme", "slack", false).item("chat.postMessage");
+        let lost = gate.attempt(&key, &Settings::default(), || {
+            refused("chat.postMessage", "request_timeout")
+        });
+        assert!(matches!(lost, Attempted::Wait { error: Some(_), .. }));
+        let mut requested = false;
+        let next = gate.attempt(&key, &Settings::default(), || {
+            requested = true;
+            done()
+        });
+        assert!(requested);
+        assert!(matches!(next, Attempted::Done(_)));
     }
 
     #[test]

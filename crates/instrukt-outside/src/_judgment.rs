@@ -43,6 +43,8 @@ pub enum Extent {
     Key,
     /// The whole scope.
     Scope,
+    /// Only the request that received it: no other call is held back.
+    Call,
 }
 
 impl fmt::Display for Extent {
@@ -50,6 +52,7 @@ impl fmt::Display for Extent {
         f.write_str(match self {
             Self::Key => "key",
             Self::Scope => "scope",
+            Self::Call => "call",
         })
     }
 }

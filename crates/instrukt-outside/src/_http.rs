@@ -69,11 +69,11 @@ pub fn judge(answer: &HttpAnswer<'_>, settings: &Settings<'_>) -> Judgment {
         HttpAnswer::Response { status, .. } => match status {
             ..400 => Judgment::Success,
             429 => unavailable(Reason::RateLimited, Extent::Key),
-            408 | 425 => unavailable(
+            408 | 425 | 500 => unavailable(
                 Reason::Unavailable {
                     status: Some(*status),
                 },
-                Extent::Key,
+                Extent::Call,
             ),
             500..600 => unavailable(
                 Reason::Unavailable {
@@ -170,11 +170,11 @@ mod tests {
             ),
             (
                 408,
-                unavailable(Reason::Unavailable { status: Some(408) }, Extent::Key),
+                unavailable(Reason::Unavailable { status: Some(408) }, Extent::Call),
             ),
             (
                 425,
-                unavailable(Reason::Unavailable { status: Some(425) }, Extent::Key),
+                unavailable(Reason::Unavailable { status: Some(425) }, Extent::Call),
             ),
             (
                 502,
@@ -186,7 +186,7 @@ mod tests {
             ),
             (
                 500,
-                unavailable(Reason::Unavailable { status: Some(500) }, Extent::Scope),
+                unavailable(Reason::Unavailable { status: Some(500) }, Extent::Call),
             ),
             (400, Judgment::Defect),
             (401, Judgment::Defect),
