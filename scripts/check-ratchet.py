@@ -326,7 +326,9 @@ def compare(baseline: Baseline, measured: Measurement) -> Findings:
             stale.append(f"{path} needs no entry: baseline {allowed} lines, not a source file in the tree")
     for lint, allowed in sorted(baseline.suppressions.items()):
         count = measured.suppressions.get(lint, 0)
-        if count < allowed:
+        if count == 0:
+            stale.append(f"{lint} needs no entry: baseline {allowed} suppressions, measured 0")
+        elif count < allowed:
             stale.append(f"{lint} is below its entry: baseline {allowed} suppressions, measured {count}")
     return Findings(rises, stale)
 

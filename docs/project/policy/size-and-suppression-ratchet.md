@@ -41,7 +41,9 @@ delivered_by: [ratchet-file-size-and-suppressions]
 - The baseline is `ratchet-baseline.json` at the repository root: the
   `threshold`, a `files` object mapping each source file above the threshold
   to its allowed lines, and a `suppressions` object mapping each suppressed
-  lint to its allowed count. Keys are sorted, one entry per line.
+  lint to its allowed count. `make ratchet` and `--init` write it with
+  sorted keys, one entry per line; the check reads its entries, not their
+  order.
 - The baseline matches the tree exactly. An entry above what the tree
   measures, an entry for a file now at or below the threshold or gone, and an
   entry for a lint now unsuppressed fail the check as a regression does.
