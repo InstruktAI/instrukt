@@ -8,14 +8,14 @@
 //! (`instrukt-connector`).
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use instrukt_connector::{
-    Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, Connector,
-    ConnectorError, Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier,
-    Field, Inbox, Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
+    Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Connector, ConnectorError,
+    Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier, Field, Inbox,
+    Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
 };
-use instrukt_outside::{Attempted, Gate, Report, Settings, Tried, Wait};
+use instrukt_outside::{Attempted, Gate, Settings, Tried, Wait};
 use jiff::Timestamp;
 use serde_json::Value;
 
@@ -684,14 +684,13 @@ impl SlackKind {
         }
     }
 
-    /// The Slack kind of a process whose environment `lookup` answers, with
-    /// this clock: its endpoint refuses a Slack API address that is neither
-    /// Slack's own nor a loopback stand-in.
+    /// The Slack kind of a process whose environment `lookup` answers,
+    /// judging through the host's `gate`: its endpoint refuses a Slack API
+    /// address that is neither Slack's own nor a loopback stand-in.
     pub fn build(
         lookup: &dyn Fn(&str) -> Option<String>,
-        clock: Clock,
+        gate: Gate,
     ) -> Result<Box<dyn Kind>, ConnectorError> {
-        let gate = Gate::new(clock, Arc::new(Instant::now), Report::log());
         SlackEndpoint::from_lookup(lookup, gate)
             .map(|endpoint| Box::new(Self::new(endpoint)) as Box<dyn Kind>)
             .map_err(|error| ConnectorError::new(error.to_string()))
