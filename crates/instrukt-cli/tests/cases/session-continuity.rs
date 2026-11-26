@@ -1639,32 +1639,24 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     assert_eq!(fake.message_count("s1"), 1);
 }
 
-/// What the operator sees of `message`'s delivery: its retained failure,
+/// The failures `instrukt events status` reports for conversation `D30`,
 /// with the test's folder and the opaque diagnostic reference masked.
-fn delivery_failure(c: &crate::fixtures::conversing::Company, message: &str) -> Option<String> {
-    use instrukt_core::state_db::rusqlite::OptionalExtension as _;
-    let failure: Option<String> = instrukt_core::state_db::rusqlite::Connection::open(
-        c.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap()
-    .query_row(
-        "SELECT failure FROM conversation_messages WHERE message=?1",
-        [message],
-        |row| row.get(0),
-    )
-    .optional()
-    .unwrap()
-    .flatten();
-    failure.map(|failure| {
-        let failure = failure.replace(
-            c.env.path("").to_str().unwrap().trim_end_matches('/'),
-            "[TMP]",
-        );
-        match failure.split_once("[diagnostic:") {
-            Some((cause, _)) => format!("{cause}[diagnostic]"),
-            None => failure,
-        }
-    })
+fn reported_failures(c: &crate::fixtures::conversing::Company) -> Vec<String> {
+    let folder = c.env.path("");
+    let folder = folder.to_str().unwrap().trim_end_matches('/');
+    c.conversations()
+        .conversations
+        .into_iter()
+        .filter(|row| row.conversation == "D30")
+        .flat_map(|row| row.failures)
+        .map(|failure| {
+            let failure = failure.replace(folder, "[TMP]");
+            match failure.split_once("[diagnostic:") {
+                Some((cause, _)) => format!("{cause}[diagnostic]"),
+                None => failure,
+            }
+        })
+        .collect()
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS29
@@ -1727,15 +1719,19 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     c.runtime.place_thread(&successor, c.env.home());
     c.runtime.set_status(&successor, "running");
     let received = c.runtime.message_count(&successor);
-    let third = c.slack.direct("D30", "USTEVEN", "And the date?");
-    wait("the pending work's cause", || {
-        delivery_failure(&c, &third).is_some()
-    });
-    insta::assert_snapshot!(
-        delivery_failure(&c, &third)
-            .unwrap()
-            .replace(&c.runtime.native_id(&successor), "[THREAD]"),
-        @"t3 conversation delivery: thread t3:[THREAD] runs in a runtime project not rooted at [TMP]/home/.instrukt/companies/acme; it rolls over once idle or archived [diagnostic]"
+    c.slack.direct("D30", "USTEVEN", "And the date?");
+    wait("the reported cause", || !reported_failures(&c).is_empty());
+    let thread = c.runtime.native_id(&successor);
+    insta::assert_json_snapshot!(
+        reported_failures(&c)
+            .into_iter()
+            .map(|failure| failure.replace(&thread, "[THREAD]"))
+            .collect::<Vec<_>>(),
+        @r#"
+[
+  "t3 conversation delivery: thread t3:[THREAD] runs in a runtime project not rooted at [TMP]/home/.instrukt/companies/acme; it rolls over once idle or archived [diagnostic]"
+]
+"#
     );
     assert_eq!(c.runtime.message_count(&successor), received);
 }
