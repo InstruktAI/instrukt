@@ -220,10 +220,6 @@ pub fn tick(
     let Some(runner) = _holder::tick(cx.home)? else {
         return Ok(TickOutcome::Busy);
     };
-    let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
-        tracing::info!(event = "tick_runner_busy");
-        return Ok(TickOutcome::Busy);
-    };
     let candidate = Admitted::load(cx.home)?;
     Admission::default().report(&candidate.findings);
     // The wake uses what it admitted: nothing in this process reads the
@@ -231,6 +227,14 @@ pub fn tick(
     let current = Current::new(candidate.generation);
     instrukt_core::config::serve(cx.home, &current);
     let admitted = current.get();
+    // The computer fleet's step runs before the dispatch gate is tried, so a
+    // tick that finds it taken still keeps its membership entry and answers
+    // waiting evaluation requests within their life.
+    crate::computer_fleet::tick_step(cx.home, admitted.global(), cx.wiring, clock());
+    let Some(invocation) = crate::keyed::RuntimeInvocation::try_acquire(cx.home)? else {
+        tracing::info!(event = "tick_runner_busy");
+        return Ok(TickOutcome::Busy);
+    };
     // Readiness is refreshed once, on entry, before any start; a failure
     // leaves the starts with the configured order. The token is revoked when
     // the tick ends.

@@ -16,7 +16,7 @@ mod _members;
 mod _query;
 mod _responder;
 
-pub(crate) use _evaluation::EvaluationHost;
+pub(crate) use _evaluation::{EvaluationHost, tick_step};
 
 pub use _members::{LastSeen, Member, Members, MembersUnread};
 
