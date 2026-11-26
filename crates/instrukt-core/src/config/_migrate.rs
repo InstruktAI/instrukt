@@ -210,8 +210,9 @@ fn invalid(message: impl Into<String>) -> ConfigError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
+    use super::upcycle;
+    use crate::config::{GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION};
+    use serde_yaml_ng::Value;
 
     fn yaml(text: &str) -> Value {
         serde_yaml_ng::from_str(text).unwrap()
