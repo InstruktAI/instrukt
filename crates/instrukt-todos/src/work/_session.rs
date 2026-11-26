@@ -1762,10 +1762,15 @@ pub(crate) fn withdrawing_refusal(slug: &TodoSlug) -> WorkError {
 pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> ReflectionStatus {
     let reflection = &item.reflection;
     // Content GitHub refused stays outstanding, with GitHub's reason, until
-    // it changes (`github-record`, Writer and convergence).
-    if !reflection.refusals.is_empty() {
-        let refused: Vec<String> = reflection
-            .refusals
+    // it changes: for an artifact version, until a later version of that
+    // artifact is on GitHub (`github-record`, Writer and convergence).
+    let outstanding: Vec<&_store::KeptRefusal> = reflection
+        .refusals
+        .iter()
+        .filter(|kept| !superseded(&item.record, &kept.target))
+        .collect();
+    if !outstanding.is_empty() {
+        let refused: Vec<String> = outstanding
             .iter()
             .map(|kept| {
                 format!(
@@ -1808,6 +1813,23 @@ pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> Refl
                 .clone()
                 .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
         ),
+    })
+}
+
+/// Whether a refused `target` no longer holds the todo's reflection back:
+/// a refused artifact version is followed by the artifact's next version,
+/// so a later version of the same artifact that GitHub has confirmed
+/// supersedes it. The refusal itself stays kept, so the refused version is
+/// never sent again unchanged.
+pub(crate) fn superseded(record: &TodoRecord, target: &_store::RefusedTarget) -> bool {
+    let _store::RefusedTarget::Artifact { name, sequence } = target else {
+        return false;
+    };
+    record.artifact(name.as_str()).is_some_and(|artifact| {
+        artifact
+            .versions
+            .iter()
+            .any(|v| v.sequence > *sequence && v.remote.is_some())
     })
 }
 

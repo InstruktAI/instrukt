@@ -91,9 +91,56 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
     let shown = project.ok(["show", "nested-lists"]);
 
+    // The door is the artifact's next version: once GitHub accepts it, the
+    // refused version no longer holds the todo's reflection back.
+    const NEXT: &str = "Lists keep their depth, and numbering restarts per level.";
+    let next = project.ok(["artifacts", "write", "nested-lists", "prd", NEXT]);
+    // The same holds for an artifact already on GitHub.
+    let prd = project
+        .github
+        .artifacts(REPOSITORY, 1)
+        .into_iter()
+        .find(|a| a["artifact"]["name"] == "prd")
+        .unwrap()["artifact"]["number"]
+        .as_u64()
+        .unwrap();
+    project.github.respond_once(
+        "PATCH",
+        &format!("/issues/1/artifacts/{prd}"),
+        CannedResponse {
+            status: 422,
+            headers: vec![],
+            body: serde_json::json!({
+                "message": "Validation Failed",
+                "errors": [{"resource": "IssueArtifact", "field": "body", "code": "too_long"}],
+            }),
+        },
+    );
+    const REFUSED_AGAIN: &str = "Lists keep their depth in every renderer.";
+    let refused_again = project.ok(["artifacts", "write", "nested-lists", "prd", REFUSED_AGAIN]);
+    const LATER: &str = "Lists keep their depth through parse, render and export.";
+    let later = project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    let settled = project.ok(["show", "nested-lists"]);
+    // Neither refused version was sent again.
+    let sent = |content: &str| {
+        project
+            .github
+            .requests()
+            .iter()
+            .filter(|r| r.path.starts_with("/repos/acme/demo/issues/1/artifacts"))
+            .filter(|r| {
+                serde_json::from_str::<Value>(&r.body)
+                    .is_ok_and(|body| body["body"].as_str() == Some(content))
+            })
+            .count()
+    };
+    assert_eq!((sent(PRD), sent(REFUSED_AGAIN)), (1, 1));
+
     insta::assert_snapshot!(
         "refused-by-github",
-        redact(&format!("{recorded}---\n{read}---\n{shown}"))
+        redact(&format!(
+            "{recorded}---\n{read}---\n{shown}---\n{next}---\n{refused_again}---\n{later}---\n{settled}"
+        ))
     );
 }
 

@@ -513,6 +513,10 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 name: artifact.name.clone(),
                 sequence: version.sequence,
             };
+            // What an artifact version sends is its content, whichever
+            // request carries it: a version refused as a new artifact is not
+            // sent again as an update of one.
+            let version_identity = version.digest.as_str().to_owned();
             let sent = match artifact.address {
                 None => {
                     let path = format!("/issues/{number}/artifacts");
@@ -521,7 +525,7 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                         "name": artifact.name.as_str(),
                         "body": content,
                     });
-                    let identity = request_identity("POST", &path, &body, None);
+                    let identity = version_identity.clone();
                     match send(&mut item.reflection, target, identity, || {
                         gh.post(&path, &body)
                     })? {
@@ -535,7 +539,7 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
                 Some(address) => {
                     let path = format!("/issues/{number}/artifacts/{address}");
                     let body = json!({"body": content});
-                    let identity = request_identity("PATCH", &path, &body, None);
+                    let identity = version_identity.clone();
                     matches!(
                         send(&mut item.reflection, target, identity, || gh
                             .patch(&path, &body))?,
