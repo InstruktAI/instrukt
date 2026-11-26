@@ -257,6 +257,7 @@ impl Renderer<'_> {
             indexes: self.indexes,
             values: self.values,
             units: self.units,
+            index: self.index,
         }
     }
 
@@ -539,17 +540,30 @@ struct Published<'a> {
     indexes: &'a BTreeMap<DomainName, PositionIndex>,
     values: &'a Values<'a>,
     units: UnitRendering,
+    /// The global index as this sync leaves it, whose entries carry each
+    /// published snippet's recorded source digest.
+    index: &'a GlobalIndex,
 }
 
 impl Published<'_> {
-    /// The source `id` is and what stands where its unit belongs: from the
-    /// committed tree for a position the project publishes, from the home's
-    /// published tree, through no symbolic link, for every other; `None`
-    /// when the snippet is pending or cannot be read here.
+    /// The source `id` is, with the source digest the global index records
+    /// for it, and what stands where its unit belongs: from the committed
+    /// tree for a position the project publishes, from the home's published
+    /// tree, through no symbolic link, for every other; `None` when the
+    /// snippet is pending, has no recorded digest or cannot be read here.
     fn unit_read(
         &self,
         id: &SnippetId,
     ) -> Result<Option<(_units::Source, _units::UnitRead)>, PublicationError> {
+        let Some(digest) = self
+            .index
+            .snippets
+            .iter()
+            .find(|entry| &entry.id == id)
+            .and_then(|entry| entry.content_sha256.as_deref())
+        else {
+            return Ok(None);
+        };
         let own = id.domain().is_none_or(|d| self.owned.contains(&d));
         if own {
             let Some(snippet) = self.corpus.snippet(id) else {
@@ -559,13 +573,13 @@ impl Published<'_> {
                 return Ok(None);
             };
             let path = snippet.path().display().to_string();
-            let source = _units::Source::snippet(
+            let source = _units::Source::recorded(
                 id,
                 &path,
                 version.body(),
                 &body,
-                Lens::Current,
                 Some(self.project),
+                digest,
             );
             let read = RepositoryUnits::of(self.tree).read(&path);
             return Ok(Some((source, read)));
@@ -589,8 +603,7 @@ impl Published<'_> {
             return Ok(None);
         };
         let shown = path.display().to_string();
-        let source =
-            _units::Source::snippet(id, &shown, version.body(), &body, Lens::Current, None);
+        let source = _units::Source::recorded(id, &shown, version.body(), &body, None, digest);
         let read = _units::read_home(self.home, &domain, &format!("{}.md", rel.1));
         Ok(Some((source, read)))
     }
@@ -1486,6 +1499,18 @@ mod tests {
     /// holds `published` and `units` (both relative to that position) hold
     /// `general/policy/care`, which the publishing project does not own.
     fn foreign_holding(published: &str, unit: Option<&str>, link_units: bool) -> UnitText {
+        let recorded = _units::source_digest(docs::split_frontmatter(published).1);
+        foreign_holding_recorded(published, unit, link_units, &recorded)
+    }
+
+    /// As [`foreign_holding`], with the global index recording `recorded` as
+    /// the source digest of `general/policy/care`.
+    fn foreign_holding_recorded(
+        published: &str,
+        unit: Option<&str>,
+        link_units: bool,
+        recorded: &str,
+    ) -> UnitText {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         let position = home.docs_dir().join("general");
@@ -1508,6 +1533,10 @@ mod tests {
         let owned = BTreeSet::new();
         let indexes = BTreeMap::new();
         let values = Values::committed();
+        let index: GlobalIndex = serde_yaml_ng::from_str(&format!(
+            "schema_version: 3\nsnippets:\n- id: general/policy/care\n  description: Care.\n  type: policy\n  scope: global\n  domain: general\n  path: general/policy/care.md\n  source_project: other\n  content_sha256: {recorded}\n"
+        ))
+        .unwrap();
         let source = Published {
             home: &home,
             project: &project,
@@ -1517,6 +1546,7 @@ mod tests {
             indexes: &indexes,
             values: &values,
             units: UnitRendering::Compressed,
+            index: &index,
         };
         source
             .unit(&SnippetId::parse("general/policy/care").unwrap())
@@ -1532,6 +1562,23 @@ mod tests {
             unreachable!("a current foreign unit is held");
         };
         insta::assert_snapshot!(text);
+    }
+
+    #[test]
+    fn a_foreign_unit_is_current_by_the_digest_the_index_records_for_its_source() {
+        let recorded = _units::source_digest("the prose as its owner published it");
+        let declaring = |digest: &str| {
+            format!("---\nsource_sha256: {digest}\nmodel: m\n---\n- MUST take care -- it lasts\n")
+        };
+        assert!(matches!(
+            foreign_holding_recorded(CARE, Some(&declaring(&recorded)), false, &recorded),
+            UnitText::Held(_)
+        ));
+        let prose = _units::source_digest(docs::split_frontmatter(CARE).1);
+        assert_eq!(
+            foreign_holding_recorded(CARE, Some(&declaring(&prose)), false, &recorded),
+            UnitText::Prose
+        );
     }
 
     #[test]

@@ -264,7 +264,9 @@ pub(super) struct Source {
 
 impl Source {
     /// The snippet `id` at `path` whose version body is `body` and whose
-    /// delivered prose under `lens` is `prose`.
+    /// delivered prose under `lens` is `prose`, its source digest computed
+    /// from that prose: what the repository readers, which publish nothing,
+    /// decide currency by.
     pub(super) fn snippet(
         id: &SnippetId,
         path: &str,
@@ -273,10 +275,45 @@ impl Source {
         lens: Lens<'_>,
         project: Option<&ProjectSlug>,
     ) -> Self {
+        Self::with_digest(id, path, body, prose, lens, project, source_digest(prose))
+    }
+
+    /// The published snippet `id` at `path`, under the current contract,
+    /// whose source digest is `digest` as its owner's sync recorded it in the
+    /// global index (`project/instrukt/spec/feature/publication/compressed-units`,
+    /// Lineage): its prose is read for the unit's checks, never digested again.
+    pub(super) fn recorded(
+        id: &SnippetId,
+        path: &str,
+        body: &str,
+        prose: &str,
+        project: Option<&ProjectSlug>,
+        digest: &str,
+    ) -> Self {
+        Self::with_digest(
+            id,
+            path,
+            body,
+            prose,
+            Lens::Current,
+            project,
+            digest.to_owned(),
+        )
+    }
+
+    fn with_digest(
+        id: &SnippetId,
+        path: &str,
+        body: &str,
+        prose: &str,
+        lens: Lens<'_>,
+        project: Option<&ProjectSlug>,
+        digest: String,
+    ) -> Self {
         Self {
             name: id.as_str().to_owned(),
             path: path.to_owned(),
-            digest: source_digest(prose),
+            digest,
             parity: Parity::Snippet {
                 project: project.cloned(),
                 configs: config_paths(prose),

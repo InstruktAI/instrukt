@@ -209,7 +209,8 @@ pub(super) fn record_paths(home: &Home, commit: &CommitSha) -> [PathBuf; 2] {
 /// global entry's file read from the home, the evaluated ones those whose
 /// frontmatter declares `eval: true`, the always-on sources those the
 /// published `docs/general/index.yaml` selects with their closure, and each
-/// always-on source's current unit from its position's `_compressed/`. A unit
+/// always-on source's unit from its position's `_compressed/`, current by the
+/// source digest the index records for the source. A unit
 /// unreadable or behind a link counts as none and is returned as a finding.
 /// It carries no time: [`records`] decides whether a record is written, and
 /// when.
@@ -272,18 +273,17 @@ pub(super) fn compute(
     let mut degraded = Vec::new();
     let mut bodies: Vec<(SnippetId, Vec<u8>)> = Vec::new();
     for id in &always_on {
-        let Some(snippet) = corpus.snippet(id) else {
-            continue;
-        };
-        let View::Visible { version, body } = snippet.view(Lens::Current) else {
-            continue;
-        };
         let (Some(domain), Some((_, rel))) = (id.domain(), id.as_str().split_once('/')) else {
             continue;
         };
-        let shown = snippet.path().display().to_string();
-        let source =
-            _units::Source::snippet(id, &shown, version.body(), &body, Lens::Current, None);
+        // A unit is current by the source digest the source's owner recorded
+        // in the index when it published it, never by digesting the prose
+        // again.
+        let recorded = index
+            .snippets
+            .iter()
+            .find(|entry| &entry.id == id)
+            .and_then(|entry| entry.content_sha256.as_deref());
         let read = _units::read_home(home, &domain, &format!("{rel}.md"));
         let held = match read {
             Some(Err(finding)) => {
@@ -295,7 +295,9 @@ pub(super) fn compute(
                 degraded.push(finding);
                 NO_UNIT.to_vec()
             }
-            Some(Ok(unit)) if unit.source_sha256 == source.digest => unit.body.into_bytes(),
+            Some(Ok(unit)) if Some(unit.source_sha256.as_str()) == recorded => {
+                unit.body.into_bytes()
+            }
             Some(Ok(_)) | None => NO_UNIT.to_vec(),
         };
         bodies.push((id.clone(), held));
@@ -499,6 +501,9 @@ commit: 0123456789abcdef0123456789abcdef01234567
         unit: Option<String>,
         unit_linked: bool,
         project: Option<String>,
+        /// The source digest the index records for `care`; its prose's
+        /// digest, as its owner's sync records it, when `None`.
+        recorded: Option<String>,
     }
 
     /// A unit of `source` declaring its digest when `current`, with `body`.
@@ -522,7 +527,11 @@ commit: 0123456789abcdef0123456789abcdef01234567
             )
             .unwrap();
             std::fs::write(general.join("policy/care.md"), care).unwrap();
-            entries.push_str("- id: general/policy/care\n  description: Care.\n  type: policy\n  scope: global\n  domain: general\n  path: general/policy/care.md\n  source_project: demo\n");
+            let recorded = published
+                .recorded
+                .clone()
+                .unwrap_or_else(|| _units::source_digest(docs::split_frontmatter(care).1));
+            entries.push_str(&format!("- id: general/policy/care\n  description: Care.\n  type: policy\n  scope: global\n  domain: general\n  path: general/policy/care.md\n  source_project: demo\n  content_sha256: {recorded}\n"));
         }
         if let Some(unit) = &published.unit {
             let place = if published.unit_linked {
@@ -613,6 +622,28 @@ commit: 0123456789abcdef0123456789abcdef01234567
             (without.prose, without.units, without.fingerprint),
             (with.prose, with.units, with.fingerprint)
         );
+    }
+
+    #[test]
+    fn a_unit_is_current_by_the_digest_the_index_records_not_by_digesting_the_prose() {
+        let recorded = _units::source_digest("the prose as its owner published it");
+        let declaring = |digest: &str| Published {
+            unit: Some(format!(
+                "---\nsource_sha256: {digest}\nmodel: m\n---\n- take care\n"
+            )),
+            recorded: Some(recorded.clone()),
+            ..with_unit("")
+        };
+        let (by_record, _) = computed(&declaring(&recorded));
+        let prose_digest = _units::source_digest(docs::split_frontmatter(CARE).1);
+        let (by_prose, _) = computed(&declaring(&prose_digest));
+        let (none, _) = computed(&Published {
+            recorded: Some(recorded.clone()),
+            care: Some(CARE.to_owned()),
+            ..Published::default()
+        });
+        assert_ne!(by_record.units, none.units);
+        assert_eq!(by_prose.units, none.units);
     }
 
     #[test]
