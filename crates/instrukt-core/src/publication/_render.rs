@@ -139,6 +139,8 @@ impl Renderer<'_> {
         }
         let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = rendering.triggered(|e| global_of(e, &general), &shown);
+        // A global file heads its listing lines with their command
+        // (`project/instrukt/spec/feature/publication/agent-entrypoints`).
         let mut blocks = vec![
             Selection {
                 position: general.as_str().to_owned(),
@@ -147,7 +149,7 @@ impl Renderer<'_> {
                 listed,
                 triggered,
             }
-            .render(),
+            .render_headed(),
         ];
         if let Some(configured) = docs::responsibilities(
             self.index

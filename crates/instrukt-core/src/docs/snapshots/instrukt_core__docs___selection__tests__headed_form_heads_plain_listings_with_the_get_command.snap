@@ -1,0 +1,16 @@
+---
+source: crates/instrukt-core/src/docs/_selection.rs
+expression: rendered
+---
+# General
+
+## Held — Procedure
+
+when: Use when holding. — `instrukt docs get general/procedure/held --closure`
+
+Do the held thing.
+
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/first: What general/policy/first says.
+- general/policy/second: What general/policy/second says.
