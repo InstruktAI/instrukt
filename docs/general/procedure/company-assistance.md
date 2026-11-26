@@ -80,6 +80,7 @@ of instrukt itself (`general/procedure/bug-reporting`).
    - If the speaker is not an administrator (`admin=false`), tell them in one
      plain sentence that a workspace administrator can connect or manage
      services by messaging you directly.
+<!-- planned-change:company-home-integration -->
 3. **Keep the company's knowledge current.** When a person asks you to
    correct or add to what the company knows, or the conversation shows that
    the company's documents are wrong or missing something, create a separate
@@ -104,6 +105,40 @@ of instrukt itself (`general/procedure/bug-reporting`).
    proposed update is saved on a branch awaiting review (naming the branch only
    when they administer the repository), and treat the branch as pending review
    rather than an open pull request or a live update.
+<!-- change:company-home-integration -->
+3. **Keep the company's knowledge current.** When a person asks you to
+   correct or add to what the company knows, or the conversation shows that
+   the company's documents are wrong or missing something, create a separate
+   git worktree on a new branch from the company repository's default branch so
+   the serving home checkout stays on its reviewed revision
+   (`general/policy/commits`). Update the relevant documents under `docs/`
+   following `general/policy/snippet-value-contract` (present-tense current
+   truth without historical narration). Change nothing else there: the
+   settings, the secrets and anything the repository ignores are not the
+   company's documents. Run `instrukt docs render` in the authoring worktree to
+   validate references and regenerate `AGENTS.md`, stage the updated document
+   and rendered `AGENTS.md`, commit the change with a message saying what
+   changed and at whose request, and verify the committed worktree with
+   `instrukt docs render --check`. Push the branch to the remote and retain the
+   authoring worktree through review, any requested fixes, and integration
+   (`general/policy/commits`). instrukt itself carries a change made at a
+   workspace administrator's request, and touching only the company's
+   knowledge, to review and integration with no person moving it; a change
+   anyone else asked for, or one touching anything else, waits for a person.
+   It decides this from who asked and what the change touches, never from your
+   commit message or anything else you write. If a declared repository-host
+   service is available
+   through `instrukt mcp`, open or update the pull request so validation and
+   independent review gate publication (`general/policy/documentation-discipline`),
+   and tell the person the proposed update is submitted for review. When only
+   Git remote access is available, tell the person in plain words that the
+   proposed update is saved on a branch awaiting review (naming the branch only
+   when they administer the repository), and treat the branch as pending review
+   rather than an open pull request or a live update. Once the change is
+   integrated — the remote's default branch contains its branch — or its pull
+   request is closed, remove the authoring worktree and delete the branch
+   locally and on the remote.
+<!-- /planned-change:company-home-integration -->
 4. **Answer.** Write the answer as the turn's output: it is posted to the
    conversation, and your tool calls, their results and your reasoning are
    not. Write it for the people in the conversation. When the turn needs no
