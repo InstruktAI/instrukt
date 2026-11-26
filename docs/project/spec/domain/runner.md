@@ -416,7 +416,7 @@ No pickup, event reaction or other command waits on a pass; only the
 runs on a thread of its own, started after a wake once the one an earlier wake
 started has ended; in `instrukt tick` it runs after the tick has released the
 runner and runtime-invocation locks, before the tick returns. Passes that
-overlap converge, because archiving an archived thread counts as done. A pass
+overlap converge. A pass
 keeps no durable state: it reads the window from the admitted configuration
 and eligibility from the runtime, work and the runner's standing bindings
 every time. Each archive is a structured log event. A failed archive, a
