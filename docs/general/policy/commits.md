@@ -97,14 +97,17 @@ All Committizen types are allowed.
   it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 <!-- change:author-recorded-review-routing -->
-- Review is routed by the committed worktree diff and binds its head before merge. Functional code/tests are committed in that worktree first. The authoring session
-  decides for each commit whether independent review is owed, by what a wrong change would
-  cost. Review is owed when the change carries a consequence its author cannot
+- Review is routed by the committed worktree diff and binds its head before merge. Functional code/tests are committed in that worktree first. Routing is
+  an either-or for every commit, which the authoring session decides by what a
+  wrong change would cost: it asks for independent review, or it records why
+  none is owed as the commit's exemption. `instrukt repo commit` asks the author
+  for that choice when committing; a decision taken after committing is
+  recorded with `instrukt review exempt`. Review is owed when the change carries a consequence its author cannot
   establish alone: new or changed logic, a state or data shape, a contract
   between components, concurrency, security, or what a governed snippet
   directs other agents to do. The author dispatches that
-  reviewer and waits for the verdict. Every other commit owes no review, and
-  the author asks no one: removal of dead code, files, or obsolete snippets, a merge of work already reviewed where it was written, a
+  reviewer and waits for the verdict. Every other commit owes no review: the
+  author asks no reviewer and records the exemption with its basis instead. That covers removal of dead code, files, or obsolete snippets, a merge of work already reviewed where it was written, a
   validation or mechanical repair, a rename or move (including snippet relocation),
   documentation curation that leaves rule semantics unchanged and adds nothing to an always-on set (demoting an `index.yaml` entry from `expanded` to `listed`, reordering index entries, or wiring `Required reads` on non-expanded snippets, where `instrukt docs validate` checks structural validity),
   formatting, and wording or
@@ -116,13 +119,8 @@ All Committizen types are allowed.
   the diff touches never decides that review is owed. Review is technical
   stewardship, never a human ratification step. Removing a live check or branch
   changes logic and owes review. Mechanical changes require green CI only.
-  The author records a no-review decision with the commit it concerns: when
-  committing through `instrukt repo commit` it declares that the commit owes
-  no review and on what basis, and that declaration is kept as the commit's
-  exemption. The integration gate reads these records: an approved head and an
-  exemption are the author's decision on record.
   This author-decided routing is listed in the general baseline (loaded on demand or through procedure required reads);
-  it adds no gate before or at commit time.
+  beyond the choice the commit command asks for, it adds no checkpoint gate.
   A worktree whose change owes independent review retains the report and approving verdict bound to its exact head before integration. Changes after review require current review; no stamp on an individual direct-main commit substitutes for it.
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -196,9 +194,8 @@ gate of its own: it does not stage, and it does not block raw git.
 `instrukt repo commit` is the canonical commit interface. It composes the
 commit's attribution and provenance — the agent as git author, `Session:`,
 `Human-Involved:` from the caller's `--human-involved`, `Todo:`, `Planned-Todo:` —
-records the author's declaration that the commit owes no review, with its
-basis, as that commit's exemption, and runs no gate of its own: it does not
-stage, and it does not block raw git.
+and takes the commit's review-routing choice (Rules); it runs no other check of
+its own: it does not stage, and it does not block raw git.
 <!-- /planned-change:author-recorded-review-routing -->
 
 The sealed interface refuses caller-supplied platform metadata before committing.

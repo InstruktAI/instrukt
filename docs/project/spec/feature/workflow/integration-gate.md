@@ -70,7 +70,6 @@ answer on the candidate commit
 evidence) and from the review status the commit carries. The first row that
 applies decides.
 
-<!-- planned-change:author-recorded-review-routing -->
 | Work's answer on the candidate commit, and its review status | The candidate's result |
 | --- | --- |
 | The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
@@ -87,35 +86,6 @@ recalled. On a
 project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
-<!-- change:author-recorded-review-routing -->
-| Work's answer on the candidate commit, and its review status | The candidate's result |
-| --- | --- |
-| The commit's current verdict with work is needs work | `failure`, whatever review status the commit still carries. |
-| A revision holds it: a verdict whose current version replaced an approval with needs work judged a commit the candidate adds, and no head the candidate contains that contains that commit holds an approval given after that revision | `failure`, whatever review status the commit still carries and whatever covers that commit. |
-| The commit carries no review status | Pending. |
-| The review status is a failure | `failure`. |
-| Anything else | The CI result. |
-
-A status the reviewer bot published for an earlier version of a verdict
-therefore completes no result that the current verdict withholds. From the
-tick that finds needs work current, the result is a failure, before GitHub
-shows the failure status. A result that was reported complete before then is
-replaced by that failure, and the integrator is woken with it.
-
-A revision holds what its verdict judged: for a todo's build review, its head
-and the commits that head contains; for work's head verdict, the commits after
-its pinned base up to its head
-(`project/instrukt/spec/feature/work/github-apps`, Review evidence). A verdict
-that answers a candidate request (Review coverage of a candidate) is that
-candidate's own verdict, read by the first row, and holds nothing else. The
-findings on a commit a revision holds are its head's author's to address, and
-nobody is asked to decide for it. A held candidate has no derived approval
-published: one GitHub already shows is withdrawn through work, and one not
-shown yet publishes nothing. On a
-project that has not opted in,
-classification reads every status and check run as before, a review status
-published earlier included.
-<!-- /planned-change:author-recorded-review-routing -->
 
 | Observed result | Integrator obligation |
 | --- | --- |
@@ -199,20 +169,15 @@ this way.
 | Finding | What follows |
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
-| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered that no revision holds (Candidate and verification) and whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/policy/checks-and-guards`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when every commit not covered that no revision holds has no author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/policy/checks-and-guards`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when no commit left uncovered has an author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 <!-- /planned-change:author-recorded-review-routing -->
 
 A derived approval thus reaches GitHub only from a finding of the tick that
 publishes it: a covering head whose approval a needs-work version replaced
 gives the candidate no first approving status.
-<!-- planned-change:author-recorded-review-routing -->
 Once GitHub shows the status, a later version of a covering head withdraws
 nothing.
-<!-- change:author-recorded-review-routing -->
-Once GitHub shows the status, the candidate is not derived again; a hold of
-the candidate withdraws it (Candidate and verification).
-<!-- /planned-change:author-recorded-review-routing -->
 
 A candidate is never approved on its covered part alone, and a different
 candidate commit is derived afresh. Whether a commit owes review stays its
@@ -401,15 +366,6 @@ Then it is integrated without a review being started for it
 But when a commit reaches integration with neither a review nor a declared decision
 Then it is held back and the agent that authored it is asked to decide
 And no review of it starts unless that agent asks for one
-```
-
-### UC-IG8: A change its reviewer now rejects stays off the canonical branch
-
-```gherkin
-Given a developer's change was approved by its reviewer and waits for integration
-When its reviewer revises that verdict to request changes before the change reaches the canonical branch
-Then the change is held back from the canonical branch, also when its integration had already passed
-And it reaches the canonical branch only with a change that addresses the findings and whose own review approves it
 ```
 <!-- /planned:author-recorded-review-routing -->
 
