@@ -387,8 +387,12 @@ owning design snippet or decision record is declared.
   stamps and automatic holds, purges expired retained records, and updates
   per-role session bindings through work’s command contract.
 - **Runner → work** — customer-supplier. The finalize-ready stamp appends
-  `workflow.finalized` through the runner's event-log interface, in the
-  stamp's own transaction.
+  `workflow.finalized` through the runner's event-log interface, and every
+  change to a todo's status, hold or attempts calls the runner's
+  fleet-attention contract, each in its record change's own transaction.
+- **Work → runner (fleet attention)** — customer-supplier. The runner reads a
+  project's active todos with their status and holds when it admits a raise and
+  when one of its own observations opens an attention episode.
 - **Work → runner (state database)** — customer-supplier. The runner's
   operational tables live in work's state database, under its writer lock and
   migrations; the runner owns their meaning and is their only writer. The

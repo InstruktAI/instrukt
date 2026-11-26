@@ -703,6 +703,9 @@ related references.
 - **Eligible durable event handoff** — `project/instrukt/spec/feature/runner/procedure-event-delivery`.
 - **Published subscriptions and durable activation acceptance** — `project/instrukt/spec/feature/runner/procedure-subscription-routing`.
 
+- **Fleet attention** — `project/instrukt/spec/feature/runner/fleet-attention`
+  — have stuck, converging or conflicting work across a project's todos attended to without watching its sessions.
+
 - **Worktree reclamation** — [project/instrukt/spec/feature/runner/worktree-reclamation](../feature/runner/worktree-reclamation.md)
   — get the disk idle and delivered todo worktrees hold back without anyone running a deletion command, and reclaim one's own worktree during work.
 
