@@ -434,7 +434,7 @@ pub(super) fn missing_role_procedure(
         _ => "connectors".into(),
     };
     Finding {
-        document: Layer::Company(company.clone()).path(home),
+        document: Layer::Company(company.clone()).located(home),
         key,
         kind: FindingKind::InvalidValue,
         message: format!(
@@ -494,8 +494,8 @@ pub fn connector_procedure_finding(
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
-    let path = layer.path(home);
     let view = super::_layer::inspect_layer(home, layer)?;
+    let path = view.path;
     let Some(value) = view.value else {
         return Err(ConfigError::NoLayer {
             path,
@@ -504,7 +504,7 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
     if let Layer::Company(name) = layer {
-        findings.extend(local_material(home, name)?);
+        findings.extend(local_material(home, name, &path)?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
             && !entries.is_empty()
         {
@@ -552,17 +552,30 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
 /// What the company home `name` keeps on the computer that its repository
 /// tracks or does not ignore, each a finding naming the path
 /// (`project/instrukt/spec/feature/configuration/company-homes`, "What
-/// stays out of the repository"). Nothing outside a git working tree.
+/// stays out of the repository"). The settings document is the one at
+/// `document`, where it stands: a home made before `company.yaml` keeps it
+/// as its root `instrukt.yaml` until converted. Nothing outside a git
+/// working tree.
 fn local_material(
     home: &Home,
     name: &crate::ids::ProjectSlug,
+    document: &Path,
 ) -> Result<Vec<Finding>, ConfigError> {
     let dir = home.company_dir(name);
     if crate::git::worktree_root(&dir)?.is_none() {
         return Ok(Vec::new());
     }
+    let settings = document
+        .file_name()
+        .map(|file| format!("/{}", file.to_string_lossy()));
     let mut found = Vec::new();
-    for line in super::_layer::COMPANY_IGNORED {
+    for line in super::_company_document::COMPANY_IGNORED {
+        let line = match &settings {
+            Some(settings) if line == super::_company_document::COMPANY_IGNORED[0] => {
+                settings.as_str()
+            }
+            _ => line,
+        };
         let relative = line.trim_matches('/');
         let path = dir.join(relative);
         let tracked = !crate::git::run(&dir, ["ls-files", "--", relative])?

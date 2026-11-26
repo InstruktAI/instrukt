@@ -12,6 +12,7 @@ mod _admitted;
 mod _agents;
 mod _agents_migrate;
 mod _company;
+mod _company_document;
 mod _connectors;
 mod _edit;
 mod _effective;
@@ -47,6 +48,7 @@ pub use _admitted::{
     Current, Offer, serve,
 };
 pub use _company::{Member, Members};
+pub use _company_document::{COMPANY_DOCUMENT, write_company_settings};
 pub use _connectors::{
     ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
     install_connector_declarations,

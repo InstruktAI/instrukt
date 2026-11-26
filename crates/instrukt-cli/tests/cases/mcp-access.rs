@@ -755,7 +755,7 @@ fn a_host_oauth_client_is_shared_across_companies_with_isolated_speaker_tokens()
         assert_eq!(ws["client_id"], HOST_CLIENT_ID);
         assert_eq!(ws["return_address"], shared_return_address);
         let dir = c.env.instrukt_home().join("companies").join(company);
-        for file in ["instrukt.yaml", "secrets.env"] {
+        for file in ["company.yaml", "secrets.env"] {
             let path = dir.join(file);
             if path.exists() {
                 let raw = std::fs::read_to_string(path).unwrap();

@@ -68,7 +68,7 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
         "sunfield",
         Some("{webhooks: {erp: {secret: '${SUN_HOOK}'}}}"),
     );
-    let sunfield = env.instrukt_home().join("companies/sunfield/instrukt.yaml");
+    let sunfield = env.instrukt_home().join("companies/sunfield/company.yaml");
     let before = std::fs::read(&sunfield).unwrap();
 
     company(
@@ -87,7 +87,7 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
     env.run(&here, ["config", "validate", "--company", "acme"])
         .success();
     // A repeated init keeps the home as it is.
-    let acme = env.instrukt_home().join("companies/acme/instrukt.yaml");
+    let acme = env.instrukt_home().join("companies/acme/company.yaml");
     let created = std::fs::read(&acme).unwrap();
     env.run(&here, ["config", "init", "--company", "acme"])
         .success();
@@ -97,7 +97,7 @@ fn a_company_is_added_beside_the_others_and_a_misnamed_folder_is_no_company() {
     let misnamed = env.instrukt_home().join("companies/misnamed");
     std::fs::create_dir_all(&misnamed).unwrap();
     std::fs::write(
-        misnamed.join("instrukt.yaml"),
+        misnamed.join("company.yaml"),
         format!(
             "schema_version: {}\ncompany: acme\n",
             instrukt_core::config::COMPANY_SCHEMA_VERSION
@@ -147,7 +147,7 @@ fn each_company_resolves_its_own_secret_and_never_the_machines_or_anothers() {
     company(env, "bare", None);
     secret(env, "bare", "OTHER", "unrelated-value");
     std::fs::write(
-        env.instrukt_home().join("companies/bare/instrukt.yaml"),
+        env.instrukt_home().join("companies/bare/company.yaml"),
         format!(
             "schema_version: {}\ncompany: bare\nwebhooks: {{erp: {{secret: '${{HOOK_KEY}}'}}}}\n",
             instrukt_core::config::COMPANY_SCHEMA_VERSION
@@ -267,7 +267,7 @@ fn a_companys_secrets_stay_out_of_its_repository() {
         .success();
     insta::assert_snapshot!(std::fs::read_to_string(dir.join(".gitignore")).unwrap(), @r"
     *.log
-    /instrukt.yaml
+    /company.yaml
     /secrets.env
     /projects/
     /.instrukt/

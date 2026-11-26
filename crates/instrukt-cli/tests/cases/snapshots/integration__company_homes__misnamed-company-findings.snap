@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/company-homes.rs
-assertion_line: 120
 expression: "stdout(&findings).replace(&home, \"[INSTRUKT_HOME]\")"
 ---
-[INSTRUKT_HOME]/companies/misnamed/instrukt.yaml: company: names company `acme`, but the home folder is `misnamed`
+[INSTRUKT_HOME]/companies/misnamed/company.yaml: company: names company `acme`, but the home folder is `misnamed`

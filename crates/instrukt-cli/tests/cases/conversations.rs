@@ -2579,7 +2579,7 @@ fn prepared_status_company() -> Company {
         let template = Company::on(common::TestEnv::new(), ", history: false", "", "");
         [
             "instrukt.yaml",
-            "companies/acme/instrukt.yaml",
+            "companies/acme/company.yaml",
             "companies/acme/secrets.env",
             "state/index.yaml",
             "docs/assistance/procedure/company-assistance.md",
@@ -3697,7 +3697,7 @@ fn a_failed_scan_resumes_without_repeating_saved_messages() {
     let late = now + jiff::SignedDuration::from_hours(31 * 24);
     let dormant = c.env.instrukt_home().join("companies/dormant");
     std::fs::create_dir_all(&dormant).unwrap();
-    std::fs::write(dormant.join("instrukt.yaml"), format!(
+    std::fs::write(dormant.join("company.yaml"), format!(
         "schema_version: {}\ncompany: dormant\nconnectors: {{slack: {{app_token: '${{MISSING}}', bot_token: '${{MISSING}}'}}}}\n",
         instrukt_core::config::COMPANY_SCHEMA_VERSION
     )).unwrap();
@@ -4041,7 +4041,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     let company_document = c
         .env
         .instrukt_home()
-        .join(format!("companies/{COMPANY}/instrukt.yaml"));
+        .join(format!("companies/{COMPANY}/company.yaml"));
     let parseable = std::fs::read_to_string(&company_document).unwrap();
     std::fs::write(&company_document, "schema_version: [\n").unwrap();
     c.runtime.flag("start-failure", false);
@@ -4058,7 +4058,7 @@ fn a_member_is_answered_while_a_projects_event_responses_are_not_admitted() {
     // While the runner runs, the company's document is broken by hand and its
     // bot token's secret blanked.
     let company_dir = c.env.instrukt_home().join(format!("companies/{COMPANY}"));
-    let document = company_dir.join("instrukt.yaml");
+    let document = company_dir.join("company.yaml");
     let mut text = std::fs::read_to_string(&document).unwrap();
     text.push_str("bogus: 1\n");
     std::fs::write(&document, text).unwrap();

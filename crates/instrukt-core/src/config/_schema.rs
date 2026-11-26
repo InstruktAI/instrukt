@@ -18,7 +18,7 @@ pub const GLOBAL_SCHEMA_VERSION: u64 = 6;
 pub const PROJECT_SCHEMA_VERSION: u64 = 6;
 
 /// The schema version of a company home's document
-/// (`~/.instrukt/companies/<name>/instrukt.yaml`) this instrukt writes. The
+/// (`~/.instrukt/companies/<name>/company.yaml`) this instrukt writes. The
 /// first is 1.
 pub const COMPANY_SCHEMA_VERSION: u64 = 6;
 
@@ -45,7 +45,7 @@ pub enum LayerKind {
     Global,
     /// `instrukt.yaml` at a repository root: the project.
     Project,
-    /// `~/.instrukt/companies/<name>/instrukt.yaml`: a company home's own
+    /// `~/.instrukt/companies/<name>/company.yaml`: a company home's own
     /// document, read on its own and combined with no layer.
     Company,
 }
@@ -798,7 +798,7 @@ pub fn layer_json_schema(layer: LayerKind) -> serde_json::Value {
         let title = match layer {
             LayerKind::Global => "instrukt.yaml (global layer)",
             LayerKind::Project => "instrukt.yaml (project layer)",
-            LayerKind::Company => "instrukt.yaml (company home)",
+            LayerKind::Company => "company.yaml (company home)",
         };
         let required = match layer {
             LayerKind::Company => json!(["schema_version", "company"]),

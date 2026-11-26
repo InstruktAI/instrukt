@@ -146,6 +146,10 @@ pub enum ConfigError {
     UnknownSchema { path: PathBuf },
     #[error("{path} does not exist; create it with `{door}`")]
     NoLayer { path: PathBuf, door: String },
+    #[error(
+        "{company} and {legacy} both hold a company's settings; keep the one that holds them and remove the other, then run instrukt again"
+    )]
+    BothCompanyDocuments { company: PathBuf, legacy: PathBuf },
     #[error("cannot create the company home {path}: {source}")]
     CreateHome {
         path: PathBuf,
