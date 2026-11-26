@@ -209,9 +209,8 @@ native input delivery, not on a CLI link command. Notification remains
 unavailable on T3's published CLI; instrukt does not rebuild it.
 
 <!-- planned:archive-finished-threads -->
-A retention window set while the selected runtime lacks thread archiving is
-refused and reported the same way, naming the runtime and the missing
-capability.
+How configuration treats a retention window set while the selected runtime
+lacks thread archiving is `project/instrukt/spec/feature/configuration/layered-configuration`'s.
 <!-- /planned:archive-finished-threads -->
 
 ### Start keys and locks
