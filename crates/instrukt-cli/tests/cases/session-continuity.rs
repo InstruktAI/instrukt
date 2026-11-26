@@ -5,18 +5,8 @@ use crate::fixtures::flavor;
 use crate::fixtures::runtime;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
-use flavor::Tracked;
+use flavor::{Tracked, change};
 use runtime::FakeT3;
-fn change(project: &Tracked, slug: &str) {
-    project.todo([
-        "create",
-        slug,
-        "Improve the parser.",
-        "--kind",
-        "change",
-        "--approved",
-    ]);
-}
 fn shown(project: &Tracked, bytes: &[u8]) -> String {
     support::redact(&String::from_utf8_lossy(bytes).replace(
         project.env.path("").to_str().unwrap().trim_end_matches('/'),
