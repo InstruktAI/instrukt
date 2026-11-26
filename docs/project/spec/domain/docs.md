@@ -78,7 +78,9 @@ Not to be confused with the generated global index.
 
 **Listing line**
 : The one line that stands for a snippet wherever a rendering lists rather
-than expands it: its id, its description, and the command that reads it
+than expands it: its id and its description, leading to the command that
+reads it — on the line itself in the inline form, or once in a heading over
+a run of lines of one kind in the headed form
 (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 
 **Root rules**
@@ -160,6 +162,13 @@ project store, not the primary worktree.
 one pass; a bare-domain required read contributes that domain's `expanded`
 set.
 
+**Current-contract body**
+: A snippet's body after its frontmatter under the default lens: planned
+additions dropped, each planned change reduced to its current side, marker
+lines removed, nothing resolved. Publication digests it as a source's
+delivered prose
+(`project/instrukt/spec/domain/publication`).
+
 **Published commit**
 : The commit of a project's canonical main that publication last published;
 recorded by publication.
@@ -204,6 +213,13 @@ recorded by publication.
   wired by the CLI when `todos` is enabled).
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
+
+Nor does docs own compressed units: `docs/_compressed/`, the units in it,
+their currency and their structural rules are publication's
+(`project/instrukt/spec/domain/publication`). That folder lies outside
+every position, and docs' walks skip it as they skip every folder whose
+name begins with an underscore, so a unit is never a snippet, never an
+index or schema file, and never a finding of validation.
 
 ## Canonical fields
 
@@ -329,6 +345,11 @@ This context emits no events.
   and pending markers.
 - **Runner** — customer / supplier: docs supplies procedures and their event
   subscriptions.
+
+For compressed units, docs supplies publication a source's current-contract
+body, its `@config` directives and its reference forms, which publication
+digests and compares with a unit's
+(`project/instrukt/spec/domain/publication`).
 
 ## Known caveats
 

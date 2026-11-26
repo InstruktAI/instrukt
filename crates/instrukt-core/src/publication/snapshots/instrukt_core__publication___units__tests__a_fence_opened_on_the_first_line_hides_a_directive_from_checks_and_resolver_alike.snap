@@ -1,0 +1,9 @@
+---
+source: crates/instrukt-core/src/publication/_units.rs
+expression: rendered.unwrap().text
+---
+```
+---
+<!-- @config: secrets.token -->
+---
+```

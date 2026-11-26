@@ -30,8 +30,8 @@ states what an index may say and what validation reports about it.
 
 - **`expanded`** — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
-- **`listed`** — snippet ids rendered as one listing line each: id,
-  description and the command that reads it.
+- **`listed`** — snippet ids rendered as one listing line each: id and
+  description, leading to the command that reads it.
 - **`description`** — one line saying what the domain is about; the line that
   stands for the domain in every agent's global file.
 - **`agents`** — a map from a provider name to snippet ids. A name has 1–64 ASCII

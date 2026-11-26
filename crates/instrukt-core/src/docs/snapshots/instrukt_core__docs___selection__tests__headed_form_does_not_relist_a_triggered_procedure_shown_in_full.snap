@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-core/src/docs/_selection.rs
+expression: rendered
+---
+# General
+
+## Held — Procedure
+
+when: Use when holding. — `instrukt docs get general/procedure/held --closure`
+
+Do the held thing.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/other: What general/procedure/other says. — when: Use when other.

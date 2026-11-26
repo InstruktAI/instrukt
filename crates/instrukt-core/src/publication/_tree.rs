@@ -107,6 +107,22 @@ pub(super) fn stage_position(
     Ok(())
 }
 
+/// Stages the units of `position` — every file below its place for units,
+/// checked by the sync before staging — into `staged/_compressed/`, at each
+/// unit's path relative to that place.
+pub(super) fn stage_units(
+    committed: &Committed,
+    position: &Position,
+    staged: &Path,
+) -> Result<(), PublicationError> {
+    let prefix = format!("{}/", super::_units::position_place(position));
+    let place = staged.join(super::_units::RESERVED);
+    for (rel, bytes) in committed.below(&prefix) {
+        atomic_write(&place.join(safe_relative(rel)?), bytes)?;
+    }
+    Ok(())
+}
+
 /// Where an earlier release recorded the repository files one project's
 /// publication wrote. Nothing reads it: the next sync that publishes
 /// deletes it.

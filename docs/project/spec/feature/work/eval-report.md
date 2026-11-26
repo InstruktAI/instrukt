@@ -33,12 +33,12 @@ invent missing observations or require conversation transcripts.
 
 ### Evaluation windows
 
-The eval fingerprint identifies the process-document set selected for
-measurement. Publication computes it from published global snippets marked `eval: true`,
-hashed as committed raw content, and records it per published commit. Each
+The eval fingerprint identifies the doctrine in force when work was done.
+Publication computes it and records it per published commit
+(`project/instrukt/spec/feature/publication/eval-fingerprint`). Each
 stamp copies the current fingerprint when written; recovered stamps therefore
 retain their evaluation window without reconstructing a conversation.
-A change to that set starts a distinct comparison window. Model and version
+A change of fingerprint starts a distinct comparison window. Model and version
 remain separate dimensions, so a model change is distinguishable from a
 process-document change.
 

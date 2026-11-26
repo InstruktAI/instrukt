@@ -227,6 +227,17 @@ pub(crate) fn company_paths(
     out
 }
 
+/// The references of `text` read as one body, its `## Required reads`
+/// section included: its `@` references, its Markdown links' file targets
+/// and its See Also entries, outside code and comments, each occurrence in
+/// order.
+pub(crate) fn company_references(text: &str) -> Vec<CompanyReference> {
+    located_references(text)
+        .into_iter()
+        .map(|(reference, _)| reference)
+        .collect()
+}
+
 /// The references of `body` with the byte range of each one's path: its
 /// `@` references, its Markdown links' file targets and its See Also
 /// entries, outside fenced code, inline code and HTML comments, each

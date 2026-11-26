@@ -74,8 +74,9 @@ the position's rendering carries; depth below that comes from required reads.
 
 - `expanded` — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
-- `listed` — snippet ids rendered as one line each: id, description and the
-  command that gets it.
+- `listed` — snippet ids rendered as one line each: id and description,
+  leading to the command that gets it, on the line or once in the heading
+  over its run of lines.
 - `description` — the domain's one line in every global agent file, which
   names `instrukt docs get --domain <x>`.
 - `agents` — a map from the name of an agent runtime instrukt deploys to, to
@@ -127,12 +128,13 @@ Frontmatter (optional, authored):
   `internal` when omitted. It is recorded in the index and filters nothing:
   every reader reads every snippet in full.
 
-- `eval` — optional boolean. `true` marks a snippet whose content enters the
-  eval fingerprint: publication computes a digest only of published
-  snippets (under `docs/general/` and `docs/domain/*/`) with `eval: true`, hashed as committed (raw) content,
-  and every stamp carries it.
+- `eval` — optional boolean. `true` marks a snippet as evaluated doctrine.
+  The eval fingerprint every stamp carries covers each published snippet
+  under `docs/general/` and `docs/domain/*/` with `eval: true`, hashed as
+  committed (raw) content, together with the always-on doctrine of the global
+  agent files and the compressed units that stand for it.
 
-- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description, trigger and the command `instrukt docs get <id> --closure`: a `general` procedure in `general`'s section of every global agent file, a domain's procedure in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
+- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description and trigger, leading to the command `instrukt docs get <id> --closure` — on its line, or once in the heading over the triggered lines of a global agent file: a `general` procedure in `general`'s section of every global agent file, a domain's procedure in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
 
 - `subscriptions` — procedures only. A non-empty list of event type patterns whose arrival activates the procedure through the runner, which resolves subscribed procedures from frontmatter. A pattern is an exact event type name, a prefix of whole name segments followed by `.*` (`a.b.*` selects every event under `a.b`), or `*`; any other form is rejected. A procedure declares `subscriptions` or `activation_trigger`, never both, because each names who is responsible for starting the work; a procedure used only as supporting knowledge declares neither. A procedure declaring `subscriptions` is never listed among triggered procedures. Validation rejects this field on non-procedure snippet types and on a procedure declaring both activation fields.
 
@@ -264,6 +266,20 @@ It never decides who may read a snippet (`general/policy/artifact-scope`).
 
 - **In-body marker grammar.** The `planned`, `planned-change`, and `change` markers are **whole-line**: each occupies its own line, with only whitespace before its opening `<!--` and after its closing `-->`. Markers **never nest** — an in-body block holds only plain content between its own markers, never another `planned`/`planned-change` block, and two carriers never overlap. Marker validation rejects inline (mid-prose) and nested markers as malformed, so every accepted marker is one the delivery fold can resolve.
 
+`docs/_compressed/` is no position. It holds the repository's compressed
+units: one for each source an entrypoint rendering holds in full, at the
+source's path relative to `docs/` (`docs/_compressed/general/<taxonomy>/<rest>.md`,
+`docs/_compressed/domain/<x>/…`, `docs/_compressed/project/…`, and a company
+document's own path below it). A unit's frontmatter carries exactly two
+keys: `source_sha256`, the digest `instrukt docs units` names for its source,
+and `model`, the model that wrote it. Its body is written in the
+compressed-unit notation (`general/spec/agent-shorthand`). Validation skips
+the folder, as it skips every folder whose name begins with an underscore,
+and no index names a unit; a folder named `_compressed` inside a position is
+refused at sync. Units are written and renewed under
+`general/procedure/compressed-unit-authoring`; publication decides their
+currency and checks their structure.
+
 The default index view lists the published snippets and the project snippets of the project the caller stands in; a reader reaches another project's by naming that project or a snippet's `project/<slug>/` identity.
 
 ### Grouped snippets — folder convention
@@ -293,9 +309,9 @@ do not accumulate by default.
 - Domain names: any name except `general` and `project`, which are reserved,
   and `third-party`, which keeps its existing special case; a domain claiming
   one is refused, naming the rule.
-- `agents` keys in `docs/general/index.yaml`: open provider names with the
-  syntax owned by `project/instrukt/spec/feature/docs/position-index`,
-  independent of configured providers or established native loaders.
+- `agents` keys in `docs/general/index.yaml`: open provider names, in the
+  syntax validation enforces, independent of configured providers or
+  established native loaders.
 - `visibility`: public, internal. Default: `internal`.
 
 ## Known caveats

@@ -94,8 +94,13 @@ Kind: Enforcement.
 
 Kind: Exceptions.
 
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/style: About Style.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 ## Configured Responsibilities — started when their events arrive
 
@@ -197,8 +202,13 @@ Kind: Enforcement.
 
 Kind: Exceptions.
 
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/style: About Style.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 ## Configured Responsibilities — started when their events arrive
 
@@ -300,8 +310,13 @@ Kind: Enforcement.
 
 Kind: Exceptions.
 
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/style: About Style.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 ## Configured Responsibilities — started when their events arrive
 
@@ -403,8 +418,13 @@ Kind: Enforcement.
 
 Kind: Exceptions.
 
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/style: About Style.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 ## Configured Responsibilities — started when their events arrive
 
@@ -506,8 +526,13 @@ Kind: Enforcement.
 
 Kind: Exceptions.
 
-- general/policy/style: About Style. — `instrukt docs get general/policy/style`
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Listed — read each with `instrukt docs get <id>`
+
+- general/policy/style: About Style.
+
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 ## Configured Responsibilities — started when their events arrive
 

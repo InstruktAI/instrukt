@@ -24,6 +24,8 @@ mod blast_radius;
 mod company_homes;
 #[path = "cases/company-plugin.rs"]
 mod company_plugin;
+#[path = "cases/compressed-units.rs"]
+mod compressed_units;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
 #[path = "cases/conversation-links.rs"]

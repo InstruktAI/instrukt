@@ -193,6 +193,12 @@ impl Home {
         self.root.join("state").join("index.yaml")
     }
 
+    /// `~/.instrukt/rendered/` — the uncompressed copies of the global agent
+    /// files, which no agent runtime loads.
+    pub fn rendered_dir(&self) -> PathBuf {
+        self.root.join("rendered")
+    }
+
     /// `~/.instrukt/state/`.
     pub fn state_dir(&self) -> PathBuf {
         self.state_dir.clone()
