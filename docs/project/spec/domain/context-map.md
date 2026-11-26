@@ -195,6 +195,9 @@ formats, for the company plugin it renders into a company's repository
 
 - `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no consumer daemon beside the runner.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
+<!-- planned:outside-gate -->
+- `project/instrukt/design/architecture/outside-gate` — the one mechanism judging the availability of every external system the anti-corruption layers above translate.
+<!-- /planned:outside-gate -->
 
 ## Ubiquitous language
 

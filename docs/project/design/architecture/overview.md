@@ -45,6 +45,7 @@ runtime adapter and consumed as facts by publication.
 | `events` | runner sources, scoped transport, independent consumers and procedure activation | on/off | scoped Redis; selected runtime adapter for agent reactions; opt-in ingress for declared webhooks |
 | `conversations` | company: connectors, conversation sessions and the answer back | a company home's declared connector | selected runtime adapter; the long-lived runner, kept running by an owned service |
 
+<!-- planned-change:outside-gate -->
 One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 `instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
 shared by `todos`, `events` and `history`), `instrukt-todos`,
@@ -59,6 +60,26 @@ first. Dependencies point one way:
 `instrukt-core` → `instrukt-connector`, for the declarations configuration
 validates against; `instrukt-connector` → nothing of instrukt. Only
 `instrukt-cli` depends on `instrukt-company` or a connector crate. Where core needs an answer only an optional module has
+<!-- change:outside-gate -->
+One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
+`instrukt-core`, `instrukt-blueprint`, `instrukt-runner` (the runner context,
+shared by `todos`, `events` and `history`), `instrukt-todos`,
+`instrukt-company` (the company context's conversation core and connector
+host), `instrukt-connector` (the connector interface and each kind's
+declaration data), one crate per connector, `instrukt-connector-slack`
+first, and `instrukt-outside`, the outside gate through which every part
+judges the availability of the services outside instrukt
+(`project/instrukt/design/architecture/outside-gate`). Dependencies point one
+way: `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
+`instrukt-core` and `instrukt-blueprint`; `instrukt-company` →
+`instrukt-runner`, `instrukt-core` and `instrukt-connector`; a connector crate →
+`instrukt-connector` and `instrukt-outside` only; `instrukt-blueprint` →
+`instrukt-core`; `instrukt-core` → `instrukt-connector`, for the declarations
+configuration validates against; `instrukt-connector` → `instrukt-outside`
+only; `instrukt-outside` → nothing of instrukt, so every crate that talks to an
+outside service reaches it. Only
+`instrukt-cli` depends on `instrukt-company` or a connector crate. Where core needs an answer only an optional module has
+<!-- /planned-change:outside-gate -->
 (whether a todo slug named by a pending doc exists), core declares the
 interface and the CLI wires the module's implementation in only when that
 module is on. Eval is not a module: stamps always carry model, version and eval
@@ -273,6 +294,13 @@ the command-line parser's own text and exit status 2.
 - **Agents read; instrukt computes.** Freshness, ownership and state are
   instrukt's to compute; agents consume answers that name what they reflect
   (a SHA, a version).
+<!-- planned:outside-gate -->
+- **One outside gate.** Every call to a service outside instrukt passes through
+  the outside gate, which alone judges a failure temporary or a defect, decides
+  the wait and tells the operator once; each part keeps the client best fitted
+  to its service, and exactly one layer retries
+  (`project/instrukt/design/architecture/outside-gate`).
+<!-- /planned:outside-gate -->
 
 ## Primary flows
 

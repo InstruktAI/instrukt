@@ -121,6 +121,13 @@ the connector retries the check before connecting. Scope findings appear
 in operator status and send no message to members
 (`project/instrukt/spec/feature/configuration/company-homes`). A token Slack
 refuses later is retried and reported like a lost connection.
+<!-- planned:outside-gate -->
+Every Slack call, Web API and Socket Mode alike, is judged by the outside gate
+(`project/instrukt/design/architecture/outside-gate`): Slack's waits and the
+pauses after a failure are the gate's, kept per `(company, connector, method)`,
+and a code Slack answers in its body for throttling or its own unavailability
+counts as temporary for every method, as an HTTP status does.
+<!-- /planned:outside-gate -->
 
 The Slack app is subscribed to exactly two kinds of message: mentions of the
 agent and direct messages to it. Slack sends instrukt nothing else from the
