@@ -12,18 +12,59 @@ use instrukt_core::{
 use instrukt_runner::assignments::RecordedStart;
 use std::path::Path;
 
-const CONFLICT_MESSAGE: &str =
-    "session has conflicting recorded assignments; recover its binding/attempt";
+/// Why a session resolves to no single assignment: the keys of the
+/// recorded bindings that disagree. No instrukt command takes a session off
+/// a binding, so these go to the operator.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AssignmentConflict {
+    /// The disagreeing bindings' semantic keys, each once, in the order the
+    /// rows were read.
+    pub keys: Vec<String>,
+}
 
-struct AssignmentCandidate {
+impl AssignmentConflict {
+    fn of<'a>(candidates: impl IntoIterator<Item = &'a AssignmentCandidate>) -> Self {
+        let mut keys: Vec<String> = Vec::new();
+        for candidate in candidates {
+            if !keys.contains(&candidate.assignment.key) {
+                keys.push(candidate.assignment.key.clone());
+            }
+        }
+        Self { keys }
+    }
+}
+
+impl std::fmt::Display for AssignmentConflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "session has conflicting recorded assignments on bindings {}; no instrukt command resolves this session, so report these bindings to the operator",
+            quoted(&self.keys)
+        )
+    }
+}
+
+/// `keys` as a list of backquoted names.
+pub(crate) fn quoted(keys: &[String]) -> String {
+    keys.iter()
+        .map(|key| format!("`{key}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+pub(crate) struct AssignmentCandidate {
     active: bool,
     attempt: i64,
     assignment: Assignment,
 }
 
-fn select_assignment(
+/// The one assignment a session's candidates resolve to. They must share
+/// one (project, todo, role, worker) scope, released attempts included;
+/// within it the active attempt wins, else the highest released attempt.
+/// Candidates that disagree are returned as the conflict naming them.
+pub(crate) fn select_assignment(
     candidates: Vec<AssignmentCandidate>,
-) -> Result<Option<Assignment>, &'static str> {
+) -> Result<Option<Assignment>, AssignmentConflict> {
     let Some(first) = candidates.first() else {
         return Ok(None);
     };
@@ -41,40 +82,40 @@ fn select_assignment(
             candidate.assignment.worker,
         ) != scope
     }) {
-        return Err(CONFLICT_MESSAGE);
+        return Err(AssignmentConflict::of(&candidates));
     }
-    let mut active_chosen: Option<Assignment> = None;
+    let mut active_chosen: Option<AssignmentCandidate> = None;
     let mut released = Vec::new();
     for candidate in candidates {
         if candidate.active {
-            if active_chosen
+            if let Some(previous) = active_chosen
                 .as_ref()
-                .is_some_and(|previous| previous != &candidate.assignment)
+                .filter(|previous| previous.assignment != candidate.assignment)
             {
-                return Err(CONFLICT_MESSAGE);
+                return Err(AssignmentConflict::of([previous, &candidate]));
             }
-            active_chosen = Some(candidate.assignment);
+            active_chosen = Some(candidate);
         } else {
             released.push(candidate);
         }
     }
-    if active_chosen.is_some() {
-        return Ok(active_chosen);
+    if let Some(chosen) = active_chosen {
+        return Ok(Some(chosen.assignment));
     }
     let Some(max_attempt) = released.iter().map(|candidate| candidate.attempt).max() else {
         return Ok(None);
     };
-    let mut latest: Option<Assignment> = None;
+    let mut latest: Option<AssignmentCandidate> = None;
     for candidate in released.into_iter().filter(|c| c.attempt == max_attempt) {
-        if latest
+        if let Some(previous) = latest
             .as_ref()
-            .is_some_and(|previous| previous != &candidate.assignment)
+            .filter(|previous| previous.assignment != candidate.assignment)
         {
-            return Err(CONFLICT_MESSAGE);
+            return Err(AssignmentConflict::of([previous, &candidate]));
         }
-        latest = Some(candidate.assignment);
+        latest = Some(candidate);
     }
-    Ok(latest)
+    Ok(latest.map(|candidate| candidate.assignment))
 }
 
 /// One binding row with the worktree a runner start supplies when the row
@@ -142,32 +183,45 @@ pub fn recorded_assignment(
         return Ok(None);
     };
     let (conn, path) = (db.conn(), db.path());
-    let session = caller.to_string();
     // Every row comes from one read snapshot. A binding work records on
     // the caller between two separate reads would be missed by
     // RECORDED_BINDINGS before the write and excluded by STARTED_BINDING
     // after it.
-    let rows = {
+    let candidates = {
         let snapshot = conn
             .unchecked_transaction()
             .map_err(StateDbError::sqlite(path))?;
-        let mut rows = binding_rows(&snapshot, path, RECORDED_BINDINGS, params![session])?;
-        for start in starts {
-            rows.extend(binding_rows(
-                &snapshot,
-                path,
-                STARTED_BINDING,
-                params![
-                    session,
-                    caller.runtime.as_str(),
-                    start.semantic_key,
-                    start.replaced_session,
-                    start.worktree,
-                ],
-            )?);
-        }
-        rows
+        assignment_candidates(&snapshot, path, caller, starts)?
     };
+    select_assignment(candidates)
+        .map_err(|conflict| StateDbError::invalid(path, conflict.to_string()))
+}
+
+/// The attempts `caller` may resolve to, read through `conn` — a read
+/// snapshot or a write transaction, which then sees its own writes: its
+/// recorded bindings, and the reserved attempts its runner `starts` name.
+pub(crate) fn assignment_candidates(
+    conn: &Connection,
+    path: &Path,
+    caller: &SessionRef,
+    starts: &[RecordedStart],
+) -> Result<Vec<AssignmentCandidate>, StateDbError> {
+    let session = caller.to_string();
+    let mut rows = binding_rows(conn, path, RECORDED_BINDINGS, params![session])?;
+    for start in starts {
+        rows.extend(binding_rows(
+            conn,
+            path,
+            STARTED_BINDING,
+            params![
+                session,
+                caller.runtime.as_str(),
+                start.semantic_key,
+                start.replaced_session,
+                start.worktree,
+            ],
+        )?);
+    }
     let mut candidates = Vec::new();
     for row in rows {
         let (
@@ -246,7 +300,7 @@ pub fn recorded_assignment(
             assignment,
         });
     }
-    select_assignment(candidates).map_err(|message| StateDbError::invalid(path, message))
+    Ok(candidates)
 }
 
 pub fn target_identity(
@@ -326,6 +380,12 @@ mod tests {
         }
     }
 
+    fn conflict(keys: &[&str]) -> AssignmentConflict {
+        AssignmentConflict {
+            keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+        }
+    }
+
     #[test]
     fn empty_candidates_return_none() {
         assert_eq!(select_assignment(Vec::new()), Ok(None));
@@ -348,7 +408,10 @@ mod tests {
         let second = candidate(true, 2, "prepare-orchestrator", "todo-a", false);
         assert_eq!(
             select_assignment(vec![first, second]),
-            Err(CONFLICT_MESSAGE)
+            Err(conflict(&[
+                "instrukt:todo:demo/todo-a:prepare-orchestrator:1",
+                "instrukt:todo:demo/todo-a:prepare-orchestrator:2",
+            ]))
         );
     }
 
@@ -369,7 +432,10 @@ mod tests {
         let active = candidate(true, 1, "prepare-orchestrator", "todo-b", false);
         assert_eq!(
             select_assignment(vec![released, active]),
-            Err(CONFLICT_MESSAGE)
+            Err(conflict(&[
+                "instrukt:todo:demo/todo-a:prepare-orchestrator:1",
+                "instrukt:todo:demo/todo-b:prepare-orchestrator:1",
+            ]))
         );
     }
 
@@ -387,7 +453,19 @@ mod tests {
         let second = candidate(false, 2, "work-orchestrator", "todo-a", false);
         assert_eq!(
             select_assignment(vec![first, second]),
-            Err(CONFLICT_MESSAGE)
+            Err(conflict(&[
+                "instrukt:todo:demo/todo-a:prepare-orchestrator:1",
+                "instrukt:todo:demo/todo-a:work-orchestrator:2",
+            ]))
+        );
+    }
+
+    #[test]
+    fn the_conflict_names_its_bindings_and_sends_them_to_the_operator() {
+        let message = conflict(&["k:builder:1", "k:build-reviewer:1"]).to_string();
+        assert_eq!(
+            message,
+            "session has conflicting recorded assignments on bindings `k:builder:1`, `k:build-reviewer:1`; no instrukt command resolves this session, so report these bindings to the operator"
         );
     }
 }
