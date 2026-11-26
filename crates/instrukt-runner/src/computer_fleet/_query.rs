@@ -26,16 +26,31 @@ pub const MAX_DEADLINE: Duration = REQUEST_LIFETIME;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Kind {
     prefix: &'static str,
+    wait: Wait,
 }
 
-/// Merged history search: its keys are the ones history always used.
+/// The connection a kind's combined wait runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wait {
+    /// A pooled connection, whose read timeout is the cluster connection's
+    /// socket timeout.
+    Pooled,
+    /// A connection of its own whose read timeout outlasts the deadline,
+    /// so the deadline always ends the wait first.
+    Outlasting,
+}
+
+/// Merged history search: its keys are the ones history always used, and
+/// its wait runs as it always did.
 pub(crate) const HISTORY: Kind = Kind {
     prefix: "instrukt:history",
+    wait: Wait::Pooled,
 };
 
 /// The evaluation report's computer answers.
 pub const EVALUATION: Kind = Kind {
     prefix: "instrukt:eval",
+    wait: Wait::Outlasting,
 };
 
 impl Kind {
@@ -202,11 +217,12 @@ impl Fleet {
                 break;
             }
             let keys: Vec<&str> = pending.keys().map(String::as_str).collect();
-            let response = endpoint.command::<Option<(String, String)>>(
-                redis::cmd("BLPOP")
-                    .arg(&keys)
-                    .arg(remaining.as_secs_f64().max(0.001)),
-            );
+            let mut wait = redis::cmd("BLPOP");
+            wait.arg(&keys).arg(remaining.as_secs_f64().max(0.001));
+            let response = match kind.wait {
+                Wait::Pooled => endpoint.command::<Option<(String, String)>>(&mut wait),
+                Wait::Outlasting => endpoint.run_waiting(remaining, |conn| wait.query(conn)),
+            };
             match response {
                 Ok(Some((reply, body))) => match pending.remove(&reply) {
                     Some(computer) => {

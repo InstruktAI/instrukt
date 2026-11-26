@@ -179,6 +179,33 @@ impl Endpoint {
         result.map_err(|error| self.redis_error(error))
     }
 
+    /// One operation that may block for up to `wait`, on a short-lived
+    /// connection of its own whose read timeout is `wait` plus this
+    /// endpoint's socket timeout, so the wait ends before the connection
+    /// times out. Reachability is recorded as for [`Self::run`]; pooled
+    /// connections and their timeouts are untouched.
+    pub fn run_waiting<T>(
+        &self,
+        wait: Duration,
+        operation: impl FnOnce(&mut redis::Connection) -> redis::RedisResult<T>,
+    ) -> Result<T, TransportError> {
+        let result = (|| {
+            let mut conn = self.client.get_connection_with_timeout(self.timeout)?;
+            conn.set_read_timeout(Some(wait.saturating_add(self.timeout)))?;
+            conn.set_write_timeout(Some(self.timeout))?;
+            operation(&mut conn)
+        })();
+        if result.is_ok()
+            || result
+                .as_ref()
+                .err()
+                .is_some_and(redis::RedisError::is_io_error)
+        {
+            self.record_reachability(result.is_ok());
+        }
+        result.map_err(|error| self.redis_error(error))
+    }
+
     fn redis_error(&self, error: redis::RedisError) -> TransportError {
         let class = if error.is_io_error() || error.is_connection_refusal() {
             RedisFailure::Connection
