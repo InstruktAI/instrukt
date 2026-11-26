@@ -21,7 +21,7 @@ use super::_model::{
     digest_of, valid_artifact_name,
 };
 use super::_session::{
-    GitHubRead, ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of,
+    GitHubRead, LockWait, ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of,
 };
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::_store::{BranchRelease, Completed, LocalItem, Store, WithdrawalIntent};
@@ -261,7 +261,7 @@ impl Work {
             check_prerequisites(s, index)?;
             Ok(index)
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -367,7 +367,7 @@ impl Work {
             s.commit_with_events("updated", events.map(|log| (log, [].as_slice())), |s| {
                 apply_update(s, index, &request, &actor)
             })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: UpdateReport {
                 record: s.items[index].record.clone(),
@@ -541,7 +541,7 @@ impl Work {
             }
         }
         drop(withdrawing);
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -603,7 +603,7 @@ impl Work {
             record.status = from;
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -647,7 +647,7 @@ impl Work {
             record.status = TodoStatus::Delivered;
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -824,7 +824,7 @@ impl Work {
                     s.log_event(*log, event)?;
                 }
             }
-            s.flush()?;
+            s.flush(LockWait::No)?;
             let retained = record
                 .stamps
                 .iter()
@@ -870,7 +870,7 @@ impl Work {
                     b.attempt.released_at = Some(now);
                     Ok(())
                 })?;
-                s.flush()?;
+                s.flush(LockWait::No)?;
             }
             return Ok(Outcome {
                 value: prior,
@@ -940,7 +940,7 @@ impl Work {
             }
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index]
                 .record
@@ -1015,7 +1015,7 @@ impl Work {
             }
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         let written = s.items[index]
             .record
             .artifact(name)
@@ -1141,7 +1141,7 @@ impl Work {
         let index = s.enter(slug)?;
         let now = s.now;
         s.commit(what, |s| change(&mut s.items[index].record, now))?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),

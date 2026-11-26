@@ -406,6 +406,14 @@ fn finished_within(mut command: Command, bound: Duration) -> Option<Output> {
     finished.recv_timeout(bound).ok()
 }
 
+/// Waits for `child` to exit within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn exited_within(child: std::process::Child, bound: Duration) -> Option<Output> {
+    let (done, finished) = mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
+}
+
 // spec: project/instrukt/spec/feature/work/state-database UC-SD5
 #[test]
 fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
@@ -490,11 +498,17 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .expect("showing the todo waited on the in-flight reflection");
     assert!(during.status.success(), "{during:?}");
     let during = String::from_utf8(during.stdout).unwrap();
+    // The second command returns once its local write is committed: it
+    // does not wait for the reflection in flight.
+    let second = exited_within(second, UNBLOCKED)
+        .expect("the second command waited on the in-flight reflection");
+    assert!(second.status.success(), "{second:?}");
     drop(fields);
-    for command in [first, second] {
-        let output = command.wait_with_output().unwrap();
-        assert!(output.status.success(), "{output:?}");
-    }
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    // The next reflection that takes the lock — here a command that changes
+    // nothing — reflects what the second command left pending.
+    project.ok(["update", "list-depth"]);
 
     // Both changes reached GitHub intact.
     let listed = project.ok(["artifacts", "list", "list-depth"]);

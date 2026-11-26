@@ -428,7 +428,7 @@ fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending(
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR1
 #[test]
-fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests() {
+fn reflection_held_back_by_rate_limiting_or_another_reflection_completes_later() {
     let project = Project::new();
     project.create("nested-lists", "feature", INTENT);
     // GitHub limits the next two requests; its window has already reset.
@@ -443,14 +443,74 @@ fn reflection_held_back_by_rate_limiting_completes_once_github_accepts_requests(
         "Lists keep their depth, and numbering restarts per level.",
     ]);
     let accepted = project.ok(["artifacts", "write", "nested-lists", "log", "Started."]);
+    let reflected = retained_artifacts(&project);
+
+    // Another process is reflecting: a first command's reflection stops at
+    // its issue update. A second command records its progress and returns
+    // without waiting for that reflection.
+    let todo = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command
+            .arg("todo")
+            .args(args)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        command
+    };
+    let fields = project.github.pause_once("PATCH", "/issues/1");
+    let first = todo(&[
+        "artifacts",
+        "write",
+        "nested-lists",
+        "log",
+        "Joined the cases.",
+    ])
+    .spawn()
+    .unwrap();
+    assert!(
+        fields.wait_until_received(std::time::Duration::from_secs(30)),
+        "the first command's reflection never reached GitHub"
+    );
+    let second = exited_within(
+        todo(&[
+            "artifacts",
+            "write",
+            "nested-lists",
+            "log",
+            "Rendered the depth.",
+        ])
+        .spawn()
+        .unwrap(),
+        std::time::Duration::from_secs(20),
+    )
+    .expect("the second command waited for the reflection in progress");
+    assert!(second.status.success(), "{second:?}");
+    let while_reflecting = String::from_utf8(second.stdout).unwrap();
+    drop(fields);
+    let first = first.wait_with_output().unwrap();
+    assert!(first.status.success(), "{first:?}");
+    // The next reflection that takes the lock — here a command that changes
+    // nothing — reflects what the second command left pending.
+    project.ok(["update", "nested-lists"]);
 
     insta::assert_snapshot!(
         "rate-limited-then-reflected",
         redact(&format!(
-            "{limited}---\n{still_limited}---\n{accepted}---\n{}",
+            "{limited}---\n{still_limited}---\n{accepted}---\n{reflected}---\n{while_reflecting}---\n{}",
             retained_artifacts(&project)
         ))
     );
+}
+
+/// Waits for `child` to exit within `bound`; `None` when it is still
+/// running then (it is left to finish on its own).
+fn exited_within(
+    child: std::process::Child,
+    bound: std::time::Duration,
+) -> Option<std::process::Output> {
+    let (done, finished) = std::sync::mpsc::channel();
+    std::thread::spawn(move || done.send(child.wait_with_output().unwrap()));
+    finished.recv_timeout(bound).ok()
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR2

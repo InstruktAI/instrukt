@@ -12,7 +12,7 @@ use instrukt_runner::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::_session::Session;
+use super::_session::{LockWait, Session};
 use super::{Attempt, Binding, Outcome, TodoRecord, Work, WorkError};
 use crate::evidence::{PreparationReview, TodoStatus, artifact_names};
 
@@ -436,7 +436,7 @@ impl Work {
                     }
                     Ok(())
                 })?;
-                s.flush()?;
+                s.flush(LockWait::No)?;
                 dispatch_admitted(&s, index, &result)?;
             }
             return Ok(ReservedAttempt {
@@ -562,7 +562,7 @@ impl Work {
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         dispatch_admitted(&s, index, &assignment)?;
         Ok(ReservedAttempt {
             assignment,
@@ -666,7 +666,7 @@ impl Work {
             b.session = Some(session.clone());
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
     pub fn resolve_native_attempt(
@@ -771,7 +771,7 @@ impl Work {
             s.items[index].record.bindings[pos] = next.clone();
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: next,
             reflection: s.status(index),
@@ -1719,7 +1719,7 @@ impl Work {
                 binding.attempt.released_at = None;
                 Ok(())
             })?;
-            s.flush()?;
+            s.flush(LockWait::No)?;
         }
         if admission == Admission::Place {
             let now = s.now;
@@ -1755,7 +1755,7 @@ impl Work {
                 });
                 Ok(())
             })?;
-            s.flush()?;
+            s.flush(LockWait::No)?;
         }
         let selection = if admitted {
             None

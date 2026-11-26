@@ -33,6 +33,19 @@ use instrukt_runner::sessions::Sessions;
 /// The fixed recovery window of withdrawn work.
 pub(crate) const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
 
+/// How a flush takes the reflection lock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LockWait {
+    /// Wait for another process's reflection, at most
+    /// [`_store::REFLECTION_LOCK_TIMEOUT`]: the runner's tick, the one
+    /// catch-all that reflects what commands left pending.
+    Bounded,
+    /// Never wait: a command that writes the record returns once its local
+    /// write is committed, its reflection left pending when another process
+    /// holds the lock.
+    No,
+}
+
 /// Why reflection is pending.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PendingReason {
@@ -1282,26 +1295,45 @@ impl<'w> Session<'w> {
     /// the reflection lock (`work-dispatch`, `github-record`): each row is
     /// re-read under the lock, reflected from a working copy with no writer
     /// lock held, and what reflection learned is committed onto the live
-    /// row (`_store::merge_reflection`). A reflection another process holds
-    /// for longer than the wait reflects nothing for this command; the
+    /// row (`_store::merge_reflection`). `wait` says how the lock is taken
+    /// ([`LockWait`]). A lock another process holds — at once, or for longer
+    /// than the bounded wait — reflects nothing for this command: the
     /// session takes the reflection state the store records, so a revision
     /// that reflection confirmed meanwhile reads as reflected, and work still
     /// unconfirmed stays pending for a later flush.
-    pub fn flush(&mut self) -> Result<(), WorkError> {
-        let lock = match ReflectionLock::acquire(self.work.home()) {
-            Ok(lock) => lock,
+    pub fn flush(&mut self, wait: LockWait) -> Result<(), WorkError> {
+        let taken = match wait {
+            LockWait::Bounded => ReflectionLock::acquire(self.work.home()).map(Some),
+            LockWait::No => ReflectionLock::try_acquire(self.work.home()),
+        };
+        let held = |session: &mut Self, why: String| -> Result<(), WorkError> {
+            session.reflection_busy = Some(why);
+            for row in session.store.items()? {
+                session.learned(Some(row));
+            }
+            Ok(())
+        };
+        let lock = match taken {
+            Ok(Some(lock)) => lock,
+            Ok(None) => {
+                tracing::info!(
+                    event = "work_reflection_busy",
+                    project = %self.project.slug,
+                    "another reflection holds the reflection lock; this command does not wait and leaves what is unconfirmed to a later flush"
+                );
+                return held(
+                    self,
+                    "another process on this computer is reflecting; the next reflection reflects this change".to_owned(),
+                );
+            }
             Err(WorkError::Fs(busy @ instrukt_core::fsx::FsError::LockTimeout { .. })) => {
                 tracing::warn!(
                     event = "work_reflection_busy",
                     project = %self.project.slug,
                     error = %busy,
-                    "another reflection holds the reflection lock; this command reflects nothing and leaves what is unconfirmed to a later flush"
+                    "another reflection holds the reflection lock; this flush reflects nothing and leaves what is unconfirmed to a later flush"
                 );
-                self.reflection_busy = Some(busy.to_string());
-                for row in self.store.items()? {
-                    self.learned(Some(row));
-                }
-                return Ok(());
+                return held(self, busy.to_string());
             }
             Err(error) => return Err(error),
         };

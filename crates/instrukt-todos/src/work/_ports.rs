@@ -15,7 +15,7 @@ use jiff::Timestamp;
 use super::_envelope::ShownStatus;
 use super::_error::WorkError;
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
-use super::_session::{self, GitHubRead, PendingReason, ReflectionStatus, Session};
+use super::_session::{self, GitHubRead, LockWait, PendingReason, ReflectionStatus, Session};
 use super::_store;
 use super::Work;
 use crate::evidence::{
@@ -130,7 +130,7 @@ impl Claims for Work {
                 })?;
                 // The claim takes effect in the record; its reflection is
                 // GitHub's to answer whenever it can (`github-record`).
-                s.flush()?;
+                s.flush(LockWait::No)?;
                 return Ok(ClaimOutcome::Claimed);
             }
             return Ok(ClaimOutcome::AlreadyHeld);
@@ -158,7 +158,7 @@ impl Claims for Work {
         })?;
         // The claim takes effect in the record; its reflection is GitHub's
         // to answer whenever it can (`github-record`).
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(ClaimOutcome::Claimed)
     }
 
@@ -199,7 +199,7 @@ impl Claims for Work {
             s.items[index].record.claim = None;
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
 }
@@ -396,7 +396,7 @@ impl SessionBindings for Work {
                 Some("No eligible configured model; runtime creation was not attempted.".into());
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
 
@@ -458,7 +458,7 @@ impl SessionBindings for Work {
                     binding.attempt.released_at = None;
                     Ok(())
                 })?;
-                s.flush()?;
+                s.flush(LockWait::No)?;
                 let key = &retained.attempt.semantic_key;
                 admitted(&s, index, &machine, |b| {
                     &b.attempt.semantic_key == key
@@ -652,7 +652,7 @@ impl SessionBindings for Work {
             record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         admitted(&s, index, &machine, |b| {
             b.attempt.semantic_key == key && b.attempt.released_at.is_none() && b.session.is_none()
         })
@@ -798,7 +798,7 @@ impl SessionBindings for Work {
         let mut s = Session::open(self, project)?;
         let todo = replacement_todo(&s, key)?;
         let index = s.enter(&todo)?;
-        s.flush()?;
+        s.flush(LockWait::Bounded)?;
         match s.status(index) {
             ReflectionStatus::Reflected => Ok(()),
             ReflectionStatus::Pending(reason) => {
@@ -868,7 +868,7 @@ impl SessionBindings for Work {
             }
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
 }
@@ -883,7 +883,7 @@ impl Reflection for Work {
         // waits behind a push.
         s.publish()?;
         poll_interest(&mut s)?;
-        s.flush()?;
+        s.flush(LockWait::Bounded)?;
         if let Some(cause) = &s.board_setup_failure {
             return Err(WorkError::refused(format!("cockpit setup pending: {cause}")).into());
         }
@@ -946,7 +946,7 @@ impl TaskFirings for Work {
             });
             Ok(())
         })?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
 }
@@ -1029,7 +1029,7 @@ impl AutomaticHolds for Work {
                 Ok(())
             },
         )?;
-        s.flush()?;
+        s.flush(LockWait::No)?;
         Ok(())
     }
 }
