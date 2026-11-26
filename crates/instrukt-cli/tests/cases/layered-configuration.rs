@@ -137,7 +137,7 @@ fn a_cloned_project_cannot_decide_which_engine_command_runs_on_a_push() {
 
 // spec: project/instrukt/spec/feature/configuration/layered-configuration UC-CL8
 #[test]
-fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_settling() {
+fn thread_finishing_resolves_from_the_machine_entry() {
     let mut env = TestEnv::new();
     let fake = t3::FakeT3::create(&env);
     write_global(&env, MACHINE);
@@ -153,8 +153,7 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
         .state_dir()
         .join(format!("{}.json", fake.native_id("agent")));
     let before = std::fs::read(&session).unwrap();
-    let body =
-        "<!-- @config: runtime.finish_thread -->\n\n<!-- @config: runtime.retire_thread -->\n";
+    let body = "<!-- @config: runtime.finish_thread -->\n";
     let repo = documented::project(
         &env,
         "demo",
@@ -163,7 +162,7 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
             documented::snippet(
                 "procedure",
                 "Conclude",
-                "Settle a resting conversation or retire a finished one.",
+                "Settle a resting conversation or a finished todo's orchestrator.",
                 "",
                 &[],
                 body,
@@ -180,12 +179,12 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
     };
 
     let shipped = rendered();
-    insta::assert_snapshot!("terminal-retirement-shipped", shipped);
+    insta::assert_snapshot!("thread-finishing-shipped", shipped);
 
     repo.write(
         "instrukt.yaml",
         &format!(
-            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    retire_thread: Delete the thread and its transcript.\n"
+            "schema_version: {PROJECT_SCHEMA_VERSION}\nproject: demo\nruntimes:\n  t3:\n    finish_thread: Delete the thread and its transcript.\n"
         ),
     );
     let refused = env.run(repo.path(), ["config", "validate"]).failure();
@@ -195,15 +194,37 @@ fn terminal_retirement_resolves_from_the_machine_entry_distinctly_from_dormant_s
     );
     assert_eq!(rendered(), shipped);
 
+    // A current machine layer naming an action the runtime entry does not
+    // define; an older one would be converted instead.
     write_global(
         &env,
         &format!(
-            "{MACHINE}runtimes:\n  t3:\n    retire_thread: Hide the finished conversation through the runtime's closest non-destructive operation.\n"
+            "schema_version: {GLOBAL_SCHEMA_VERSION}\nrunner: {{runtime: t3}}\nruntimes:\n  t3:\n    retire_thread: Archive the finished thread.\n"
+        ),
+    );
+    let undefined = env
+        .run(env.path("").as_path(), ["config", "validate", "--global"])
+        .failure();
+    // Only the machine layer's own finding; the agents file's findings are not this scenario's.
+    let undefined = stdout(&env, &undefined);
+    let layer: Vec<_> = undefined
+        .lines()
+        .filter(|line| line.contains("instrukt.yaml"))
+        .collect();
+    insta::assert_snapshot!(
+        layer.join("\n"),
+        @"[TMP]/home/.instrukt/instrukt.yaml: runtimes.t3.retire_thread: unknown key"
+    );
+
+    write_global(
+        &env,
+        &format!(
+            "{MACHINE}runtimes:\n  t3:\n    finish_thread: Settle the conversation through the runtime's closest non-destructive operation.\n"
         ),
     );
     env.run(env.path("").as_path(), ["config", "validate", "--global"])
         .success();
-    insta::assert_snapshot!("terminal-retirement-overridden", rendered());
+    insta::assert_snapshot!("thread-finishing-overridden", rendered());
 
     assert_eq!(std::fs::read(&session).unwrap(), before);
     assert_eq!(fake.threads(), [fake.native_id("agent")]);
@@ -263,8 +284,11 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     // layers to the current schema with every setting kept, and reads answer
     // as before.
     let env = TestEnv::new();
-    let global =
-        format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\n");
+    // The machine's runtime entry overrides a supported action beside one
+    // the runtime entry no longer defines.
+    let global = format!(
+        "{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\nruntimes:\n  t3:\n    finish_thread: Settle it the machine's way.\n    retire_thread: Archive it.\n"
+    );
     write_global(&env, &global);
     // A company home an earlier instrukt wrote, whose member named a Slack
     // identity.
@@ -281,7 +305,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let validated = env.run(repo.path(), ["config", "validate"]).success();
     insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 7; file migrates on the next writing command
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     ");
     assert_eq!(
@@ -314,6 +338,19 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     .unwrap();
     assert!(machine["modules"].get("conversations").is_none());
     assert_eq!(machine["modules"]["blueprint"].as_bool(), Some(true));
+    // The action the runtime entry no longer defines is gone; the
+    // supported override is kept as written.
+    assert!(machine["runtimes"]["t3"].get("retire_thread").is_none());
+    insta::assert_snapshot!(
+        read(&["config", "get", "--global", "runtimes.t3.finish_thread"]),
+        @"Settle it the machine's way."
+    );
+    assert_eq!(
+        machine["schema_version"].as_u64(),
+        Some(GLOBAL_SCHEMA_VERSION)
+    );
+    env.run(repo.path(), ["config", "validate", "--global"])
+        .success();
     env.run(repo.path(), ["config", "init", "--company", "acme"])
         .success();
     env.run(repo.path(), ["config", "validate", "--company", "acme"])
@@ -428,11 +465,11 @@ fn validating_configuration_written_by_a_newer_instrukt_is_refused() {
     docs render:
     stdout:
     stderr:
-    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 7 is newer than this instrukt supports (6); run `instrukt config validate --global` to see what to fix
+    instrukt: the machine configuration [TMP]/home/.instrukt/instrukt.yaml cannot be read: its schema_version 8 is newer than this instrukt supports (7); run `instrukt config validate --global` to see what to fix
     config validate --global:
     stdout:
     stderr:
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 7, newer than this instrukt supports (6); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml has schema_version 8, newer than this instrukt supports (7); upgrade with `curl -fsSL https://github.com/InstruktAI/instrukt/releases/latest/download/install.sh | sh`
     "
     );
     assert_eq!(std::fs::read(&path).unwrap(), machine_bytes);

@@ -20,6 +20,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 
 ### Bounded contexts
 
+
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -28,11 +29,12 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
-| work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+
 
 ### Modules
 
@@ -155,6 +157,14 @@ repository's company home adoption carries it out.
 | publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
 <!-- /planned:company-home-generation -->
 
+Thread retention adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
+| work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator
@@ -164,8 +174,9 @@ hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
 External models are translated through **Anti-corruption layer (ACL)**
-relationships: work's GitHub reflection boundary translates issues, artifacts
-and stamps; blueprint's engine adapter translates the engine graph into its
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into

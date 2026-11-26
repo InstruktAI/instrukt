@@ -352,6 +352,13 @@ impl Committed {
                 .map_err(|source| PublicationError::Io { path: full, source })?;
             files.insert(path, bytes);
         }
+        // The place for units is read only where no link stands at, above
+        // or inside it, whether git ignores the link or not.
+        let units_above = links_at_or_above(root, super::_units::PLACE)?;
+        if units_above.is_empty() {
+            links.extend(links_inside(root, super::_units::PLACE)?);
+        }
+        links.extend(units_above);
         if let Some(places) = places {
             for file in places.files {
                 links.extend(links_at_or_above(root, file)?);
@@ -642,6 +649,19 @@ mod tests {
         .unwrap();
         let links: Vec<&str> = tree.links().collect();
         assert_eq!(links, ["plugins"]);
+    }
+
+    #[test]
+    fn a_git_ignored_link_inside_the_place_for_units_is_recorded() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("repo");
+        std::fs::create_dir_all(root.join("docs/_compressed")).unwrap();
+        crate::git::run(&root, ["init", "-q"]).unwrap();
+        std::fs::write(root.join(".gitignore"), "docs/_compressed/general\n").unwrap();
+        std::os::unix::fs::symlink(dir.path(), root.join("docs/_compressed/general")).unwrap();
+        let tree = Committed::working_tree(&root).unwrap();
+        let links: Vec<&str> = tree.links().collect();
+        assert_eq!(links, ["docs/_compressed/general"]);
     }
 
     #[test]

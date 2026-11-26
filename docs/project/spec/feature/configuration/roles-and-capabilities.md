@@ -85,10 +85,11 @@ code. This table groups the catalog by capability family. A command's read and
 write forms can map to different actions. New command paths declare their
 mapping; a missing mapping is a defect, never an unclassified bypass.
 
+
 | Family | Actions | Objects and current instrukt surface |
 | --- | --- | --- |
 | Documentation | `docs-read`, `docs-write` | Snippets and documentation workspace: `docs index|get|schema|validate`; `docs fold` mutates the target workspace. |
-| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show|refresh`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
+| Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
 | Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
@@ -101,6 +102,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Tool servers | `mcp-access` | `mcp list|list-tools|call`: the servers the caller's scope shows and calls to their tools, under `project/instrukt/spec/feature/runner/mcp-access`. Which login a call carries is decided there, never by this grant. `own` reaches the servers of the assignment's own company and the machine-wide open servers that company's sessions see; a machine-wide server that carries a login is a machine-wide object. `any` lifts that restriction and changes nothing in which servers the caller sees, which company it may name or which login a call carries. |
 | Company conversations | `company-reply` | `company reply`: queue an explicit reply to an admitted conversation of the caller's active company connector binding (`project/instrukt/spec/feature/company/conversations`). `own` reaches the caller's own bound conversation (or, under `session_scope: company`, any admitted conversation on that `(company, connector)`); object checks always require an active company conversation binding and never cross companies or connectors. |
 | Installation and runner | `installation-read`, `installation-write`, `runner-execute` | `ticks status`, `install --check`; `install` convergence/withdrawal; `run`, `tick`, hook workers, blueprint workers and the internal webhook receiver execute their declared work. Internal entry paths retain object checks and receive no caller-selected role bypass. |
+
 
 Review evidence belongs to the Evidence family: `instrukt review record` and
 `instrukt review exempt` are `stamp`, and `instrukt review show` is
@@ -140,6 +142,14 @@ among them, is refused it whatever its class, naming the operator's door,
 and nothing is created
 (`project/instrukt/spec/feature/configuration/company-homes`, Generation).
 <!-- /planned:company-home-generation -->
+
+`instrukt docs units` belongs to the Documentation family: it is `docs-read`,
+as the read forms of the renderings are — `docs render --check`,
+`docs plugin --check` and `docs plugin --validate`. Its object is the
+checkout the caller stands in, which it reads and never writes; like those
+read forms, it needs no home, publication, configuration layer, database or
+network, so a fresh clone with the binary is enough
+(`project/instrukt/spec/feature/publication/compressed-units`).
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
@@ -197,34 +207,24 @@ todo, home or placement.
 
 ### Shipped bundles and role entries
 
-The named bundles ship in the file and are editable configuration. Their shipped
-composition is:
-
-| Bundle | Scoped grants |
-| --- | --- |
-| `read` | `docs-read`, `todo-read`, `artifact-read`, `config-read`, `agents-read`, `events-read`, `code-check`, `eval-read`, `repository-read`, `installation-read`, each at `any`. |
-| `worker` | `artifact-write`, `stamp`, `code-commit`, `docs-write`, each at `own`. |
-| `review` | `artifact-write`, `stamp`, each at `own`. |
-| `record` | `todo-write`, `artifact-write`, `stamp`, `bug-report`, each at `own`. |
-| `report` | `bug-report` at `any`. |
-| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, `attention-raise`, each at `own`. |
-| `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
-| `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
-| `tools` | `mcp-access`, `company-reply`, each at `own`. |
-| `all` | Every catalog action at `any`. |
+`crates/instrukt-core/src/config/shipped/agents.yaml` is the single source of
+truth for the shipped named bundles, role entries, classes, grant compositions,
+GitHub App references, and model `order`/`tier` defaults (editable in
+`~/.instrukt/agents.yaml` and inspectable via `instrukt agents list`). Its
+entries cover every role declared by instrukt's shipped procedures, the
+`company-agent` role the runner gives a conversation session
+(`project/instrukt/spec/feature/company/conversations`), and the reserved
+`default` and `event-handler` fallbacks. Model `order` and `tier` defaults
+follow `project/instrukt/spec/feature/configuration/agent-selection`; `github_app`
+names only the GitHub identity reference, never model selection.
 
 A company connector may declare `role: technical-coordinator`; its sessions
 then start from `general/procedure/technical-coordinator`, the procedure
-declaring that role, rather than from company assistance. Its shipped entry
-carries the `read` bundle (every read surface in that bundle, excluding
-`history-read`), `worker` and `record` (documentation, commits, artifacts,
-stamps and todo writes scoped to `own`), `report` (defect reports into any
-project at `any`), and `tools` (`mcp-access` and `company-reply` at `own`,
-bound to the session's company). Because a company conversation binding carries
-no bound project or todo, `own`-scoped work-record grants do not match a target
-project on their own; as a `standing` role, the session carries these grants as
-declared focus and relies on object-level checks rather than focused-class
-command refusals.
+declaring that role, rather than from company assistance. Because a company
+conversation binding carries no bound project or todo, `own`-scoped work-record
+grants do not match a target project on their own; as a `standing` role, the
+session carries its grants as declared focus and relies on object-level checks
+rather than focused-class command refusals.
 
 A company's agent reports defects of the system it works through
 (`general/procedure/bug-reporting`) into the project that owns the defect on its
@@ -233,28 +233,6 @@ project at `any`. It is the company agent's only work-record write: it holds no
 `todo-write`, so it creates, changes and withdraws no other todo. What a
 report files is the work context's
 (`project/instrukt/spec/feature/work/todos`).
-
-These entries cover every role declared by instrukt's shipped procedures and
-the `company-agent` role the runner gives a conversation session, declared by
-the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-Each role's model `order` and `tier` are the shipped data's, under
-`project/instrukt/spec/feature/configuration/agent-selection`; the table's App
-column names the identity reference, not another model/provider choice.
-
-| Roles | Class | `can` bundles | App |
-| --- | --- | --- | --- |
-| `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
-| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
-| `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
-| `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
-| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
-| `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
-| `sdlc-coordinator` | `standing` | `read`, `record`, `orchestrate`, `report` | project |
-| `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
-| `event-handler` | `standing` | `all` | project |
-| `company-agent` | `standing` | `read`, `tools`, `report` | project |
-| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
-| `default` | `agent` | `all` | project |
 
 `sdlc-coordinator` is the standing role of a project's fleet coordination. Its
 `own` scope is the project home of its standing assignment. Its
@@ -270,9 +248,6 @@ and standing role that orchestrates holds it. A shipped focused worker or
 reviewer holds no `attention-raise`: its raise is refused, and it returns the
 condition to the orchestrator that dispatched it in its own output, which
 raises it when it cannot resolve it.
-
-`verifier` takes the reviewer roles' model `order` and `tier`
-(`project/instrukt/spec/feature/configuration/agent-selection`).
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role

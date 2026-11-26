@@ -68,7 +68,7 @@ at a staging location is deleted by a later one.
 ### Delivered worktrees
 
 After a todo is delivered, the runner has work release that todo's worktree
-and work branch on each computer that holds any of them
+and work branch on the computer whose work record holds the todo
 (`project/instrukt/spec/feature/work/todos`): the cleanup
 `project/instrukt/spec/feature/workflow/delivery-cycle` requires of a
 delivered todo. The worktree's regenerable output leaves with it. A worktree
@@ -160,11 +160,10 @@ Then the request is refused and names the assignment that would bind it
   reclaimed and not removed.
 - A declared path names one location. A project whose regenerable output sits
   at many locations declares each of them.
-- A computer acts on what its own work record holds. It learns of a delivery
-  made elsewhere because work reads GitHub for the todos whose worktree or
-  work branch the computer holds
-  (`project/instrukt/spec/feature/work/github-record`); until it has, the
-  worktree keeps the standing the record last gave it.
+- A computer acts on what its own work record holds, and that record holds
+  the delivery of each of its todos. A worktree or work branch of a todo
+  another computer's record holds has no standing here and is never reclaimed
+  or removed (`project/instrukt/spec/feature/work/github-record`).
 
 ## See Also
 

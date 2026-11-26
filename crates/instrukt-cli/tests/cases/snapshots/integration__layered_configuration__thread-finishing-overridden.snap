@@ -1,0 +1,37 @@
+---
+source: crates/instrukt-cli/tests/cases/layered-configuration.rs
+expression: rendered()
+---
+# instrukt docs get: acme/procedure/conclude
+
+---
+id: acme/procedure/conclude
+type: procedure
+domain: acme
+scope: global
+description: Settle a resting conversation or a finished todo's orchestrator.
+source: [TMP]/demo/docs/domain/acme/procedure/conclude.md
+---
+# Conclude — Procedure
+
+## Goal
+
+```
+Settle the conversation through the runtime's closest non-destructive operation.
+```
+
+## Preconditions
+
+Text.
+
+## Steps
+
+Text.
+
+## Outputs
+
+Text.
+
+## Recovery
+
+Text.

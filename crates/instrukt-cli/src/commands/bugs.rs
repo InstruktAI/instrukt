@@ -334,6 +334,7 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             catch_up: None,
             agent: None,
             human_involved: args.human_involved,
+            hold: None,
         },
     )?;
     let record = &outcome.value;

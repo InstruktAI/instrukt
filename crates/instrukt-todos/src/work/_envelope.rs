@@ -1,17 +1,13 @@
-//! How a record is shown and carried on GitHub (`github-record`, "Issues
-//! and visible work" and "Writer and convergence"): the issue a person
-//! reads, and the record envelope — a comment whose readable first line
-//! names the revision and whose hidden line carries the committed record
-//! with its artifact-version references and stamp ledger.
+//! How a record is shown on GitHub (`github-record`, "Issues and visible
+//! work"): the issue a person reads, its output labels and the artifact
+//! type each artifact uses. The record itself is never carried there.
 
 use instrukt_runner::interfaces::TodoKind;
 use serde_json::{Value, json};
 
 use super::_model::{TodoId, TodoRecord};
-use crate::evidence::{Actor, TodoStatus, artifact_names};
+use crate::evidence::{TodoStatus, artifact_names};
 
-/// The marker of the hidden record line.
-const RECORD_MARKER: &str = "<!-- instrukt:work-record:v2:";
 /// The marker naming a todo's identity in its issue body.
 const ISSUE_MARKER: &str = "<!-- instrukt:todo:";
 const COMMENT_CLOSE: &str = " -->";
@@ -155,121 +151,6 @@ pub(crate) fn issue_identity(body: &str) -> Option<TodoId> {
     })
 }
 
-/// One revision as GitHub carries it: the committed record, and the
-/// revision it was built on. Revisions are appended, never edited; the
-/// committed record is the chain of trusted envelopes each built on the
-/// one before it (see `_reflect::committed`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(crate) struct Envelope {
-    /// The revision this one replaces; 0 for the first.
-    pub base: u64,
-    pub record: TodoRecord,
-}
-
-/// The record comment of `record`, built on revision `base` (contents
-/// stripped: artifact content is published as native artifacts).
-pub(crate) fn record_comment(record: &TodoRecord, base: u64) -> Result<String, serde_json::Error> {
-    let payload = serde_json::to_string(&Envelope {
-        base,
-        record: record.without_contents(),
-    })?;
-    let mut text = format!(
-        "[instrukt record · {} · rev {} on rev {base}]\n",
-        record.slug, record.revision
-    );
-    for stamp in &record.stamps {
-        let fact = serde_json::to_value(&stamp.fact)?;
-        text.push_str(&format!(
-            "- {} {} by {}\n",
-            stamp.at.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            fact["fact"].as_str().unwrap_or_default(),
-            match &stamp.actor {
-                Actor::Session(session) => format!("session {session}"),
-                Actor::GitHub { login } => format!("@{login}"),
-                Actor::Person { name } => name.clone(),
-            }
-        ));
-    }
-    text.push_str(&format!(
-        "{RECORD_MARKER}{}{COMMENT_CLOSE}\n",
-        hide(&payload)
-    ));
-    Ok(text)
-}
-
-/// The envelope a comment carries: `None` when it is no record comment,
-/// `Some(Err)` when its record line does not parse. Content an envelope
-/// supplies is dropped: evidence content comes only from verified
-/// artifact versions.
-pub(crate) fn parse_record_comment(
-    body: &str,
-) -> Option<Result<Envelope, super::_github::GitHubError>> {
-    let line = body.lines().find(|line| {
-        line.starts_with("<!-- instrukt:work-record:v") && line.ends_with(COMMENT_CLOSE)
-    })?;
-    let wire = &line["<!-- instrukt:work-record:v".len()..line.len() - COMMENT_CLOSE.len()];
-    let (envelope_version, payload) = wire.split_once(':').unwrap_or((wire, ""));
-    Some((|| {
-        let invalid = |message: String| super::_github::GitHubError::RecordSchema { message };
-        if envelope_version != "2" {
-            return Err(invalid(format!(
-                "unsupported GitHub record envelope version {envelope_version} (supported: 2); upgrade instrukt before acting on this todo"
-            )));
-        }
-        let mut value: Value = serde_json::from_str(payload).map_err(|e| invalid(e.to_string()))?;
-        let observed = value["record"]["schema"].as_u64().ok_or_else(|| {
-            invalid(
-                "record has no schema version; upgrade instrukt or restore a supported record"
-                    .into(),
-            )
-        })?;
-        let supported = u64::from(super::_model::SCHEMA);
-        if !(1..=supported).contains(&observed) {
-            return Err(invalid(format!(
-                "todo `{}` has record schema {observed}; this binary supports 1..={supported}; upgrade instrukt before acting on this todo",
-                value["record"]["slug"].as_str().unwrap_or("unknown")
-            )));
-        }
-        // v1 lacks record-order numbers. Serde defaults and number_unsequenced
-        // preserve retained evidence while assigning its existing order.
-        if observed < 3
-            && let Some(bindings) = value["record"]["bindings"].as_array_mut()
-        {
-            for binding in bindings {
-                let role = binding
-                    .get("role")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if let Some(placement) = binding
-                    .get_mut("native_placement")
-                    .filter(|v| v.is_object())
-                    && placement.get("title").is_none_or(Value::is_null)
-                {
-                    let title = role.as_deref()
-                        .zip(placement.get("branch").and_then(Value::as_str))
-                        .zip(placement.get("key").and_then(Value::as_str))
-                        .and_then(|((role, branch), key)| instrukt_runner::runtime::legacy_driver_title(role, branch, key))
-                        .ok_or_else(|| invalid("legacy native placement lacks retained title or original role/phase evidence; restore that evidence before retrying".into()))?;
-                    placement["title"] = title.into();
-                }
-            }
-        }
-        value["record"]["schema"] = supported.into();
-        let mut envelope: Envelope =
-            serde_json::from_value(value).map_err(|e| invalid(e.to_string()))?;
-        envelope.record = envelope.record.without_contents();
-        envelope.record.number_unsequenced();
-        Ok(envelope)
-    })())
-}
-
-/// Keeps JSON inside an HTML comment: `<`, `>` and `&` as JSON escapes.
-fn hide(json: &str) -> String {
-    json.replace('&', "\\u0026")
-        .replace('<', "\\u003c")
-        .replace('>', "\\u003e")
-}
-
 /// The artifact type an artifact uses: plans use the provider's plan
 /// capability, everything else its document capability.
 pub(crate) fn artifact_type(name: &str) -> &'static str {
@@ -324,6 +205,7 @@ pub(crate) fn is_repository_work(kind: TodoKind) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence::Actor;
     use instrukt_core::ids::{ProjectSlug, TodoSlug};
     use instrukt_runner::interfaces::CatchUp;
 
@@ -359,39 +241,6 @@ mod tests {
             delivery: None,
             removal: None,
         }
-    }
-
-    #[test]
-    fn a_record_comment_round_trips_even_with_markup_in_its_text() {
-        let record = record();
-        let body = record_comment(&record, 2).unwrap();
-        let parsed = parse_record_comment(&body).unwrap().unwrap();
-        assert_eq!(parsed, Envelope { base: 2, record });
-        assert!(parse_record_comment("a plain comment").is_none());
-    }
-
-    #[test]
-    fn content_an_envelope_supplies_is_never_read_as_evidence() {
-        let mut record = record();
-        let forged = crate::work::_model::Version {
-            digest: crate::work::_model::digest_of("real"),
-            writer: Actor::Person { name: "x".into() },
-            created: "2026-11-03T10:00:00Z".parse().unwrap(),
-            derived_from: Vec::new(),
-            sequence: 0,
-            grounding: Default::default(),
-            remote: Some(1),
-            content: Some("forged".into()),
-        };
-        record.artifacts.push(crate::work::_model::Artifact {
-            name: crate::evidence::ArtifactName::new("prd"),
-            address: Some(1),
-            versions: vec![forged],
-        });
-        let payload = serde_json::to_string(&Envelope { base: 0, record }).unwrap();
-        let body = format!("{RECORD_MARKER}{payload}{COMMENT_CLOSE}");
-        let parsed = parse_record_comment(&body).unwrap().unwrap();
-        assert_eq!(parsed.record.artifacts[0].versions[0].content, None);
     }
 
     #[test]

@@ -758,9 +758,10 @@ fn an_outage_before_dispatch_keeps_the_question() {
         conversation_finding(&c, "t3 conversation delivery").is_some()
             && interval(&c, &question).is_some()
     });
-    let before = retained().unwrap();
-    let command_id = before.0.as_deref().unwrap();
-    assert_eq!((before.1, before.2), (None, None));
+    // The thread's placement is checked against the runtime before the send
+    // is attempted: with the runtime unreachable, nothing is attempted and
+    // no command identity is taken.
+    assert_eq!(retained(), Some((None, None, None)));
     let failure = || {
         db.query_row(
             "SELECT failure FROM conversation_messages WHERE message=?1",
@@ -781,15 +782,15 @@ fn an_outage_before_dispatch_keeps_the_question() {
         "the relay persists a fresh failure past the send reconciliation bound",
         || failure().is_some_and(|cause| cause != prior_failure),
     );
-    assert_eq!(retained(), Some((Some(command_id.to_owned()), None, None)));
+    assert_eq!(retained(), Some((None, None, None)));
     assert_eq!(c.runtime.message_count(&session), 1);
     std::fs::rename(&held, &descriptor).unwrap();
-    wait_for_answer_fixture(
-        "dispatch resumes without replacing the command identity",
-        || c.runtime.message_count(&session) == 2,
-    );
+    wait_for_answer_fixture("dispatch resumes once the runtime is back", || {
+        c.runtime.message_count(&session) == 2
+    });
+    let command_id = retained().unwrap().0.unwrap();
     let ids = std::fs::read_to_string(c.runtime.state_dir().join("dispatch-ids")).unwrap();
-    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id]);
+    assert_eq!(ids.lines().collect::<Vec<_>>(), [command_id.as_str()]);
     c.finish_turn(&session, 1, "The report is in the drive.");
     wait_for_answer_fixture("the saved question is answered once", || {
         c.slack.posts_beginning("The report is in the drive.") == 1
@@ -2602,6 +2603,8 @@ fn prepared_status_company() -> Company {
         std::fs::write(&path, &file.content).unwrap();
         std::fs::set_permissions(path, file.permissions.clone()).unwrap();
     }
+    // The copied company is onboarded: its home has its runtime project.
+    company.env.place_company_project(COMPANY);
     company
 }
 

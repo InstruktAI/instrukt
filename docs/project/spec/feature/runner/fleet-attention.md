@@ -52,9 +52,8 @@ before and after, whether it left active work, a failed attempt's role and
 number with that role's earlier failed attempts on the todo, and whether the
 project has an active todo that is unheld and not a structural holder after the
 change. The runner decides which of those facts are conditions and appends
-their events. A record adopted from GitHub carries another computer's change;
-work makes no call for it. A release of a todo that holds nothing changes no
-hold and is no condition.
+their events. A release of a todo that holds nothing changes no hold and is
+no condition.
 
 #### Attention episodes
 
@@ -118,7 +117,8 @@ follow `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 ### What produces no attention event
 
-- A running session, a turn that ended with its evidence recorded, a todo
+- A running session (one parked on work it delegated included), a turn that
+  ended with its evidence recorded, a todo
   waiting on a person's approval as work decides that wait
   (`project/instrukt/spec/feature/work/github-record`), and an execution whose
   claim was released or transferred.

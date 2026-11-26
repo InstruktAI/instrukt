@@ -15,7 +15,8 @@ use instrukt_core::{
 use instrukt_runner::{
     process,
     runtime::{
-        InputState, RuntimeAdapter, T3,
+        ArchiveOutcome, ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart,
+        T3,
         conversations::{Role, SourceWake},
     },
     sessions::SessionState,
@@ -809,6 +810,98 @@ pub fn websocket_dispatch(id: &str) -> Result<Value> {
     Ok(json!({"queued":true,"inputs_after_replay":count,"missing_provenance_rejected":true}))
 }
 
+/// The thread the thread-retention check archives.
+pub const RETENTION_THREAD: &str = "contract-retention";
+
+/// Brings the retention fixture thread to settled and opened on the real
+/// release with management commands alone: created without a message,
+/// settled, then visited as a person opening it.
+fn retention_fixture(token: &str, project: &str) -> Result<()> {
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.create","commandId":"contract-retention-create","threadId":RETENTION_THREAD,"projectId":project,"title":"contract retention","modelSelection":{"instanceId":"codex","model":"default"},"runtimeMode":"approval-required","interactionMode":"default","createdBy":"user","creationSource":"web","branch":null,"worktreePath":null}),
+    )?;
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.settle","commandId":"contract-retention-settle","threadId":RETENTION_THREAD}),
+    )?;
+    let visited = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.visit","commandId":"contract-retention-visit","threadId":RETENTION_THREAD,"visitedAt":visited,"opened":true}),
+    )?;
+    Ok(())
+}
+
+/// Thread archiving through the adapter's public finished-thread listing
+/// and archive, on whichever boundary the worker runs against: the settled,
+/// opened fixture thread's decoded facts, its archive (whose re-read
+/// validates every table it consumes), its absence from the listing
+/// afterwards, and T3's refusal of a second raw `thread.archive` while its
+/// projection row shows it archived.
+pub fn retention(checkout: &Path) -> Result<Value> {
+    let adapter = T3::default();
+    let observed = adapter
+        .finished_threads(checkout)?
+        .into_iter()
+        .find(|thread| thread.session.id.as_str() == RETENTION_THREAD)
+        .context("the settled fixture thread is not listed finished")?;
+    let db = input_database()?;
+    let opened: Option<f64> = db.query_row(
+        "SELECT json_extract(payload_json,'$.opens.openedAt') FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+        [RETENTION_THREAD],
+        |row| row.get(0),
+    )?;
+    let opened = opened
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms.round() as i64).ok())
+        .context("the fixture thread's opening is not recorded")?;
+    let opening_counted = observed
+        .latest_activity
+        .is_some_and(|latest| latest >= opened);
+    let outcome = adapter.archive(&observed, jiff::Timestamp::now())?;
+    ensure!(
+        outcome == ArchiveOutcome::Archived,
+        "the fixture thread was not archived: {outcome:?}"
+    );
+    let listed: Vec<Value> = serde_json::from_str(&cli(
+        &[
+            "thread",
+            "list",
+            "--project",
+            checkout.to_str().context("checkout path")?,
+            "--json",
+        ],
+        None,
+    )?)?;
+    let mut token = Token::scoped(&["orchestration:operate"])?;
+    let second = rpc_exit(
+        &token.secret,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.archive","commandId":"contract-retention-again","threadId":RETENTION_THREAD}),
+    )?;
+    token.revoke()?;
+    let row_archived: bool = db.query_row(
+        "SELECT archived_at IS NOT NULL FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+        [RETENTION_THREAD],
+        |row| row.get(0),
+    )?;
+    Ok(json!({
+        "finished": observed.finished_at.is_some(),
+        "quiet": observed.quiet,
+        "pinned": observed.pinned,
+        "opening_counted": opening_counted,
+        "archived": true,
+        "listed_after_archive": listed.iter().any(|thread| thread["threadId"] == RETENTION_THREAD),
+        "second_archive_refused": second["_tag"] == "Failure",
+        "row_archived": row_archived,
+    }))
+}
+
 /// Provider-free launch management: no opening message or provider turn is requested.
 pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     let mut token = Token::issue(true)?;
@@ -845,6 +938,59 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     Ok(
         json!({"same_thread":true,"modes_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
     )
+}
+
+/// Project registration and resolution: a root without a project is
+/// reported, ensured once and then reused, `t3 project add` refuses a root
+/// that has one, and a launch for a checkout whose only containing project
+/// is rooted at an ancestor registers the checkout and resolves to it.
+/// `project` is a registered project's root.
+pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
+    let adapter = T3::default();
+    let added = root.join("added-root");
+    fs::create_dir_all(&added)?;
+    let before = adapter.execution_root(&added, ExecutionRootMode::Check)?;
+    let ensured = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    let duplicate = cli(&["project", "add", added.to_str().unwrap()], None);
+    let reused = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    ensure!(
+        ensured.project_id.is_some() && ensured.project_id == reused.project_id,
+        "the ensured project is not the one the snapshot lists afterwards"
+    );
+    let nested = project.join("nested-checkout");
+    fs::create_dir_all(&nested)?;
+    let request = RuntimeStart {
+        launch_modes: None,
+        native_launch: Some(NativeLaunch {
+            command_id: "contract-ancestor-launch".into(),
+            thread_id: "contract-ancestor-thread".into(),
+            project_id: String::new(),
+            existing_worktree: None,
+        }),
+        preferences: Vec::new(),
+        selection: None,
+        selection_evidence: None,
+        checkout: nested.clone(),
+        key: "instrukt:contract:ancestor".into(),
+        title: "Ancestor-only contract launch".into(),
+        brief: "Never started.".into(),
+        worktree: None,
+        profiles: Default::default(),
+    };
+    // Mode resolution needs a provider selection the contract does not
+    // make; the project is resolved before it, so a refusal after
+    // registration still shows where the launch would start.
+    let _ = adapter.resolve_launch(&request, None);
+    let registered = adapter.execution_root(&nested, ExecutionRootMode::Check)?;
+    let ancestor = adapter.execution_root(project, ExecutionRootMode::Check)?;
+    Ok(json!({
+        "check_before_add": {"present": before.project_id.is_some(), "created": before.created},
+        "ensure": {"present": ensured.project_id.is_some(), "created": ensured.created},
+        "duplicate_add_refused": duplicate.is_err(),
+        "ensure_again": {"present": reused.project_id.is_some(), "created": reused.created},
+        "ancestor_only_launch_registers_the_checkout": registered.project_id.is_some()
+            && registered.project_id != ancestor.project_id,
+    }))
 }
 
 pub fn real(root: &Path) -> Result<()> {
@@ -884,6 +1030,7 @@ pub fn real(root: &Path) -> Result<()> {
     }
     let project = find_project()?.context("registered temporary project")?;
     let native_launch = native_launch_contract(root, &project)?;
+    let projects = project_boundary(root, &root.join("project"))?;
     let id = "contract-thread";
     rpc(
         &token.secret,
@@ -948,6 +1095,8 @@ pub fn real(root: &Path) -> Result<()> {
     ensure!(changed, "durable input change was not observed");
     let result = observe(id)?;
     let websocket = websocket_dispatch(id)?;
+    retention_fixture(&token.secret, &project)?;
+    let retention = retention(&root.join("project"))?;
     ensure!(
         adapter
             .read_state(&SessionRef::parse("t3:contract-missing")?)?
@@ -1039,7 +1188,7 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects})
             .to_string(),
     )?;
     Ok(())

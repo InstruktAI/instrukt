@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: reviews
+---
+[
+  {
+    "reviewer": "instruktai-reviewer[bot]",
+    "state": "CHANGES_REQUESTED",
+    "commit": "the built commit",
+    "body": "**Build review: changes requested** · reviewed commit `<the built commit>`\n\n1. The parser keeps the depth of nested lists.\n2. Rendering is untouched.\n\n[Complete review findings](https://github.test/acme/demo/issues/1/artifacts/6)"
+  }
+]

@@ -512,13 +512,14 @@ fn refused_findings(
             findings.retain(|f| f.key != super::_review::REVIEW_AUTOMATIC_KEY);
         }
     }
-    if layer.kind() == LayerKind::Global
-        && super::_validate::needs_transport(&super::_effective::effective_value(
-            Some(before),
-            None,
-        )?)
-    {
-        findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+    if layer.kind() == LayerKind::Global {
+        let before = super::_effective::effective_value(Some(before), None)?;
+        if super::_validate::needs_transport(&before) {
+            findings.retain(|f| f.kind != FindingKind::EventsNeedTransport);
+        }
+        if super::_validate::thread_retention_unavailable(&before).is_some() {
+            findings.retain(|f| !super::withholds_thread_retention(f));
+        }
     }
     Ok(findings)
 }

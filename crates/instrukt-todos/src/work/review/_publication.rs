@@ -15,7 +15,7 @@ pub(crate) const STATUS_CONTEXT: &str = "instrukt/review";
 const BODY_MARK: &str = "instrukt/review";
 
 /// The longest review body this computer writes.
-const BODY_LIMIT: usize = 60_000;
+pub(crate) const BODY_LIMIT: usize = 60_000;
 
 /// A verdict as GitHub carries it: its state, name and moment.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,8 +57,15 @@ pub(crate) fn body(
     let head = format!("{BODY_MARK} {}\n\n", description(name, moment));
     let closing =
         format!("\n\n(shortened; `instrukt review show {commit}` gives the report whole)\n");
+    shortened(&head, content, &closing)
+}
+
+/// `head` then `content`, within the body limit: when they do not fit,
+/// `content` is cut at a line end so that it and `closing`, the line saying
+/// where it is given whole, fit after `head`.
+pub(crate) fn shortened(head: &str, content: &str, closing: &str) -> String {
     let room = BODY_LIMIT.saturating_sub(head.chars().count() + closing.chars().count());
-    if content.chars().count() <= BODY_LIMIT - head.chars().count() {
+    if content.chars().count() <= BODY_LIMIT.saturating_sub(head.chars().count()) {
         return format!("{head}{content}");
     }
     let mut kept = String::new();
@@ -206,8 +213,9 @@ mod tests {
     }
 
     #[test]
-    fn a_long_report_is_shortened_within_the_body_limit() {
-        let report = "a line of findings\n".repeat(10_000);
+    fn a_long_report_is_shortened_within_the_body_limit_and_keeps_what_fits() {
+        let line = "a line of findings\n";
+        let report = line.repeat(10_000);
         let commit = CommitSha::parse(&"a".repeat(40)).unwrap();
         let body = body(
             &ContentDigest::of(&report),
@@ -216,6 +224,9 @@ mod tests {
             &commit,
         );
         assert!(body.chars().count() <= BODY_LIMIT);
+        // Whole lines are kept until the next would not fit: the body falls
+        // short of the limit by less than two lines, never by the report.
+        assert!(body.chars().count() > BODY_LIMIT - 2 * line.chars().count());
     }
 
     #[test]

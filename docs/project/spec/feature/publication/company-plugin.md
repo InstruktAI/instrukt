@@ -51,10 +51,17 @@ where each of their files stands.
   document by one line: that file's path inside the skill and the document's
   `description`. A document that requires another names it by where the
   plugin carries it.
-- **Every document once.** Each document the index selects, and each
-  document their required reads reach, is carried exactly once: in the main
-  file where an `expanded` document brings it in, otherwise as a file of its
-  own.
+- **Compressed in the main file.** The main file holds each document it
+  holds in full as that document's current compressed unit, and in its prose
+  where the unit is stale or missing
+  (`project/instrukt/spec/feature/publication/compressed-units`). A document
+  the main file holds compressed is also carried in its prose as a file of
+  its own, and the main file names that file with the document's compressed
+  rules, so a reader without the repository reaches its full prose.
+- **Every document's prose once.** Each document the index selects, and each
+  document their required reads reach, is carried in its prose exactly once:
+  in the main file where an `expanded` document brings it in and the main
+  file holds it in prose, otherwise as a file of its own.
 - **References between documents.** A reference in one company document's
   text to another, in each form the company's knowledge admits
   (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
@@ -143,9 +150,10 @@ With a finding, no file is written or removed.
 
 ### What the rendering is a function of
 
-The plugin and its catalog entry are a function of the repository's index and
-documents, the company's key, the name people write the company by, the
-plugin the repository already holds, and the rendering instrukt release.
+The plugin and its catalog entry are a function of the repository's index,
+documents and compressed units, the company's key, the name people write the
+company by, the plugin the repository already holds, and the rendering
+instrukt release.
 Nothing else from the computer enters: no home, no publication, no
 configuration layer and no environment. A fresh clone and the binary are
 enough, and a home and a clone of the repository render the same bytes.

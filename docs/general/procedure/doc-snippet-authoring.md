@@ -292,6 +292,19 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
     integration onto the default branch (`general/policy/commits`,
     `general/policy/documentation-discipline`).
 
+**Compressed units of the sources you change.** A source an entrypoint
+rendering holds in full may have a compressed unit under `docs/_compressed/`
+(`general/spec/snippet-authoring-schema`). Changing the source leaves that
+unit stale: the renderings then hold the source in its prose until the unit
+is renewed, and nothing refuses the change. Renewing the unit in the same
+change is optional; when you do, follow
+`general/procedure/compressed-unit-authoring`, and otherwise the
+repository's post-merge automation renews it. A change that deletes or moves
+a source removes or moves its unit with it, and one that takes a `general`,
+project or company source out of every entrypoint selection of its
+repository removes its unit; a domain snippet's unit stays while the snippet
+exists. `instrukt docs units` names every unit left orphaned.
+
 ## Outputs
 
 - New or updated snippet or company home document with correct structure.

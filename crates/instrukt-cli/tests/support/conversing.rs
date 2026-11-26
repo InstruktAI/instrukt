@@ -164,6 +164,8 @@ pub fn company_home(env: &TestEnv, name: &str, app: &str, bot: &str, settings: &
     let here = env.path("");
     env.run(&here, ["config", "init", "--company", name])
         .success();
+    // An onboarded company's home has its runtime project.
+    env.place_company_project(name);
     for (reference, value) in [("SLACK_APP_TOKEN", app), ("SLACK_BOT_TOKEN", bot)] {
         env.instrukt(&here)
             .args(["secrets", "set", reference, "--company", name])
@@ -315,6 +317,7 @@ impl Company {
         ).unwrap();
         let company_path = home.company_dir(&slug);
         std::fs::create_dir_all(&company_path).unwrap();
+        company.env.place_company_project(COMPANY);
         let config = company_path.join("company.yaml");
         let identity = format!("schema_version: {COMPANY_SCHEMA_VERSION}\ncompany: {COMPANY}\n");
         std::fs::write(&config, &identity).unwrap();

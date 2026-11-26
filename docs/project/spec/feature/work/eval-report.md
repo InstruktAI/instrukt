@@ -14,10 +14,9 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 
 ### Evidence source
 
-`instrukt eval report` produces HTML from the record, whether the available
-record is local, drawn from another project's reflected work or reconstructed
-from GitHub. The report uses recorded evidence rather than a separate eval
-log. There is only something to evaluate where work passes through the record.
+`instrukt eval report` produces HTML from this computer's work record. The
+report uses recorded evidence rather than a separate eval log. There is only
+something to evaluate where work passes through the record.
 
 `--since <date>` selects the history range. `--out <path>` selects the HTML
 destination, defaulting to the current project’s `scratchpad/eval/index.html`.
@@ -25,28 +24,21 @@ With no recorded work, the report says so.
 
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is
-read from this computer's local record and, for items that are not on this
-computer, from GitHub, so work done on another computer is reported here as
-well; that is the record reconstructed from GitHub. The report is not a
-listing: the developer asking for it is the interest that reads GitHub
-(`project/instrukt/spec/feature/work/github-record`). A project whose record
-cannot be read, for example without credentials or with GitHub unreachable,
-is listed with that limitation rather than dropped. The report takes no
-options beyond `--since` and `--out`.
+read from this computer's work record; the report reads nothing from GitHub.
+The report takes no options beyond `--since` and `--out`.
 
 Model identity, version and eval fingerprint come from the stamps owned by
 `project/instrukt/spec/feature/work/stamps`. Report generation does not
-invent missing observations or require conversation transcripts. Unreflected
-local observations are available only where their record is available.
+invent missing observations or require conversation transcripts.
 
 ### Evaluation windows
 
-The eval fingerprint identifies the process-document set selected for
-measurement. Publication computes it from published global snippets marked `eval: true`,
-hashed as committed raw content, and records it per published commit. Each
+The eval fingerprint identifies the doctrine in force when work was done.
+Publication computes it and records it per published commit
+(`project/instrukt/spec/feature/publication/eval-fingerprint`). Each
 stamp copies the current fingerprint when written; recovered stamps therefore
 retain their evaluation window without reconstructing a conversation.
-A change to that set starts a distinct comparison window. Model and version
+A change of fingerprint starts a distinct comparison window. Model and version
 remain separate dimensions, so a model change is distinguishable from a
 process-document change.
 

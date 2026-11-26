@@ -137,6 +137,7 @@ todo's worktree does not depend on it
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
 | `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
 | `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -276,8 +277,7 @@ No command/agent verb kind or agent-action exit-status router exists.
 | `discuss` | Open, participate in and close a runner-owned conversation link between two peer threads; the person participates in either thread and the runner relays finished turns with attribution. |
 | `start_thread` | Start a separately addressed conversation with its supplied project, semantic key, display title, initialized brief and placement. Repository todos use a single `<slug>/work` worktree; tasks create no git worktree. A worker uses `dispatch`. |
 | `cancel_child` | Stop this parent's identified child under its existing mandate, retaining its work/evidence and distinguishing accepted cancellation from completion. |
-| `finish_thread` | Dormantly settle an addressed conversation or this agent's own conversation where the runtime supports it so it stays wakeable in place with full context; retain open obligations, forbid external agents and runner automation from settling a standing agent (a standing procedure may self-settle when parked dormant), and apply self-settling at its supported turn boundary. |
-| `retire_thread` | Terminally retire an addressed terminal todo's orchestrator thread (`todo-orchestrator`, plus legacy `prepare-orchestrator` / `work-orchestrator` threads during upgrade) once its todo is delivered or withdrawn, removing it from active and settled thread lists and normal wake paths while retaining transcripts for audit and history extraction; converge idempotently on already-retired threads, preserve unfinished human and worker obligations, and never retire standing agents. On runtimes without a distinct archive state, map to the closest non-destructive native equivalent. |
+| `finish_thread` | Dormantly settle an addressed conversation, or this agent's own conversation where the runtime supports it, so it stays wakeable in place with full context: a resting conversation, or the orchestrator thread of a todo that was delivered or withdrawn. Retain open obligations, forbid external agents and runner automation from settling a standing agent (a standing procedure may self-settle when parked dormant), and apply self-settling at its supported turn boundary. |
 | `discover_environments` | Discover connected computers/environments, their project locations, access and task capabilities; keep runtime addresses distinct from instrukt machine IDs. |
 | `connect_environment` | Request the runtime's native connection/authentication flow for a named missing computer; report unresolved access as a prerequisite without inventing an address. |
 | `dispatch_remote` | Assign a local brief and report destination to an explicitly addressed connected environment, under its project and permissions; follow native completion evidence and retain partial results. |
@@ -312,8 +312,7 @@ agent-facing consumers retrieve the value through its alias.
 | `discuss` | When asked to open a discussion, use `instrukt discuss open <thread> [--message <text>]`; the native caller is the other member. Use `instrukt discuss close [--message <text>]` to deliver an optional final contribution and close for both members. The running instrukt runner shares finished turns automatically under project/instrukt/spec/feature/runner/conversation-links. |
 | `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a repository todo, start `t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>` (on another computer use `--worktree origin/<slug>/work --branch <slug>/work`; legacy un-integrated `<slug>/prepare` branches are carried forward automatically). instrukt derives these names; creation refuses an existing local branch. Native shared children inherit `<slug>/work`. After deliberate native startup, enter `instrukt todo work <slug> --placement-evidence <file\|->` containing native session, key, title, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
-| `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |
-| `retire_thread` | Use native archiving (t3_thread_organize with action 'archive') for the addressed terminal todo orchestrator thread once its todo is delivered or withdrawn, removing it from active and settled thread lists and normal wake paths while retaining transcripts for audit and history extraction. Settling already clears PR watches and does not by itself block storage cleanup; archiving removes terminal threads from active and settled views and leaves qualified workspace cleanup eligible. On replay, inspect or recognize an already-archived thread per binding as converged and distinguish it from a failed observation; complete any remaining handoff or record writes before archiving this session itself because archiving detaches the provider session immediately. Preserve unfinished human and worker obligations before retiring, and never archive standing agent threads. |
+| `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |
 | `discover_environments` | Use the connection's native linked-environment discovery. Match participating computers to observed environment ids and registered project paths, keeping instrukt machine IDs distinct. Report missing mappings and access. |
 | `connect_environment` | Use native environment linking with the named computer as its hint and follow the connection's authentication flow. Report any unresolved operator prerequisite. |
 | `dispatch_remote` | Use the connection's native task operation explicitly targeting the identified linked environment and registered project. Supply the local configuration brief, skill package location/text and report destination; preserve local permission limits. Follow its completion instructions and compare returned verification across computers, retaining partial success. |
@@ -412,6 +411,18 @@ with `--global` answers from the global layer alone. Writes address one layer
   (`project/instrukt/spec/feature/work/github-record`). A write to the
   project layer that would switch todos on there is refused with the same
   reason.
+- `runner.archive_finished_after` set while the selected runtime cannot
+  archive threads, naming the runtime and the missing capability
+  (`project/instrukt/spec/feature/runner/session-continuity`). A write that
+  would set it so, or choose such a runtime while it is set, is refused with
+  the same naming.
+
+That capability finding withholds only thread retention: wherever the
+machine layer is admitted, a layer whose only findings are this one is
+admitted with the window off, the finding is reported with the others, and
+everything else the layer admits runs unchanged. Every other finding at
+`runner.archive_finished_after`, a value outside its shape among them, is a
+finding of the machine layer like any other.
 
 Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
@@ -447,6 +458,10 @@ command.
   without an email address is the validation finding of
   `project/instrukt/spec/feature/configuration/company-homes` until the
   address is added; conversion derives none.
+- The global layer's conversion removes the `retire_thread` value from each
+  runtime entry of its `runtimes`, keeping every other agent-action value. A
+  runtime entry that this removal leaves empty is removed, and so is a
+  `runtimes` map it leaves empty.
 
 ### Environment
 
@@ -534,6 +549,7 @@ And the configuration is unchanged
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
@@ -560,13 +576,14 @@ But a cloned project cannot replace the machine's agent-action values
 
 ### UC-CL7: Keep a runner operating when its clock file disappears
 
-### UC-CL8: Obtain terminal session retirement instructions distinctly from dormant settling
+### UC-CL8: Obtain the thread finishing instruction from the machine's runtime entry
 
 ```gherkin
 Given a developer chose T3 as this machine's runtime
-When an agent retrieves a procedure that renders the terminal retirement action beside the dormant settling action
-Then the retirement action resolves from the machine's T3 entry as native archiving while dormant settling remains native settling
-And a global override replaces the machine's retirement instruction while a project-layer override is refused
+When an agent retrieves a procedure that renders the thread finishing action
+Then the finishing action resolves from the machine's T3 entry as native settling, for a resting conversation and for a finished todo's orchestrator alike
+And a global override replaces the machine's finishing instruction while a project-layer override is refused
+And a global override of an action the runtime entry does not define is refused
 And reading those directives starts or modifies no runtime session
 ```
 

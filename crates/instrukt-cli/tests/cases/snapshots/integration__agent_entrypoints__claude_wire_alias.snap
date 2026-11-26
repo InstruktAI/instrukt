@@ -45,7 +45,9 @@ Care: Enforcement.
 
 Care: Exceptions.
 
-- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone. — `instrukt docs get general/procedure/onboard --closure`
+## Triggered procedures — read each with `instrukt docs get <id> --closure`
+
+- general/procedure/onboard: About Onboard. — when: When the human asks to onboard someone.
 
 # Sdlc
 

@@ -33,12 +33,18 @@ visibility: 'public'
   ids, then the ids listed under `# Required reads (not loaded)` in that
   response. Dependencies are never expanded inline by default; `--closure`, on
   any snippet, takes them in the same pass.
-- **A listing line names the command to run.** A triggered procedure's line
-  names `instrukt docs get <id> --closure`, which delivers the procedure with
-  its transitive required reads in one pass; a scheduled job's startup
+- **A listing line leads to the command to run**, on the line itself or once
+  in the heading over its run of lines. A triggered procedure's line leads to
+  `instrukt docs get <id> --closure`, which delivers the procedure with its
+  transitive required reads in one pass; a scheduled job's startup
   instruction does the same for the procedure its declaration names. A listed
-  snippet's line names `instrukt docs get <id>`, which keeps the explicit
+  snippet's line leads to `instrukt docs get <id>`, which keeps the explicit
   follow-up flow.
+- **A compressed section holds its source's rules, not its prose.** Where
+  the legend of your instruction file says a section is compressed, apply its
+  rules as written; when applying one turns on a case it does not name, on
+  its exact wording or on its reasons, read the source in full with
+  `instrukt docs get <id>` first.
 - **Third-party docs: consolidated first.** Run `instrukt docs index --third-party`
   before web search or Context7; those are fallbacks for coverage gaps.
 
@@ -52,6 +58,10 @@ procedure. The rendering, not the files behind it, is what an agent reads: it
 leaves undelivered content out and resolves every reference, so the agent
 grounds in the current contract. Consolidated third-party docs are curated and project-aware; live web
 results are noisy and bypass shared knowledge.
+
+A compressed section keeps every rule of its source with one clause of
+reason and leaves the rest of the reasoning in the source, which stays the
+authority for a case the rules do not settle.
 
 ## Scope
 

@@ -62,7 +62,7 @@ The check runs on the computer where the originating conversation is readable.
 The responsible orchestrator there dispatches the checker through an
 configured native delegation instruction, reserving its role attempt and
 binding the native child id through work commands. Its runtime delivers the
-result to that parent. GitHub carries the checked record and
+result to that parent. The work record carries the checked record and
 stamp; the conversation remains in its runtime.
 
 An intent check establishes fidelity of the record. An approval authorizes a

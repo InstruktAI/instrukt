@@ -1,0 +1,7 @@
+---
+source: crates/instrukt-cli/tests/cases/compressed-units.rs
+expression: text
+---
+stale: general/policy/alpha (docs/general/policy/alpha.md): renew docs/_compressed/general/policy/alpha.md declaring source_sha256 6c462168c8e0a72a34063b6c34925a250b2586991ac2ad81899b86c6879cee14
+missing: general/policy/beta (docs/general/policy/beta.md): write docs/_compressed/general/policy/beta.md declaring source_sha256 9bc659a5af84a7a4a97efa98904176f2ae28eede6db7f03076d863ec28384412
+orphaned: docs/_compressed/general/policy/gone.md: its source no longer exists or no entrypoint index inlines it; remove it

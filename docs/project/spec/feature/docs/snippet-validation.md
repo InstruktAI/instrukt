@@ -29,6 +29,12 @@ check documentation before committing, and it changes nothing.
   manifest (`orchestrator`, `requires`, `roles`) is validated against the
   workflow schema, rather than snippet taxonomy and frontmatter.
 
+`docs/_compressed/`, where a repository keeps its compressed units, is one of
+the skipped directories: a unit is no snippet, and validation reports nothing
+about it. A unit's structure is checked by `instrukt docs units`, by the
+renderings and by sync
+(`project/instrukt/spec/feature/publication/compressed-units`).
+
 ### Checks
 
 | Family | A finding when |

@@ -621,6 +621,7 @@ pub enum HoldSource {
     /// An attributable GitHub hold-label action.
     #[serde(rename = "github")]
     GitHub,
+    /// `instrukt todo create <slug> … --hold --reason` or
     /// `instrukt todo update <slug> --hold --reason`.
     Manual,
     /// Set by the runner or by a stamp that establishes one.

@@ -42,6 +42,10 @@ visibility: 'public'
 - Deployed runtime directories (`~/.{agent}/`) are also build outputs — never create or edit files there directly. Always author in source. This applies to every agent runtime, current and future: its runtime directory is always a deployment target, never a source.
 - The generated documentation index is written by publication and the generated `AGENTS.md` by instrukt at each commit; do not hand-edit them. Author the documentation and the `index.yaml` they are rendered from.
 
+Every rendering that holds a snippet or a company document in full — each user-scope instruction file, a repository's root `AGENTS.md`, and the skill of a company's plugin — holds that source's current compressed unit in its place, under the source's name, and the source's prose wherever its unit is stale or missing, deciding per source; a rendering that holds a unit carries the notation's legend once. A source's unit is committed in the repository that holds the source, under `docs/_compressed/` at the source's path relative to `docs/` (`general/spec/snippet-authoring-schema`), outside every position and named by no index. `instrukt docs get` and the domain read always return prose.
+
+A user-scope instruction file lists its `listed` snippets and its triggered procedures under headings that carry the read command once. One that holds a unit names, near its top, the uncompressed copy publication keeps of it in the home — the same rendering with every source in prose, under a name no agent runtime loads — and how to read any snippet in full.
+
 ## Rationale
 
 - One rendered file per repository, from one index, reaches every agent runtime the same way. Agent runtimes load an instruction file in a subfolder differently, and some not at all, so a rendering there reaches some agents and not others; the root file, with on-demand reads for what it lists, does not depend on how a runtime treats subfolders.
@@ -60,6 +64,8 @@ visibility: 'public'
 - A file is judged by the part it plays, not by its name: the same name can be a former master at a repository's root and a selected document under `docs/`, and an instruction keyed on the name would move or delete knowledge that is already where it belongs.
 
 - Reading authored input from a directory the platform also writes makes a file's provenance unreadable from its location: an author cannot tell their own work from generated output, and a regenerating deploy is free to overwrite something a human wrote. Keeping the source root out of every delivery location is what makes that class of loss unrepresentable rather than merely avoided by convention.
+
+Agent runtimes cut or demote an instruction file past a size limit, dropping its last rules without saying so; holding each source as its current unit lets every runtime receive the whole selection. Deciding per source by the digest the unit was written from means a changed source reaches agents at once in prose, a unit that no longer matches its source never reaches one, and one change stales one unit. Units committed beside their sources make every checkout render the same bytes offline, and the uncompressed copy lets a person read exactly what agents were given.
 
 ## Scope
 

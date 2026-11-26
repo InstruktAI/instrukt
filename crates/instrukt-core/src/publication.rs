@@ -7,7 +7,8 @@
 //! `docs/general/`, each `docs/domain/<x>/` and `docs/project/`. Each is claimed
 //! in the ownership record in the selected home's publication state.
 //!
-//! Two operations. [`render_repository`] renders a repository's committed
+//! Three operations. [`inspect_units`] reports the state of a repository's
+//! compressed units from its working tree alone. [`render_repository`] renders a repository's committed
 //! entrypoints from one view of it and nothing from the computer, as a
 //! [`RenderPlan`] its caller applies ([`write_rendering`] for the working
 //! tree). [`sync`]: publish the project the caller stands in from
@@ -30,6 +31,8 @@ mod _source;
 mod _sync;
 mod _tree;
 mod _tx;
+mod _units;
+pub(crate) use _units::published_digest;
 
 use std::path::{Path, PathBuf};
 
@@ -57,6 +60,7 @@ pub use _sync::{
     EnsuredLink, GlobalDestination, LinkState, Refusal, SyncError, SyncFinding, SyncOutcome,
     SyncReport, SyncRequest, sync,
 };
+pub use _units::{UnitFinding, UnitFindingKind, UnitWork, UnitsOutcome, UnitsReport};
 
 use crate::config::ConfigError;
 use crate::docs::DocsError;
@@ -106,6 +110,22 @@ pub fn render_repository(view: RepositoryView<'_>) -> Result<RenderPlan, Publica
         }
     };
     _render::render_tree(&tree, override_beside_root)
+}
+
+/// The inspection of the units of the repository whose working tree has
+/// its root at `root` (`project/instrukt/spec/feature/publication/compressed-units`,
+/// Inspecting units): each source whose unit is stale or missing, each
+/// orphaned unit and each finding. With `target`, each source is read with
+/// that todo's pending documentation in the checkout applied. Reads the
+/// working tree alone — no home, configuration or network — and writes
+/// nothing.
+pub fn inspect_units(
+    root: &Path,
+    target: Option<&crate::ids::TodoSlug>,
+) -> Result<UnitsReport, PublicationError> {
+    let view = _source::Committed::working_tree(root)?;
+    let lens = target.map_or(crate::docs::Lens::Current, crate::docs::Lens::Target);
+    _units::inspect(&view, lens)
 }
 
 /// Whether `rel`, a path relative to the root of the working tree at `root`,
@@ -332,6 +352,10 @@ pub enum PublicationError {
     /// format does not support.
     #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
     CommittedDirectives { findings: Vec<crate::docs::Finding> },
+    /// The unit of a source a committed rendering holds in full has
+    /// findings, which are the rendering's.
+    #[error("{}", findings.iter().map(ToString::to_string).collect::<Vec<_>>().join("; "))]
+    UnitFindings { findings: Vec<UnitFinding> },
     #[error("cannot access {}: {source}", path.display())]
     Io {
         path: PathBuf,

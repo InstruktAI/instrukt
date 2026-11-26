@@ -93,6 +93,13 @@ impl Runtime {
         env.caller_identity(self.name())
             .map(|caller| caller.session)
     }
+    /// Whether the runtime's adapter archives threads, which thread
+    /// retention needs (`project/instrukt/spec/feature/runner/session-continuity`).
+    pub fn archives_threads(self) -> bool {
+        match self {
+            Self::T3 => true,
+        }
+    }
 }
 
 /// Optional runtime capabilities declared by a workflow, never inferred from prose.
@@ -152,7 +159,7 @@ impl std::fmt::Display for WorkflowCapability {
 /// Agent actions as `(name, contract)`: the contract is the one line the
 /// configuration schema prints for the action; its execution wording lives
 /// only in configuration data.
-pub(crate) const ACTIONS: [(&str, &str); 15] = [
+pub(crate) const ACTIONS: [(&str, &str); 14] = [
     (
         "dispatch",
         "Delegate this agent's worker with shared isolation in the parent's recorded workspace.",
@@ -196,10 +203,6 @@ pub(crate) const ACTIONS: [(&str, &str); 15] = [
     (
         "finish_thread",
         "Dormantly settle an addressed conversation, or this agent's own, so it stays wakeable in place with full context; external agents and runner automation never settle a standing agent, which may self-settle when parked dormant.",
-    ),
-    (
-        "retire_thread",
-        "Terminally retire a delivered or withdrawn todo's orchestrator thread, retaining its transcript; never a standing agent.",
     ),
     (
         "discover_environments",

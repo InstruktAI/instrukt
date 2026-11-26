@@ -680,3 +680,50 @@ whose installed instrukt predates this release, that key is an unknown key in
 this repository's layer: the layer does not validate there, which withholds
 history extraction for the project on that computer until instrukt is
 upgraded. Upgrade instrukt on each computer that serves this repository.
+
+### One thread-finishing action: `retire_thread` is removed
+
+The runtime action `retire_thread` is gone; `finish_thread` is now the only
+action that ends a thread, for a resting conversation and for the orchestrator
+of a delivered or withdrawn todo alike.
+
+The machine layer, `~/.instrukt/instrukt.yaml`, moves to global schema 7. The
+first writing command of this release on a computer converts it: any
+`runtimes.<runtime>.retire_thread` override is dropped, a runtime entry or a
+`runtimes` map left empty by that goes with it, and every other setting is
+kept. Read-only commands convert it in memory until then. Nothing needs doing
+by hand.
+
+Project layers and company homes keep their schema version, so no
+repository, this one included, needs a commit for this change.
+
+Once an instrukt of this release has written a computer's machine layer, an
+instrukt from before it on the same computer refuses that layer as newer
+than it supports. Upgrade every instrukt on a computer together.
+
+### The work record lives on this computer only
+
+GitHub no longer carries a copy of the work record: the issue, its labels,
+the board, the native artifacts, the pull request and its reviews show the
+todo one way, and the state database holds the only copy. `instrukt todo
+refresh` is gone, and a computer no longer lists, picks up or reads todos
+another computer created. The state database migrates forward on its own
+(Version 40); existing record comments on issues are left where they are.
+
+A todo this computer holds can carry artifact versions whose content only
+GitHub has: versions another computer recorded, taken in by an earlier
+build's pickup listing without their bodies. The new build reads artifacts
+from the local record alone, so it cannot fetch them later. Before installing
+it, restore them with the build you have. List the versions without content:
+
+    sqlite3 ~/.instrukt/state/instrukt.db "SELECT t.project, t.slug || '@' || substr(t.id, 1, 8), v.name, v.digest FROM artifact_versions v JOIN todos t ON t.id = v.todo_id WHERE v.content IS NULL"
+
+The list covers every todo this computer retains — live, delivered and
+withdrawn ones alike — and names each by its exact address. In a checkout of
+each project listed, read each version once with the installed build, which
+fetches its content from GitHub, checks it against its digest and keeps it in
+the record:
+
+    instrukt todo artifacts diff <address> <name> <digest> <digest>
+
+A version the command reports GitHub no longer serves stays without content.

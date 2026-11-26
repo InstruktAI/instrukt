@@ -28,11 +28,14 @@ use serde_json::Value as Json;
 use serde_yaml_ng::Value;
 
 use super::_company::{self, COMPANY_PASSAGE, DOCS, Selection, listed_line};
-use super::_render::{PlannedFile, RenderFinding, company_home, finish};
+use super::_render::{PlannedFile, RenderFinding, RenderFindingKind, company_home, finish};
 use super::_source::{Committed, EntryIndex};
+use super::_units::{LEGEND, Unit, frame};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
-use crate::docs::{CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_paths};
+use crate::docs::{
+    self, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_paths,
+};
 use crate::ids::ProjectSlug;
 
 /// The folder below a repository's root that holds its skills.
@@ -291,7 +294,23 @@ pub(super) fn render(
         return Ok(Rendered::Findings(vec![PluginFinding::NoIndex]));
     };
     let selection = reading.selection;
-    let carried = Carried::of(&selection);
+    let units = match _company::held_units(tree, &selection) {
+        Ok(units) => units,
+        Err(found) => {
+            return Ok(Rendered::Findings(
+                found
+                    .into_iter()
+                    .map(|finding| {
+                        PluginFinding::Reading(RenderFinding {
+                            path: PathBuf::from(&folder),
+                            kind: RenderFindingKind::Unit { finding },
+                        })
+                    })
+                    .collect(),
+            ));
+        }
+    };
+    let carried = Carried::of(&selection, &units);
     // The documents the shared reading could read are judged by the
     // plugin's own rules too, so one call reports every finding.
     let mut findings: Vec<PluginFinding> = reading
@@ -319,19 +338,22 @@ pub(super) fn render(
     }
     files.insert(
         format!("{skill}/{SKILL_FILE}"),
-        main_file(tree, key, name, &selection, &carried)?,
+        main_file(tree, key, name, &selection, &units, &carried)?,
     );
     Ok(Rendered::Files(files))
 }
 
 /// The skill's main file: its frontmatter, the company's name as its
-/// title, the company passage, each held document and one line for each
+/// title, the company passage, the units' legend when it holds a unit, each
+/// held document — as its unit, framed under its path with the line naming
+/// the file that carries its prose, or in its prose — and one line for each
 /// listed one.
 fn main_file(
     tree: &Committed,
     key: &ProjectSlug,
     name: &CompanyName,
     selection: &Selection,
+    units: &BTreeMap<String, Unit>,
     carried: &Carried,
 ) -> Result<String, PublicationError> {
     let mut frontmatter = serde_yaml_ng::Mapping::new();
@@ -347,7 +369,26 @@ fn main_file(
         format!("# {name}"),
         COMPANY_PASSAGE.to_owned(),
     ];
+    if !units.is_empty() {
+        blocks.push(LEGEND.to_owned());
+    }
     for path in &selection.held {
+        if let (Some(unit), Some(place)) = (units.get(path), carried.file(path)) {
+            let document = docs::company_document(&unit.body);
+            let body = company_paths(&unit.body, &document, CompanyText::Body, |at| {
+                carried.replacement(tree, path, SKILL_FILE, at)
+            });
+            let framed = frame(
+                path,
+                &format!(
+                    "Full prose: `{}`\n\n{}",
+                    relative(SKILL_FILE, place),
+                    body.trim()
+                ),
+            );
+            blocks.push(framed.trim().to_owned());
+            continue;
+        }
         let Some(selected) = selection.documents.get(path) else {
             continue;
         };
@@ -373,14 +414,20 @@ fn main_file(
 }
 
 /// Where the plugin carries each document the selection reaches: by its
-/// path inside the skill's folder, `SKILL.md` for a document held in full.
+/// path inside the skill's folder, `SKILL.md` for a document held in full
+/// in its prose. A document the main file holds as its unit is carried in
+/// prose as a file of its own under `references/`, as every other one is.
 struct Carried {
     places: BTreeMap<String, String>,
 }
 
 impl Carried {
-    fn of(selection: &Selection) -> Self {
-        let held: BTreeSet<&String> = selection.held.iter().collect();
+    fn of(selection: &Selection, units: &BTreeMap<String, Unit>) -> Self {
+        let held: BTreeSet<&String> = selection
+            .held
+            .iter()
+            .filter(|path| !units.contains_key(*path))
+            .collect();
         let places = selection
             .documents
             .keys()
@@ -1219,6 +1266,73 @@ mod tests {
         tree.iter()
             .map(|(path, text)| ((*path).to_owned(), (*text).to_owned()))
             .collect()
+    }
+
+    const COMPANY: &str = "# Company\n\nWe make things. Roles: [roles](roles.md).\n";
+    const ROLES: &str = "---\ndescription: Who does what.\n---\n\n# Roles\n\nAda builds.\n";
+
+    /// A unit of `document`, current when `current`, with `body`.
+    fn unit_of(document: &str, current: bool, body: &str) -> String {
+        let prose = docs::split_frontmatter(document).1;
+        let digest = super::super::_units::source_digest(if current { prose } else { "older" });
+        format!("---\nsource_sha256: {digest}\nmodel: m\n---\n{body}")
+    }
+
+    /// A company repository expanding `company.md`, listing `roles.md`,
+    /// with `company.md`'s unit `unit`.
+    fn with_unit(unit: Option<&str>) -> Vec<(String, String)> {
+        let mut files = vec![
+            (INDEX, "expanded: [company.md]\nlisted: [roles.md]\n"),
+            ("docs/company.md", COMPANY),
+            ("docs/roles.md", ROLES),
+            (CATALOG, CATALOG_TEXT),
+        ];
+        files.extend(unit.map(|unit| ("docs/_compressed/company.md", unit)));
+        files_of(&files)
+    }
+
+    fn rendered_files(tree: &Committed) -> BTreeMap<String, String> {
+        match render(tree, &key(), &name()).unwrap() {
+            Rendered::Files(files) => files,
+            Rendered::Findings(findings) => panic!("findings {findings:?}"),
+        }
+    }
+
+    const SKILL: &str = "skills/acme/SKILL.md";
+    const CARRIED: &str = "skills/acme/references/company.md";
+
+    #[test]
+    fn a_document_held_as_its_unit_is_framed_with_the_file_carrying_its_prose() {
+        let unit = unit_of(
+            COMPANY,
+            true,
+            "- we make things; roles: [roles](roles.md)\n",
+        );
+        let files = rendered_files(&view(&with_unit(Some(&unit))));
+        insta::assert_snapshot!("carried_prose", files[CARRIED]);
+        insta::assert_snapshot!(files[SKILL]);
+    }
+
+    #[test]
+    fn a_stale_unit_holds_its_document_in_prose_in_the_main_file_alone() {
+        let unit = unit_of(COMPANY, false, "- we make things\n");
+        let files = rendered_files(&view(&with_unit(Some(&unit))));
+        assert!(!files.contains_key(CARRIED));
+        insta::assert_snapshot!(files[SKILL]);
+    }
+
+    #[test]
+    fn the_version_rises_when_only_a_unit_changes() {
+        let first = with_unit(Some(&unit_of(COMPANY, true, "- we make things\n")));
+        let planned = plan(&view(&first), &key(), &name()).unwrap();
+        let version = planned.drift.clone().unwrap().version;
+        let mut changed = applied_plan(&first, &planned);
+        for (path, text) in &mut changed {
+            if path == "docs/_compressed/company.md" {
+                *text = unit_of(COMPANY, true, "- we make many things\n");
+            }
+        }
+        assert_eq!(drift_of(&view(&changed)).version, version.raised());
     }
 
     #[test]

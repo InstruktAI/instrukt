@@ -485,6 +485,22 @@ impl FakeGitHub {
             .unwrap()
     }
 
+    /// Adds an event to issue `number`, after its existing ones; returns
+    /// its id. `event` is GitHub's issue event without its `id`.
+    pub fn seed_event(&self, repo: &str, number: u64, mut event: Value) -> u64 {
+        let mut state = self.lock();
+        let id = state.next_id();
+        event["id"] = id.into();
+        state
+            .repo(repo)
+            .issues
+            .get_mut(&number)
+            .unwrap()
+            .events
+            .push(event);
+        id
+    }
+
     /// Changes a comment's body out of band.
     pub fn edit_comment(&self, repo: &str, id: u64, body: &str) {
         let mut state = self.lock();
@@ -492,6 +508,13 @@ impl FakeGitHub {
         let comment = state.repo(repo).comments.get_mut(&id).unwrap();
         comment.body = body.to_owned();
         comment.updated_at = now;
+    }
+
+    /// Serves the branches of `repo` from the bare repository at `source`:
+    /// what is pushed there is on GitHub.
+    pub fn serve_branches_from(&self, repo: &str, source: &std::path::Path) -> &Self {
+        self.lock().repo(repo).branch_source = Some(source.to_owned());
+        self
     }
 
     /// Puts branch `name` at `sha` on the fake.
@@ -668,7 +691,7 @@ impl FakeGitHub {
                 issue
                     .artifacts
                     .values()
-                    .map(|a| json!({"artifact": a.json(), "versions": a.versions_json()}))
+                    .map(|a| json!({"artifact": a.json(repo, number), "versions": a.versions_json()}))
                     .collect()
             })
             .unwrap_or_default()

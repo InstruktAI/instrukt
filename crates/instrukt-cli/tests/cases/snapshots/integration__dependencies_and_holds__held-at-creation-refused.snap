@@ -1,0 +1,14 @@
+---
+source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+expression: "redact(&format!(\"{refused}\\n---\\n{active}---\\n{iceboxed}\"))"
+---
+instrukt: a hold records why the work must wait; the reason is blank
+---
+error: the argument '--hold' cannot be used with '--icebox'
+---
+error: the following required arguments were not provided:
+  --reason <REASON>
+---
+nested-lists · feature · active · on hold: waiting for the renderer binary to roll out
+---
+no todos

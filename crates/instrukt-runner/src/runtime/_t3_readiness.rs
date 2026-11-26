@@ -13,7 +13,10 @@
 //! semantics (`packages/contracts/src/settings.ts`, `providerInstance.ts`,
 //! `apps/server/src/provider/Drivers/CodexDriver.ts`).
 use super::{ObservedSnapshot, ProviderFacts, ProviderSnapshot, ReportedModel, UsageWindow};
-use crate::{process::Invocation, sessions::SessionsError};
+use crate::{
+    process::Invocation,
+    sessions::{ExecutionRootCause, SessionsError},
+};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
     config::{Env, HarnessKind},
@@ -539,19 +542,24 @@ impl std::io::Write for FrameStream {
 
 use super::DispatchError::{self, AfterFrame, BeforeFrame};
 
+/// One `orchestration.dispatchCommand` of `payload`, over a token labelled
+/// `label` issued and revoked around it; T3's refusal is attributed to
+/// `operation`.
 pub(super) fn dispatch(
     home: &Home,
     env: &Env,
+    label: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<(), DispatchError> {
     let endpoint = server_endpoint(home, env).map_err(BeforeFrame)?;
-    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")
-        .map_err(BeforeFrame)?;
+    let mut token = Token::issue_scoped("orchestration:operate", label).map_err(BeforeFrame)?;
     let outcome = rpc(
         &endpoint,
         &token.secret,
         "orchestration.dispatchCommand",
+        operation,
         payload,
         before_write,
     )
@@ -568,10 +576,13 @@ pub(super) fn dispatch(
     outcome
 }
 
+/// One RPC `tag` with `payload`; a refusal of a command or launch carries
+/// T3's detail attributed to `operation`.
 fn rpc(
     endpoint: &url::Url,
     token: &str,
     tag: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<serde_json::Value, DispatchError> {
@@ -683,12 +694,7 @@ fn rpc(
                     .unwrap_or("T3 refused the WebSocket dispatch");
                 return Err(AfterFrame(SessionsError::Failed {
                     runtime: "t3".into(),
-                    operation: match tag {
-                        "orchestration.launchThread" => "launch",
-                        "orchestration.getThreadProjection" => "thread projection",
-                        _ => "send",
-                    }
-                    .into(),
+                    operation: operation.into(),
                     detail: detail.into(),
                 }));
             }
@@ -701,9 +707,14 @@ fn rpc(
 }
 
 fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
-    let value = rpc(endpoint, token, "server.getConfig", json!({}), &mut || {
-        Ok(())
-    })
+    let value = rpc(
+        endpoint,
+        token,
+        "server.getConfig",
+        "readiness",
+        json!({}),
+        &mut || Ok(()),
+    )
     .map_err(DispatchError::into_inner)?;
     let snapshot: Snapshot = serde_json::from_value(value)
         .map_err(|_| refused("unrecognized provider snapshot shape"))?;
@@ -1026,6 +1037,137 @@ fn translate(source: Snapshot) -> ProviderSnapshot {
     }
 }
 
+/// One live project of T3's authenticated project snapshot.
+pub(super) struct LiveProject {
+    pub id: String,
+    pub root: PathBuf,
+}
+
+/// A snapshot read that failed, by its fixed cause; the checkout it was
+/// read for is named where the failure becomes instrukt's outcome.
+fn root_unavailable(checkout: &Path, cause: ExecutionRootCause) -> SessionsError {
+    SessionsError::ExecutionRootUnavailable {
+        checkout: checkout.to_path_buf(),
+        cause,
+    }
+}
+
+/// `path` as it is compared with a project root: absolute, and canonical
+/// where it exists.
+fn canonical_root(path: &Path) -> Option<PathBuf> {
+    let absolute = std::path::absolute(path).ok()?;
+    Some(absolute.canonicalize().unwrap_or(absolute))
+}
+
+/// The live projects `GET /api/projects` lists; deleted ones are left out.
+/// An unreachable server or malformed metadata is a cause, never an empty
+/// table.
+pub(super) fn fetch_live_projects(
+    endpoint: &url::Url,
+    token: &str,
+) -> Result<Vec<LiveProject>, ExecutionRootCause> {
+    let mut origin = endpoint.clone();
+    origin
+        .set_scheme("http")
+        .map_err(|_| ExecutionRootCause::MalformedMetadata)?;
+    origin.set_path("/api/projects");
+    origin.set_query(None);
+    let agent: ureq::Agent = ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .build()
+        .into();
+    let text = agent
+        .get(origin.as_str())
+        .header("Authorization", &format!("Bearer {token}"))
+        .call()
+        .map_err(|error| {
+            tracing::warn!(event = "t3_project_snapshot_failed", %error);
+            ExecutionRootCause::Unreachable
+        })?
+        .body_mut()
+        .read_to_string()
+        .map_err(|_| ExecutionRootCause::Unreachable)?;
+    live_projects(&text)
+}
+
+/// The live projects of one project snapshot response body.
+fn live_projects(text: &str) -> Result<Vec<LiveProject>, ExecutionRootCause> {
+    let malformed = ExecutionRootCause::MalformedMetadata;
+    let snapshot: serde_json::Value = serde_json::from_str(text).map_err(|_| malformed)?;
+    let mut live = Vec::new();
+    for project in snapshot["projects"].as_array().ok_or(malformed)? {
+        let id = project["id"]
+            .as_str()
+            .filter(|id| !id.is_empty())
+            .ok_or(malformed)?;
+        let root = project["workspaceRoot"].as_str().ok_or(malformed)?;
+        let deleted = project.get("deletedAt").ok_or(malformed)?;
+        if deleted.is_null() {
+            live.push(LiveProject {
+                id: id.to_owned(),
+                root: root.into(),
+            });
+        }
+    }
+    Ok(live)
+}
+
+/// The one live project rooted exactly at `checkout`. A project rooted at
+/// an ancestor or a descendant never stands in for it; two live projects at
+/// that root are contradictory evidence.
+pub(super) fn exact_project_id_in(
+    projects: &[LiveProject],
+    checkout: &Path,
+) -> Result<Option<String>, SessionsError> {
+    let wanted = canonical_root(checkout)
+        .ok_or_else(|| root_unavailable(checkout, ExecutionRootCause::Missing))?;
+    let mut found: Option<&LiveProject> = None;
+    for project in projects {
+        if canonical_root(&project.root).as_ref() == Some(&wanted) {
+            if found.is_some() {
+                return Err(root_unavailable(
+                    checkout,
+                    ExecutionRootCause::DuplicateRoots,
+                ));
+            }
+            found = Some(project);
+        }
+    }
+    Ok(found.map(|project| project.id.clone()))
+}
+
+/// The live project rooted exactly at `checkout`, read now with a
+/// short-lived read-scoped token that is revoked after the read.
+pub(super) fn exact_project_id(
+    home: &Home,
+    env: &Env,
+    checkout: &Path,
+) -> Result<Option<String>, SessionsError> {
+    let endpoint = server_endpoint(home, env).map_err(|_| {
+        // A descriptor that exists but is refused is malformed; without one
+        // the server is unreachable.
+        let cause = if super::_t3_home::T3Home::discover(home, env)
+            .descriptor()
+            .exists()
+        {
+            ExecutionRootCause::MalformedMetadata
+        } else {
+            ExecutionRootCause::Unreachable
+        };
+        root_unavailable(checkout, cause)
+    })?;
+    let mut token = Token::issue_scoped("orchestration:read", "instrukt-project-snapshot")
+        .map_err(|_| root_unavailable(checkout, ExecutionRootCause::Unreachable))?;
+    let result = fetch_live_projects(&endpoint, &token.secret)
+        .map_err(|cause| root_unavailable(checkout, cause))
+        .and_then(|projects| exact_project_id_in(&projects, checkout));
+    if let Err(cleanup) = token.revoke() {
+        // The read-only credential expires; the observed snapshot stands.
+        tracing::warn!(event="t3_project_snapshot_token_cleanup_failed",%cleanup);
+    }
+    result
+}
+
 /// Launch metadata is acquired independently of provider readiness/capacity.
 pub(super) fn resolve_launch(
     home: &Home,
@@ -1043,62 +1185,12 @@ pub(super) fn resolve_launch(
             .as_ref()
             .is_none_or(|launch| launch.project_id.is_empty())
         {
-            let mut origin = endpoint.clone();
-            origin
-                .set_scheme("http")
-                .map_err(|_| launch_error("invalid project snapshot origin"))?;
-            origin.set_path("/api/projects");
-            origin.set_query(None);
-            let agent: ureq::Agent = ureq::Agent::config_builder()
-                .timeout_global(Some(TIMEOUT))
-                .build()
-                .into();
-            let snapshot_text = agent
-                .get(origin.as_str())
-                .header("Authorization", &format!("Bearer {}", token.secret))
-                .call()
-                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?
-                .body_mut()
-                .read_to_string()
-                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?;
-            let snapshot: serde_json::Value = serde_json::from_str(&snapshot_text)
-                .map_err(|e| launch_error(&format!("project snapshot: {e}")))?;
-            let projects = snapshot["projects"]
-                .as_array()
-                .ok_or_else(|| launch_error("invalid project snapshot"))?;
-            let absolute =
-                std::path::absolute(&request.checkout).map_err(|e| launch_error(&e.to_string()))?;
-            let checkout = absolute.canonicalize().unwrap_or(absolute);
-            let mut selected = None;
-            for project in projects {
-                let id = project["id"]
-                    .as_str()
-                    .filter(|id| !id.is_empty())
-                    .ok_or_else(|| launch_error("invalid native project ID"))?;
-                let root = project["workspaceRoot"]
-                    .as_str()
-                    .ok_or_else(|| launch_error("invalid native workspace root"))?;
-                let deleted = project
-                    .get("deletedAt")
-                    .ok_or_else(|| launch_error("missing native project deletion state"))?;
-                if !deleted.is_null() {
-                    continue;
-                }
-                let absolute =
-                    std::path::absolute(root).map_err(|e| launch_error(&e.to_string()))?;
-                let root = absolute.canonicalize().unwrap_or(absolute);
-                let depth = root.components().count();
-                if checkout.starts_with(&root)
-                    && selected.as_ref().is_none_or(|(_, prior)| depth > *prior)
-                {
-                    selected = Some((id.to_owned(), depth));
-                }
-            }
-            let project_id = selected
-                .ok_or_else(|| {
-                    launch_error("checkout has no containing registered native project")
-                })?
-                .0;
+            let projects = fetch_live_projects(&endpoint, &token.secret)
+                .map_err(|cause| root_unavailable(&request.checkout, cause))?;
+            // A miss is the caller's to answer: launch registers the
+            // checkout, adoption of a present thread never does.
+            let project_id = exact_project_id_in(&projects, &request.checkout)?
+                .ok_or_else(|| root_unavailable(&request.checkout, ExecutionRootCause::Missing))?;
             let launch = request.native_launch.as_mut().ok_or_else(|| {
                 launch_error("native IDs must be reserved before metadata acquisition")
             })?;
@@ -1110,6 +1202,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "orchestration.getThreadProjection",
+                    "thread projection",
                     json!({"threadId": session.id}),
                     &mut || Ok(()),
                 )
@@ -1144,6 +1237,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "server.getConfig",
+                    "readiness",
                     json!({}),
                     &mut || Ok(()),
                 )
@@ -1246,6 +1340,7 @@ pub(super) fn launch(
         &endpoint,
         &token.secret,
         "orchestration.launchThread",
+        "launch",
         payload,
         &mut || Ok(()),
     )
@@ -1562,5 +1657,82 @@ mod tests {
             stderr: "private stderr".into(),
         }));
         assert_eq!(result, Err(CommandFailure::Exit));
+    }
+
+    /// A snapshot listing projects at `roots`, each `(id, root, deleted)`.
+    fn snapshot_of(roots: &[(&str, &Path, bool)]) -> Vec<super::LiveProject> {
+        let projects: Vec<_> = roots
+            .iter()
+            .map(|(id, root, deleted)| {
+                json!({"id": id, "workspaceRoot": root, "deletedAt": if *deleted { json!("2026-11-01T00:00:00Z") } else { json!(null) }})
+            })
+            .collect();
+        super::live_projects(&json!({ "projects": projects }).to_string()).unwrap()
+    }
+
+    #[test]
+    fn the_project_rooted_exactly_at_the_checkout_is_selected() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let company = home.join(".instrukt/companies/acme");
+        std::fs::create_dir_all(&company).unwrap();
+        let projects = snapshot_of(&[("home", &home, false), ("acme", &company, false)]);
+        assert_eq!(
+            super::exact_project_id_in(&projects, &company).unwrap(),
+            Some("acme".to_owned())
+        );
+    }
+
+    #[test]
+    fn an_ancestor_project_never_stands_in_for_the_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let company = home.join(".instrukt/companies/acme");
+        std::fs::create_dir_all(&company).unwrap();
+        let projects = snapshot_of(&[("home", &home, false)]);
+        assert_eq!(
+            super::exact_project_id_in(&projects, &company).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn a_descendant_project_never_stands_in_for_the_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("project");
+        let nested = checkout.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        let projects = snapshot_of(&[("nested", &nested, false)]);
+        assert_eq!(
+            super::exact_project_id_in(&projects, &checkout).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn two_live_projects_at_the_checkout_are_contradictory() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("project");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let projects = snapshot_of(&[("one", &checkout, false), ("two", &checkout, false)]);
+        assert!(matches!(
+            super::exact_project_id_in(&projects, &checkout),
+            Err(crate::sessions::SessionsError::ExecutionRootUnavailable {
+                cause: crate::sessions::ExecutionRootCause::DuplicateRoots,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_deleted_project_at_the_checkout_is_not_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("project");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let projects = snapshot_of(&[("gone", &checkout, true)]);
+        assert_eq!(
+            super::exact_project_id_in(&projects, &checkout).unwrap(),
+            None
+        );
     }
 }
