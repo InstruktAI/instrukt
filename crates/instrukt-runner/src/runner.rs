@@ -367,6 +367,7 @@ pub fn run(
     let mut readers: Option<consumers::ConsumerWorkers> = None;
     let mut handover_pending = false;
     let mut history = crate::history::Readers::default();
+    let mut evaluation = crate::computer_fleet::EvaluationHost::default();
     // The relay serves links and, while a company declares a connector and
     // conversations are on, the connector destination; the connections take
     // the intake. Both report their unexpected end to this loop at once.
@@ -496,6 +497,7 @@ pub fn run(
             }
         }
         history.refresh(cx.home, cx.env, &current);
+        evaluation.refresh(cx.home, cx.env, &current, cx.wiring, &clock);
         let considered = considered(&admitted);
         let events_enabled = admitted.module_anywhere(Module::Events).unwrap_or(false);
         if platform.is_none() && events_enabled {
