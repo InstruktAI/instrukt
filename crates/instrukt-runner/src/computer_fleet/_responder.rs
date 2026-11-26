@@ -34,6 +34,9 @@ pub(crate) trait Answering: Send + 'static {
     fn tend(&mut self, _endpoint: &Endpoint) -> Result<(), TransportError> {
         Ok(())
     }
+    /// A request answered and its answer written, `elapsed` after it was
+    /// taken up.
+    fn answered(&self, _elapsed: Duration) {}
 }
 
 /// How one kind's responder runs.
@@ -74,6 +77,7 @@ pub(crate) fn answer_request(
     answering: &impl Answering,
     body: &str,
 ) -> Result<(), PollError> {
+    let started = std::time::Instant::now();
     let request: Envelope<Map<String, Value>> = serde_json::from_str(body)
         .map_err(|error| PollError::Invalid(format!("unreadable request: {error}")))?;
     if request.expires < jiff::Timestamp::now().as_second() {
@@ -101,6 +105,7 @@ pub(crate) fn answer_request(
             .ignore()
             .query::<()>(conn)
     })?;
+    answering.answered(started.elapsed());
     Ok(())
 }
 

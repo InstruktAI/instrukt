@@ -53,6 +53,13 @@ impl Answering for Evaluating {
         serde_json::to_string(&self.answers.answer(Value::Object(payload))?)
     }
 
+    fn answered(&self, elapsed: Duration) {
+        tracing::debug!(
+            event = "eval_request_answered",
+            duration_ms = u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        );
+    }
+
     fn tend(&mut self, endpoint: &Endpoint) -> Result<(), TransportError> {
         if let Some(membership) = &mut self.membership
             && membership
