@@ -1167,6 +1167,7 @@ Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active
 page holds text only until intake and the scan checkpoint commit.
 
+<!-- planned-change:fleet-eval-aggregation -->
 **`runner_workers`** — one row per background worker of the runner: the history
 workers (extraction, query responder) and the readiness refresh (`readiness`,
 which keeps the runtime's provider snapshot current,
@@ -1176,6 +1177,24 @@ its limit — written by that worker alone on a change and cleared by its next
 success; current state only. A row lives while its worker exists on this computer:
 the history rows while history is on, `readiness` while the runner runs with a
 runtime that reports provider facts.
+<!-- change:fleet-eval-aggregation -->
+**`runner_workers`** — one row per background worker of the runner: the history
+workers (extraction, query responder), the computer fleet's evaluation
+responder (`computer-fleet`, which answers evaluation requests and keeps this
+computer's entry on the fleet membership record,
+`project/instrukt/spec/domain/runner`) and the readiness refresh (`readiness`,
+which keeps the runtime's provider snapshot current,
+`project/instrukt/spec/feature/runner/session-continuity`). `failure` and `since`,
+its current outside failure — for `readiness`, a refresh that failed or ran past
+its limit; for `computer-fleet`, a cluster store that cannot be reached or a
+configured cluster connection that cannot be used — written by that worker alone
+on a change and cleared by its next success; current state only. `instrukt run`'s
+evaluation responder and `instrukt tick`'s fleet step write the same
+`computer-fleet` row. A row lives while its worker exists on this computer:
+the history rows while history is on, `computer-fleet` while a cluster
+connection is configured, `readiness` while the runner runs with a
+runtime that reports provider facts.
+<!-- /planned-change:fleet-eval-aggregation -->
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again

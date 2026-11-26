@@ -223,6 +223,7 @@ recorded orchestrator (`project/instrukt/spec/feature/work/dependencies-and-hold
 the runner dispatches that todo no further, and a reservation it already made
 resolves to that retained conversation.
 
+<!-- planned-change:fleet-eval-aggregation -->
 A command of a switched-off module refuses and names the door: `todo` names
 `modules.todos`; `sessions` and `tick` refuse only
 when both `modules.todos` and `modules.events` are off, and then name both;
@@ -235,6 +236,22 @@ serves those two modules, history and conversations: it refuses only when
 todos, events and history are off and there is no conversation demand, and
 then names the three switches and the connector declaration. `install` and `ticks status` always
 work; `eval report` needs no switch and reports only the record it can access.
+<!-- change:fleet-eval-aggregation -->
+A command of a switched-off module refuses and names the door: `todo` names
+`modules.todos`; `sessions` and `tick` refuse only
+when both `modules.todos` and `modules.events` are off, and then name both;
+with either on, they serve that module's work. Conversation demand, a
+company home's declared connector
+(`project/instrukt/spec/feature/company/conversations`), admits `sessions` as
+well, to list the sessions conversations start and resolve their starts, and
+its refusal then names that declaration too; it does not admit `tick`. `run`
+serves those two modules, history and conversations: it refuses only when
+todos, events and history are off and there is no conversation demand, and
+then names the three switches and the connector declaration. `install` and `ticks status` always
+work; `eval report` needs no switch and reports only the records it can access:
+this computer's and those of the computers that answer it
+(`project/instrukt/spec/feature/work/eval-report`).
+<!-- /planned-change:fleet-eval-aggregation -->
 
 ## Use cases
 

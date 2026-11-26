@@ -153,6 +153,7 @@ write-isolation unit, taken only by that command
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
 
+<!-- planned-change:fleet-eval-aggregation -->
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
 a link at the database file itself is refused
@@ -162,6 +163,18 @@ message's no-work interval and the current state of the runner's background
 workers — the history workers and the readiness refresh (`runner_workers`). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).
+<!-- change:fleet-eval-aggregation -->
+The state directory is resolved to its canonical location once, and every path and
+lock above derives from it, so a home reached through a link keeps one authority;
+a link at the database file itself is refused
+(`project/instrukt/spec/feature/work/state-database`). The state database also holds
+the read-back cursor of each connector (`connector_read_back`), each conversation
+message's no-work interval and the current state of the runner's background
+workers — the history workers, the computer fleet's evaluation responder and the
+readiness refresh (`runner_workers`). Installation keeps no record of the units it wrote and the runner
+service publishes no identity: both converge by name
+(`project/instrukt/spec/feature/runner/module-installation`).
+<!-- /planned-change:fleet-eval-aggregation -->
 
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:

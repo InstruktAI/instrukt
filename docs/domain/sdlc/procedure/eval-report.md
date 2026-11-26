@@ -18,10 +18,23 @@ those outcomes to the process-document set and models used.
 
 ## Steps
 
+<!-- planned-change:fleet-eval-aggregation -->
 1. Establish the project and requested time range from the conversation. Run
    `instrukt eval report`, using `--since <date>` when a range was requested
    and `--out <path>` when a destination is needed. The default destination is
    the project's `scratchpad/eval/index.html`.
+<!-- change:fleet-eval-aggregation -->
+1. Establish the project, the requested time range and any computers the
+   human asked about from the conversation. Run `instrukt eval report`, using
+   `--since <date>` when a range was requested, `--computer <id>` once per
+   computer when the human asked about particular computers, and
+   `--out <path>` when a destination is needed. Without `--computer` the report
+   covers this computer and every computer of the fleet. The default
+   destination is the project's `scratchpad/eval/index.html`. A report covering
+   other computers can take up to two minutes while it waits for their answers:
+   run it with a command timeout of at least three minutes, and do not stop or
+   rerun it while it waits.
+<!-- /planned-change:fleet-eval-aggregation -->
 2. Open the generated HTML in the available browser, or serve it through the
    available HTML-serving capability and open its address. Give the human the
    file path or served address that actually shows the report.
@@ -29,9 +42,16 @@ those outcomes to the process-document set and models used.
    rounds, findings, returns for repair and human intervention. Name the commit
    SHAs annotated by the report as changing the eval set, and distinguish
    those process changes from model and version changes.
+<!-- planned-change:fleet-eval-aggregation -->
 4. State missing evidence or incomplete history alongside the comparisons it
    limits. Treat the report as recorded evidence under
    `general/principle/grounding`; a comparison alone establishes no cause.
+<!-- change:fleet-eval-aggregation -->
+4. State missing evidence or incomplete history alongside the comparisons it
+   limits, including each computer the report lists without its answer and
+   why. Treat the report as recorded evidence under
+   `general/principle/grounding`; a comparison alone establishes no cause.
+<!-- /planned-change:fleet-eval-aggregation -->
 
 ## Outputs
 

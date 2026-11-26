@@ -35,6 +35,7 @@ their project layers. There is no shared instrukt layer, fleet state service
 or new project-owner-machine routing key. Configuration management outside
 instrukt distributes agreed facts, including any operator-managed dotfiles.
 
+<!-- planned-change:fleet-eval-aggregation -->
 | Fact | Agreement and scope |
 | --- | --- |
 | `ingress.computer` | All participants use the same existing stable instrukt machine ID for the one ingress. A runtime environment ID or hostname does not substitute for it. |
@@ -45,6 +46,18 @@ instrukt distributes agreed facts, including any operator-managed dotfiles.
 | Ingress source homes | Every project declaring inbound sources has its adopted checkout on ingress, and every company home declaring them has its `instrukt.yaml` there; their signing references resolve in the owner-only secrets file of the declaring home on the ingress computer. |
 | Reacting homes | The homes external procedures run in exist on the reacting computer: the project checkouts and company homes the facts' origins name, with their published procedures and a chosen runtime. They need not exist on the ingress when it is not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). |
 | `ingress.port` | The receiver and its local edge agree on this port; other computers need not share it. |
+<!-- change:fleet-eval-aggregation -->
+| Fact | Agreement and scope |
+| --- | --- |
+| `ingress.computer` | All participants use the same existing stable instrukt machine ID for the one ingress. A runtime environment ID or hostname does not substitute for it. |
+| `redis.cluster.url` | All event participants reach the same logical Redis database and stream namespace. URL spellings may differ when they resolve to that same store. |
+| `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store, the fleet query's included (`project/instrukt/spec/feature/runner/module-installation`); credentials and reference spellings need not match. |
+| Project identity and placement | The coordination brief records which computer holds each participating project and its local checkout. Project `project` identity and source declarations identify the same project wherever needed. This is a configuration-management fact, not a new YAML key or a replacement for todo claims. |
+| `ingress.reactions` | All participants use the same existing stable instrukt machine ID for the one computer that reacts to external facts, or all leave it out so the ingress reacts. |
+| Ingress source homes | Every project declaring inbound sources has its adopted checkout on ingress, and every company home declaring them has its `instrukt.yaml` there; their signing references resolve in the owner-only secrets file of the declaring home on the ingress computer. |
+| Reacting homes | The homes external procedures run in exist on the reacting computer: the project checkouts and company homes the facts' origins name, with their published procedures and a chosen runtime. They need not exist on the ingress when it is not the reacting computer (`project/instrukt/spec/feature/runner/single-ingress-webhook-termination`). |
+| `ingress.port` | The receiver and its local edge agree on this port; other computers need not share it. |
+<!-- /planned-change:fleet-eval-aggregation -->
 
 These are the cross-computer and edge-local agreements in
 `project/instrukt/spec/feature/configuration/layered-configuration` and
