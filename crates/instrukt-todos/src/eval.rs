@@ -12,11 +12,14 @@
 //! affects.
 
 mod _answer;
+mod _coverage;
+mod _pool;
 mod _read;
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use instrukt_core::ids::{CommitSha, ProjectSlug};
+use instrukt_core::machine::MachineId;
 use instrukt_core::publication::EvalFingerprint;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -31,6 +34,8 @@ pub use _answer::{
     ANSWER_FORMAT, Answer, EvaluationAnswering, ModelAnswer, ProjectAnswer, Request, SetAnswer,
     Unreadable, Wording, answer, decode,
 };
+pub use _coverage::{Asked, Refused, covering};
+pub use _pool::{Part, Pooling, pool};
 pub use _read::{Limitation, ProjectRead, Reading, Stored, Why, read};
 
 /// One project as the report reads it.
@@ -65,6 +70,20 @@ pub struct Report {
     pub projects: Vec<ProjectReport>,
     /// Limitations on every comparison in the report.
     pub limitations: Vec<String>,
+    /// The computers whose answers the report holds; empty for a report
+    /// covering only this computer.
+    pub computers: Vec<ReportComputer>,
+    /// Whether its windows are pooled by eval set across computers, listed
+    /// with no sequence claimed between them.
+    pub pooled: bool,
+}
+
+/// A computer whose answer a pooled report holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportComputer {
+    pub computer: MachineId,
+    /// Whether it is the computer the report was made on.
+    pub this: bool,
 }
 
 impl Report {
@@ -137,6 +156,28 @@ pub struct Tally {
     pub human: usize,
 }
 
+impl std::ops::AddAssign<&Tally> for Tally {
+    fn add_assign(&mut self, other: &Tally) {
+        self.todos += other.todos;
+        self.stamps += other.stamps;
+        self.approved += other.approved;
+        self.not_approved += other.not_approved;
+        self.reviews += other.reviews;
+        self.rounds += other.rounds;
+        self.findings += other.findings;
+        self.returns += other.returns;
+        self.human += other.human;
+    }
+}
+
+impl std::ops::Add<&Tally> for Tally {
+    type Output = Tally;
+    fn add(mut self, other: &Tally) -> Tally {
+        self += other;
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRow {
     pub model: Model,
@@ -147,10 +188,7 @@ pub struct ModelRow {
 pub fn report(inputs: Inputs<'_>) -> Report {
     let mut limitations = Vec::new();
     if let Some(since) = inputs.since {
-        limitations.push(format!(
-            "History before {} is outside the requested range.",
-            day(since)
-        ));
+        limitations.push(outside_range(since));
     }
     let changes = change_points(inputs.fingerprints);
     if changes.untimed > 0 {
@@ -178,7 +216,40 @@ pub fn report(inputs: Inputs<'_>) -> Report {
         since: inputs.since,
         projects,
         limitations,
+        computers: Vec::new(),
+        pooled: false,
     }
+}
+
+/// The limitation of a report whose range starts at `since`.
+fn outside_range(since: Timestamp) -> String {
+    format!(
+        "History before {} is outside the requested range.",
+        day(since)
+    )
+}
+
+/// The limitation of a window whose stamps copied no eval fingerprint.
+const UNFINGERPRINTED: &str = "These stamps copied no eval fingerprint: they were recorded before any publication, so their process-document set is unknown.";
+
+/// The limitation of a window whose eval set was recorded with a commit of
+/// unknown time.
+const ORDER_UNKNOWN: &str = "A published commit recorded with this eval set carries no recording time: the order of its commits is unknown, so the one that set it is not named.";
+
+/// The limitation counting a window's stamps by agent sessions whose
+/// runtime did not report its model; `None` when there are none.
+fn unknown_model(models: &[ModelRow]) -> Option<String> {
+    let unknown: usize = models
+        .iter()
+        .filter(|row| row.model == Model::Unknown)
+        .map(|row| row.tally.stamps)
+        .sum();
+    (unknown > 0).then(|| {
+        format!(
+            "{unknown} stamp{} by an agent session whose runtime did not report its model.",
+            if unknown == 1 { "" } else { "s" }
+        )
+    })
 }
 
 /// Where the eval set changed, from the timed fingerprint records in time
@@ -279,31 +350,15 @@ fn window(period: &[(&TodoRecord, &StampRecord)], changes: &ChangePoints) -> Opt
     let models = rows(period);
     let mut limitations = Vec::new();
     match &fingerprint {
-        None => limitations.push(
-            "These stamps copied no eval fingerprint: they were recorded before any publication, so their process-document set is unknown."
-                .to_owned(),
-        ),
-        Some(_) if order_unknown => limitations.push(
-            "A published commit recorded with this eval set carries no recording time: the order of its commits is unknown, so the one that set it is not named."
-                .to_owned(),
-        ),
+        None => limitations.push(UNFINGERPRINTED.to_owned()),
+        Some(_) if order_unknown => limitations.push(ORDER_UNKNOWN.to_owned()),
         Some(_) if changed_by.is_empty() => limitations.push(
             "No published commit on this computer is recorded setting this eval set before this window: the commit that set it is unknown here."
                 .to_owned(),
         ),
         Some(_) => {}
     }
-    let unknown: usize = models
-        .iter()
-        .filter(|row| row.model == Model::Unknown)
-        .map(|row| row.tally.stamps)
-        .sum();
-    if unknown > 0 {
-        limitations.push(format!(
-            "{unknown} stamp{} by an agent session whose runtime did not report its model.",
-            if unknown == 1 { "" } else { "s" }
-        ));
-    }
+    limitations.extend(unknown_model(&models));
     Some(Window {
         fingerprint,
         first,
@@ -442,6 +497,21 @@ pub fn render_html(report: &Report) -> String {
         );
     }
     body.push_str(&limits("Limitations", &report.limitations));
+    if !report.computers.is_empty() {
+        body.push_str("<section class=\"computers\">\n<h2>Computers</h2>\n<p>The computers whose outcomes this report holds:</p>\n<ul>\n");
+        for computer in &report.computers {
+            body.push_str(&format!(
+                "<li><code>{}</code>{}</li>\n",
+                escape(computer.computer.as_str()),
+                if computer.this {
+                    " (this computer)"
+                } else {
+                    ""
+                }
+            ));
+        }
+        body.push_str("</ul>\n</section>\n");
+    }
     for project in &report.projects {
         body.push_str(&format!(
             "<section class=\"project\">\n<h2>Project {}</h2>\n",
@@ -451,10 +521,14 @@ pub fn render_html(report: &Report) -> String {
         if project.windows.is_empty() {
             body.push_str("<p class=\"empty\">No recorded work.</p>\n");
         }
+        // Pooled windows claim no sequence: nothing is compared with the
+        // window before.
         let mut previous: Option<&Window> = None;
         for (number, window) in project.windows.iter().enumerate() {
-            body.push_str(&render_window(number + 1, window, previous));
-            previous = Some(window);
+            body.push_str(&render_window(number + 1, window, previous, report.pooled));
+            if !report.pooled {
+                previous = Some(window);
+            }
         }
         body.push_str("</section>\n");
     }
@@ -478,7 +552,12 @@ fn limits(title: &str, limitations: &[String]) -> String {
     out
 }
 
-fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> String {
+fn render_window(
+    number: usize,
+    window: &Window,
+    previous: Option<&Window>,
+    pooled: bool,
+) -> String {
     let mut out = format!(
         "<article class=\"window\">\n<h3>Window {number}: {}</h3>\n<p class=\"meta\">{} – {}</p>\n",
         match &window.fingerprint {
@@ -499,7 +578,11 @@ fn render_window(number: usize, window: &Window, previous: Option<&Window>) -> S
         );
     }
     if !window.changed_by.is_empty() {
-        out.push_str("<p>Eval set changed to this one by:</p>\n<ul class=\"commits\">\n");
+        out.push_str(if pooled {
+            "<p>Commits recorded setting this eval set:</p>\n<ul class=\"commits\">\n"
+        } else {
+            "<p>Eval set changed to this one by:</p>\n<ul class=\"commits\">\n"
+        });
         for (project, commit) in &window.changed_by {
             out.push_str(&format!(
                 "<li>{} <code>{}</code></li>\n",

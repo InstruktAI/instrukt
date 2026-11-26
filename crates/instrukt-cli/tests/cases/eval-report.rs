@@ -291,3 +291,103 @@ fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
     insta::assert_snapshot!("checkout-gone-printed", printed);
     insta::assert_snapshot!("checkout-gone-report", page);
 }
+
+/// Records `computer`'s work in project `demo` under both eval sets: one
+/// todo under the first with `first_model`, the process changed, then one
+/// under the second with `second_model` (returned once when `returned`).
+fn records_work(eval: &mut Evaluated, todo: &str, first_model: &str, second_model: &str) {
+    let demo = eval.project.repo.path().to_path_buf();
+    eval.at("2030-01-05T12:00:00Z");
+    documented::sync(&eval.project.env, &eval.project.repo);
+    eval.uses(first_model);
+    eval.at("2030-01-06T09:00:00Z");
+    eval.reviewed(&demo, &format!("{todo}-first"), true);
+    eval.at("2030-01-12T09:00:00Z");
+    eval.change_process("Review every change against its requirements and its tests.");
+    eval.uses(second_model);
+    eval.at("2030-01-13T09:00:00Z");
+    eval.reviewed(&demo, &format!("{todo}-second"), false);
+}
+
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER2
+#[test]
+fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offline_one() {
+    use crate::fixtures::history as fleet;
+    let (a_id, b_id, c_id, d_id) = (
+        "aaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbb",
+        "cccccccccccccccc",
+        "dddddddddddddddd",
+    );
+    // A asks; B runs `instrukt run` with history off; C only ticks; D
+    // ticked once and is offline since.
+    let mut a = Evaluated::new();
+    let mut b = Evaluated::new();
+    let mut c = Evaluated::new();
+    let mut d = Evaluated::new();
+    let redis = common::redis::RedisServer::new(&a.project.env);
+    records_work(&mut a, "a", "claude-opus 4.1", "claude-sonnet 4.5");
+    records_work(&mut b, "b", "claude-opus 4.1", "claude-opus 4.1");
+    records_work(&mut c, "c", "claude-sonnet 4.5", "claude-sonnet 4.5");
+    // B also records work in a project only B knows.
+    let lists = b.lists.path().to_path_buf();
+    b.at("2030-01-13T12:00:00Z");
+    documented::sync(&b.project.env, &b.lists);
+    b.reviewed(&lists, "list-markers", false);
+    for (env, id) in [
+        (&a.project.env, a_id),
+        (&b.project.env, b_id),
+        (&c.project.env, c_id),
+        (&d.project.env, d_id),
+    ] {
+        fleet::join_cluster(env, &redis.url, id);
+    }
+    let global = b.project.env.instrukt_home().join("instrukt.yaml");
+    let mut layer = std::fs::read_to_string(&global).unwrap();
+    layer.push_str("modules:\n  history: false\n");
+    std::fs::write(&global, layer).unwrap();
+    d.at("2030-01-14T08:00:00Z");
+    documented::sync(&d.project.env, &d.project.repo);
+    d.project.env.run(d.project.env.home(), ["tick"]).success();
+    c.at("2030-01-15T08:59:00Z");
+    c.project.env.run(c.project.env.home(), ["tick"]).success();
+    b.at("2030-01-15T08:59:00Z");
+    let _b_runner = fleet::evaluation_runner(&b.project.env);
+
+    // A reports on the whole fleet; C answers on its next tick.
+    a.at("2030-01-15T09:00:00Z");
+    let html = a.project.env.path("elsewhere/report.html");
+    let asking = a
+        .project
+        .env
+        .instrukt_process(a.project.repo.path())
+        .args(["eval", "report", "--out", html.to_str().unwrap()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut conn = fleet::cluster_connection(&a.project.env);
+    common::wait_until(
+        "the report's request on C's queue",
+        std::time::Duration::from_secs(60),
+        || {
+            redis::cmd("LLEN")
+                .arg(format!("instrukt:eval:requests:{c_id}"))
+                .query::<usize>(&mut conn)
+                .unwrap()
+                >= 1
+        },
+    );
+    c.project.env.run(c.project.env.home(), ["tick"]).success();
+    let output = asking.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let printed = a.without_tmp(&String::from_utf8(output.stdout).unwrap());
+    let page = redact(&a.without_tmp(&std::fs::read_to_string(&html).unwrap()));
+    insta::assert_snapshot!("fleet-printed", printed);
+    insta::assert_snapshot!("fleet-report", page);
+}

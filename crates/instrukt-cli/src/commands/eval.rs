@@ -6,6 +6,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context as _, bail};
 use instrukt_core::git;
+use instrukt_core::machine::MachineId;
 use instrukt_todos::eval;
 use instrukt_todos::work::Work;
 use jiff::Timestamp;
@@ -35,6 +36,19 @@ struct ReportArgs {
     /// `scratchpad/eval/index.html`.
     #[arg(long)]
     out: Option<PathBuf>,
+    /// Narrow the report to this computer, by its instrukt computer
+    /// identity; repeatable. Without it the report covers this computer and
+    /// every member of the fleet, and may wait up to 120 s for their
+    /// answers.
+    #[arg(long = "computer", value_parser = computer)]
+    computers: Vec<MachineId>,
+}
+
+/// `--computer`: an instrukt computer identity.
+fn computer(text: &str) -> Result<MachineId, String> {
+    MachineId::parse(text).ok_or_else(|| {
+        format!("`{text}` is not a computer identity: 16 to 64 lowercase hexadecimal characters")
+    })
 }
 
 /// `--since`: a date from midnight UTC, or an RFC 3339 date-time.
@@ -67,33 +81,14 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         ctx.clock.shared(),
     );
     let project = work.project_at(&root)?;
-    // Every project publication knows, the current one first.
-    let reading = eval::read(&ctx.home, &work, Some((project.slug.clone(), root.clone())));
-    reading
-        .published
-        .context("cannot read which projects this home publishes")?;
-    let projects: Vec<eval::ProjectInput<'_>> = reading
-        .projects
-        .iter()
-        .map(|read| eval::ProjectInput {
-            project: read.project.clone(),
-            records: &read.records,
-            limitations: read
-                .limitations
-                .iter()
-                .map(eval::Limitation::local)
-                .collect(),
-        })
-        .collect();
-    let fingerprints = reading
-        .fingerprints
-        .context("cannot read the recorded eval fingerprints")?;
-    let report = eval::report(eval::Inputs {
-        projects: &projects,
-        fingerprints: &fingerprints,
+    let report = eval::covering(&eval::Asked {
+        home: &ctx.home,
+        work: &work,
+        current: (project.slug.clone(), root.clone()),
+        computers: &args.computers,
         since: args.since,
         now: ctx.clock.now(),
-    });
+    })?;
     let out = match args.out {
         Some(path) if path.is_absolute() => path,
         Some(path) => ctx.cwd.join(path),
