@@ -865,13 +865,16 @@ mod tests {
         let candidate = Admitted::load(&home).unwrap();
         assert!(!candidate.complete);
         assert!(candidate.generation.company(&company).is_none());
-        let named: Vec<String> = candidate.findings.iter().map(ToString::to_string).collect();
-        assert!(
-            named.iter().any(|finding| {
-                finding.contains(&company_dir.join("company.yaml").display().to_string())
-                    && finding.contains(&company_dir.join("instrukt.yaml").display().to_string())
-            }),
-            "{named:?}"
+        let finding = candidate
+            .findings
+            .iter()
+            .find(|finding| finding.document == company_dir.join(super::super::COMPANY_DOCUMENT))
+            .unwrap_or_else(|| panic!("{:?}", candidate.findings));
+        insta::assert_snapshot!(
+            "both_settings_documents",
+            finding
+                .message
+                .replace(&company_dir.display().to_string(), "[HOME]")
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

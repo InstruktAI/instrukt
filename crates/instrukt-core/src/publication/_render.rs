@@ -1223,13 +1223,7 @@ mod tests {
         ]));
         assert_eq!(plan.findings, []);
         assert_eq!(plan.notices, []);
-        assert!(
-            root(&plan)
-                .text
-                .contains(super::super::_company::COMPANY_PASSAGE),
-            "{}",
-            root(&plan).text
-        );
+        insta::assert_snapshot!("company_repository_rendering", root(&plan).text);
     }
 
     #[test]

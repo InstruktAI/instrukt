@@ -226,11 +226,7 @@ mod tests {
                 kind: AccountKind::Personal,
             })
         );
-        let message = personal.unwrap_err().to_string();
-        assert!(
-            message.contains("github.org") && message.contains("GitHub organisation"),
-            "{message}"
-        );
+        insta::assert_snapshot!("not_an_organisation", personal.unwrap_err().to_string());
     }
 
     #[test]

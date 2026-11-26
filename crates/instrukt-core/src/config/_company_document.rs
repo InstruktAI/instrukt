@@ -257,11 +257,13 @@ mod tests {
         };
         assert_eq!(resolve(&home, &acme()).unwrap(), both);
         let error = convert(&home, &acme()).unwrap_err();
-        let message = error.to_string();
         assert!(
-            message.contains(&dir.join(COMPANY_DOCUMENT).display().to_string())
-                && message.contains(&dir.join(CONFIG_FILE_NAME).display().to_string()),
-            "{message}"
+            matches!(
+                &error,
+                ConfigError::BothCompanyDocuments { company, legacy }
+                    if company == &dir.join(COMPANY_DOCUMENT) && legacy == &dir.join(CONFIG_FILE_NAME)
+            ),
+            "{error}"
         );
         assert_eq!(
             std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),

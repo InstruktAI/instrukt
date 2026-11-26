@@ -416,6 +416,12 @@ impl FakeGitHub {
             .unwrap_or_default()
     }
 
+    /// Whether `repo` is private; `None` for a repository the fake does not
+    /// hold.
+    pub fn is_private(&self, repo: &str) -> Option<bool> {
+        self.lock().repos.get(repo).map(|repo| !repo.public)
+    }
+
     /// The default branch of `repo`.
     pub fn default_branch(&self, repo: &str) -> Option<String> {
         self.lock()

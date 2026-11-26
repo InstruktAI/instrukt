@@ -1353,7 +1353,11 @@ mod tests {
                 "author"
             ]
         );
-        assert!(file.text.ends_with("}\n") && file.text.contains("\n  \"plugins\""));
+        // One JSON document, indented by two spaces, ending in one newline.
+        assert_eq!(
+            file.text,
+            format!("{}\n", serde_json::to_string_pretty(&written).unwrap())
+        );
         // Once set, the entry holds its values: the catalog is left as it is.
         let tree = repository(Some(&file.text), &[]);
         assert_eq!(catalog(&tree, "1.2.3").unwrap(), Ok(None));

@@ -95,8 +95,8 @@ fn refusal(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountKind, ConfigError, Findings, GITHUB_ORG_KEY, GitHubAccounts, Home, Layer, Revision,
-        Value, admit_github_org,
+        AccountKind, ConfigError, FindingKind, Findings, GITHUB_ORG_KEY, GitHubAccounts, Home,
+        Layer, Revision, Value, admit_github_org,
     };
     use crate::interfaces::InterfaceError;
 
@@ -146,32 +146,21 @@ mod tests {
 
     #[test]
     fn a_personal_absent_or_empty_owner_is_refused_naming_the_key_and_nothing_is_written() {
-        for (patch, kind, said) in [
+        for (patch, kind, case) in [
             ("github: {org: ana}", Ok(AccountKind::Personal), "personal"),
-            (
-                "github: {org: nobody}",
-                Ok(AccountKind::Absent),
-                "no GitHub account",
-            ),
+            ("github: {org: nobody}", Ok(AccountKind::Absent), "absent"),
             ("github: {org: ''}", Ok(AccountKind::Organisation), "empty"),
-            (
-                "github: {org: homes}",
-                Err("unreachable"),
-                "cannot be asked",
-            ),
+            ("github: {org: homes}", Err("unreachable"), "unanswered"),
         ] {
             let (_root, home, revision) = machine(MACHINE);
             let error = admit(&home, &revision, patch, Some(&Stub(kind))).unwrap_err();
             let ConfigError::Invalid(Findings(findings)) = &error else {
                 panic!("{error}");
             };
+            assert_eq!(findings.len(), 1);
             assert_eq!(findings[0].key, GITHUB_ORG_KEY);
-            assert!(
-                findings[0].message.contains(said),
-                "{}",
-                findings[0].message
-            );
-            assert!(findings[0].message.contains("GitHub organisation"));
+            assert_eq!(findings[0].kind, FindingKind::InvalidValue);
+            insta::assert_snapshot!(format!("refused_{case}"), findings[0].message);
             assert_eq!(
                 std::fs::read_to_string(home.global_config()).unwrap(),
                 MACHINE

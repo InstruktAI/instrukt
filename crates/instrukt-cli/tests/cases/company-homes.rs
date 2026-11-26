@@ -367,6 +367,26 @@ fn stderr(assert: &assert_cmd::assert::Assert) -> String {
     String::from_utf8_lossy(&assert.get_output().stderr).into_owned()
 }
 
+/// `text` with the test's own temporary folder, as written and as resolved,
+/// replaced by `[TMP]`.
+fn scrubbed(env: &TestEnv, text: &str) -> String {
+    let base = env.path("");
+    let base = base.to_str().unwrap().trim_end_matches('/');
+    let resolved = std::fs::canonicalize(base).unwrap();
+    text.replace(resolved.to_str().unwrap(), "[TMP]")
+        .replace(base, "[TMP]")
+}
+
+/// Every value in `value`, at any depth, as text.
+fn values(value: &serde_yaml_ng::Value, out: &mut Vec<String>) {
+    match value {
+        serde_yaml_ng::Value::Mapping(map) => map.values().for_each(|v| values(v, out)),
+        serde_yaml_ng::Value::Sequence(items) => items.iter().for_each(|v| values(v, out)),
+        serde_yaml_ng::Value::String(text) => out.push(text.clone()),
+        _ => {}
+    }
+}
+
 // spec: project/instrukt/spec/feature/configuration/company-homes UC-CH5
 #[test]
 fn adding_a_company_generates_its_home_the_same_as_every_other() {
@@ -385,11 +405,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     // No organisation is declared: nothing is created, and the operator is
     // told the organisation is a prerequisite.
     let refused = env.run(&env.path(""), add).failure();
-    assert!(
-        stderr(&refused).contains("github.org") && stderr(&refused).contains("GitHub organisation"),
-        "{}",
-        stderr(&refused)
-    );
+    insta::assert_snapshot!("no-owner-refused", scrubbed(&env, &stderr(&refused)));
     // The declared owner is a person's account: refused the same way.
     let machine = env.instrukt_home().join("instrukt.yaml");
     let declared = std::fs::read_to_string(&machine).unwrap();
@@ -397,12 +413,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     layer["github"]["org"] = "ana".into();
     std::fs::write(&machine, serde_yaml_ng::to_string(&layer).unwrap()).unwrap();
     let refused = env.run(&env.path(""), add).failure();
-    assert!(
-        stderr(&refused).contains("personal GitHub account")
-            && stderr(&refused).contains("GitHub organisation"),
-        "{}",
-        stderr(&refused)
-    );
+    insta::assert_snapshot!("personal-owner-refused", scrubbed(&env, &stderr(&refused)));
     std::fs::write(&machine, &declared).unwrap();
     assert_eq!(writes(&github), Vec::<String>::new());
     assert!(!acme_home.exists());
@@ -419,8 +430,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     env.git(&elsewhere, ["init", "--quiet"]);
     std::fs::write(elsewhere.join("instrukt.yaml"), "schema_version: [\n").unwrap();
     let added = env.run(&elsewhere, add).success();
-    let report = stdout(&added);
-    assert!(report.contains("created"), "{report}");
+    insta::assert_snapshot!("company-created", scrubbed(&env, &stdout(&added)));
 
     // The organisation holds the company's private repository, named after
     // its key, holding the company skeleton.
@@ -443,6 +453,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     assert_eq!(layer["modules"]["todos"], false);
     assert_eq!(layer["review"]["automatic"], true);
     assert!(!skeleton.iter().any(|file| file.starts_with(".github/")));
+    assert_eq!(github.is_private("homes/company-acme"), Some(true));
     assert_eq!(
         writes(&github),
         [
@@ -472,37 +483,60 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     env.run(&env.path(""), ["config", "validate", "--company", "acme"])
         .success();
     let hooks = stdout(&env.run(&acme_home, ["hooks", "status"]).success());
-    assert!(hooks.contains("pre-commit"), "{hooks}");
+    insta::assert_snapshot!("home-hooks", scrubbed(&env, &hooks));
     assert!(
         env.instrukt_home()
             .join("state/publication/company-acme.yaml")
             .is_file()
     );
-    // A commit made in it carries its rendered AGENTS.md; publishing it put
-    // none of the company's documents on the computer.
-    env.git(&acme_home, ["checkout", "--quiet", "-b", "knowledge"]);
-    std::fs::write(
-        acme_home.join("docs/about.md"),
-        "---\ndescription: Who Acme is.\n---\n\n# About Acme\n\nAcme builds bicycles to order.\n",
-    )
-    .unwrap();
+    // The company's knowledge is committed on main, a document under
+    // `docs/project/` among it: the commit carries the AGENTS.md rendered
+    // from it, and publishing the home puts none of it on the computer.
+    let about =
+        "---\ndescription: Who Acme is.\n---\n\n# About Acme\n\nAcme builds bicycles to order.\n";
+    let notes =
+        "---\ndescription: How Acme plans its week.\n---\n\n# Planning\n\nAcme plans on Mondays.\n";
+    std::fs::create_dir_all(acme_home.join("docs/project")).unwrap();
+    std::fs::write(acme_home.join("docs/about.md"), about).unwrap();
+    std::fs::write(acme_home.join("docs/project/planning.md"), notes).unwrap();
     std::fs::write(
         acme_home.join("docs/index.yaml"),
-        "expanded: [about.md]\nlisted: []\n",
+        "expanded: [about.md]\nlisted: [project/planning.md]\n",
     )
     .unwrap();
     env.git(&acme_home, ["add", "docs"]);
     env.git(&acme_home, ["commit", "--quiet", "-m", "Who Acme is"]);
-    assert!(
+    env.finished_hook_run(&acme_home, instrukt_core::repository::Hook::PostCommit);
+    insta::assert_snapshot!(
+        "home-commit-instructions",
         env.git(&acme_home, ["show", "HEAD:AGENTS.md"])
-            .contains("Acme builds bicycles to order.")
     );
+    env.run(&acme_home, ["sync"]).success();
+    let docs = env.instrukt_home().join("docs");
+    for entry in walkdir::WalkDir::new(&docs)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        if entry.file_type().is_file() {
+            let bytes = std::fs::read(entry.path()).unwrap();
+            assert!(
+                bytes != about.as_bytes() && bytes != notes.as_bytes(),
+                "{} holds a company document",
+                entry.path().display()
+            );
+        }
+    }
+    assert!(!docs.join("project/company-acme").exists());
+    let index: serde_yaml_ng::Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(env.instrukt_home().join("state/index.yaml")).unwrap_or_default(),
+    )
+    .unwrap_or(serde_yaml_ng::Value::Null);
+    let mut named = Vec::new();
+    values(&index, &mut named);
     assert!(
-        !env.instrukt_home()
-            .join("docs/project/company-acme")
-            .exists()
+        !named.iter().any(|value| value == "company-acme"),
+        "{named:?}"
     );
-    env.git(&acme_home, ["checkout", "--quiet", "main"]);
 
     // A second company's home holds the same skeleton, differing only where
     // its identity enters it.
@@ -520,6 +554,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     )
     .success();
     let globex_remote = remotes.join("homes/company-globex.git");
+    assert_eq!(github.is_private("homes/company-globex"), Some(true));
     let identity = |text: String| text.replace("acme", "globex").replace("Acme", "Globex");
     assert_eq!(
         files_on_main(&env, &globex_remote),
@@ -541,11 +576,7 @@ fn adding_a_company_generates_its_home_the_same_as_every_other() {
     let before = common::Snapshot::over(vec![], vec![acme_home.clone()]);
     let recorded = writes(&github).len();
     let refused = env.run(&env.path(""), add).failure();
-    assert!(
-        stderr(&refused).contains(&acme_home.display().to_string()),
-        "{}",
-        stderr(&refused)
-    );
+    insta::assert_snapshot!("existing-home-refused", scrubbed(&env, &stderr(&refused)));
     assert_eq!(before.changed(), Vec::<std::path::PathBuf>::new());
     assert_eq!(writes(&github).len(), recorded);
 }
@@ -590,7 +621,7 @@ fn another_computer_gets_an_existing_companys_home() {
     let added = env
         .run(&env.path(""), ["init", "--company", "acme"])
         .success();
-    assert!(stdout(&added).contains("contract"), "{}", stdout(&added));
+    insta::assert_snapshot!("company-checked-out", scrubbed(&env, &stdout(&added)));
 
     // The computer holds the home as the checkout of that repository, ready
     // as a project like any other.
@@ -601,7 +632,8 @@ fn another_computer_gets_an_existing_companys_home() {
     assert!(home.join("company.yaml").is_file());
     env.run(&env.path(""), ["config", "validate", "--company", "acme"])
         .success();
-    assert!(stdout(&env.run(&home, ["hooks", "status"]).success()).contains("pre-commit"));
+    let hooks = stdout(&env.run(&home, ["hooks", "status"]).success());
+    insta::assert_snapshot!("other-computer-hooks", scrubbed(&env, &hooks));
     assert!(
         env.instrukt_home()
             .join("state/publication/company-acme.yaml")
