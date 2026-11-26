@@ -1149,7 +1149,10 @@ mod tests {
 
     #[test]
     fn a_unit_that_is_not_utf8_is_unreadable() {
-        assert!(unreadable(b"---\nsource_sha256: x\nmodel: m\n---\n\xff\n"));
+        let mut bytes = unit(&source_digest("x"), "- a rule\n").into_bytes();
+        assert!(Unit::parse("u.md", &bytes).is_ok());
+        bytes.insert(bytes.len() - 1, 0xff);
+        assert!(unreadable(&bytes));
     }
 
     #[test]
