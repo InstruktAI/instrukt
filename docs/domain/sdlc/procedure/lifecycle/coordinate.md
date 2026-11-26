@@ -34,12 +34,23 @@ you rest.
 
 ### What you resolve and what you return
 
+<!-- planned-change:todo-create-hold -->
 - **Operational conditions are yours to resolve.** A raced or failed launch, a
   stale thread of delivered or withdrawn work, agents confused about who does
   what, compatible todos that touch the same subsystem, unrelated todos
   contending for the same code, a session stalled on a prompt, the same thing
   filed twice by agents, a defect of the platform itself: resolve each with the
   owning command or by pointing its owner, under `sdlc/concept/coordination-cases`.
+<!-- change:todo-create-hold -->
+- **Operational conditions are yours to resolve.** A raced or failed launch, a
+  stale thread of delivered or withdrawn work, agents confused about who does
+  what, compatible todos that touch the same subsystem, unrelated todos
+  contending for the same code, a session stalled on a prompt, the same thing
+  filed twice by agents, a held todo whose stated condition outside the
+  project's todos is met, a defect of the platform itself: resolve each with
+  the owning command or by pointing its owner, under
+  `sdlc/concept/coordination-cases`.
+<!-- /planned-change:todo-create-hold -->
 - **What belongs to a person goes back to the work's origin.** A decision a
   person owns, separately commissioned work that converges or conflicts, and an
   existing solution found while work is under way return to the conversation the
@@ -200,6 +211,14 @@ waiting on a person. The operator's answer here is the settlement.
   end of the turn.
 
 ### 6. Rest
+
+<!-- planned:todo-create-hold -->
+Before resting, read each held todo of the project whose manual hold waits on
+a stated condition outside the project's todos, and release every one whose
+condition the evidence its reason names shows met (`NC-51`). While you are
+parked, whoever satisfies such a condition releases the hold or messages this
+thread, and either wakes you.
+<!-- /planned:todo-create-hold -->
 
 At the end of every turn, read `instrukt todo list`. While a todo of the project
 is active, unheld and not a structural holder, that fleet is your active watch:

@@ -32,11 +32,24 @@ Apply these configured action values to the identified assignment and session.
   a concrete next contribution, and an owner able to make it. Judge progress
   by changed evidence, artifacts, or outcomes, not by repeated status checks
   or renewed attempts with the same premise.
+<!-- planned-change:todo-create-hold -->
 - **Hold for a specific unblock condition.** Record the condition, who owns
   satisfying it, and the evidence that releases the hold. A named dependency
   delivery, a scheduled gate, or a specific decision from its responsible
   person can qualify. Naming an owner for hypothetical future evidence does
   not make that evidence an actionable dependency.
+<!-- change:todo-create-hold -->
+- **Hold for a specific unblock condition outside the project's todos.**
+  Record the condition, who owns satisfying it, and the address of the
+  evidence that releases the hold. A delivery outside the project's todos,
+  such as a one-off branch merge or a binary rollout, a scheduled gate, or a
+  specific decision from its responsible person can qualify. Another todo's
+  delivery never does: that wait is a prerequisite (`--after`). Naming an owner
+  for hypothetical future evidence does not make that evidence an actionable
+  dependency. Whoever satisfies the condition releases the hold or tells the
+  project's coordinator, which releases it once it reads the evidence
+  (**Coordinator pauses and retirements**).
+<!-- /planned-change:todo-create-hold -->
 - **Bound investigation by an obtainable next observation.** Missing evidence
   can justify a concrete, bounded acquisition step. When the available inquiry
   is exhausted and no such step or admissible unblock condition remains,
@@ -99,6 +112,7 @@ once, deduplicated, while preserving the existing restoration obligation.
   semantic documentation impact. Iceboxed forming work acquires its required
   evidence before entering the lifecycle.
 
+<!-- planned-change:todo-create-hold -->
 - **A todo enters the lifecycle valid; the icebox parks ideas at any stage.** A
   todo is valid when its intended outcome and every known contract that Prepare
   will consume have converged, and no pending authoring, review, or commit is
@@ -107,6 +121,22 @@ once, deduplicated, while preserving the existing restoration obligation.
   created with `--icebox` and made valid before it is unfrozen; unfreezing
   enters it into the lifecycle. Hold is a brake on valid work awaiting an
   external gate.
+<!-- change:todo-create-hold -->
+- **A todo enters the lifecycle valid; the icebox parks ideas at any stage.** A
+  todo is valid when its intended outcome and every known contract that Prepare
+  will consume have converged, and no pending authoring, review, or commit is
+  still expected to change them. Creating a todo without `--icebox` enters it
+  into the lifecycle, so it is valid at creation. An idea still forming is
+  created with `--icebox` and made valid before it is unfrozen; unfreezing
+  enters it into the lifecycle.
+- **Place a filing by what it waits on.** Valid work waiting on another todo
+  is created with `--after <slugs>`, and leaves the wait on its own when they
+  deliver. Valid work waiting on a concrete condition outside the project's
+  todos is created with `--hold --reason <text>`, the reason naming that
+  condition under the hold rule above, so it is held from its first revision.
+  `--icebox` is for work that has not converged, never for a dependency or for
+  converged work waiting on a merge or release, and never combined with a hold.
+<!-- /planned-change:todo-create-hold -->
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -446,6 +476,17 @@ acts on todos it does not hold, within these bounds alone.
   the challenged premise at its next safe point. The coordinator releases the
   hold when the settlement is applied. It pauses only the work the settlement
   concerns and never parks work without its release.
+<!-- planned:todo-create-hold -->
+- **A stated unblock condition is released once it is met.** A manual hold
+  whose reason names a condition outside the project's todos and the address
+  of the evidence that releases it is the coordinator's to release, whoever
+  placed it. Whenever it is woken, the coordinator reads that address for each
+  such hold and releases the hold with `instrukt todo update <slug> --release`
+  when the evidence shows the condition met, inspecting the outcome. It
+  releases none on age, on a message alone, or on its own judgment that the
+  condition stopped mattering, and a hold whose evidence it cannot read stays
+  as it is.
+<!-- /planned:todo-create-hold -->
 - **A redundant agent filing is retired by the coordinator.** A todo that
   agents filed and that duplicates another carries no person's request. The
   coordinator writes into the surviving todo's `log` what the redundant filing
@@ -578,6 +619,21 @@ filed is the coordinator's to retire because no claimant sees the other
 filing and no person's intent rests on it; folding its evidence into the
 survivor keeps what it found.
 
+<!-- planned:todo-create-hold -->
+Each placement answers a different question about why work is not moving. A
+prerequisite clears itself when the todo it names delivers, so a hold standing
+for one waits on someone to remember it. A hold is the only record that keeps
+converged work in the lifecycle, paused, with the condition it waits on visible
+to everyone reading the work. The icebox takes work out of the lifecycle and
+records no condition, so converged work parked there drops out of the fleet's
+attention and is found again only by chance. Holding the work as it is created
+leaves no moment in which the runner can pick it up unheld. A hold whose
+evidence has arrived pauses work that is free to move; the coordinator is the
+one standing reader of every todo's hold, and releasing on the evidence the
+hold itself names applies the condition as recorded rather than judging it, so
+no placer's absence keeps the work waiting.
+<!-- /planned:todo-create-hold -->
+
 ## Scope
 
 All todo creation and preparation, every kind, every human or agent creator,
@@ -604,9 +660,18 @@ this policy.
   filing that carries a human's request, violates this policy.
 - Parking a flagged todo with `instrukt todo update <slug> --hold --reason <text>` without
   the associated todo-log explanation is incomplete reconciliation.
+<!-- planned-change:todo-create-hold -->
 - Reviewers apply **Coordinator pauses and retirements** to the coordinator's
   holds, log writes and withdrawals as the work record shows them. A
   coordinator acting within it is not a flagger.
+<!-- change:todo-create-hold -->
+- Reviewers apply **Coordinator pauses and retirements** to the coordinator's
+  holds, releases, log writes and withdrawals as the work record shows them. A
+  coordinator acting within it is not a flagger.
+- Converged work filed with `--icebox` to wait on a merge, a release or another
+  todo, or a hold whose reason is another todo's delivery, violates **Place a
+  filing by what it waits on**.
+<!-- /planned-change:todo-create-hold -->
 
 ## Exceptions
 

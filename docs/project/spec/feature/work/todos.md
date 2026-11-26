@@ -41,6 +41,21 @@ It records observed human involvement and supplies no authorization.
 GitHub reflection is owned by
 `project/instrukt/spec/feature/work/github-record`.
 
+<!-- planned:todo-create-hold -->
+Creation places the todo by what it waits on, and its help and admission
+questions name the three placements apart:
+
+- `--after <slugs>` makes it wait for other todos and leaves it ready once they
+  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`,
+  Prerequisites).
+- `--hold --reason <text>` files converged work held for a condition outside
+  the project's todos, the hold committed with the todo
+  (`project/instrukt/spec/feature/work/dependencies-and-holds`, Session
+  bindings, claims and holds).
+- `--icebox` parks work whose outcome has not converged, outside the
+  lifecycle (Parking, withdrawal and delivery, below).
+<!-- /planned:todo-create-hold -->
+
 ### Kinds
 
 | Kind | Purpose | Completion evidence |

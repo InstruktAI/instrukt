@@ -40,6 +40,7 @@ authority, coordinator act, intervention stop, and settlement evidence match.
 An event opens a reading, not a verdict: the current record decides which case
 applies, and a condition that has cleared opens none.
 
+<!-- planned-change:todo-create-hold -->
 | What woke the coordinator | Cases it can open |
 | --- | --- |
 | `runner.attention.execution_stalled` | `NC-37`, `NC-38`, `NC-05` |
@@ -51,6 +52,23 @@ applies, and a condition that has cleared opens none.
 | An origin's message about a return | `NC-48` |
 | A technical coordinator's question | `NC-49` |
 | A person's message in the coordinator's thread | `NC-30`, `NC-32`, `NC-33`, `NC-35` |
+<!-- change:todo-create-hold -->
+| What woke the coordinator | Cases it can open |
+| --- | --- |
+| `runner.attention.execution_stalled` | `NC-37`, `NC-38`, `NC-05` |
+| `runner.attention.input_waiting` | `NC-39`, `NC-29`, `NC-34` |
+| `runner.attention.hold_placed`, `runner.attention.hold_released` | `NC-41`, `NC-15-a`, `NC-15-b`, `NC-48`, `NC-51` |
+| `runner.attention.fleet_quiet` | `NC-50` |
+| `runner.attention.attempts_failing` | `NC-40`, `NC-08` |
+| `runner.attention.raised` | `NC-44-a` to `NC-44-e`, `NC-45`, `NC-46`, `NC-47` |
+| An origin's message about a return | `NC-48` |
+| A technical coordinator's question | `NC-49` |
+| A person's message in the coordinator's thread | `NC-30`, `NC-32`, `NC-33`, `NC-35` |
+| A message that a held todo's stated condition is met | `NC-51` |
+
+Every wake, whatever opened it, also reads the project's holds that wait on a
+stated condition outside its todos under `NC-51` before the coordinator rests.
+<!-- /planned-change:todo-create-hold -->
 
 ---
 
@@ -658,12 +676,24 @@ applies, and a condition that has cleared opens none.
 
 - **Evidence available:** the hold event, the hold's source and reason, the
   todo's record and the coordinator's own open returns.
+<!-- planned-change:todo-create-hold -->
 - **Ownership:** the hold's source owns it; the Coordinator owns only holds it
   placed for a settlement.
 - **Coordinator:** a release of a hold you placed is read under `NC-48`. A hold
   with a governed gate is `NC-15-a`, one with no discernible owner `NC-15-b`. A
   hold that leaves no unheld todo in the project is the coordinator procedure's
   rest condition.
+<!-- change:todo-create-hold -->
+- **Ownership:** the hold's source owns it; the Coordinator owns the holds it
+  placed for a settlement, and releases a manual hold whose stated condition
+  outside the project's todos is met (`sdlc/policy/todo-creation-discipline`,
+  Coordinator pauses and retirements).
+- **Coordinator:** a release of a hold you placed is read under `NC-48`. A hold
+  with a governed gate is `NC-15-a`, a manual hold whose reason names a
+  condition outside the project's todos and the evidence that releases it
+  `NC-51`, and one with no discernible owner `NC-15-b`. A hold that leaves no
+  unheld todo in the project is the coordinator procedure's rest condition.
+<!-- /planned-change:todo-create-hold -->
 - **Stop and settlement:** settles on reading; nothing is owed for a valid hold.
 
 ##### NC-42 — Stale thread of delivered or withdrawn work
@@ -687,6 +717,33 @@ applies, and a condition that has cleared opens none.
   ownership address, as in `NC-02-d`.
 - **Stop and settlement:** stop after the pointers. Settle when one owner acts and
   the other stands down.
+
+<!-- planned:todo-create-hold -->
+##### NC-51 — A hold waits on a stated condition outside the todos
+
+- **Evidence available:** the manual hold's reason, time and recording session
+  (`instrukt todo show <slug>`), and the record at the address the reason
+  names: a branch's merge into the canonical branch, a published release, an
+  external gate's recorded state, or a person's recorded decision.
+- **Ownership:** whoever the reason names satisfies the condition; whether it
+  is met is `not applicable — mechanically determined by the record at the
+  address the reason names`. The Coordinator releases the hold, expressly
+  authorised by `sdlc/policy/todo-creation-discipline` (Coordinator pauses and
+  retirements); the todo mechanism is the state authority.
+- **Coordinator:** read that record on the event that placed the hold, on a
+  message that the condition is met, and on every later wake before resting.
+  When it shows the condition met, release the hold with
+  `instrukt todo update <slug> --release` and inspect the outcome; the todo
+  returns to the workflow's other gates. While it shows the condition unmet,
+  leave the hold. A message alone, the hold's age, or a reading that the
+  condition stopped mattering releases nothing. A reason that names another
+  todo's delivery is a misplaced prerequisite: point the hold's recording
+  session at the placement rule of `sdlc/policy/todo-creation-discipline`. A
+  reason that names no readable evidence is `NC-15-b`; a hold you placed for a
+  settlement is `NC-48`.
+- **Stop and settlement:** settle on the release, or on reading the condition
+  unmet; the next wake reads it again.
+<!-- /planned:todo-create-hold -->
 
 #### Responsibility 7 — Converging work and origin routing
 

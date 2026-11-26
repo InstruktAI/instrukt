@@ -84,6 +84,26 @@ is refused. An automatic hold records the cause that produced it, such as a
 failed task or unresolved diagnosis. `instrukt todo show` exposes the hold's
 reason and source.
 
+<!-- planned:todo-create-hold -->
+`instrukt todo create <slug> <content> --kind <kind> --hold --reason <reason>`
+places the same manual hold as the todo is created, in the creation's one
+transaction: the first revision of the record already carries the hold, so no
+reader of the record, the runner included, ever finds the todo unheld. The
+hold carries its source, reason, time and recording session and raises the
+attention any placed hold raises
+(`project/instrukt/spec/feature/runner/fleet-attention`). `--hold` and
+`--reason` require each other, a blank reason is refused, and a hold is
+refused together with `--icebox`; a refused creation records nothing.
+
+A dispatch hold is the wait on a condition outside the project's todos, such
+as an unmerged one-off branch, a binary rollout or an external gate, and its
+reason names that condition. A wait on another todo is a prerequisite, which
+the dependent leaves on its own when the prerequisite delivers. Work whose
+outcome has not converged is parked in the icebox
+(`project/instrukt/spec/feature/work/todos`, Parking), outside the lifecycle,
+and is never held.
+<!-- /planned:todo-create-hold -->
+
 `instrukt todo update <slug> --release` releases the dispatch hold while
 preserving the todo's intent, artifacts, dependencies and execution-claim
 record. Release makes the todo eligible for the other workflow gates; it does
@@ -133,6 +153,19 @@ belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
   But when filing the work under that todo is refused
   Then the documentation still belongs to the original todo
 ```
+
+<!-- planned:todo-create-hold -->
+### UC-DH7: File converged work that waits on something outside the project's todos
+
+```gherkin
+  Given a developer has converged work that must wait for a condition outside the project's todos
+  When they file it on hold with the reason it must wait
+  Then the todo is on hold from its first recorded revision
+  And the reason is visible with the todo in the project's work listing and in its record
+  But when the reason is blank, or the work is also parked in the icebox
+  Then the filing is refused, names why, and records nothing
+```
+<!-- /planned:todo-create-hold -->
 
 ## Known caveats
 
