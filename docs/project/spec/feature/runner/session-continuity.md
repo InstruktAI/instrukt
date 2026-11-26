@@ -185,13 +185,15 @@ adapter verb templates.
 
 <!-- planned:commit-rereview-reuses-reviewer -->
 
-Requested review also needs input-consumption observation: which run an input
-entered and whether that run has ended, as the runner observes the inputs it
-delivers. With it the runner tells the session that asked when the requested
-reviewer's turn stops without a verdict
-(`project/instrukt/spec/feature/runner/requested-review`, Returning the
-outcome). A keyed wake of a requested reviewer is a `dispatch_send` under the
-command identity Keyed wake derives.
+Requested review also needs the run a message entered, read by the message's
+identity: the opening message of a keyed start and the message of a
+`dispatch_send` each carry the command identity instrukt fixed for it, and the
+runtime reports which run that message entered and whether the run has ended.
+With it the runner tells the session that asked when the requested reviewer's
+turn stops without a verdict
+(`project/instrukt/spec/feature/runner/requested-review`). A keyed wake of a
+requested reviewer is a `dispatch_send` under the command identity Keyed wake
+derives.
 
 <!-- /planned:commit-rereview-reuses-reviewer -->
 
@@ -337,9 +339,13 @@ is not woken. Neither is a session whose thread was archived or deleted, or one
 with a turn in progress. Each answer names the session and why, and the caller
 decides what follows.
 
-The requested-review caller wakes a commit's reviewer of record
-(`project/instrukt/spec/feature/runner/requested-review`, Reaching the
-reviewer). It wakes only a session under a requested-reviewer key.
+A reviewer wake is addressed by a reviewed head. The runner asks work for the
+head's reviewer of record, the session that recorded the current version of
+its verdict (`project/instrukt/spec/feature/work/github-apps`), and keyed-wakes
+that session with coordinates only. A head with no reviewer of record has no
+reviewer to wake. The requested-review caller wakes only a reviewer of record
+under a requested-reviewer key
+(`project/instrukt/spec/feature/runner/requested-review`).
 
 <!-- /planned:commit-rereview-reuses-reviewer -->
 

@@ -208,10 +208,12 @@ The session that recorded the current version of a commit's verdict that
 stands here is that commit's reviewer of record. Work answers it with the
 commit's verdict, together with the current version's report digest and
 moment, which name and date the version (Verdict publication), and
-`instrukt review show` names it. A verdict this computer handed off or set
-aside has no reviewer of record here. The runner wakes a reviewer of record to
-review later work (`project/instrukt/spec/feature/runner/requested-review`,
-Reaching the reviewer). A wake records nothing of the commit's evidence and
+`instrukt review show` names it. Work also answers which commit's verdict
+standing here has a version whose report has a given digest. A verdict this
+computer handed off or set aside has no reviewer of record here. The runner
+wakes a reviewer of record to review later work
+(`project/instrukt/spec/feature/runner/requested-review`). A wake records
+nothing of the commit's evidence and
 changes nothing of who may record a version (Admission of review evidence,
 Settlement): a verdict the woken session records for another commit is that
 commit's own and admitted as that commit's.
