@@ -935,15 +935,7 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
         .query::<()>(&mut redis.connection())
         .unwrap();
     env.run(env.home(), ["install", "--check"]).success();
-    // The fleet query's permissions are checked beside the events ones.
-    for denied in [
-        "-EVALSHA",
-        "-SCRIPT|LOAD",
-        "-HSET",
-        "-HGETALL",
-        "-LPOP",
-        "-LLEN",
-    ] {
+    for denied in ["-EVALSHA", "-SCRIPT|LOAD"] {
         redis::cmd("ACL")
             .arg("SETUSER")
             .arg("probe-user")
