@@ -291,9 +291,7 @@ pub(crate) fn maintain_at_start(home: &Home, now: Timestamp) -> Result<(), Conne
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
-    ConnectorError {
-        cause: error.to_string(),
-    }
+    ConnectorError::new(error.to_string())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -387,15 +385,10 @@ pub(crate) fn scan(
                         page
                     }
                     Err(error) => {
-                        let retry = error.retry_after.map(|seconds| {
-                            let delay = SignedDuration::from_secs(
-                                i64::try_from(seconds).unwrap_or(i64::MAX),
-                            );
-                            micros(clock().checked_add(delay).unwrap_or(Timestamp::MAX))
-                        });
+                        let retry = error.wait.as_ref().map(|wait| micros(wait.at()));
                         conn.execute(
                             "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
-                            params![owner, key, retry, error.cause],
+                            params![owner, key, retry, error.to_string()],
                         ).map_err(sql)?;
                         return Err(failed(error));
                     }

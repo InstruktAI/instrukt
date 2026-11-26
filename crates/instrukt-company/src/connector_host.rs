@@ -108,8 +108,10 @@ impl Connectors for Directory {
         company: &ProjectSlug,
         key: &str,
     ) -> Result<Box<dyn Connector>, ConnectorError> {
-        let not_admitted = || ConnectorError {
-            cause: format!("the {key} connector of company `{company}` is not admitted"),
+        let not_admitted = || {
+            ConnectorError::new(format!(
+                "the {key} connector of company `{company}` is not admitted"
+            ))
         };
         let admitted_company = admitted.company(company).ok_or_else(not_admitted)?;
         let declared = admitted_company
@@ -121,8 +123,11 @@ impl Connectors for Directory {
             .kinds
             .iter()
             .find(|kind| kind.declaration().key == declared.kind)
-            .ok_or_else(|| ConnectorError {
-                cause: format!("this instrukt has no {} connector kind", declared.kind),
+            .ok_or_else(|| {
+                ConnectorError::new(format!(
+                    "this instrukt has no {} connector kind",
+                    declared.kind
+                ))
             })?;
         kind.open(
             company.as_str(),
@@ -182,12 +187,11 @@ struct AdmittedResolver<'a>(&'a AdmittedSecrets);
 
 impl SecretResolver for AdmittedResolver<'_> {
     fn resolve(&self, reference: &str) -> Result<String, ConnectorError> {
-        self.0
-            .resolve(reference)
-            .map(str::to_owned)
-            .ok_or_else(|| ConnectorError {
-                cause: format!("`{reference}` is not among the company's admitted secrets"),
-            })
+        self.0.resolve(reference).map(str::to_owned).ok_or_else(|| {
+            ConnectorError::new(format!(
+                "`{reference}` is not among the company's admitted secrets"
+            ))
+        })
     }
 }
 
@@ -466,8 +470,10 @@ fn connector_policy(
                 declared.reply_mode,
             )
         })
-        .ok_or_else(|| ConnectorError {
-            cause: format!("connector `{key}` is not admitted for company `{company}`"),
+        .ok_or_else(|| {
+            ConnectorError::new(format!(
+                "connector `{key}` is not admitted for company `{company}`"
+            ))
         })
 }
 
@@ -507,9 +513,7 @@ impl Inbox for HostInbox<'_> {
             reply_mode,
             self.clock.now(),
         )
-        .map_err(|error| ConnectorError {
-            cause: error.to_string(),
-        })?;
+        .map_err(|error| ConnectorError::new(error.to_string()))?;
         let _ = self.nudge.try_send(());
         Ok(())
     }
@@ -1326,7 +1330,7 @@ fn next_record(admission: Admission, admit: ConnectorAdmit) -> Next {
             ConnectorAdmit::Members => RefusalReason::NotOwn,
             ConnectorAdmit::AdminsOnly => RefusalReason::NotAdmin,
         }),
-        Admission::Undecided(cause) => Next::Waiting(cause),
+        Admission::Undecided { cause, .. } => Next::Waiting(cause),
     }
 }
 
@@ -1380,10 +1384,9 @@ impl ContextReads {
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Disconnected) => {
                             slot.remove();
-                            return Some(Err(ConnectorError {
-                                cause: "the context reader stopped before reporting its result"
-                                    .into(),
-                            }));
+                            return Some(Err(ConnectorError::new(
+                                "the context reader stopped before reporting its result",
+                            )));
                         }
                     }
                 }
@@ -1400,9 +1403,7 @@ impl ContextReads {
                 let excluded = match exclusions() {
                     Ok(excluded) => excluded,
                     Err(error) => {
-                        return Some(Err(ConnectorError {
-                            cause: error.to_string(),
-                        }));
+                        return Some(Err(ConnectorError::new(error.to_string())));
                     }
                 };
                 let connector = Arc::clone(connector);
@@ -1428,9 +1429,9 @@ impl ContextReads {
                         }
                     });
                 if let Err(error) = spawned {
-                    return Some(Err(ConnectorError {
-                        cause: format!("cannot start context read: {error}"),
-                    }));
+                    return Some(Err(ConnectorError::new(format!(
+                        "cannot start context read: {error}"
+                    ))));
                 }
                 slot.insert(ContextFlight {
                     replies,
@@ -1951,7 +1952,10 @@ mod tests {
         );
         assert_eq!(
             next_record(
-                Admission::Undecided("later".into()),
+                Admission::Undecided {
+                    cause: "later".into(),
+                    wait: None
+                },
                 ConnectorAdmit::Members
             ),
             Next::Waiting("later".into())

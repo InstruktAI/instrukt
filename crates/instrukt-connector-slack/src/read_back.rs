@@ -289,18 +289,14 @@ fn continuation(pending: &[Request]) -> Result<Option<String>, ReadBackError> {
 fn failed(error: impl std::fmt::Display) -> ReadBackError {
     ReadBackError {
         cause: error.to_string(),
-        retry_after: None,
+        wait: None,
     }
 }
 
 fn web_error(error: SlackError) -> ReadBackError {
-    let retry_after = match &error {
-        SlackError::Limited { seconds, .. } => Some(*seconds),
-        _ => None,
-    };
     ReadBackError {
         cause: error.to_string(),
-        retry_after,
+        wait: None,
     }
 }
 

@@ -770,9 +770,7 @@ impl SlackKind {
     ) -> Result<Box<dyn Kind>, ConnectorError> {
         SlackEndpoint::from_lookup(lookup, clock)
             .map(|endpoint| Box::new(Self::new(endpoint)) as Box<dyn Kind>)
-            .map_err(|error| ConnectorError {
-                cause: error.to_string(),
-            })
+            .map_err(|error| ConnectorError::new(error.to_string()))
     }
 }
 
@@ -789,8 +787,10 @@ impl Kind for SlackKind {
         secrets: &dyn SecretResolver,
     ) -> Result<Box<dyn Connector>, ConnectorError> {
         let token = |field: &str| -> Result<String, ConnectorError> {
-            let reference = declared.text(field).ok_or_else(|| ConnectorError {
-                cause: format!("the slack connector `{connector}` declares no {field}"),
+            let reference = declared.text(field).ok_or_else(|| {
+                ConnectorError::new(format!(
+                    "the slack connector `{connector}` declares no {field}"
+                ))
             })?;
             secrets.resolve(reference)
         };
@@ -869,9 +869,7 @@ fn cached_names<T>(
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
-    ConnectorError {
-        cause: error.to_string(),
-    }
+    ConnectorError::new(error.to_string())
 }
 
 fn own_message(message: &Value, me: &Me) -> bool {
@@ -928,7 +926,7 @@ impl Connector for Slack {
     }
 
     fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError> {
-        session(&self.api, inbox, quit).map_err(|cause| ConnectorError { cause })
+        session(&self.api, inbox, quit).map_err(ConnectorError::new)
     }
 
     /// Slack's record of the sender read now decides: one of the company's
@@ -937,7 +935,12 @@ impl Connector for Slack {
     fn admit(&self, sender: &str) -> Admission {
         let me = match self.me() {
             Ok(me) => me,
-            Err(error) => return Admission::Undecided(error.to_string()),
+            Err(error) => {
+                return Admission::Undecided {
+                    cause: error.to_string(),
+                    wait: None,
+                };
+            }
         };
         match self.api.user(sender) {
             Ok(record) => match admission(&record, &me) {
@@ -952,9 +955,10 @@ impl Connector for Slack {
             {
                 Admission::NotOwn
             }
-            Err(error) => {
-                Admission::Undecided(format!("who sent it cannot be looked up yet: {error}"))
-            }
+            Err(error) => Admission::Undecided {
+                cause: format!("who sent it cannot be looked up yet: {error}"),
+                wait: None,
+            },
         }
     }
 
