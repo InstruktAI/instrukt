@@ -41,7 +41,7 @@ pub struct InitArgs {
     /// The company's GitHub administrator, a person's GitHub account; needed
     /// only when its repository is created.
     #[arg(long, value_name = "LOGIN", requires = "company")]
-    admin: Option<String>,
+    admin: Option<instrukt_core::ids::GitHubLogin>,
     /// Whether a human was involved, declared for the root commit of a
     /// created repository; `false` when omitted.
     #[arg(long, value_name = "true|false", requires = "company")]

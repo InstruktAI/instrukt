@@ -7,6 +7,7 @@
 
 use instrukt_core::config::Configuration;
 use instrukt_core::github::{AppError, Operation};
+use instrukt_core::ids::{GitHubLogin, GitHubOrganisation, ProjectSlug};
 use instrukt_core::interfaces::{
     AccountKind, CompanyRepositories, CompanyRepositoryError, Creation, GitHubAccounts,
     InterfaceError,
@@ -182,16 +183,21 @@ impl GitHubAccess {
 }
 
 impl CompanyRepositories for GitHubAccess {
-    fn ready(&self, org: &str, now: Timestamp) -> Result<(), CompanyRepositoryError> {
-        self.administering(org, now, |_, _, _| Ok(()))
+    fn ready(
+        &self,
+        org: &GitHubOrganisation,
+        now: Timestamp,
+    ) -> Result<(), CompanyRepositoryError> {
+        self.administering(org.as_str(), now, |_, _, _| Ok(()))
     }
 
     fn create(
         &self,
-        org: &str,
-        repo: &str,
+        org: &GitHubOrganisation,
+        repo: &ProjectSlug,
         now: Timestamp,
     ) -> Result<Creation, CompanyRepositoryError> {
+        let (org, repo) = (org.as_str(), repo.as_str());
         self.administering(org, now, |apps, token, clock| {
             let what = format!("creating {org}/{repo}");
             let answer = apps
@@ -215,11 +221,12 @@ impl CompanyRepositories for GitHubAccess {
 
     fn grant_admin(
         &self,
-        org: &str,
-        repo: &str,
-        login: &str,
+        org: &GitHubOrganisation,
+        repo: &ProjectSlug,
+        login: &GitHubLogin,
         now: Timestamp,
     ) -> Result<(), CompanyRepositoryError> {
+        let (org, repo, login) = (org.as_str(), repo.as_str(), login.as_str());
         self.administering(org, now, |apps, token, clock| {
             let what = format!("making {login} an administrator of {org}/{repo}");
             let answer = apps
@@ -249,11 +256,12 @@ impl CompanyRepositories for GitHubAccess {
 
     fn set_default_branch(
         &self,
-        org: &str,
-        repo: &str,
+        org: &GitHubOrganisation,
+        repo: &ProjectSlug,
         branch: &str,
         now: Timestamp,
     ) -> Result<(), CompanyRepositoryError> {
+        let (org, repo) = (org.as_str(), repo.as_str());
         self.administering(org, now, |apps, token, clock| {
             let what = format!("setting the default branch of {org}/{repo} to {branch}");
             let answer = apps

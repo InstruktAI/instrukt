@@ -314,28 +314,32 @@ pub enum CompanyRepositoryError {
 pub trait CompanyRepositories: Send + Sync {
     /// Whether the project identity can administer repositories in `org`:
     /// its credential requested with exactly that permission.
-    fn ready(&self, org: &str, now: jiff::Timestamp) -> Result<(), CompanyRepositoryError>;
+    fn ready(
+        &self,
+        org: &crate::ids::GitHubOrganisation,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
     /// Creates the private repository `org/repo`, empty.
     fn create(
         &self,
-        org: &str,
-        repo: &str,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
         now: jiff::Timestamp,
     ) -> Result<Creation, CompanyRepositoryError>;
     /// Makes `login` an administrator of `org/repo`: at once for a member
     /// of `org`, by GitHub's invitation for anyone else.
     fn grant_admin(
         &self,
-        org: &str,
-        repo: &str,
-        login: &str,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
+        login: &crate::ids::GitHubLogin,
         now: jiff::Timestamp,
     ) -> Result<(), CompanyRepositoryError>;
     /// Sets the default branch of `org/repo` to `branch`.
     fn set_default_branch(
         &self,
-        org: &str,
-        repo: &str,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
         branch: &str,
         now: jiff::Timestamp,
     ) -> Result<(), CompanyRepositoryError>;

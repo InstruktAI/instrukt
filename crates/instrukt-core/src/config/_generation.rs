@@ -11,7 +11,7 @@ use serde_yaml_ng::{Mapping, Value};
 use super::_error::ConfigError;
 use super::_github_org::GITHUB_ORG_KEY;
 use super::_schema::PROJECT_SCHEMA_VERSION;
-use crate::ids::ProjectSlug;
+use crate::ids::{GitHubOrganisation, ProjectSlug};
 use crate::interfaces::AccountKind;
 
 /// What adding a company does, as configuration decides it from the facts
@@ -21,14 +21,14 @@ pub enum Generation {
     /// The company's repository does not exist: create it in
     /// `organisation` as `repository`, with the skeleton.
     Create {
-        organisation: String,
-        repository: String,
+        organisation: GitHubOrganisation,
+        repository: ProjectSlug,
     },
     /// The company's repository exists: it is the company's by contract and
     /// is checked out as the home, nothing on GitHub changed.
     CheckOut {
-        organisation: String,
-        repository: String,
+        organisation: GitHubOrganisation,
+        repository: ProjectSlug,
     },
 }
 
@@ -68,8 +68,21 @@ pub fn company_repository(key: &ProjectSlug) -> Result<ProjectSlug, crate::ids::
     ProjectSlug::parse(&format!("company-{key}"))
 }
 
+/// Refuses adding a company whose home `home` exists: a home is never
+/// adopted or overwritten. The first question of adding a company, asked
+/// before anything else is read.
+pub fn admit_home(home: &Path, home_exists: bool) -> Result<(), GenerationRefusal> {
+    if home_exists {
+        return Err(GenerationRefusal::HomeExists {
+            home: home.to_path_buf(),
+        });
+    }
+    Ok(())
+}
+
 /// Decides what adding the company whose repository is `repository`
-/// ([`company_repository`]) does: refused when its home exists, when
+/// ([`company_repository`]) does: refused when its home exists
+/// ([`admit_home`]), when
 /// `github.org` is not declared, or when the account it names (`org_kind`)
 /// is no organisation; otherwise checked out by contract when the
 /// repository is `reachable`, created when it is not.
@@ -81,11 +94,7 @@ pub fn decide(
     org_kind: Option<AccountKind>,
     reachable: bool,
 ) -> Result<Generation, GenerationRefusal> {
-    if home_exists {
-        return Err(GenerationRefusal::HomeExists {
-            home: home.to_path_buf(),
-        });
-    }
+    admit_home(home, home_exists)?;
     let Some(organisation) = declared_org.map(str::trim).filter(|org| !org.is_empty()) else {
         return Err(GenerationRefusal::NoOrganisation);
     };
@@ -98,8 +107,13 @@ pub fn decide(
             });
         }
     }
-    let organisation = organisation.to_owned();
-    let repository = repository.to_string();
+    let organisation = GitHubOrganisation::parse(organisation).map_err(|_| {
+        GenerationRefusal::NotAnOrganisation {
+            organisation: organisation.to_owned(),
+            kind: AccountKind::Absent,
+        }
+    })?;
+    let repository = repository.clone();
     Ok(if reachable {
         Generation::CheckOut {
             organisation,
@@ -157,8 +171,8 @@ pub fn write_skeleton(root: &Path, key: &ProjectSlug) -> Result<(), ConfigError>
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountKind, Generation, GenerationRefusal, PROJECT_SCHEMA_VERSION, Path, PathBuf,
-        ProjectSlug, company_repository, decide, skeleton_layer,
+        AccountKind, Generation, GenerationRefusal, GitHubOrganisation, PROJECT_SCHEMA_VERSION,
+        Path, PathBuf, ProjectSlug, company_repository, decide, skeleton_layer,
     };
 
     fn acme() -> ProjectSlug {
@@ -187,15 +201,15 @@ mod tests {
         assert_eq!(
             decided(false, Some("homes"), org, false),
             Ok(Generation::Create {
-                organisation: "homes".to_owned(),
-                repository: "company-acme".to_owned(),
+                organisation: GitHubOrganisation::parse("homes").unwrap(),
+                repository: ProjectSlug::parse("company-acme").unwrap(),
             })
         );
         assert_eq!(
             decided(false, Some("homes"), org, true),
             Ok(Generation::CheckOut {
-                organisation: "homes".to_owned(),
-                repository: "company-acme".to_owned(),
+                organisation: GitHubOrganisation::parse("homes").unwrap(),
+                repository: ProjectSlug::parse("company-acme").unwrap(),
             })
         );
     }

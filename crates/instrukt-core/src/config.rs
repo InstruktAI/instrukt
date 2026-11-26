@@ -59,8 +59,8 @@ pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Ti
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
 pub use _generation::{
-    Generation, GenerationRefusal, company_repository, decide as decide_generation, skeleton_layer,
-    write_skeleton,
+    Generation, GenerationRefusal, admit_home, company_repository, decide as decide_generation,
+    skeleton_layer, write_skeleton,
 };
 pub use _github_org::{GITHUB_ORG_KEY, admit_github_org};
 pub use _layer::{

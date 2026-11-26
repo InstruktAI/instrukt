@@ -84,6 +84,23 @@ identifier!(
 );
 
 identifier!(
+    /// The login of a GitHub organisation: the owner of company
+    /// repositories.
+    GitHubOrganisation,
+    "GitHub organisation",
+    is_github_login,
+    "ASCII letters, digits and `-`, not empty"
+);
+
+identifier!(
+    /// The login of a person's GitHub account.
+    GitHubLogin,
+    "GitHub login",
+    is_github_login,
+    "ASCII letters, digits and `-`, not empty"
+);
+
+identifier!(
     /// A todo's project-local address.
     TodoSlug,
     "todo slug",
@@ -292,6 +309,15 @@ impl SnippetId {
         }
         DomainName::parse(self.0.split('/').next()?).ok()
     }
+}
+
+/// Whether `value` has the shape of a GitHub account login: ASCII letters,
+/// digits and `-`, not empty.
+fn is_github_login(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 
 fn is_slug(value: &str) -> bool {

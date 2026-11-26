@@ -17,11 +17,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::config::{self, Configuration, Env, Generation, GenerationRefusal};
+use crate::config::{self, Configuration, Env, Generation};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
 use crate::home::Home;
-use crate::ids::ProjectSlug;
+use crate::ids::{GitHubLogin, GitHubOrganisation, ProjectSlug};
 use crate::interfaces::{AccountKind, CompanyRepositories, CoreWiring, Creation, GitHubAccounts};
 use crate::publication::{self, CompanyName, RepositoryView};
 
@@ -40,9 +40,6 @@ const MAIN: &str = "main";
 const NOT_PUBLISHED: &str =
     "the company's home is in place and not published; `instrukt sync` in it publishes it";
 
-/// The skeleton's knowledge index: it selects nothing yet.
-const EMPTY_INDEX: &str = "expanded: []\nlisted: []\n";
-
 /// What the caller asks of `instrukt init --company`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyRequest {
@@ -51,7 +48,7 @@ pub struct CompanyRequest {
     /// The name people write the company by; needed only to create.
     pub name: Option<CompanyName>,
     /// The company's GitHub administrator; needed only to create.
-    pub admin: Option<String>,
+    pub admin: Option<GitHubLogin>,
     /// The caller's declaration of human involvement for a created
     /// repository's root commit; `None` when it declared nothing.
     pub human_involved: Option<bool>,
@@ -90,8 +87,8 @@ pub enum CompanySync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyReport {
     pub origin: CompanyOrigin,
-    pub organisation: String,
-    pub repository: String,
+    pub organisation: GitHubOrganisation,
+    pub repository: ProjectSlug,
     pub home: PathBuf,
     /// A creation cut short earlier was completed from its intent.
     pub resumed: bool,
@@ -110,10 +107,10 @@ pub struct CompanyReport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Intent {
-    organisation: String,
-    repository: String,
+    organisation: GitHubOrganisation,
+    repository: ProjectSlug,
     name: String,
-    admin: String,
+    admin: GitHubLogin,
     /// The caller's declaration for the root commit.
     human_involved: bool,
 }
@@ -171,9 +168,8 @@ pub fn adopt_company(
         GENERATION_LOCK_TIMEOUT,
     )?;
     let home_dir = home.company_dir(key);
-    if present(&home_dir)? {
-        return Err(GenerationRefusal::HomeExists { home: home_dir }.into());
-    }
+    let home_exists = present(&home_dir)?;
+    config::admit_home(&home_dir, home_exists)?;
     let staging = generation.join(key.as_str());
     let intent_path = staging.join("intent.yaml");
     // Read at entry: the run writes the intent itself.
@@ -199,13 +195,14 @@ pub fn adopt_company(
         let kind = declared
             .map(|org| ports.accounts.account_kind(org))
             .transpose()?;
-        let reachable = match (declared, kind) {
-            (Some(org), Some(AccountKind::Organisation)) => {
-                reachable(&staging_parent(&staging), &url(&host, org, named.as_str()))?
+        let reachable = match (declared.map(GitHubOrganisation::parse), kind) {
+            (Some(Ok(org)), Some(AccountKind::Organisation)) => {
+                reachable(&staging_parent(&staging), &url(&host, &org, &named))?
             }
             _ => false,
         };
-        match config::decide_generation(&named, &home_dir, false, declared, kind, reachable)? {
+        match config::decide_generation(&named, &home_dir, home_exists, declared, kind, reachable)?
+        {
             Generation::CheckOut {
                 organisation,
                 repository,
@@ -223,12 +220,12 @@ pub fn adopt_company(
                     .ok_or(RepositoryError::CompanyFlagMissing { flag: "--name" })?;
                 let admin = request
                     .admin
-                    .as_deref()
+                    .as_ref()
                     .ok_or(RepositoryError::CompanyFlagMissing { flag: "--admin" })?;
-                let admin_kind = ports.accounts.account_kind(admin)?;
+                let admin_kind = ports.accounts.account_kind(admin.as_str())?;
                 if admin_kind != AccountKind::Personal {
                     return Err(RepositoryError::CompanyAdminNotPersonal {
-                        login: admin.to_owned(),
+                        login: admin.to_string(),
                         kind: admin_kind,
                     });
                 }
@@ -237,7 +234,7 @@ pub fn adopt_company(
                     organisation: organisation.clone(),
                     repository: repository.clone(),
                     name: name.as_str().to_owned(),
-                    admin: admin.to_owned(),
+                    admin: admin.clone(),
                     human_involved: request.human_involved.unwrap_or(false),
                 };
                 write_intent(&intent_path, &intent)?;
@@ -283,8 +280,8 @@ pub fn adopt_company(
     tracing::info!(
         event = "company_home_adopted",
         company = %key,
-        organisation,
-        repository,
+        organisation = %organisation,
+        repository = %repository,
         created = origin == CompanyOrigin::Created,
         resumed = resuming,
     );
@@ -323,7 +320,7 @@ fn given_flags(request: &CompanyRequest) -> Vec<&'static str> {
 
 /// The company repository's address for git, on the GitHub host the API
 /// address names; git reaches it with the computer's own credentials.
-fn url(host: &str, organisation: &str, repository: &str) -> String {
+fn url(host: &str, organisation: &GitHubOrganisation, repository: &ProjectSlug) -> String {
     format!("https://{host}/{organisation}/{repository}.git")
 }
 
@@ -343,7 +340,7 @@ fn create(
 ) -> Result<CompanyOrigin, RepositoryError> {
     let skeleton = staging.join("skeleton");
     let root = compose_root(home, key, &skeleton, intent, ports)?;
-    let (org, repo) = (intent.organisation.as_str(), intent.repository.as_str());
+    let (org, repo) = (&intent.organisation, &intent.repository);
     let created = ports.repositories.create(org, repo, ports.now)?;
     let mut step = next_step(resuming, created, None);
     if step == Step::Push {
@@ -391,7 +388,11 @@ fn compose_root(
     git::run(skeleton, ["init", "--quiet", "--initial-branch", MAIN])?;
     config::write_skeleton(skeleton, key)?;
     publication::refresh_editor_schemas(home.root(), skeleton)?;
-    atomic_write(&skeleton.join("docs/index.yaml"), EMPTY_INDEX.as_bytes())?;
+    // The skeleton's knowledge index selects nothing yet.
+    atomic_write(
+        &skeleton.join("docs/index.yaml"),
+        b"expanded: []\nlisted: []\n",
+    )?;
     let rendering = publication::render_repository(RepositoryView::WorkingTree(skeleton))?;
     if !rendering.findings.is_empty() {
         return Err(RepositoryError::Skeleton {
@@ -570,7 +571,8 @@ fn write_intent(path: &Path, intent: &Intent) -> Result<(), RepositoryError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Creation, Intent, Pushed, RepositoryError, Step, next_step, read_intent, write_intent,
+        Creation, GitHubLogin, GitHubOrganisation, Intent, ProjectSlug, Pushed, RepositoryError,
+        Step, next_step, read_intent, write_intent,
     };
 
     #[test]
@@ -613,10 +615,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("intent.yaml");
         let intent = Intent {
-            organisation: "homes".into(),
-            repository: "company-acme".into(),
+            organisation: GitHubOrganisation::parse("homes").unwrap(),
+            repository: ProjectSlug::parse("company-acme").unwrap(),
             name: "Acme".into(),
-            admin: "acme-admin".into(),
+            admin: GitHubLogin::parse("acme-admin").unwrap(),
             human_involved: true,
         };
         write_intent(&path, &intent).unwrap();
