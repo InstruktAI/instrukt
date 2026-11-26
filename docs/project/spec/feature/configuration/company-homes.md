@@ -15,6 +15,20 @@ its home folder holds a valid settings document, and it is listed nowhere
 else. A project belongs to no company, and a company home carries no roles and
 no authorization.
 
+<!-- planned-change:company-home-t3-title -->
+A company's home is generated. An operator declares once, for the computer,
+the GitHub organisation that owns company homes; from then on an agent asked
+to add a company creates the company's private repository in that
+organisation with the one company skeleton every company receives, makes the
+company's GitHub administrator an administrator of it, and checks it out as the
+company's home. A company whose repository already exists there is one by
+contract: adding it to another computer checks that repository out as its home
+and changes nothing on GitHub. Nothing about a company is customised: two
+companies' homes differ only where each company's identity enters them. A
+company's repository is also a project like any other adopted on the computer,
+one whose documentation is the company's knowledge alone, so everything an
+adopted project receives works for it from the moment its home exists.
+<!-- change:company-home-t3-title -->
 A company's home is generated. An operator declares once, for the computer,
 the GitHub organisation that owns company homes; from then on an agent asked
 to add a company creates the company's private repository in that
@@ -30,6 +44,7 @@ adopted project receives works for it from the moment its home exists. Where
 the runtime is T3, the home's runtime project is created titled with the
 repository's name, `company-<name>`, while the folder keeps the company's name
 (`project/instrukt/spec/feature/runner/t3-contract`).
+<!-- /planned-change:company-home-t3-title -->
 
 ## Canonical fields
 
