@@ -366,29 +366,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "docs/domain/acme/principle/session.md",
             &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
         );
-    let run = validate(&env, &repo, &[]);
-    assert!(!run.success, "{}", run.err);
-    insta::assert_snapshot!(run.out);
-}
-
-/// A snippet of `taxonomy` whose Required reads are `reads` and whose
-/// See Also lists `see_also`.
-fn referring(taxonomy: &str, reads: &str, see_also: &str) -> String {
-    let title = format!(
-        "# Sample — {}{}\n",
-        taxonomy[..1].to_uppercase(),
-        &taxonomy[1..]
-    );
-    snippet(taxonomy, "", &format!("\n## See also\n\n{see_also}"))
-        .replace(&title, &format!("{title}\n## Required reads\n\n{reads}"))
-}
-
-// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV8
-#[test]
-fn a_reference_against_the_direction_is_reported_with_what_its_position_may_reference() {
-    let env = TestEnv::new();
-    let repo = project(&env);
-    valid_tree(&repo);
+    // References against the direction, beside upward ones that pass.
     repo.write(
         "docs/general/index.yaml",
         "expanded: [general/principle/base]\nlisted: [general/concept/down]\n",
@@ -452,8 +430,19 @@ fn a_reference_against_the_direction_is_reported_with_what_its_position_may_refe
     );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
-    // The snapshot holds every finding: none names fine.md or home.md.
     insta::assert_snapshot!(run.out);
+}
+
+/// A snippet of `taxonomy` whose Required reads are `reads` and whose
+/// See Also lists `see_also`.
+fn referring(taxonomy: &str, reads: &str, see_also: &str) -> String {
+    let title = format!(
+        "# Sample — {}{}\n",
+        taxonomy[..1].to_uppercase(),
+        &taxonomy[1..]
+    );
+    snippet(taxonomy, "", &format!("\n## See also\n\n{see_also}"))
+        .replace(&title, &format!("{title}\n## Required reads\n\n{reads}"))
 }
 
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1

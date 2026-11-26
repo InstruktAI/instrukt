@@ -216,17 +216,9 @@ Then validation succeeds without taking the writer lock or modifying the state d
 ```
 
 <!-- planned:docs-dependency-direction -->
-### UC-SV8: A developer learns where a reference points away from the generic
+### UC-SV8: A developer learns where a reference points away from the generic (retired)
 
-```gherkin
-Given a developer's general snippet requires a domain snippet and requires a domain by name
-And a domain snippet requires a project snippet and lists another domain's snippet under See Also
-And a project snippet requires another project's snippet
-When they validate the project's documentation
-Then each of those references is reported with its file, the reference and the positions its snippet may reference
-And the run reports failure while any of them remains
-But a domain snippet requiring general and its own domain, and a project snippet requiring its own project, general and a domain, are not reported
-```
+Retired: references against the direction are findings of UC-SV1, under the References row above; this id is not reused.
 <!-- /planned:docs-dependency-direction -->
 
 ## Known caveats
