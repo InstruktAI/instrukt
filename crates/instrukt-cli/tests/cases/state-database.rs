@@ -10,10 +10,16 @@ use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use nix::fcntl::{FcntlArg, fcntl};
+use nix::libc;
+
+use instrukt_core::home::Home;
+use instrukt_core::state_db::rusqlite::Connection;
+use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+
 use crate::common;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
-use instrukt_core::state_db::rusqlite::Connection;
 use workflow::Crew;
 
 // spec: project/instrukt/spec/feature/work/state-database UC-SD2
@@ -524,8 +530,6 @@ const LOCK_OBSERVER: &str = "INSTRUKT_STATE_DB_LOCK_OBSERVER";
 // spec: project/instrukt/spec/feature/work/state-database UC-SD6
 #[test]
 fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
-    use instrukt_core::home::Home;
-    use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
     if let Some(file) = std::env::var_os(LOCK_OBSERVER) {
         println!(
             "observed-lock {}",
@@ -574,7 +578,7 @@ fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
         .collect::<Vec<_>>();
     assert_eq!(
         observed,
-        [i64::from(nix::libc::F_RDLCK), i64::from(std::process::id())],
+        [i64::from(libc::F_RDLCK), i64::from(std::process::id())],
         "another process finds this process's read lock on {} in place",
         file.display()
     );
@@ -613,8 +617,6 @@ fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
 /// shared-reader range of the database at `file` (`SHARED_FIRST`,
 /// `0x40000002`, 510 bytes).
 fn observe_lock(file: &std::path::Path) -> String {
-    use nix::fcntl::{FcntlArg, fcntl};
-    use nix::libc;
     let database = std::fs::File::open(file).unwrap();
     let mut lock = libc::flock {
         l_type: libc::F_WRLCK as libc::c_short,
