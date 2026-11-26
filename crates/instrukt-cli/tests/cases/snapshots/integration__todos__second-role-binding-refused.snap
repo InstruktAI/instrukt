@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
-expression: "redact(&format!(\"{}---\\n{outstanding}\",\nString::from_utf8_lossy(&refused.get_output().stderr)))"
+expression: "redact(&format!(\"{}---\\n{outstanding}\\n---\\n{role}\",\nString::from_utf8_lossy(&refused.get_output().stderr)))"
 ---
 instrukt: session `t3:planner-1` holds `instrukt:todo:demo/<id 1>:planner:1`, so it cannot also be recorded on `instrukt:todo:demo/<id 1>:plan-reviewer:1`: a session resolves to one assignment, so it is bound to attempts of one role on one todo; nothing of this change was written. Bind the attempt to a new native session, or let that session continue the attempt it holds
 ---
@@ -8,3 +8,7 @@ instrukt: session `t3:planner-1` holds `instrukt:todo:demo/<id 1>:planner:1`, so
     key: instrukt:todo:demo/<id 1>:plan-reviewer:1
     branch: single-role-worker/work; base: <commit 1>
     worktree: [TMP]/team-single-role-worker-work
+---
+Role: planner · class: agent. Scope comes from assignment
+instrukt:todo:demo/<id 1>:planner:1. Object claims, phase and writer
+constraints apply.

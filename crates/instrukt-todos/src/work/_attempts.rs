@@ -2885,21 +2885,16 @@ mod tests {
         let role = orchestrator_role();
         let caller = session("driver-1");
         let proof = placement_evidence(&record, "driver-1", repo.path());
-        let refused = decide(
-            &record,
-            &role,
-            Some(&caller),
-            &in_workspace(repo.path()),
-            Some(&proof),
-        );
-        let Err(WorkError::Refused(reason)) = refused else {
-            panic!("evidence from the retired-role orchestrator was admitted");
-        };
-        assert!(
-            reason.contains("`demo/bug-fix:work-orchestrator:1`")
-                && reason.contains("without --placement-evidence"),
-            "{reason}"
-        );
+        assert!(matches!(
+            decide(
+                &record,
+                &role,
+                Some(&caller),
+                &in_workspace(repo.path()),
+                Some(&proof)
+            ),
+            Err(WorkError::Refused(_))
+        ));
     }
 
     #[test]

@@ -713,7 +713,6 @@ fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
     let shown = crew.todo(["show", slug]);
     let outstanding = attempt_record(&shown, "plan-reviewer/1");
     assert!(!outstanding.is_empty(), "{shown}");
-    assert!(!outstanding.contains(&session), "{outstanding}");
     let help = crew
         .project
         .env
@@ -722,12 +721,17 @@ fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
         .arg("--help")
         .assert()
         .success();
-    assert!(stdout(&help).contains("Role: planner"), "{}", stdout(&help));
+    let role = stdout(&help)
+        .lines()
+        .skip_while(|line| !line.starts_with("Role: "))
+        .take_while(|line| !line.is_empty() && !line.starts_with("Usual capabilities"))
+        .collect::<Vec<_>>()
+        .join("\n");
     as_worker(&crew, &tree, &session, &["todo", "show", slug]);
     insta::assert_snapshot!(
         "second-role-binding-refused",
         redact(&format!(
-            "{}---\n{outstanding}",
+            "{}---\n{outstanding}\n---\n{role}",
             String::from_utf8_lossy(&refused.get_output().stderr)
         ))
     );

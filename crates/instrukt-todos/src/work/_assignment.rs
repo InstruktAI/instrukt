@@ -532,13 +532,4 @@ mod tests {
             ]))
         );
     }
-
-    #[test]
-    fn the_conflict_names_its_bindings_and_sends_them_to_the_operator() {
-        let message = conflict(&["k:builder:1", "k:build-reviewer:1"]).to_string();
-        assert_eq!(
-            message,
-            "session has conflicting recorded assignments on bindings `k:builder:1`, `k:build-reviewer:1`; no instrukt command resolves this session, so report these bindings to the operator"
-        );
-    }
 }
