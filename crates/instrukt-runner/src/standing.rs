@@ -1081,6 +1081,39 @@ pub fn bind_manual(
     Ok(())
 }
 
+/// Every session a standing responsibility holds on `runtime`: the session
+/// of its current binding, of its standing runtime binding, and of its
+/// manual reservation, bound or observed — the sources [`replace_deleted`]
+/// resolves. None when the runner has no state yet.
+pub fn held_sessions(state: &RunnerState, runtime: &str) -> Result<Vec<SessionRef>, StateError> {
+    let held = state.read(|conn, path| {
+        let mut statement = conn
+            .prepare(
+                "SELECT session FROM procedure_responsibilities WHERE session IS NOT NULL
+                 UNION
+                 SELECT session FROM runtime_bindings
+                 WHERE runtime=?1 AND kind='standing' AND session IS NOT NULL
+                 UNION
+                 SELECT session FROM manual_standing_reservations WHERE session IS NOT NULL
+                 UNION
+                 SELECT json_extract(request,'$.observed_session') FROM manual_standing_reservations
+                 WHERE json_extract(request,'$.observed_session') IS NOT NULL",
+            )
+            .map_err(state::sql(path))?;
+        let texts = statement
+            .query_map(params![runtime], |row| row.get::<_, String>(0))
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(state::sql(path))?;
+        // A text that names no session equals no thread a runtime lists.
+        Ok(texts
+            .iter()
+            .filter_map(|text| SessionRef::parse(text).ok())
+            .collect())
+    })?;
+    Ok(held.unwrap_or_default())
+}
+
 pub(crate) fn replace_deleted(
     guard: &keyed::KeyGuard,
     invocation: &RuntimeInvocation,

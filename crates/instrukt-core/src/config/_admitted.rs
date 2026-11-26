@@ -49,6 +49,8 @@ pub struct Admitted {
     projects: Vec<AdmittedProject>,
     /// Some project is published here, admitted or not.
     published: bool,
+    /// The retention window admitted: `None` while it is off or withheld.
+    thread_retention: Option<jiff::SignedDuration>,
 }
 
 /// A company home admitted with its generation.
@@ -132,7 +134,9 @@ pub struct Candidate {
 
 impl Admitted {
     /// Builds a generation from the files, reading each once. An invalid
-    /// machine layer or `agents.yaml` refuses it: nothing can run on them. A
+    /// machine layer or `agents.yaml` refuses it: nothing can run on them;
+    /// a machine layer whose only findings withhold thread retention is
+    /// admitted with the window off and its findings reported. A
     /// company home that does not validate, or a project whose layer cannot
     /// be read, is left out with its findings and makes the candidate
     /// incomplete; a finding against a project's module withholds that module.
@@ -195,14 +199,22 @@ impl Admitted {
             projects: Some(&read_layers),
             secrets: None,
         };
+        let mut findings = Vec::new();
+        let mut thread_retention = super::_thread_retention::admitted(global_layer.as_ref());
         if let Some(value) = &global_layer {
             let found = findings_given(home, &Layer::Global, &global_path, value, given)?;
-            if !found.is_empty() {
-                return Err(ConfigError::Invalid(super::Findings(found)).into());
+            match admit_machine_layer(found) {
+                MachineLayer::Admitted => {}
+                MachineLayer::RetentionWithheld(found) => {
+                    thread_retention = None;
+                    findings.extend(found);
+                }
+                MachineLayer::Refused(found) => {
+                    return Err(ConfigError::Invalid(super::Findings(found)).into());
+                }
             }
         }
         let global = Configuration::from_layers(home, global_layer.clone(), None)?.pinned(&agents);
-        let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
         for (name, unreadable_folder) in super::company_folders(home)? {
@@ -257,10 +269,18 @@ impl Admitted {
                 companies,
                 projects,
                 published,
+                thread_retention,
             },
             findings,
             complete,
         })
+    }
+
+    /// The computer's retention window as admitted: `None` while it is off,
+    /// or withheld because the selected runtime cannot archive threads. The
+    /// one read of the window for consumers.
+    pub fn thread_retention(&self) -> Option<jiff::SignedDuration> {
+        self.thread_retention
     }
 
     /// The machine layer as admitted, before any project layer combines
@@ -344,6 +364,30 @@ impl Admitted {
                 Module::History => project.history,
                 _ => false,
             }))
+    }
+}
+
+/// What the machine layer's findings admit.
+#[derive(Debug, PartialEq)]
+enum MachineLayer {
+    /// No finding: the layer is admitted whole.
+    Admitted,
+    /// Only findings that withhold thread retention: the layer is admitted
+    /// with the window off, and these are reported.
+    RetentionWithheld(Vec<Finding>),
+    /// Any other finding: nothing can run on the layer.
+    Refused(Vec<Finding>),
+}
+
+/// The admission of a machine layer with findings `found`
+/// (`project/instrukt/spec/feature/configuration/layered-configuration`).
+fn admit_machine_layer(found: Vec<Finding>) -> MachineLayer {
+    if found.is_empty() {
+        MachineLayer::Admitted
+    } else if found.iter().all(super::withholds_thread_retention) {
+        MachineLayer::RetentionWithheld(found)
+    } else {
+        MachineLayer::Refused(found)
     }
 }
 
@@ -675,6 +719,36 @@ mod tests {
         );
     }
 
+    /// A finding that the selected runtime cannot carry the retention window.
+    fn retention_capability() -> Finding {
+        Finding {
+            kind: FindingKind::RuntimeCapabilityMissing,
+            ..finding("runner.archive_finished_after")
+        }
+    }
+
+    #[test]
+    fn a_machine_layer_without_findings_is_admitted() {
+        assert_eq!(admit_machine_layer(Vec::new()), MachineLayer::Admitted);
+    }
+
+    #[test]
+    fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_with_it_withheld() {
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability()]),
+            MachineLayer::RetentionWithheld(vec![retention_capability()])
+        );
+    }
+
+    #[test]
+    fn a_machine_layer_with_any_other_finding_beside_it_is_refused() {
+        let shape = finding("runner.archive_finished_after");
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability(), shape.clone()]),
+            MachineLayer::Refused(vec![retention_capability(), shape])
+        );
+    }
+
     #[test]
     fn a_finding_at_the_regenerable_declaration_withholds_no_module() {
         let switched = Modules {
@@ -699,6 +773,7 @@ mod tests {
             companies: Vec::new(),
             projects: Vec::new(),
             published,
+            thread_retention: None,
         }
     }
 

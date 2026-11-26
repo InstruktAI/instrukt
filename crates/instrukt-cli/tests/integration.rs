@@ -124,6 +124,8 @@ mod snippet_validation;
 mod state_database;
 #[path = "cases/task-timing.rs"]
 mod task_timing;
+#[path = "cases/thread-retention.rs"]
+mod thread_retention;
 #[path = "cases/todos.rs"]
 mod todos;
 #[path = "cases/use-case-coverage.rs"]

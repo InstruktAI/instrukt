@@ -161,6 +161,14 @@ Worktree reclamation adds these crossings; its contract is
 | workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
 | work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
 
+Thread retention adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
+| work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator

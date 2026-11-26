@@ -137,6 +137,7 @@ todo's worktree does not depend on it
 | `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
 | `runner.notify` | global only | the runner |
 | `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
 | `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
 | `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
 | `project` | project only | docs and publication |
@@ -378,6 +379,18 @@ with `--global` answers from the global layer alone. Writes address one layer
   (`project/instrukt/spec/feature/work/github-record`). A write to the
   project layer that would switch todos on there is refused with the same
   reason.
+- `runner.archive_finished_after` set while the selected runtime cannot
+  archive threads, naming the runtime and the missing capability
+  (`project/instrukt/spec/feature/runner/session-continuity`). A write that
+  would set it so, or choose such a runtime while it is set, is refused with
+  the same naming.
+
+That capability finding withholds only thread retention: wherever the
+machine layer is admitted, a layer whose only findings are this one is
+admitted with the window off, the finding is reported with the others, and
+everything else the layer admits runs unchanged. Every other finding at
+`runner.archive_finished_after`, a value outside its shape among them, is a
+finding of the machine layer like any other.
 
 Every finding names the document and key; the exit status is non-zero when
 there is at least one finding. Validation judges the document as written;
@@ -504,6 +517,7 @@ And the configuration is unchanged
 | `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
 | `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
 | `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
 | `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |

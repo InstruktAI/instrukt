@@ -132,6 +132,11 @@ is not admitted: reclaiming that output from its idle worktrees is withheld
 for that project on this computer, while a delivered todo's worktree is still
 released (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
+They report in the same way a retention window the selected runtime cannot
+carry: thread retention is withheld on this computer while the runner's other
+work runs (`project/instrukt/spec/feature/configuration/layered-configuration`).
+The window adds no wake-up demand.
+
 ### Graphify installation
 
 For blueprint demand, use the lifecycle and pin owned by

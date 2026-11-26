@@ -16,13 +16,15 @@
 //! | [`TaskFirings`] | `task-timing` "Task and schedule" | work | runner task timing |
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
+//! | [`OpenWorkSessions`] | `thread-retention` "Threads that are kept" | work | runner thread retention |
 //! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
 //! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
 //! wiring.rs`); the runner checks `modules.todos` per project before using
-//! them. The event-log
+//! them, except [`OpenWorkSessions`], which thread retention asks for every
+//! registered project whatever its switches. The event-log
 //! append work's finalize-ready stamp uses is the other direction: the
 //! runner implements [`crate::events::EventLog`] and the CLI hands it to
 //! work.
@@ -597,6 +599,25 @@ pub trait RetentionPurge: Send + Sync {
 }
 
 // ---------------------------------------------------------------------
+// Thread retention
+// ---------------------------------------------------------------------
+
+/// Work's answer for thread retention (`work` domain, "Work → runner (thread
+/// retention)"). Work owns which outcomes are terminal; the runner keeps the
+/// threads of the sessions it names.
+pub trait OpenWorkSessions: Send + Sync {
+    /// The native sessions work associates with `project`'s todos that have
+    /// not reached a terminal outcome, delivered or withdrawn: every session
+    /// their bindings hold, whatever the state of each role attempt, and
+    /// each one's execution-claim session. Answered from the local record,
+    /// with no provider call and no write; none when there is no record.
+    fn open_work_sessions(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<SessionRef>, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
 // Worktree reclamation
 // ---------------------------------------------------------------------
 
@@ -870,6 +891,7 @@ pub struct WorkPorts {
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
     pub reclamation: Arc<dyn WorktreeReclamation>,
+    pub open_sessions: Arc<dyn OpenWorkSessions>,
     pub fleet: Arc<dyn FleetRecord>,
 }
 
