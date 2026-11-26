@@ -164,34 +164,24 @@ todo, home or placement.
 
 ### Shipped bundles and role entries
 
-The named bundles ship in the file and are editable configuration. Their shipped
-composition is:
-
-| Bundle | Scoped grants |
-| --- | --- |
-| `read` | `docs-read`, `todo-read`, `artifact-read`, `config-read`, `agents-read`, `events-read`, `code-check`, `eval-read`, `repository-read`, `installation-read`, each at `any`. |
-| `worker` | `artifact-write`, `stamp`, `code-commit`, `docs-write`, each at `own`. |
-| `review` | `artifact-write`, `stamp`, each at `own`. |
-| `record` | `todo-write`, `artifact-write`, `stamp`, `bug-report`, each at `own`. |
-| `report` | `bug-report` at `any`. |
-| `orchestrate` | `todo-orchestration`, `assignment-write`, `session-observe`, `standing-bind`, `conversation-link`, each at `own`. |
-| `integrate` | `integration`, `publication`, `repository-write`, `todo-write`, each at `own`. |
-| `configure` | `config-write`, `secrets-write`, `installation-write`, `agents-write`, each at `any`. |
-| `tools` | `mcp-access`, `company-reply`, each at `own`. |
-| `all` | Every catalog action at `any`. |
+`crates/instrukt-core/src/config/shipped/agents.yaml` is the single source of
+truth for the shipped named bundles, role entries, classes, grant compositions,
+GitHub App references, and model `order`/`tier` defaults (editable in
+`~/.instrukt/agents.yaml` and inspectable via `instrukt agents list`). Its
+entries cover every role declared by instrukt's shipped procedures, the
+`company-agent` role the runner gives a conversation session
+(`project/instrukt/spec/feature/company/conversations`), and the reserved
+`default` and `event-handler` fallbacks. Model `order` and `tier` defaults
+follow `project/instrukt/spec/feature/configuration/agent-selection`; `github_app`
+names only the GitHub identity reference, never model selection.
 
 A company connector may declare `role: technical-coordinator`; its sessions
 then start from `general/procedure/technical-coordinator`, the procedure
-declaring that role, rather than from company assistance. Its shipped entry
-carries the `read` bundle (every read surface in that bundle, excluding
-`history-read`), `worker` and `record` (documentation, commits, artifacts,
-stamps and todo writes scoped to `own`), `report` (defect reports into any
-project at `any`), and `tools` (`mcp-access` and `company-reply` at `own`,
-bound to the session's company). Because a company conversation binding carries
-no bound project or todo, `own`-scoped work-record grants do not match a target
-project on their own; as a `standing` role, the session carries these grants as
-declared focus and relies on object-level checks rather than focused-class
-command refusals.
+declaring that role, rather than from company assistance. Because a company
+conversation binding carries no bound project or todo, `own`-scoped work-record
+grants do not match a target project on their own; as a `standing` role, the
+session carries its grants as declared focus and relies on object-level checks
+rather than focused-class command refusals.
 
 A company's agent reports defects of the system it works through
 (`general/procedure/bug-reporting`) into the project that owns the defect on its
@@ -200,32 +190,6 @@ project at `any`. It is the company agent's only work-record write: it holds no
 `todo-write`, so it creates, changes and withdraws no other todo. What a
 report files is the work context's
 (`project/instrukt/spec/feature/work/todos`).
-
-These entries cover every role declared by instrukt's shipped procedures and
-the `company-agent` role the runner gives a conversation session, declared by
-the company-assistance procedure (`project/instrukt/spec/feature/company/conversations`).
-They share the model `order`/`tier` defaults of agent-selection, except
-`technical-coordinator`, which ships `order: [antigravity, claude]` at tier
-`premium`; the table's App column names the identity reference, not another
-model/provider choice.
-
-| Roles | Class | `can` bundles | App |
-| --- | --- | --- | --- |
-| `builder`, `finalizer`, `drift-analyzer`, `deferrer`, `diagnoser` | `focused` | `read`, `worker`, `record` | author |
-| `prd-reviewer`, `architecture-reviewer`, `plan-reviewer`, `build-reviewer`, `commit-reviewer`, `verifier` | `focused` | `read`, `review` | reviewer |
-| `knowledge-author`, `project-analyst`, `third-party-researcher` | `focused` | `read`, `worker`, `record` | author |
-| `config-assessor` | `focused` | `read`, `configure`, `worker`, `record` | author |
-| `todo-orchestrator`, `intaker`, `architect`, `planner`, `diagnosis-driver`, `task-preparer`, `task-runner` | `agent` | `read`, `worker`, `record`, `orchestrate` | author |
-| `integrator` | `standing` | `read`, `record`, `orchestrate`, `integrate` | project |
-| `coordinator` | `standing` | `read`, `record`, `orchestrate` | project |
-| `bug-hunter`, `upstream-watcher` | `standing` | `read`, `record` | project |
-| `event-handler` | `standing` | `all` | project |
-| `company-agent` | `standing` | `read`, `tools`, `report` | project |
-| `technical-coordinator` | `standing` | `read`, `worker`, `record`, `report`, `tools` | project |
-| `default` | `agent` | `all` | project |
-
-`verifier` takes the reviewer roles' model `order` and `tier`
-(`project/instrukt/spec/feature/configuration/agent-selection`).
 
 A subscribed procedure with no explicit `role` receives `event-handler` at
 entry and in its resolved publication metadata. The author can declare a role
