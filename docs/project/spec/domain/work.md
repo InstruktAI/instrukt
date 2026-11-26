@@ -296,16 +296,22 @@ The work finalize-ready stamp appends workflow’s `workflow.finalized`
 through the runner’s event-log interface. This atomic work mutation retains
 the reviewed head; workflow owns the lifecycle vocabulary.
 
+<!-- planned-change:github-human-agent-reflection -->
 Every change work makes on this computer to a todo's status, hold or attempts
 calls the runner's fleet-attention contract inside its own transaction, with
 the facts of that change: the todo, its hold before and after, whether it left
 active work, a failed attempt with that role's earlier failed attempts, and
 whether the project still has an active todo that is unheld and not a
 structural holder. Which of those facts are conditions, and their events, are
-<!-- planned-change:github-human-agent-reflection -->
 the runner's (`project/instrukt/spec/feature/runner/fleet-attention`). A record
 adopted from GitHub is another computer's change and makes no call.
 <!-- change:github-human-agent-reflection -->
+Every change work makes on this computer to a todo's status, hold or attempts
+calls the runner's fleet-attention contract inside its own transaction, with
+the facts of that change: the todo, its hold before and after, whether it left
+active work, a failed attempt with that role's earlier failed attempts, and
+whether the project still has an active todo that is unheld and not a
+structural holder. Which of those facts are conditions, and their events, are
 the runner's (`project/instrukt/spec/feature/runner/fleet-attention`).
 <!-- /planned-change:github-human-agent-reflection -->
 
