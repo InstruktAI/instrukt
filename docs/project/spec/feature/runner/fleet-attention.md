@@ -118,7 +118,8 @@ follow `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 ### What produces no attention event
 
-- A running session, a turn that ended with its evidence recorded, a todo
+- A running session (one parked on work it delegated included), a turn that
+  ended with its evidence recorded, a todo
   waiting on a person's approval as work decides that wait
   (`project/instrukt/spec/feature/work/github-record`), and an execution whose
   claim was released or transferred.

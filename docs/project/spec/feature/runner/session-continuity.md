@@ -593,9 +593,9 @@ GitHub command creates no second attention item.
 
 | State | Runtime observation |
 | --- | --- |
-| `running` | `running`, `preparing`, `starting`, `resuming` or `queued`; this operational state supplies no proof of input consumption. |
-| `needs-input` | `waiting`, `waiting_for_input`, `waiting_for_approval` or a reported pending request. |
-| `input-ready` | T3 `idle`, `completed` or `stopped`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
+| `running` | `running`, `preparing`, `starting`, `queued` or `waiting`; this operational state supplies no proof of input consumption. T3 reports `waiting` for a thread with no active run whose background work holds its completion — a delegated subagent, a background task, or an awaited command or monitor such as a pull-request watch — and for a run whose ended turn awaits checkpoint capture. Neither is a wait for input. |
+| `needs-input` | A reported pending request (`pendingRequestCount` above zero), whatever the status. T3 reports a wait for input or approval only as a pending request. |
+| `input-ready` | T3 `idle` or `completed`, with no outstanding input. A settled thread is dormant and reachable; turn idleness establishes no task success. Listings retain its native `settled` metadata. |
 | `failed` | `failed`, `interrupted`, `cancelled` or `rolled_back`. |
 | `gone` | An explicit unknown-thread response, or a confirmed archived/unavailable thread. The thread's presence keeps the two apart: absent for the explicit unknown-thread response, archived for a shown archived thread. Outstanding owner-admitted work after confirmed terminal presence uses the automatic succession contract above. |
 
