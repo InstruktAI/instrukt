@@ -10,6 +10,7 @@
 mod _coverage;
 mod _finding;
 mod _flavor;
+mod _held;
 mod _observe;
 mod _provider;
 mod _schema;
@@ -23,6 +24,7 @@ pub use _coverage::{
 };
 pub use _finding::{Finding, Problem};
 pub use _flavor::{Flavor, FlavorError, WORKFLOW_FILE};
+pub use _held::held;
 pub use _observe::ObservationError;
 pub(crate) use _observe::{
     VERIFIER_ROLE, handoff_admitted, readiness_approved, verification_admission,

@@ -865,15 +865,11 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
 
     fn candidate(
         &self,
-        project: &instrukt_runner::interfaces::ProjectRef,
-        repository: &str,
-        candidate: &CommitSha,
-        pulls: &[u64],
+        query: &instrukt_runner::interfaces::CandidateQuery<'_>,
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<instrukt_runner::interfaces::CandidateFinding, String> {
-        _candidate::candidate_finding(self, project, repository, candidate, pulls, now, clock)
-            .map_err(|error| error.to_string())
+        _candidate::candidate_finding(self, query, now, clock).map_err(|error| error.to_string())
     }
 
     fn publish(

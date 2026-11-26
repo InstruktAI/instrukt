@@ -254,17 +254,21 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
 /// Work's part of a candidate's coverage (`integration-gate`, Review
 /// coverage of a candidate): the candidate's own verdict settles it;
 /// otherwise workflow derives coverage, and the derived approval is
-/// recorded and published, or withdrawn while GitHub does not show it.
+/// recorded and published, or withdrawn while GitHub does not show it and
+/// the candidate held with workflow's decision on it.
 pub(super) fn candidate_finding(
     work: &ReviewWork,
-    project: &instrukt_runner::interfaces::ProjectRef,
-    repository: &str,
-    candidate: &CommitSha,
-    pulls: &[u64],
+    query: &instrukt_runner::interfaces::CandidateQuery<'_>,
     now: Timestamp,
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<instrukt_runner::interfaces::CandidateFinding, ReviewError> {
     use instrukt_runner::interfaces::CandidateFinding;
+    let (project, repository, candidate, pulls) = (
+        query.project,
+        query.repository,
+        query.candidate,
+        query.pulls,
+    );
     let held = evidence(&work.home, &project.slug, candidate)?;
     if held
         .current()
@@ -299,7 +303,10 @@ pub(super) fn candidate_finding(
                 db.write(|tx| _published::withdraw(tx, &project.slug, approval, commit, now))?;
                 tracing::info!(event = "review_derived_approval_withdrawn", project = %project.slug, candidate = %candidate, uncovered = %commit);
             }
-            Ok(CandidateFinding::Owed)
+            Ok(CandidateFinding::Held(crate::workflow::held(
+                &found,
+                query.presence,
+            )))
         }
         crate::workflow::Coverage::Covered(items) => {
             let based = git::run(

@@ -6,7 +6,9 @@
 
 mod _conversation;
 mod _eligibility;
+mod _held;
 mod _observation;
+mod _presence;
 mod _requests;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,6 +23,7 @@ use crate::interfaces::{AutomaticReview, ProjectRef};
 use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
+pub use _held::{HeldCandidate, HeldCommit, PresenceAnswer, SessionPresence};
 pub(crate) use _requests::live;
 pub use _requests::{
     Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
@@ -49,6 +52,9 @@ pub(crate) struct ReviewPass<'a> {
     pub repository: &'a str,
     pub token: &'a str,
     pub port: &'a dyn AutomaticReview,
+    /// Work's session bindings, as input delivery passes them: whose
+    /// threads delivery sends nothing.
+    pub work: Option<&'a dyn crate::interfaces::SessionBindings>,
     /// The moment the wake began.
     pub now: Timestamp,
     /// The operator's clock, read again where publication's credential is
@@ -93,6 +99,7 @@ pub(crate) fn pass(
         repository,
         token,
         port: port.as_ref(),
+        work: cx.wiring.work.as_ref().map(|work| work.bindings.as_ref()),
         now,
         clock,
     };
@@ -172,10 +179,15 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
     _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
-    if let (Some(candidate), Some(crate::interfaces::CandidateFinding::Owed)) =
+    if let (Some(candidate), Some(crate::interfaces::CandidateFinding::Held(held))) =
         (pass.candidate, &finding)
     {
-        ask_candidate(pass, candidate, &mut fetched)?;
+        for (commit, session) in held.unanswered() {
+            tracing::warn!(event = "review_presence_unanswered", project = %project, candidate = %candidate, commit = %commit, session = %session);
+        }
+        if held.owes_review() {
+            ask_candidate(pass, candidate, &mut fetched)?;
+        }
     }
     if let Some(owed) = owed_candidates(pass.candidate, finding.as_ref()) {
         _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
@@ -187,8 +199,9 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
 /// requests stay; every other queued candidate request ends
 /// (`pull-request-review`, One review per commit: a queued request ends when
 /// its commit stops being owed). Without an active candidate, or with one
-/// whose request is selected or handed over, none is. Nothing is decided
-/// while the repository cannot answer.
+/// whose request is selected or handed over, none is; nor is a held
+/// candidate waiting on an author of ours. Nothing is decided while the
+/// repository or the runtime cannot answer.
 fn owed_candidates(
     candidate: Option<&CommitSha>,
     finding: Option<&crate::interfaces::CandidateFinding>,
@@ -196,9 +209,10 @@ fn owed_candidates(
     use crate::interfaces::CandidateFinding;
     match (candidate, finding) {
         (_, Some(CandidateFinding::CannotAnswer(_))) => None,
-        (Some(candidate), Some(CandidateFinding::Owed)) => {
+        (Some(candidate), Some(CandidateFinding::Held(held))) if held.owes_review() => {
             Some(BTreeSet::from([candidate.clone()]))
         }
+        (_, Some(CandidateFinding::Held(held))) if held.asks.is_empty() => None,
         _ => Some(BTreeSet::new()),
     }
 }
@@ -224,14 +238,16 @@ fn derive_candidate(
         .filter(|(_, head)| head == candidate)
         .map(|(number, _)| *number)
         .collect();
-    let finding = pass.port.candidate(
-        pass.project,
-        pass.repository,
+    let presence =
+        _presence::RuntimePresence::new(pass.home, pass.state, pass.work, project, pass.now);
+    let query = crate::interfaces::CandidateQuery {
+        project: pass.project,
+        repository: pass.repository,
         candidate,
-        &pulls,
-        pass.now,
-        pass.clock,
-    )?;
+        pulls: &pulls,
+        presence: &presence,
+    };
+    let finding = pass.port.candidate(&query, pass.now, pass.clock)?;
     tracing::info!(event = "review_candidate_derived", project = %project, candidate = %candidate, finding = ?finding);
     Ok(Some(finding))
 }
@@ -335,11 +351,42 @@ mod tests {
         );
     }
 
+    fn held(asks: usize, answered: bool) -> CandidateFinding {
+        let session = instrukt_core::ids::SessionRef::parse("t3:author").unwrap();
+        CandidateFinding::Held(HeldCandidate {
+            commits: vec![HeldCommit {
+                commit: sha('b'),
+                sessions: Vec::new(),
+            }],
+            asks: (0..asks).map(|_| (sha('b'), session.clone())).collect(),
+            answered,
+        })
+    }
+
     #[test]
-    fn only_an_uncovered_candidate_is_owed_a_review() {
+    fn a_held_candidate_waiting_on_an_author_is_owed_no_review() {
+        let candidate = sha('a');
+        for answered in [true, false] {
+            assert_eq!(
+                owed_candidates(Some(&candidate), Some(&held(1, answered))),
+                Some(BTreeSet::new())
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_decided_while_a_held_candidates_sessions_are_unanswered() {
+        assert_eq!(
+            owed_candidates(Some(&sha('a')), Some(&held(0, false))),
+            None
+        );
+    }
+
+    #[test]
+    fn only_an_uncovered_candidate_no_author_of_ours_can_decide_is_owed_a_review() {
         let candidate = sha('a');
         assert_eq!(
-            owed_candidates(Some(&candidate), Some(&CandidateFinding::Owed)),
+            owed_candidates(Some(&candidate), Some(&held(0, true))),
             Some(BTreeSet::from([candidate.clone()]))
         );
         for covered in [CandidateFinding::Covered, CandidateFinding::Settled] {
