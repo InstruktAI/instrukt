@@ -341,9 +341,9 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     // The action the runtime entry no longer defines is gone; the
     // supported override is kept as written.
     assert!(machine["runtimes"]["t3"].get("retire_thread").is_none());
-    assert_eq!(
-        machine["runtimes"]["t3"]["finish_thread"].as_str(),
-        Some("Settle it the machine's way.")
+    insta::assert_snapshot!(
+        read(&["config", "get", "--global", "runtimes.t3.finish_thread"]),
+        @"Settle it the machine's way."
     );
     assert_eq!(
         machine["schema_version"].as_u64(),
