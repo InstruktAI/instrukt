@@ -24,7 +24,7 @@ use super::_identity::{
 };
 use super::_markers::Problem;
 use super::_position::{GENERAL, INDEX_FILE, Position, PositionIndex, is_reserved_domain_folder};
-use super::_refs::RefTarget;
+use super::_refs::{RefTarget, SeeAlsoForm};
 use super::_schema::{self, EffectiveSchema, Schemas};
 use super::_text;
 use super::DocsError;
@@ -501,14 +501,17 @@ fn check_references(
     for token in path_tokens(&lines, &link_lines) {
         push(out, path, FindingCode::ReferenceByPath, Some(token));
     }
-    for id in super::_refs::see_also_ids(&lines) {
-        if !corpus.resolves(&RefTarget::Snippet(id.clone())) {
-            push(
-                out,
-                path,
-                FindingCode::ReferenceUnresolved,
-                Some(id.to_string()),
-            );
+    let from = class.domain.position();
+    for entry in super::_refs::see_also(&lines) {
+        let raw = entry.id.to_string();
+        let target = RefTarget::Snippet(entry.id);
+        if let Some(finding) = direction_finding(corpus, path, &from, &raw, &target) {
+            out.push(finding);
+            continue;
+        }
+        // A linked entry's resolution is checked as a reference link.
+        if entry.form == SeeAlsoForm::Plain && !corpus.resolves(&target) {
+            push(out, path, FindingCode::ReferenceUnresolved, Some(raw));
         }
     }
     for reference in version.required_reads() {
@@ -525,14 +528,17 @@ fn check_references(
             );
             continue;
         }
-        if let Some(RefTarget::Domain(domain)) = &reference.target {
-            check_domain_read(corpus, env, path, domain, out);
+        if let Some(target @ RefTarget::Domain(domain)) = &reference.target {
+            match direction_finding(corpus, path, &from, &reference.raw, target) {
+                Some(finding) => out.push(finding),
+                None => check_domain_read(corpus, env, path, domain, out),
+            }
             continue;
         }
         check_target(
             corpus,
             path,
-            class.scope == Scope::Global,
+            &from,
             &reference.raw,
             reference.target.as_ref(),
             out,
@@ -654,41 +660,61 @@ fn path_tokens(lines: &[_text::Line<'_>], link_lines: &BTreeSet<usize>) -> Vec<S
     out
 }
 
+/// A direction finding when `raw`, standing in `from`, names `target`
+/// against the upward direction; its value is the reference, then what
+/// `from` may reference.
+fn direction_finding(
+    corpus: &Corpus,
+    path: &Path,
+    from: &Position,
+    raw: &str,
+    target: &RefTarget,
+) -> Option<Finding> {
+    (!super::_refs::runs_upward(from, target, corpus.project())).then(|| {
+        Finding::new(
+            path,
+            FindingCode::ReferenceDirection,
+            Some(format!("{raw}: {}", super::_refs::upward_from(from))),
+        )
+    })
+}
+
+/// A reference standing in `from`: its form, its direction, then whether
+/// it resolves.
 fn check_target(
     corpus: &Corpus,
     path: &Path,
-    published: bool,
+    from: &Position,
     raw: &str,
     target: Option<&RefTarget>,
     out: &mut Vec<Finding>,
 ) {
-    match target {
-        None => push(out, path, FindingCode::ReferenceForm, Some(raw.to_owned())),
-        Some(target) if published && target.is_local() => {
-            push(
-                out,
-                path,
-                FindingCode::ReferenceLocalFromPublished,
-                Some(raw.to_owned()),
-            );
-        }
-        Some(target) if !corpus.resolves(target) => match unpublished_domain(corpus, target) {
-            Some(domain) => push(
-                out,
-                path,
-                FindingCode::ReferenceDomainUnpublished,
-                Some(format!(
-                    "{raw}: domain `{domain}` is not published on this computer; adopt a docs repository that publishes it"
-                )),
-            ),
-            None => push(
-                out,
-                path,
-                FindingCode::ReferenceUnresolved,
-                Some(raw.to_owned()),
-            ),
-        },
-        Some(_) => {}
+    let Some(target) = target else {
+        push(out, path, FindingCode::ReferenceForm, Some(raw.to_owned()));
+        return;
+    };
+    if let Some(finding) = direction_finding(corpus, path, from, raw, target) {
+        out.push(finding);
+        return;
+    }
+    if corpus.resolves(target) {
+        return;
+    }
+    match unpublished_domain(corpus, target) {
+        Some(domain) => push(
+            out,
+            path,
+            FindingCode::ReferenceDomainUnpublished,
+            Some(format!(
+                "{raw}: domain `{domain}` is not published on this computer; adopt a docs repository that publishes it"
+            )),
+        ),
+        None => push(
+            out,
+            path,
+            FindingCode::ReferenceUnresolved,
+            Some(raw.to_owned()),
+        ),
     }
 }
 
@@ -1150,7 +1176,7 @@ fn check_baseline(
     out: &mut Vec<Finding>,
 ) -> Result<(), DocsError> {
     let path = manifest.path();
-    let published = matches!(manifest.owner(), BaselineOwner::Domain(_));
+    let from = manifest.owner().position();
     let mut highest: Option<Taxonomy> = None;
     for line in manifest.lines() {
         match line {
@@ -1166,7 +1192,7 @@ fn check_baseline(
                 check_target(
                     corpus,
                     path,
-                    published,
+                    &from,
                     &reference.raw,
                     reference.target.as_ref(),
                     out,

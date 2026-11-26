@@ -325,8 +325,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             )
             .replace(
                 "# Sample — Policy\n",
-                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- acme/principle/missing\n\
-                 - project/demo/design/shape\n",
+                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- acme/principle/missing\n",
             ),
         )
         // Pending
@@ -369,6 +368,108 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
         );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
+    insta::assert_snapshot!(run.out);
+}
+
+/// A snippet of `taxonomy` whose Required reads are `reads` and whose
+/// See Also lists `see_also`.
+fn referring(taxonomy: &str, reads: &str, see_also: &str) -> String {
+    let title = format!(
+        "# Sample — {}{}\n",
+        taxonomy[..1].to_uppercase(),
+        &taxonomy[1..]
+    );
+    snippet(taxonomy, "", &format!("\n## See also\n\n{see_also}"))
+        .replace(&title, &format!("{title}\n## Required reads\n\n{reads}"))
+}
+
+// spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV8
+#[test]
+fn a_reference_against_the_direction_is_reported_with_what_its_position_may_reference() {
+    let env = TestEnv::new();
+    let repo = project(&env);
+    valid_tree(&repo);
+    repo.write(
+        "docs/general/index.yaml",
+        "expanded: [general/principle/base]\nlisted: [general/concept/down]\n",
+    )
+    .write(
+        "docs/general/principle/base.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
+        "docs/domain/ops/index.yaml",
+        "description: The ops way.\nexpanded: [ops/principle/far]\n",
+    )
+    .write(
+        "docs/domain/ops/principle/far.md",
+        &snippet("principle", "", ""),
+    )
+    // Against the direction: general -> a domain snippet and a domain by
+    // name; a domain -> a project snippet and another domain's snippet,
+    // linked, under See Also; the project -> another project.
+    .write(
+        "docs/general/concept/down.md",
+        &referring(
+            "concept",
+            "- ops/principle/far\n- acme\n",
+            "- general/principle/base\n",
+        ),
+    )
+    .write(
+        "docs/domain/acme/concept/across.md",
+        &referring(
+            "concept",
+            "- project/demo/design/shape\n",
+            "- [ops/principle/far](../../ops/principle/far.md)\n",
+        ),
+    )
+    .write(
+        "docs/project/concept/elsewhere.md",
+        &referring(
+            "concept",
+            "- project/other/design/shape\n",
+            "- general/principle/base\n",
+        ),
+    )
+    // Upward: a domain -> general and itself; the project -> itself,
+    // general and a domain.
+    .write(
+        "docs/domain/acme/concept/fine.md",
+        &referring(
+            "concept",
+            "- general\n- acme/principle/care\n",
+            "- general/principle/base\n",
+        ),
+    )
+    .write(
+        "docs/project/concept/home.md",
+        &referring(
+            "concept",
+            "- project/demo/design/shape\n- general/principle/base\n- ops/principle/far\n",
+            "- [project/demo/design/retired](../design/retired.md)\n",
+        ),
+    );
+    let run = validate(&env, &repo, &[]);
+    assert!(!run.success, "{}", run.err);
+    let findings_of = |file: &str| {
+        run.out
+            .lines()
+            .filter(|line| !line.starts_with("notice:") && line.starts_with(file))
+            .count()
+    };
+    assert_eq!(
+        findings_of("docs/domain/acme/concept/fine.md"),
+        0,
+        "{}",
+        run.out
+    );
+    assert_eq!(
+        findings_of("docs/project/concept/home.md"),
+        0,
+        "{}",
+        run.out
+    );
     insta::assert_snapshot!(run.out);
 }
 

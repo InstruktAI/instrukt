@@ -218,14 +218,14 @@ const CONCEPT: &str = "---\ndescription: d\n---\n# C — Concept\n\n## What\n\n#
 
 fn local_manifest_findings(files: &[(&str, &str)]) -> Vec<(FindingCode, PathBuf)> {
     let mut all = vec![
-        ("docs/domain/acme/concept/a.md", CONCEPT),
+        ("docs/general/concept/a.md", CONCEPT),
         (
-            "docs/domain/acme/baseline.md",
-            "@~/.instrukt/docs/acme/concept/a.md\n",
+            "docs/general/baseline.md",
+            "@~/.instrukt/docs/general/concept/a.md\n",
         ),
         (
             "docs/project/baseline.md",
-            "@~/.instrukt/docs/outer/bundle.md\n@~/.instrukt/docs/acme/concept/a.md\n",
+            "@~/.instrukt/docs/outer/bundle.md\n@~/.instrukt/docs/general/concept/a.md\n",
         ),
     ];
     all.extend_from_slice(files);
@@ -243,7 +243,7 @@ fn a_bundle_naming_another_bundle_carries_what_that_bundle_carries() {
     )];
     let nested = local_manifest_findings(&[(
         "docs/domain/outer/baseline.md",
-        "@~/.instrukt/docs/acme/bundle.md\n",
+        "@~/.instrukt/docs/general/bundle.md\n",
     )]);
     assert_eq!(nested, carried);
 }
@@ -266,17 +266,28 @@ fn bundles_naming_each_other_end_the_expansion() {
         ),
     ]);
     // The cycle ends; acme's own entry is carried back to it through
-    // outer's bundle, and nothing else is reported.
+    // outer's bundle. Two domains naming each other's bundles reference
+    // against the direction, which each manifest reports.
     let found: Vec<(FindingCode, PathBuf)> = run(&c, &CoreWiring::default(), &[])
         .into_iter()
         .map(|f| (f.code, f.path))
         .collect();
     assert_eq!(
         found,
-        [(
-            FindingCode::BaselineCarried,
-            PathBuf::from("docs/domain/acme/baseline.md")
-        )]
+        [
+            (
+                FindingCode::ReferenceDirection,
+                PathBuf::from("docs/domain/acme/baseline.md")
+            ),
+            (
+                FindingCode::BaselineCarried,
+                PathBuf::from("docs/domain/acme/baseline.md")
+            ),
+            (
+                FindingCode::ReferenceDirection,
+                PathBuf::from("docs/domain/outer/baseline.md")
+            ),
+        ]
     );
 }
 

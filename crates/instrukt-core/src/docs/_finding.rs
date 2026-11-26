@@ -122,8 +122,10 @@ codes! {
     /// A reference into a published domain that no adopted docs
     /// repository publishes on this computer.
     ReferenceDomainUnpublished => "reference-domain-unpublished",
-    /// A published snippet referencing local material.
-    ReferenceLocalFromPublished => "reference-local-from-published",
+    /// A Required reads or See Also entry naming a position its snippet
+    /// may not reference: references run upward only, from a specific
+    /// body toward the generic one.
+    ReferenceDirection => "reference-direction-invalid",
 
     // Baselines
     BaselineLineInvalid => "baseline-line-invalid",

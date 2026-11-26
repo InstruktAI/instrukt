@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+docs/domain/acme/concept/across.md: reference-direction-invalid: ops/principle/far: acme references only acme and general
+docs/domain/acme/concept/across.md: reference-direction-invalid: project/demo/design/shape: acme references only acme and general
+docs/general/concept/down.md: reference-direction-invalid: acme: general references only general
+docs/general/concept/down.md: reference-direction-invalid: ops/principle/far: general references only general
+docs/project/concept/elsewhere.md: reference-direction-invalid: project/other/design/shape: project references only its own project, general and domains
+notice: docs/domain/acme/concept/across.md: unreferenced-snippet: acme/concept/across
+notice: docs/domain/acme/concept/fine.md: unreferenced-snippet: acme/concept/fine
+notice: docs/project/concept/elsewhere.md: unreferenced-snippet: project/demo/concept/elsewhere
+notice: docs/project/concept/home.md: unreferenced-snippet: project/demo/concept/home

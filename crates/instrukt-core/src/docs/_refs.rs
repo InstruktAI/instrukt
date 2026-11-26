@@ -19,6 +19,7 @@ use std::path::Path;
 use serde::Serialize;
 
 use super::_identity::{Placement, place, published_origin};
+use super::_position::{GENERAL, Position};
 use super::_text;
 use crate::ids::{DomainName, ProjectSlug, SnippetId};
 
@@ -138,8 +139,25 @@ pub(super) fn links(lines: &[_text::Line<'_>]) -> Vec<ReferenceLink> {
     out
 }
 
-/// The ids the `See Also` entries of `lines` open with.
-pub(super) fn see_also_ids(lines: &[_text::Line<'_>]) -> Vec<SnippetId> {
+/// How a See Also entry names its id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SeeAlsoForm {
+    /// The entry opens with the plain id.
+    Plain,
+    /// The entry opens with a link whose text is the id; the link's
+    /// target is checked as a reference link.
+    Linked,
+}
+
+/// The id a `See Also` entry names, and how it names it.
+pub(super) struct SeeAlso {
+    pub id: SnippetId,
+    pub form: SeeAlsoForm,
+}
+
+/// The ids the `See Also` entries of `lines` open with, plain or as the
+/// text of a link.
+pub(super) fn see_also(lines: &[_text::Line<'_>]) -> Vec<SeeAlso> {
     let headings = _text::headings(lines);
     let Some(start) = headings
         .iter()
@@ -163,9 +181,61 @@ pub(super) fn see_also_ids(lines: &[_text::Line<'_>]) -> Vec<SnippetId> {
                 .find_map(|bullet| text.trim().strip_prefix(bullet))
                 .map(str::to_owned)?;
             let first = item.split_whitespace().next()?.trim_matches('`');
-            SnippetId::parse(first).ok()
+            let (raw, form) = match link(first) {
+                Some((text, _)) => (text, SeeAlsoForm::Linked),
+                None => (first, SeeAlsoForm::Plain),
+            };
+            let id = SnippetId::parse(raw).ok()?;
+            Some(SeeAlso { id, form })
         })
         .collect()
+}
+
+/// Whether a reference standing in `from` may name `target`. References
+/// run upward only, from a specific body toward the generic one
+/// (`general/policy/referencing-doc-snippets`): `general` names only
+/// `general`; a domain names only itself and `general`; the project names
+/// itself, `general` and any domain. `project` is the slug the validated
+/// repository declares, the only project its snippets name.
+pub(super) fn runs_upward(
+    from: &Position,
+    target: &RefTarget,
+    project: Option<&ProjectSlug>,
+) -> bool {
+    let domain = match target {
+        RefTarget::Snippet(id) if id.is_project() => {
+            return *from == Position::Project
+                && project.is_some_and(|own| project_of(id) == Some(own.as_str()));
+        }
+        RefTarget::LocalFile(_) => return *from == Position::Project,
+        RefTarget::Snippet(id) => match id.domain() {
+            Some(domain) => domain,
+            None => return false,
+        },
+        RefTarget::Domain(domain) | RefTarget::Bundle(domain) => domain.clone(),
+    };
+    match from {
+        Position::General => domain.as_str() == GENERAL,
+        Position::Domain(own) => domain.as_str() == GENERAL || domain == *own,
+        Position::Project => true,
+    }
+}
+
+/// What a reference standing in `from` may name, as a direction finding
+/// states it after the reference.
+pub(super) fn upward_from(from: &Position) -> String {
+    match from {
+        Position::General => format!("{GENERAL} references only {GENERAL}"),
+        Position::Domain(domain) => format!("{domain} references only {domain} and {GENERAL}"),
+        Position::Project => {
+            format!("project references only its own project, {GENERAL} and domains")
+        }
+    }
+}
+
+/// The slug a project snippet's id names (`project/<slug>/…`).
+fn project_of(id: &SnippetId) -> Option<&str> {
+    id.as_str().strip_prefix("project/")?.split('/').next()
 }
 
 /// Whether `token` names a snippet file by its path: an `@` reference, or
@@ -288,6 +358,58 @@ mod tests {
         let reference = entry("[sdlc/policy/x](a-stale-path.md)");
         assert_eq!(reference.target, snippet("sdlc/policy/x"));
         assert_eq!(reference.raw, "sdlc/policy/x");
+    }
+
+    #[test]
+    fn references_run_upward_only() {
+        let project = ProjectSlug::parse("demo").unwrap();
+        let acme = Position::of_domain(&DomainName::parse("acme").unwrap());
+        let named = |from: &Position, raw: &str| {
+            let target = entry(raw).target.unwrap();
+            runs_upward(from, &target, Some(&project))
+        };
+        let general = Position::General;
+        assert!(named(&general, "general/policy/x"));
+        assert!(named(&general, "general"));
+        for raw in ["acme/policy/x", "acme", "project/demo/spec/a"] {
+            assert!(!named(&general, raw), "general -> {raw}");
+        }
+        for raw in ["acme/policy/x", "acme", "general/policy/x", "general"] {
+            assert!(named(&acme, raw), "acme -> {raw}");
+        }
+        for raw in ["ops/policy/x", "ops", "project/demo/spec/a"] {
+            assert!(!named(&acme, raw), "acme -> {raw}");
+        }
+        for raw in [
+            "project/demo/spec/a",
+            "general/policy/x",
+            "acme",
+            "ops/policy/x",
+        ] {
+            assert!(named(&Position::Project, raw), "project -> {raw}");
+        }
+        assert!(!named(&Position::Project, "project/other/spec/a"));
+        let manifest = RefTarget::LocalFile("docs/project/baseline.md".to_owned());
+        assert!(runs_upward(&Position::Project, &manifest, Some(&project)));
+        assert!(!runs_upward(&acme, &manifest, Some(&project)));
+    }
+
+    #[test]
+    fn a_see_also_entry_names_its_id_plain_or_linked() {
+        let body =
+            "# T\n\n## See Also\n\n- sdlc/policy/x — why\n- [ops/policy/y](../y.md)\n- prose\n";
+        let lines = _text::lines(body);
+        let entries: Vec<_> = see_also(&lines)
+            .into_iter()
+            .map(|e| (e.id.to_string(), e.form))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("sdlc/policy/x".to_owned(), SeeAlsoForm::Plain),
+                ("ops/policy/y".to_owned(), SeeAlsoForm::Linked),
+            ]
+        );
     }
 
     #[test]
