@@ -72,7 +72,7 @@ impl T3 {
             serde_json::json!({
                 "commandId":launch.command_id, "threadId":launch.thread_id, "projectId":launch.project_id,
                 "title":request.title, "generateTitle":false, "creationSource":"mcp",
-                "modelSelection":{"instanceId":selection.instance,"model":selection.model},
+                "modelSelection":super::_t3_options::model_selection(selection),
                 "runtimeMode":modes.runtime, "interactionMode":modes.interaction, "workspaceStrategy":workspace,
                 "initialMessage":{"messageId":launch.command_id,"text":request.brief,"attachments":[]}
             }),
@@ -288,7 +288,7 @@ impl RuntimeAdapter for T3 {
     }
     fn selection_realization(&self, operation: super::SelectionOperation) -> String {
         match operation {
-            super::SelectionOperation::ThreadStart=>"T3 native launch receives the selected provider/model and captured native modes; the existing start effort/options limitation is retained.".into(),
+            super::SelectionOperation::ThreadStart=>"T3 native launch receives the selected provider/model with its translated native effort/options and captured native modes.".into(),
             super::SelectionOperation::NativeDelegation=>"T3 native delegation receives provider instance/model and translated harness options where the native operation supports them.".into(),
         }
     }
@@ -296,43 +296,7 @@ impl RuntimeAdapter for T3 {
         &self,
         selection: &instrukt_core::config::AgentSelection,
     ) -> instrukt_core::config::AgentSelection {
-        let mut native = selection.clone();
-        if let Some(effort) = selection.effort {
-            let key = match selection.kind {
-                instrukt_core::config::HarnessKind::Codex
-                | instrukt_core::config::HarnessKind::Grok
-                | instrukt_core::config::HarnessKind::Kiro
-                | instrukt_core::config::HarnessKind::Muse => "reasoningEffort",
-                instrukt_core::config::HarnessKind::Antigravity => "thought_level",
-                instrukt_core::config::HarnessKind::Pi => "thinking",
-                instrukt_core::config::HarnessKind::OpenCode => "variant",
-                instrukt_core::config::HarnessKind::Claude
-                | instrukt_core::config::HarnessKind::Cursor
-                | instrukt_core::config::HarnessKind::Fx
-                | instrukt_core::config::HarnessKind::AcpRegistry => "effort",
-            };
-            // Effort remains a closed semantic variant until this native boundary.
-            native.options.insert(
-                key.into(),
-                serde_json::Value::String(
-                    match effort {
-                        instrukt_core::config::Effort::None => "none",
-                        instrukt_core::config::Effort::Minimal => "minimal",
-                        instrukt_core::config::Effort::Low => "low",
-                        instrukt_core::config::Effort::Medium => "medium",
-                        instrukt_core::config::Effort::High => "high",
-                        instrukt_core::config::Effort::Xhigh => "xhigh",
-                        instrukt_core::config::Effort::Max => "max",
-                        instrukt_core::config::Effort::Ultra => "ultra",
-                        instrukt_core::config::Effort::Ultrathink => "ultrathink",
-                        instrukt_core::config::Effort::Off => "off",
-                        instrukt_core::config::Effort::Auto => "auto",
-                    }
-                    .into(),
-                ),
-            );
-        }
-        native
+        super::_t3_options::native(selection)
     }
     fn create_thread(&self, request: &RuntimeStart) -> Result<SessionRef, SessionsError> {
         T3::create_thread(self, request)
