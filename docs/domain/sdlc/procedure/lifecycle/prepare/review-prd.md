@@ -15,7 +15,7 @@ parameters:
 - [sdlc/procedure/lifecycle/review](../review.md)
 - [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 - [sdlc/policy/definition-of-ready](../../../policy/definition-of-ready.md)
-- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
+- [general/policy/command-contract-read](../../../../../general/policy/command-contract-read.md)
 
 ## Goal
 

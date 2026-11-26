@@ -145,7 +145,7 @@ The default is **skip unless justified**, not "produce when applicable."
     field, never inline body prose. The delivering slug is coordination
     metadata; it never appears in the body. A pending snippet's body reads as
     present-tense contract — `delivered_by` is the only thing that says "not
-    yet" (`sdlc/principle/documentation-first-development`).
+    yet" (`general/principle/documentation-first-development`).
   - **Future framing** ("will", "is planned", "the new surface is going to")
     → present-tense description of the intended shape. Forward design is
     written as contract, not as forecast.

@@ -202,7 +202,7 @@ Here is what happens when an outside event arrives — say, your billing system 
 
 Adding a new reactive business or operations workflow takes one `webhooks:` entry and secret in the company's `company.yaml` or the project's `instrukt.yaml` plus one committed markdown procedure. And because every standing agent is a real T3 thread, you can open it anytime to inspect what it did or step in directly.
 
-Internal engineering automations ride the exact same standing-procedure primitive too — for example, [`upstream-watch`](docs/general/procedure/upstream-watch.md) wakes when a watched upstream git ref moves (`runner.upstream_changed`) to assess whether a fork needs action, and [`lifecycle/integrate`](docs/domain/sdlc/procedure/lifecycle/integrate.md) wakes when `main` goes red (`runner.main_failing`) to restore the baseline before repairing the cause. [Inbound webhook framework →](docs/project/spec/feature/runner/inbound-webhook-endpoint-framework.md)
+Internal engineering automations ride the exact same standing-procedure primitive too — for example, [`upstream-watch`](docs/domain/sdlc/procedure/upstream-watch.md) wakes when a watched upstream git ref moves (`runner.upstream_changed`) to assess whether a fork needs action, and [`lifecycle/integrate`](docs/domain/sdlc/procedure/lifecycle/integrate.md) wakes when `main` goes red (`runner.main_failing`) to restore the baseline before repairing the cause. [Inbound webhook framework →](docs/project/spec/feature/runner/inbound-webhook-endpoint-framework.md)
 
 ---
 

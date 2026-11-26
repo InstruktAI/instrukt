@@ -14,7 +14,7 @@ parameters:
 
 - [general/procedure/doc-snippet-authoring](doc-snippet-authoring.md)
 - [general/procedure/scratchpad-workspace](scratchpad-workspace.md)
-- [sdlc/policy/command-contract-read](../../domain/sdlc/policy/command-contract-read.md)
+- [general/policy/command-contract-read](../policy/command-contract-read.md)
 
 ## Goal
 
