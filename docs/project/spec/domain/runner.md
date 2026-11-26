@@ -412,7 +412,8 @@ quiet first, up to its bound on archive attempts whatever their outcome, each
 archived only while the adapter finds the observation it was chosen from still
 holds.
 
-No pickup, event reaction or command waits on a pass. In `instrukt run` it
+No pickup, event reaction or other command waits on a pass; only the
+`instrukt tick` that runs one returns after it. In `instrukt run` it
 runs on a thread of its own, started after a wake once the one an earlier wake
 started has ended; in `instrukt tick` it runs after the tick has released the
 runner and runtime-invocation locks, before the tick returns. Passes that

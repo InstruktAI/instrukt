@@ -83,7 +83,8 @@ unreachable during a pass leaves its eligible threads for a later pass.
 
 The sweep runs on runner invocations beside the runner's other mechanical
 maintenance, after dispatch and event work, so no pickup, event reaction or
-command waits on it. It starts no agent session, sends no agent a message and
+other command waits on it; an `instrukt tick` returns once its own sweep is
+done. It starts no agent session, sends no agent a message and
 emits no event. It keeps no record of its own: which threads are eligible is
 read again on every pass from the runtime, the work record and the runner's
 standing bindings (`sdlc/policy/state-storage`). The runner's diagnostics show
