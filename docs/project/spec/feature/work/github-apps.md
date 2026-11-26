@@ -217,8 +217,12 @@ version (Admission of review evidence, Settlement): a verdict the woken session
 records for another commit is that commit's own and admitted as that commit's.
 Once `instrukt review record` has recorded a version, it hands the version to
 the runner, which queues the verdict notices of that head's requested reviews
-(`project/instrukt/spec/feature/runner/requested-review`). The recording does
-not wait for them and is not undone when they fail.
+and delivers them on its own wake-ups
+(`project/instrukt/spec/feature/runner/requested-review`). The recording waits
+only for that queuing, never for a delivery, and is not undone when it fails. A
+session judging a dispute of its own findings records a version whether or not
+the verdict changes; a revision is admitted on the same terms either way
+(Admission of review evidence, Settlement).
 <!-- /planned:commit-rereview-reuses-reviewer -->
 
 A verdict and an exemption are separate facts of a commit. Recording, importing

@@ -227,18 +227,21 @@ resolves to none is answered by the report destination and
 `instrukt review show <head>` alone, and nothing refuses it for that
 (`general/concept/lineage-vs-authorship`).
 
-When `instrukt review record` records a version of a head's verdict, it queues
-a verdict notice for each session recorded as asking for that head, right after
-its evidence write. The notice goes into the runner's input delivery to that
-session (`project/instrukt/spec/feature/runner/procedure-event-delivery`), the
-route approval attention uses, which delivers it and retries it. The command
-waits for none of that delivery. A notice carries the head, the pinned base,
-the verdict, the version's report digest, the reviewing session, the report
-destination of that session's ask and `instrukt review show <head>`. It carries
-no report text and nothing of a conversation. Its identity is made of the
-project, the head, the version's report digest and the session, so a session is
-sent each version once. Only a recorded version is sent, so a reviewer that
-records nothing sends nothing.
+Once work has recorded a version of a head's verdict, it hands the version to
+the runner (`project/instrukt/spec/feature/work/github-apps`). The runner then
+queues a verdict notice for each session recorded as asking for that head, into
+its input delivery to that session
+(`project/instrukt/spec/feature/runner/procedure-event-delivery`), the route
+approval attention uses. That queuing is one read of the head's asks and one
+state-database write. The route delivers and retries each notice on the
+runner's wake-ups, and the recording waits for no delivery. A notice carries
+the head, the pinned base, the verdict, the version's number and report digest,
+the reviewing session, the report destination of that session's ask and
+`instrukt review show <head>`. It carries no report text and nothing of a
+conversation. Its identity is made of the project, the head, the version's
+number and report digest, and the session, so a session is sent each version
+once. Only a recorded version is sent, so a reviewer that records nothing sends
+nothing. A judged dispute is recorded as a version, so its asker is sent it.
 
 A notice whose session is archived or deleted before it is delivered is closed
 as undeliverable with that cause and is never sent again. `instrukt events
@@ -260,9 +263,11 @@ under its procedure, from the closure of its own findings and the change since
 the earlier head. A dispute of findings without a new commit names the
 unchanged head, the prior report and the disposition file, and reaches that
 head's reviewer of record, the session that recorded its verdict. That session
-judges it under its procedure; the turn the dispute opened is no review
-request's, so a revised verdict it records is admitted as a revision
-(`project/instrukt/spec/feature/work/github-apps`). Both carry coordinates only.
+judges it under its procedure and records its judgment as a new version of the
+head's verdict, with its updated report, whether or not the verdict changes.
+The turn the dispute opened is no review request's, so that version is admitted
+as a revision (`project/instrukt/spec/feature/work/github-apps`). Both carry
+coordinates only.
 
 ### Requested review records
 
@@ -281,7 +286,7 @@ The runner keeps each admitted ask in a store of its own.
 | Medium | A SQLite database of its own with its own migrations: the asks grow with every head asked for, are read by head, by start key and by report destination, and a head's asks change together. |
 | Write isolation | Its own lock, taken only by `instrukt review start` and held for each of that command's transactions, never while the command waits on the runtime or takes the state database's writer lock. No background writer takes it, and no write to this store takes the writer lock (`sdlc/policy/state-storage`). Readers, the requested reviewer's assignment resolution and `instrukt review record` among them, take no lock and never migrate it; only `instrukt review start` brings it to its current version. |
 | Recording | The ask, with the session that asked and a wake's command identity, is recorded before its start or wake reaches the runtime, and its acceptance and generation once the runtime accepted it. The start key joins it to the runner's runtime binding, which the keyed start records in the state database as every keyed start does. |
-| Notices | Queued by `instrukt review record` into the runner's input deliveries to the session that asked, in the state database (`project/instrukt/spec/feature/work/state-database`), right after its evidence write. This store records nothing of them. |
+| Notices | Queued by the runner, once work hands it a recorded version (`project/instrukt/spec/feature/work/github-apps`), into its input deliveries to the sessions that asked, in the state database (`project/instrukt/spec/feature/work/state-database`). This store records nothing of them. |
 | Scope | One computer: the requested reviewer runs on this computer's runtime. Moving review evidence between computers moves no ask (`project/instrukt/spec/feature/work/github-apps`). |
 | Lifecycle | A head's asks are current while the canonical branch does not contain the head, and history once it does, as the head's review evidence is. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`), inside `instrukt review start`. |
 
@@ -303,7 +308,7 @@ Then the review is not started and the agent is told what differs and how to rep
 Given a developer's agent received a needs-work verdict from the reviewer it asked for
 When the agent asks again for the same head, naming the prior report and its dispositions
 Then the reviewer that recorded the verdict judges the dispositions on an assignment that names those files and holds nothing the agent wrote
-And when that reviewer changes its verdict, the revised verdict is recorded
+And that reviewer's judgment is recorded as a new version of the verdict, whether or not the verdict changes, and reaches the agent
 But when the agent pushes a fixing commit instead and asks for its review naming the prior report
 Then the reviewer that recorded the earlier verdict reviews the fixing head, on an assignment that names the new head and the prior report and holds nothing the agent wrote
 And the fixing head's verdict is recorded as that head's own
@@ -356,9 +361,6 @@ And when the reviewer later records a revised verdict for that head, the agent r
 - A notice is queued after the verdict is recorded, not with it. If the command
   stops between the two writes, that version's notice is never sent, and the
   verdict stays readable with `instrukt review show <head>`.
-- A dispute the reviewer upholds records no new version, so its asker is sent
-  nothing new. The verdict it disputed stands, and its asker already holds it
-  and its report.
 - A notice reaches the session that asked as an instrukt delivery, which opens
   that session's next turn when it is idle and waits behind its turn in
   progress otherwise
