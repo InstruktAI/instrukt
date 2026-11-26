@@ -280,8 +280,11 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     // layers to the current schema with every setting kept, and reads answer
     // as before.
     let env = TestEnv::new();
-    let global =
-        format!("{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\n");
+    // The machine's runtime entry overrides a supported action beside one
+    // the runtime entry no longer defines.
+    let global = format!(
+        "{MACHINE}ticks: 'off'\nmodules:\n  blueprint: true\n  conversations: false\nruntimes:\n  t3:\n    finish_thread: Settle it the machine's way.\n    retire_thread: Archive it.\n"
+    );
     write_global(&env, &global);
     // A company home an earlier instrukt wrote, whose member named a Slack
     // identity.
@@ -298,7 +301,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let validated = env.run(repo.path(), ["config", "validate"]).success();
     insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 7; file migrates on the next writing command
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     ");
     assert_eq!(
@@ -331,6 +334,19 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     .unwrap();
     assert!(machine["modules"].get("conversations").is_none());
     assert_eq!(machine["modules"]["blueprint"].as_bool(), Some(true));
+    // The action the runtime entry no longer defines is gone; the
+    // supported override is kept as written.
+    assert!(machine["runtimes"]["t3"].get("retire_thread").is_none());
+    assert_eq!(
+        machine["runtimes"]["t3"]["finish_thread"].as_str(),
+        Some("Settle it the machine's way.")
+    );
+    assert_eq!(
+        machine["schema_version"].as_u64(),
+        Some(GLOBAL_SCHEMA_VERSION)
+    );
+    env.run(repo.path(), ["config", "validate", "--global"])
+        .success();
     env.run(repo.path(), ["config", "init", "--company", "acme"])
         .success();
     env.run(repo.path(), ["config", "validate", "--company", "acme"])

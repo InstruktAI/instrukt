@@ -145,6 +145,34 @@ fn global(mut value: Value, from: u64) -> Value {
         // machine's switch is gone, whatever its value.
         modules.remove(super::_schema::CONVERSATIONS);
     }
+    if from < 7
+        && let Some(Value::Mapping(runtimes)) = value.get_mut("runtimes")
+    {
+        // The runtime action that global schema 6 accepted and that no
+        // longer exists, whatever this binary's catalog holds later.
+        const V6_RETIRED_ACTIONS: [&str; 1] = ["retire_thread"];
+        // An entry or a `runtimes` map this removal empties goes with it;
+        // one that is not a mapping is left for validation to report.
+        let mut emptied = false;
+        runtimes.retain(|_, entry| {
+            let Value::Mapping(actions) = entry else {
+                return true;
+            };
+            let mut removed = false;
+            for action in V6_RETIRED_ACTIONS {
+                removed |= actions.remove(action).is_some();
+            }
+            let keep = !(removed && actions.is_empty());
+            emptied |= !keep;
+            keep
+        });
+        if emptied
+            && runtimes.is_empty()
+            && let Value::Mapping(map) = &mut value
+        {
+            map.remove("runtimes");
+        }
+    }
     value
 }
 

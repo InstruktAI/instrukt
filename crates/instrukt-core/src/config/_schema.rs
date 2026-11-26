@@ -11,7 +11,7 @@ use crate::ids::{DomainName, ProjectSlug};
 
 /// The schema version of the global layer (`~/.instrukt/instrukt.yaml`)
 /// this instrukt writes. The first is 1.
-pub const GLOBAL_SCHEMA_VERSION: u64 = 6;
+pub const GLOBAL_SCHEMA_VERSION: u64 = 7;
 
 /// The schema version of a project layer (`instrukt.yaml` at a repository
 /// root) this instrukt writes. The first is 1.
