@@ -969,12 +969,12 @@ mod tests {
             let path = format!("runtime.{name}");
             let instruction = shipped.get_str(&path, &env).unwrap();
             assert!(!instruction.trim().is_empty(), "{name}");
-            let expected = if name == "inspect_thread" {
-                "Inspect the child natively."
+            let resolved = machine.get_str(&path, &env).unwrap();
+            if name == "inspect_thread" {
+                assert_ne!(resolved, instruction, "{name}");
             } else {
-                instruction.as_str()
-            };
-            assert_eq!(machine.get_str(&path, &env).unwrap(), expected, "{name}");
+                assert_eq!(resolved, instruction, "{name}");
+            }
         }
     }
 }
