@@ -19,8 +19,8 @@ const LONG_AGO: &str = "2026-11-07T00:00:00Z";
 const RECENTLY: &str = "2026-11-28T00:00:00Z";
 
 /// The crew's project with event responses on and a published procedure
-/// that a fact starts a standing responsibility for, on a computer whose
-/// retention window is a week; and the event transport it uses.
+/// that a fact starts a standing responsibility for, on a computer with a
+/// retention window set; and the event transport it uses.
 fn retaining() -> (Crew, RedisServer) {
     let crew = Crew::new();
     let redis = RedisServer::new(&crew.project.env);
