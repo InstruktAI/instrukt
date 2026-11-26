@@ -517,6 +517,108 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     );
 }
 
+/// The stage variable under which this test binary, run again, observes
+/// the database's lock from another process; it carries the database path.
+const LOCK_OBSERVER: &str = "INSTRUKT_STATE_DB_LOCK_OBSERVER";
+
+// spec: project/instrukt/spec/feature/work/state-database UC-SD6
+#[test]
+fn a_process_holding_the_database_keeps_its_lock_while_it_inspects_it() {
+    use instrukt_core::home::Home;
+    use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+    if let Some(file) = std::env::var_os(LOCK_OBSERVER) {
+        println!(
+            "observed-lock {}",
+            observe_lock(std::path::Path::new(&file))
+        );
+        return;
+    }
+    let project = support::Project::new();
+    project.create("held-database", "change", "Keep the database whole.");
+    let home = Home::at_user_home(project.env.home().to_path_buf());
+    let file = home.state_db_file();
+    let todos = |db: &Connection| -> i64 {
+        db.query_row("SELECT count(*) FROM todos", [], |row| row.get(0))
+            .unwrap()
+    };
+
+    // This process holds the database open, as the runner does: a
+    // connection that has run a query keeps its read lock between reads.
+    let held = StateRead::open(&home).unwrap().unwrap();
+    assert_eq!(todos(held.conn()), 1);
+
+    // It reads the database for inspection, as the runner's workers do.
+    let inspected = StateRead::open(&home.for_inspection()).unwrap().unwrap();
+    assert_eq!(todos(inspected.conn()), 1);
+    drop(inspected);
+
+    // Another process asks the kernel whether a write lock could be taken
+    // where SQLite's readers hold theirs; a process never sees its own locks.
+    let observer = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "state_database::a_process_holding_the_database_keeps_its_lock_while_it_inspects_it",
+            "--nocapture",
+        ])
+        .env(LOCK_OBSERVER, &file)
+        .output()
+        .unwrap();
+    assert!(observer.status.success(), "{observer:?}");
+    let stdout = String::from_utf8(observer.stdout).unwrap();
+    let observed = stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("observed-lock "))
+        .unwrap_or_else(|| panic!("the observer reported no lock: {stdout}"));
+    assert_eq!(
+        observed,
+        format!("{} {}", nix::libc::F_RDLCK, std::process::id()),
+        "another process finds this process's read lock on {} in place",
+        file.display()
+    );
+
+    // Another instrukt command writes the database and exits.
+    project.create("second-write", "change", "Write while it is held.");
+
+    // The holder goes on reading, seeing that write, and writing.
+    assert_eq!(todos(held.conn()), 2);
+    let mut writer = StateDb::open(&home).unwrap();
+    let path = writer.path().to_path_buf();
+    writer
+        .write(|tx| {
+            tx.execute(
+                "UPDATE todos SET revision = revision WHERE slug = 'second-write'",
+                [],
+            )
+            .map_err(StateDbError::sqlite(&path))
+        })
+        .unwrap();
+    drop(writer);
+    assert_eq!(todos(held.conn()), 2);
+    let integrity: String = held
+        .conn()
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(integrity, "ok");
+}
+
+/// The lock, as `<type> <pid>`, that keeps a write lock off SQLite's
+/// shared-reader range of the database at `file` (`SHARED_FIRST`,
+/// `0x40000002`, 510 bytes).
+fn observe_lock(file: &std::path::Path) -> String {
+    use nix::fcntl::{FcntlArg, fcntl};
+    use nix::libc;
+    let database = std::fs::File::open(file).unwrap();
+    let mut lock = libc::flock {
+        l_type: libc::F_WRLCK as libc::c_short,
+        l_whence: libc::SEEK_SET as libc::c_short,
+        l_start: 0x4000_0002,
+        l_len: 510,
+        l_pid: 0,
+    };
+    fcntl(&database, FcntlArg::F_GETLK(&mut lock)).unwrap();
+    format!("{} {}", lock.l_type, lock.l_pid)
+}
+
 #[test]
 fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refusals() {
     let env = common::TestEnv::new();
