@@ -647,9 +647,12 @@ fn connection(
             }
             // A scan runs when a connection wakes it, when its recheck is
             // due, or when the stored moment of its wait passes on the host
-            // clock, the clock that moment was stored on.
+            // clock, the clock that moment was stored on. A live pause the
+            // service named no moment for is a recheck on the monotonic
+            // source; the scan after it skips that stored moment.
             let mut recheck: Option<Instant> = None;
             let mut waiting_until: Option<Timestamp> = None;
+            let mut live_pause: Option<(Timestamp, Instant)> = None;
             while !quit() {
                 let event = scans.recv_timeout(Duration::from_millis(200));
                 if quit() {
@@ -661,6 +664,9 @@ fn connection(
                 if !woken {
                     continue;
                 }
+                let waited_out = live_pause
+                    .filter(|(_, pause)| Instant::now() >= *pause)
+                    .map(|(at, _)| at);
                 let admitted_gen = reach.current.get();
                 let result = connector_policy(&admitted_gen, company, key).and_then(
                     |(role, _, session_scope, reply_mode)| {
@@ -681,6 +687,7 @@ fn connection(
                                     &|| {
                                         let _ = scan_nudge.try_send(());
                                     },
+                                    waited_out,
                                 )
                             })
                     },
@@ -692,14 +699,34 @@ fn connection(
                         }
                         recheck = Some(after_failure(error.wait.as_ref(), Instant::now()));
                         waiting_until = None;
+                        live_pause = None;
                     }
                     Ok(conversations::read_back::Scanned::Done { catch_up }) => {
                         recheck = catch_up.then(Instant::now);
                         waiting_until = None;
+                        live_pause = None;
                     }
-                    Ok(conversations::read_back::Scanned::Waiting { until }) => {
-                        recheck = None;
-                        waiting_until = Some(until);
+                    Ok(conversations::read_back::Scanned::Waiting {
+                        until,
+                        pause: Some(pause),
+                    }) => {
+                        recheck = Some(pause);
+                        waiting_until = None;
+                        live_pause = Some((until, pause));
+                    }
+                    Ok(conversations::read_back::Scanned::Waiting { until, pause: None }) => {
+                        // Woken during its own live pause, the read keeps it.
+                        match live_pause.filter(|(at, _)| *at == until) {
+                            Some((_, pause)) => {
+                                recheck = Some(pause);
+                                waiting_until = None;
+                            }
+                            None => {
+                                recheck = None;
+                                waiting_until = Some(until);
+                                live_pause = None;
+                            }
+                        }
                     }
                 }
             }
@@ -1762,14 +1789,14 @@ fn call(
 }
 
 #[cfg(test)]
-pub(crate) mod test_connector {
+mod test_connector {
     //! An in-memory connector whose facts each test sets: its limits and
     //! where it places a message's status. It records nothing.
     use instrukt_connector::{
         Admission, Captured, Connector, ConnectorError, Inbox, Limits, Place, Status,
     };
 
-    pub(crate) struct TestConnector {
+    pub(super) struct TestConnector {
         pub limits: Limits,
         /// Places every message of a conversation at the conversation, or
         /// each message at itself.

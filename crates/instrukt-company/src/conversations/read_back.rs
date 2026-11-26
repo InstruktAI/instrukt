@@ -16,7 +16,11 @@ use instrukt_core::{
 use instrukt_runner::state::{self, RunnerState, StateError};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
 const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
@@ -298,9 +302,27 @@ fn failed(error: impl std::fmt::Display) -> ConnectorError {
 pub(crate) enum Scanned {
     /// It read what it could; `catch_up` asks for a fresh window at once.
     Done { catch_up: bool },
-    /// The read waits until this moment on the host clock: the outside
-    /// gate's wait for its last read, live or as stored before a restart.
-    Waiting { until: Timestamp },
+    /// The read waits for the outside gate's wait of its last read, whose
+    /// moment `until` is stored. A live pause the service named no moment
+    /// for runs out at `pause` on the monotonic source; otherwise the wait
+    /// lasts until the host clock reaches `until`.
+    Waiting {
+        until: Timestamp,
+        pause: Option<Instant>,
+    },
+}
+
+/// The stored moment a read still waits for: one the host clock has not
+/// reached, unless it is the pause `waited_out` that this process already
+/// waited out on the monotonic source.
+fn stored_wait(
+    retry_at: Option<i64>,
+    now: Timestamp,
+    waited_out: Option<Timestamp>,
+) -> Option<i64> {
+    retry_at
+        .filter(|at| micros(now) < *at)
+        .filter(|at| waited_out.is_none_or(|out| micros(out) != *at))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -315,6 +337,7 @@ pub(crate) fn scan(
     clock: &dyn Fn() -> Timestamp,
     quit: &dyn Fn() -> bool,
     nudge: &dyn Fn(),
+    waited_out: Option<Timestamp>,
 ) -> Result<Scanned, ConnectorError> {
     let done = |catch_up| Scanned::Done { catch_up };
     let Some(mut conn) = open(home, true).map_err(failed)? else {
@@ -364,9 +387,10 @@ pub(crate) fn scan(
             |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
                 page: row.get(3)?, retry_at: row.get(4)? }),
         ).map_err(sql)?;
-        if let Some(at) = progress.retry_at.filter(|at| micros(clock()) < *at) {
+        if let Some(at) = stored_wait(progress.retry_at, clock(), waited_out) {
             return Ok(Scanned::Waiting {
                 until: Timestamp::from_microsecond(at).map_err(failed)?,
+                pause: None,
             });
         }
         let window = ScanWindow {
@@ -398,7 +422,10 @@ pub(crate) fn scan(
                             params![owner, key, retry, error.to_string()],
                         ).map_err(sql)?;
                         return match error.wait {
-                            Some(wait) => Ok(Scanned::Waiting { until: wait.at() }),
+                            Some(wait) => Ok(Scanned::Waiting {
+                                until: wait.at(),
+                                pause: (!wait.named()).then(|| wait.until()),
+                            }),
                             None => Err(failed(error)),
                         };
                     }
@@ -781,56 +808,27 @@ pub(super) fn channel_gaps(home: &Home, now: Timestamp) -> Result<Vec<ChannelGap
 
 #[cfg(test)]
 mod tests {
-    use super::{Scanned, micros, observe, open, scan};
-    use crate::connector_host::test_connector::TestConnector;
-    use instrukt_connector::Limits;
-    use instrukt_core::config::{ReplyMode, SessionScope};
-    use instrukt_core::ids::{ProjectSlug, RoleName};
-    use instrukt_core::state_db::rusqlite::params;
-    use jiff::Timestamp;
+    use super::{micros, stored_wait};
+    use jiff::{SignedDuration, Timestamp};
 
     #[test]
-    fn a_stored_future_wait_is_answered_as_waiting_without_reading() {
-        let root = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
-        let home = instrukt_core::home::Home::at_user_home(root.path().to_path_buf()).for_writing();
-        drop(instrukt_core::state_db::StateDb::open(&home).unwrap());
-        let acme = ProjectSlug::parse("acme").unwrap();
-        // A company whose configuration cannot be read keeps every
-        // connector's read-back record.
-        let company = home.company_dir(&acme);
-        instrukt_core::fsx::create_dir_all(&company).unwrap();
-        instrukt_core::fsx::write(company.join("company.yaml"), "connectors: [").unwrap();
+    fn a_stored_moment_holds_until_the_host_clock_reaches_it() {
         let now: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
-        let until = now + jiff::SignedDuration::from_secs(120);
-        observe(&home, &acme, "slack", now).unwrap();
-        open(&home, true)
-            .unwrap()
-            .unwrap()
-            .execute(
-                "UPDATE scans SET retry_at=?3 WHERE company=?1 AND connector=?2",
-                params!["acme", "slack", micros(until)],
-            )
-            .unwrap();
-        let connector = TestConnector {
-            limits: Limits {
-                message_chars: 100,
-                working_refresh: None,
-            },
-            per_message: false,
-        };
-        let scanned = scan(
-            &home,
-            &acme,
-            "slack",
-            &RoleName::parse("company-agent").unwrap(),
-            SessionScope::Conversation,
-            ReplyMode::default(),
-            &connector,
-            &|| now,
-            &|| false,
-            &|| {},
-        )
-        .unwrap();
-        assert_eq!(scanned, Scanned::Waiting { until });
+        let at = now + SignedDuration::from_secs(120);
+        assert_eq!(stored_wait(Some(micros(at)), now, None), Some(micros(at)));
+        assert_eq!(stored_wait(Some(micros(at)), at, None), None);
+        assert_eq!(stored_wait(None, now, None), None);
+    }
+
+    #[test]
+    fn a_pause_waited_out_on_the_monotonic_source_no_longer_holds() {
+        let now: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
+        let at = now + SignedDuration::from_secs(2);
+        assert_eq!(stored_wait(Some(micros(at)), now, Some(at)), None);
+        let other = now + SignedDuration::from_secs(1);
+        assert_eq!(
+            stored_wait(Some(micros(at)), now, Some(other)),
+            Some(micros(at))
+        );
     }
 }
