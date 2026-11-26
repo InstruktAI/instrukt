@@ -917,25 +917,24 @@ fn a_deliberate_standing_entry_records_native_evidence_and_preserves_attendance(
             .contains("changed native project")
     );
 
-    // Historical manual bindings may have no retained native project.
+    // Historical manual bindings may have no retained native project; the
+    // thread still runs in another runtime project than its checkout's own,
+    // so the event stays pending and status reports it misplaced.
     r.computer
         .db()
         .execute("UPDATE runtime_bindings SET project_id=NULL", [])
         .unwrap();
     r.tick();
     assert_eq!(r.runtime.message_count("s1"), 2);
-    assert!(
+    let folder = r.computer.env.path("");
+    let canonical = folder.canonicalize().unwrap();
+    insta::assert_snapshot!(
         start_anomalies(&r)[0]["failure"]
             .as_str()
             .unwrap()
-            .contains("native project")
-    );
-    let finding = start_anomalies(&r)[0].clone();
-    assert!(
-        finding["failure"]
-            .as_str()
-            .unwrap()
-            .contains("native project")
+            .replace(canonical.to_str().unwrap().trim_end_matches('/'), "[TMP]")
+            .replace(folder.to_str().unwrap().trim_end_matches('/'), "[TMP]"),
+        @"thread t3:s1 runs in a runtime project not rooted at [TMP]/fork; it rolls over once idle or archived"
     );
     r.runtime.change("s1", "projectId", retained_project.into());
     r.runtime.change("s1", "title", request["title"].clone());
@@ -1205,6 +1204,8 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
             ["config", "init", "--company", "acme"],
         )
         .success();
+    // An onboarded company's home has its runtime project.
+    r.computer.env.place_company_project("acme");
     let company = r
         .computer
         .env

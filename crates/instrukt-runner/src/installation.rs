@@ -57,6 +57,8 @@ pub enum ResourceKind {
     Graphify,
     #[serde(rename = "runner service")]
     Runner,
+    #[serde(rename = "runtime project")]
+    RuntimeProject,
 }
 impl ResourceKind {
     pub fn name(self) -> &'static str {
@@ -67,6 +69,7 @@ impl ResourceKind {
             Self::LocalRedis => "local Redis",
             Self::Graphify => "graphify",
             Self::Runner => "runner service",
+            Self::RuntimeProject => "runtime project",
         }
     }
 }
@@ -292,6 +295,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     if request.module.is_none() {
         runner_service(request, &demand, &mut report);
     }
+    runtime_projects(request, &demand, &mut report);
     if request.conversations {
         boot_prerequisite(request, &demand, &mut report);
         return Ok(report);
@@ -359,6 +363,102 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     boot_prerequisite(request, &demand, &mut report);
     Ok(report)
+}
+
+/// The runtime projects of the execution roots the selected modules start
+/// sessions in (`module-installation`, "Runtime projects of execution
+/// roots"), under one rule for company homes and project checkouts alike:
+/// a missing one is created, or reported under `--check`; none is ever
+/// withdrawn. With no root selected, the runtime is not asked.
+fn runtime_projects(request: &Request<'_>, demand: &Demand, report: &mut Report) {
+    use crate::runtime::ExecutionRootMode;
+    use _demand::RuntimeProjectModule;
+    let selected = |module: RuntimeProjectModule| {
+        if request.conversations {
+            return module == RuntimeProjectModule::Conversations;
+        }
+        match request.module {
+            None => true,
+            Some(Module::Todos) => module == RuntimeProjectModule::Todos,
+            Some(Module::Events) => module == RuntimeProjectModule::Events,
+            Some(_) => false,
+        }
+    };
+    // One row per canonical root, naming every home that demands it.
+    let mut roots: Vec<(PathBuf, PathBuf, Vec<String>)> = Vec::new();
+    for entry in demand
+        .runtime_projects
+        .iter()
+        .filter(|entry| selected(entry.module))
+    {
+        let canonical = entry
+            .checkout
+            .canonicalize()
+            .unwrap_or_else(|_| entry.checkout.clone());
+        match roots.iter_mut().find(|(_, root, _)| *root == canonical) {
+            Some((_, _, labels)) => {
+                if !labels.contains(&entry.label) {
+                    labels.push(entry.label.clone());
+                }
+            }
+            None => roots.push((entry.checkout.clone(), canonical, vec![entry.label.clone()])),
+        }
+    }
+    if roots.is_empty() {
+        return;
+    }
+    let adapter =
+        match Configuration::load_global(request.home).and_then(|global| global.runner_runtime()) {
+            Ok(runtime) => crate::runtime::adapter(runtime),
+            Err(error) => {
+                for (root, _, labels) in &roots {
+                    report.resource(
+                        ResourceKind::RuntimeProject,
+                        Disposition::Unmet,
+                        vec![root.clone()],
+                        labels,
+                        error.to_string(),
+                    );
+                    report.finding(format!("runtime project {}", root.display()), &error);
+                }
+                return;
+            }
+        };
+    let mode = if request.check {
+        ExecutionRootMode::Check
+    } else {
+        ExecutionRootMode::Ensure
+    };
+    for (root, _, labels) in roots {
+        let name = format!("runtime project {}", root.display());
+        let (disposition, detail) = match adapter.execution_root(&root, mode) {
+            Ok(status) => match status.project_id {
+                Some(project) if status.created => (
+                    Disposition::Installed,
+                    format!("created runtime project {project}"),
+                ),
+                Some(project) => (Disposition::Reused, format!("runtime project {project}")),
+                None => {
+                    let cause =
+                        "no runtime project is rooted here; run `instrukt install`".to_owned();
+                    report.finding(&name, &cause);
+                    (Disposition::Unmet, cause)
+                }
+            },
+            Err(error) => {
+                let cause = error.to_string();
+                report.finding(&name, &cause);
+                (Disposition::Unmet, cause)
+            }
+        };
+        report.resource(
+            ResourceKind::RuntimeProject,
+            disposition,
+            vec![root],
+            &labels,
+            detail,
+        );
+    }
 }
 
 /// The admission findings that withhold a responsibility on this computer
@@ -898,13 +998,20 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         module: Some(Module::Events),
         ..request.clone()
     })?;
-    let runner_service = converge(&Request {
-        check: true,
-        module: None,
-        conversations: true,
-        ..request.clone()
-    })?
-    .runner_service;
+    // Only the runner service's state is shown: it is read alone, without
+    // asking the runtime about anything the status leaves out.
+    let mut service = Report::default();
+    runner_service(
+        &Request {
+            check: true,
+            module: None,
+            conversations: true,
+            ..request.clone()
+        },
+        &demand,
+        &mut service,
+    );
+    let runner_service = service.runner_service;
     let global = Configuration::load_global(request.home)?.get(None, request.env)?;
     let configured = global.get("redis").is_some();
     let redis = if demand.events.is_empty() && !configured {

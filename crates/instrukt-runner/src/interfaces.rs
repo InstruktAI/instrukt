@@ -273,6 +273,14 @@ pub struct AcceptedDispatch {
     pub occurrence: Option<Timestamp>,
 }
 
+/// The work binding of a session, as work reports it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionOwner {
+    pub key: String,
+    pub project: ProjectSlug,
+    pub worktree: Option<std::path::PathBuf>,
+}
+
 /// Reading and writing per-todo, per-role session bindings
 /// (`session-continuity`, "Identity and reuse"). Reuse is a lookup of the
 /// binding followed by `alive`; brief similarity is not identity.
@@ -301,6 +309,13 @@ pub trait SessionBindings: Send + Sync {
         todo: &TodoSlug,
         role: &RoleName,
     ) -> Result<Option<SessionBinding>, WorkInterfaceError>;
+
+    /// The unreleased per-role binding work holds for `session`, if any:
+    /// its key, its todo's project and the worktree it recorded.
+    fn session_owner(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<SessionOwner>, WorkInterfaceError>;
 
     /// Check that work still owns the stopped assignment before starting a replacement.
     fn check_dispatch_replacement(

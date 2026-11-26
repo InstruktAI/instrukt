@@ -1099,7 +1099,7 @@ fn a_github_decision_wakes_only_its_live_claimant_and_replay_creates_no_second_n
             .success();
     }
 
-    crew.runtime.open_session("lead-1");
+    crew.runtime.open_session_in("lead-1", crew.root());
     crew.runtime.set_status("lead-1", "ended ok");
     let config = project.repo.path().join("instrukt.yaml");
     let mut text = std::fs::read_to_string(&config).unwrap();
@@ -1250,7 +1250,7 @@ fn a_failed_mixed_handover_does_not_resend_an_approval_to_a_released_claimant() 
         .unwrap()
         .strip_prefix("t3:")
         .unwrap();
-    crew.runtime.open_session("lead-1");
+    crew.runtime.open_session_in("lead-1", crew.root());
     crew.runtime.set_status("lead-1", "ended ok");
     project.env.run(crew.root(), ["sync"]).success();
     crew.runtime
@@ -1285,7 +1285,7 @@ fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
     project.create(slug, "feature", "Keep the requested direction.");
     crew.next("prepare", slug);
     crew.write(slug, "prd", "The current outcome.");
-    crew.runtime.open_session("lead-1");
+    crew.runtime.open_session_in("lead-1", crew.root());
     crew.runtime.set_status("lead-1", "ended ok");
     let source = project
         .repo
@@ -1382,7 +1382,7 @@ fn a_decision_imported_by_another_computer_reaches_the_claim_host_once() {
     project.create(slug, "feature", "Retain the remote decision.");
     crew.next("prepare", slug);
     crew.write(slug, "prd", "The current audience.");
-    crew.runtime.open_session("lead-1");
+    crew.runtime.open_session_in("lead-1", crew.root());
     crew.runtime.set_status("lead-1", "ended ok");
     let other = project.other_computer();
     let source = other

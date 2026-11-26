@@ -39,6 +39,14 @@ creates no replacement session identity.
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 
+`execution_root` takes an execution root and a mode, check or ensure. It
+returns whether the selected runtime holds a live project rooted exactly at
+that root, creating one in ensure mode, together with the runtime's own door
+for adding one. It never selects, alters or removes another project; an
+unreachable or refusing runtime returns its cause and no answer. Its released
+consumers are launch, for the root of the work it starts, and installation
+(`project/instrukt/spec/feature/runner/module-installation`).
+
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
 unattended consumers use adapter capabilities. Conversation links use the
@@ -220,10 +228,13 @@ A subject token is the complete typed reference from the event envelope. Encode
 each whole component with the rule below. Home identity omits the subject suffix;
 subject identity requires it. The object key stays fixed across succession;
 its generation increases once under the object lock after confirmed native
-archive or deletion and only when outstanding or new work needs a session.
-Settled and idle threads remain reusable. Observation/send failures retain their
-target; they never establish terminal presence. Native archive/deletion owns
-provider detachment; the create receipt proves no stronger process-exit guarantee.
+archive or deletion, or after an idle thread is confirmed misplaced (T3
+realization below), and only when outstanding or new work needs a session.
+Settled and idle threads in their checkout's own project remain reusable.
+Observation/send failures retain their target; they never establish terminal
+presence. Native archive/deletion owns provider detachment; neither the create
+receipt nor a misplacement rollover proves a process exit, and a rolled-over
+thread is idle and never sent to again.
 
 Components are UTF-8 percent-encoded, leaving only ASCII letters, digits, `-`,
 `_`, `.`, `~` unescaped; hex digits are uppercase. Occurrences are the scheduled
@@ -272,8 +283,9 @@ created-then-deleted; that evidence survives projection deletion. A lost launch
 reply replays the same command/thread IDs and opening message receipt. It neither
 allocates another generation nor sends the opening assignment separately.
 
-Confirmed native archive/deletion with outstanding work allocates one successor
-under the object lock. Standing transfers only unconsumed events using its
+Confirmed native archive/deletion, or an idle thread confirmed misplaced, with
+outstanding work allocates one successor under the object lock.
+Standing transfers only unconsumed events using its
 existing generation accounting. Work validates eligible active claims and commits
 its binding/claim, runner acceptance, opening receipt and execution tracking
 together. Company harvests available completed answers before adoption, preserves
@@ -290,9 +302,20 @@ sends `createdBy:"user"`; that native stamp is accepted.
 
 Before first launch, authenticated `GET /api/projects` supplies registered project
 IDs and roots. Exclude deleted projects, compare canonical paths when available
-and otherwise resolved original paths, and select the deepest containing root
-by path components. No match or malformed/unavailable metadata leaves work
-pending before launch; no implicit project registration occurs.
+and otherwise resolved original paths, and select the one live project whose
+root is exactly the checkout. A project rooted at an ancestor or a descendant of
+the checkout never stands in for it: `root` placement would run the session in
+that other folder and `worktree` placement would branch another repository.
+When no live project has that root, launch adds one through `execution_root` in
+ensure mode and starts in it. The checkout is always the execution root instrukt
+derives from the work's home — a registered project checkout, a company home or
+the platform checkout — so only such a root is ever added. A retry of a
+generation replays its captured project; a successor generation never inherits
+a retired generation's project and resolves its checkout's project afresh. Two
+live projects at one root are contradictory project evidence. An unreachable
+runtime, a refused addition or malformed metadata leaves work pending before
+launch with instrukt's own cause naming the checkout, which reaches operator
+surfaces unchanged and is retried on later passes.
 
 After model preparation, `server.getConfig` supplies normalized settings,
 project overrides, managed limits and selected-provider mode capabilities.
@@ -314,6 +337,45 @@ successor. T3 owns preparation and release; a launch reply can precede completed
 workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
+
+Every placement runs in the checkout's own project. Whenever instrukt adopts,
+wakes or succeeds an instrukt-owned thread, and before every input it delivers
+to one — event, approval, recovery and conversation input alike, for every
+binding kind — it looks up the checkout's project in T3's project snapshot by
+exact root, read-only, and compares it with the thread's native project. The
+comparison never registers a project. The binding's recorded project is not
+proof of a match, and a checkout with no live project of its own never
+matches. A thread that does not match is misplaced: it is not adopted and is
+sent nothing, and the input stays pending.
+
+A misplaced thread reported `input-ready` or `ended failed` is rolled over by
+its owner, at the same succession point and under the same object lock that
+follow confirmed archive or deletion, with the same transfer of outstanding
+work: a standing agent's delivery, a todo or task execution's observation or
+follow-up, and a company conversation's succession. The new generation
+launches as any successor does, adding the checkout's project if it is still
+missing, and the misplaced thread is left as it is, as history; instrukt never
+sends to it again. A todo successor attaches a retained worktree only when it
+is a registered worktree of the checkout on the captured branch; a worktree
+the misplaced thread holds elsewhere is left untouched, and the successor
+starts with `worktree` placement on its captured base and branch. Input
+delivery and approval attention never roll a thread over themselves; their
+pending input waits for the owner's succession, and approval attention keeps
+its own rule: once the claim moves to the successor, the notice is not routed
+to the former holder, and the successor derives the decision from the work
+record. Taking the object lock before any input lock, the owner never rolls
+over from inside input delivery.
+
+A misplaced thread reported `running`, `needs-input` or `unknown` is left
+alone: a turn in progress, a pending request or an unobserved state is never
+cut off. Its work stays pending, and operator surfaces carry instrukt's own
+outcome naming the thread and the checkout, stating that the thread rolls over
+once it is idle or archived.
+
+A manual reservation never adopts a misplaced thread: a candidate a project
+listing returns meets the same comparison and is refused, with no rollover.
+A person writing to a company's agent is told only that the assistant is
+unavailable for a while. No project root is retained beside the binding.
 
 Service failures retain the captured request and actual cause for retry/status.
 No unresolved-start permission state, five-minute start anomaly or operator
@@ -472,6 +534,14 @@ instruction prose is a separate configuration surface.
 | Operational listing | `t3 thread list --project <checkout> --json` supplies native identity, title, state and activity for people. Known semantic keys come only from retained bindings. Listing never selects an actor. |
 | Linked-thread source | The adapter reads the T3 projection database read-only through the turn read, with per-conversation fingerprints over every record T3 holds of a conversation and native database change notifications. Each link owns its source/delivery positions. No T3 session token or `subscribeThread` is used; sends use native input delivery. |
 | Notify | Unsupported by the published `t3 thread` CLI. Report the capability gap; use an explicit `runner.notify` command for notifications. |
+
+Execution-root readiness reads the authenticated project snapshot and matches
+canonical roots exactly, as launch does. Ensure mode adds a missing root with
+`t3 project add <root>`, titled by T3 from the folder name, then reads the
+snapshot again: the project it finds there is the result. T3's running server
+accepts one active project per root, so a refusal because another addition
+landed first is a reuse confirmed by the same read. The door reported for a
+root that is still missing is `instrukt install`, or `t3 project add <root>`.
 
 T3 project listing includes settled threads and supplies no server-side time
 filter. The adapter reports their retained binding identities. Sending to a settled thread
@@ -821,6 +891,23 @@ When T3 finishes preparing the worktree during that pickup
 Then the pickup accepts the orchestrator in that conversation and its managed worktree
 And no failed start is reported for it
 And the orchestrator has received its opening brief once
+```
+
+### UC-SS29: Start and deliver only in the checkout's own runtime project
+
+```gherkin
+Given an execution checkout has no runtime project rooted at itself
+And an ancestor folder is registered as a runtime project
+When the runner starts a session for that checkout
+Then a runtime project is registered at the exact checkout
+And the session starts in that checkout's project
+And no session is started in the ancestor project
+When new work arrives for an idle bound thread whose project is rooted elsewhere
+Then that thread receives none of it
+And a successor starts in the checkout's own project and receives the work
+When new work arrives for a running bound thread whose project is rooted elsewhere
+Then the work stays pending and that thread receives none of it
+And the runner reports the thread and the checkout, and that the thread rolls over once idle
 ```
 
 ## Known caveats

@@ -1628,3 +1628,100 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     );
     assert_eq!(fake.message_count("s1"), 1);
 }
+
+/// The failures `instrukt events status` reports for conversation `D30`,
+/// with the test's folder and the opaque diagnostic reference masked.
+fn reported_failures(c: &crate::fixtures::conversing::Company) -> Vec<String> {
+    let folder = c.env.path("");
+    let folder = folder.to_str().unwrap().trim_end_matches('/');
+    c.conversations()
+        .conversations
+        .into_iter()
+        .filter(|row| row.conversation == "D30")
+        .flat_map(|row| row.failures)
+        .map(|failure| {
+            let failure = failure.replace(folder, "[TMP]");
+            match failure.split_once("[diagnostic:") {
+                Some((cause, _)) => format!("{cause}[diagnostic]"),
+                None => failure,
+            }
+        })
+        .collect()
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS29
+#[test]
+fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project() {
+    use crate::fixtures::conversing::{Company, wait};
+    // History is off, so the conversation relay is the only source reader.
+    let mut c = Company::on(common::TestEnv::new(), ", history: false", "", "");
+    let home = instrukt_core::home::Home::at_user_home(c.env.home().into());
+    let checkout = home.company_dir(&c.company());
+    // The company's home has no runtime project of its own; the operator's
+    // home folder, which contains it, is one.
+    c.env.withdraw_runtime_project(&checkout);
+    c.runtime.add_project(c.env.home());
+    let ancestor = c.runtime.project_at(c.env.home()).unwrap();
+    c.run();
+    c.slack.direct("D30", "USTEVEN", "Is the report ready?");
+    // Starting the session registers the exact checkout and starts there.
+    let session = c.session();
+    let own = c.runtime.project_at(&checkout).unwrap();
+    assert_ne!(own, ancestor);
+    assert_eq!(c.runtime.project_id(&session), own);
+    c.finish_turn(&session, 0, "The report is ready.");
+    wait("the answer", || {
+        c.slack.posts_beginning("The report is ready.") == 1
+    });
+    // The bound thread belongs to the ancestor project, as bindings recorded
+    // under it do, and is idle: new work reaches a successor in the
+    // checkout's own project and none of it the old thread.
+    c.runtime.place_thread(&session, c.env.home());
+    instrukt_core::state_db::rusqlite::Connection::open(
+        c.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap()
+    .execute(
+        "UPDATE runtime_bindings SET project_id=?1 WHERE session=?2",
+        [
+            ancestor.as_str(),
+            &format!("t3:{}", c.runtime.native_id(&session)),
+        ],
+    )
+    .unwrap();
+    let delivered = c.runtime.message_count(&session);
+    let before = c.sessions();
+    c.slack.direct("D30", "USTEVEN", "Who signs it off?");
+    let successor = c.wait_for_new_session(&before);
+    assert_eq!(c.runtime.project_id(&successor), own);
+    c.finish_turn(&successor, 0, "NOOP");
+    wait("the work reaches the successor", || {
+        c.runtime.message_count(&successor) == 2
+    });
+    assert_eq!(c.runtime.message_count(&session), delivered);
+    c.finish_turn(&successor, 1, "Ada signs it off.");
+    wait("the second answer", || {
+        c.slack.posts_beginning("Ada signs it off.") == 1
+    });
+    // A running bound thread in the ancestor project keeps the work pending
+    // and receives none of it; the runner reports the thread and the
+    // checkout, and that it rolls over once idle.
+    c.runtime.place_thread(&successor, c.env.home());
+    c.runtime.set_status(&successor, "running");
+    let received = c.runtime.message_count(&successor);
+    c.slack.direct("D30", "USTEVEN", "And the date?");
+    wait("the reported cause", || !reported_failures(&c).is_empty());
+    let thread = c.runtime.native_id(&successor);
+    insta::assert_json_snapshot!(
+        reported_failures(&c)
+            .into_iter()
+            .map(|failure| failure.replace(&thread, "[THREAD]"))
+            .collect::<Vec<_>>(),
+        @r#"
+[
+  "t3 conversation delivery: thread t3:[THREAD] runs in a runtime project not rooted at [TMP]/home/.instrukt/companies/acme; it rolls over once idle or archived [diagnostic]"
+]
+"#
+    );
+    assert_eq!(c.runtime.message_count(&successor), received);
+}

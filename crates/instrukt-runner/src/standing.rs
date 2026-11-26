@@ -377,11 +377,26 @@ fn deliver_group(
                 )?;
                 return Ok(());
             }
-            keyed::recover_binding(&guard, adapter.as_ref(), &assignment, &thread, true)?;
+            match keyed::recover_binding(&guard, adapter.as_ref(), &assignment, &thread, true) {
+                // An idle thread in another runtime project rolls over here,
+                // where the responsibility's key is held.
+                Err(SessionsError::ThreadMisplaced { idle: true, .. }) => {
+                    replace_deleted(
+                        &guard,
+                        invocation,
+                        adapter.as_ref(),
+                        &original.key,
+                        target,
+                        now,
+                    )?;
+                    return Ok(());
+                }
+                result => result?,
+            }
         }
         let thread = match keyed::start_owned(adapter.as_ref(), &assignment, &guard) {
             Ok(thread) => thread,
-            Err(SessionsError::Gone(_)) => {
+            Err(SessionsError::Gone(_) | SessionsError::ThreadMisplaced { idle: true, .. }) => {
                 replace_deleted(
                     &guard,
                     invocation,
@@ -539,35 +554,6 @@ fn start_and_bind(
         Ok(()),
     );
     Ok(thread)
-}
-
-/// The shared input pump can retry a selected standing input without a new
-/// activation. Check the same retained project before handing it over again.
-pub(crate) fn verify_delivery_project(
-    state: &RunnerState,
-    adapter: &dyn RuntimeAdapter,
-    thread: &Thread,
-    now: Timestamp,
-) -> Result<(), SessionsError> {
-    let key: Option<String> = state
-        .read(|conn, path| {
-            conn.query_row(
-                "SELECT semantic_key FROM procedure_responsibilities WHERE session=?1",
-                [thread.session.to_string()],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(state::sql(path))
-        })?
-        .flatten();
-    if let Some(key) = key {
-        let result = keyed::verify_recorded_project(state, &key, thread);
-        if let Err(error) = &result {
-            keyed::note(state, adapter.runtime(), &key, now, Err(error));
-        }
-        result?;
-    }
-    Ok(())
 }
 
 fn settle_terminal(
@@ -1004,6 +990,9 @@ pub fn bind_manual(
         if keyed::retained_project(&state, &request.key, &thread.session)?.is_some() {
             keyed::verify_recorded_project(&state, &request.key, &thread)?;
         }
+        // A project listing returns threads of a containing project too: the
+        // evidence thread must run in the checkout's own project.
+        adapter.verify_thread_project(&request.checkout, &thread, Some(&request.key))?;
         Some(thread)
     } else {
         if reason.is_none_or(|reason| reason.trim().is_empty()) {
@@ -1031,20 +1020,24 @@ pub fn bind_manual(
             Err(_) if stopped.is_some() => Vec::new(),
             Err(error) => return Err(error),
         };
-        let mut same_key = listed.iter().filter(|thread| {
+        // A listed thread confirmed to run in another project is not this
+        // reservation's thread; any comparison that cannot be made stops the
+        // confirmation.
+        let mut candidates = Vec::new();
+        for entry in listed.iter().filter(|thread| {
             thread.presence != Presence::Absent && thread.title.as_deref() == Some(&reserved.title)
-        });
-        if let Some(thread) = same_key.next() {
-            if same_key.next().is_some() {
+        }) {
+            match adapter.verify_thread_project(&reserved.checkout, entry, Some(&reserved.key)) {
+                Ok(()) => candidates.push(entry),
+                Err(SessionsError::ThreadMisplaced { .. }) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if let Some(thread) = candidates.first().copied() {
+            if candidates.len() > 1 {
                 return Err(keyed::conflict(
                     &reserved.key,
-                    listed
-                        .iter()
-                        .filter(|entry| {
-                            entry.presence != Presence::Absent
-                                && entry.title.as_deref() == Some(&reserved.title)
-                        })
-                        .map(|entry| &entry.session),
+                    candidates.iter().map(|entry| &entry.session),
                 ));
             }
             if let Some(prior) = previously_seen
@@ -1157,10 +1150,10 @@ pub(crate) fn replace_deleted(
         } else {
             return Err(keyed::stopped_mismatch(key, stopped));
         };
-    if !resuming {
-        keyed::confirm_deleted(adapter, stopped)?;
-    }
     let (root, project) = checkout(&state, &home)?;
+    if !resuming {
+        keyed::confirm_succession(adapter, &root, stopped, key)?;
+    }
     let config = execution_config(state.home(), &home, &root)?;
     if config.runner_runtime()? != adapter.runtime()
         || !config.module_enabled(instrukt_core::config::Module::Events)?

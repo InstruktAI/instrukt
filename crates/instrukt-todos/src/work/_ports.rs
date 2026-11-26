@@ -9,7 +9,7 @@ use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
     AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, FleetRecord, GitHubReach, HoldCause,
     Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionReport, RetentionPurge,
-    SessionBinding, SessionBindings, TaskFirings, TaskOutcome, TaskTiming, TodoKind,
+    SessionBinding, SessionBindings, SessionOwner, TaskFirings, TaskOutcome, TaskTiming, TodoKind,
     WorkInterfaceError,
 };
 use jiff::Timestamp;
@@ -858,6 +858,42 @@ impl SessionBindings for Work {
             .rev()
             .find(|b| matches_driver_role(&b.role, role))
             .map(|b| b.binding))
+    }
+
+    fn session_owner(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<SessionOwner>, WorkInterfaceError> {
+        use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+        let store = |error: String| WorkInterfaceError::Store { message: error };
+        let Some(db) = instrukt_core::state_db::StateRead::open(&self.home)
+            .map_err(|error| store(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let row = db
+            .conn()
+            .query_row(
+                "SELECT b.semantic_key,t.project,b.worktree FROM session_bindings b JOIN todos t ON t.id=b.todo_id WHERE b.session=?1 AND b.released_at IS NULL",
+                [session.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, Option<String>>(2)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| store(error.to_string()))?;
+        row.map(|(key, project, worktree)| {
+            Ok(SessionOwner {
+                key,
+                project: ProjectSlug::parse(&project).map_err(|error| store(error.to_string()))?,
+                worktree: worktree.map(Into::into),
+            })
+        })
+        .transpose()
     }
 
     fn check_dispatch_replacement(
