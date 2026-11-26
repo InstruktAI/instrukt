@@ -170,6 +170,18 @@ Company home adoption extends this boundary:
   an interface core declares and the CLI wires, as for the verified bot
   author).
 
+<!-- planned:company-home-integration -->
+The `post-commit` hook run also hands each commit to the company context's
+proposal recording, through an interface core declares and the CLI wires, in
+the session and the repository the commit was made in. The run decides
+nothing about it: whether the commit is a knowledge proposal, and with which
+speaker, is the company context's
+(`project/instrukt/spec/domain/company`). The handing waits for the
+recording, which is bounded by one read of the session's turn and one write
+of the company's proposal record, and it never fails the commit, as no
+section does.
+<!-- /planned:company-home-integration -->
+
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
 it reclaims the regenerable output of a todo's worktree and belongs to runner
 (`project/instrukt/spec/domain/runner`).
@@ -350,6 +362,10 @@ This context emits no events.
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+<!-- planned:company-home-integration -->
+- **company** — Customer / Supplier. The `post-commit` hook run invokes the
+  company context's proposal recording, declared by core and wired by the CLI.
+<!-- /planned:company-home-integration -->
 
 - **workflow** — Customer / Supplier. Repository supplies candidate integration
   branches and exact-commit main advancement.

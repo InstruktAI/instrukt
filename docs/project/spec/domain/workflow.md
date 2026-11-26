@@ -34,7 +34,11 @@ commit. Intelligence owns all activity routing in clear prose
 - **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
 
+<!-- planned-change:company-home-integration -->
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- change:company-home-integration -->
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, a reproduced rendering of the repository's agent material, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+<!-- /planned-change:company-home-integration -->
 
 - **Worktree standing:** whether a todo's worktree on a computer is delivered, idle or under way, derived from the todo's record and the repository.
 
@@ -51,6 +55,18 @@ workflow stores it nowhere. Its rule belongs to
 `project/instrukt/spec/feature/workflow/integration-gate`; the approval it
 earns is work's record and the review it otherwise owes is the runner's
 request.
+
+<!-- planned:company-home-integration -->
+A rendering of the repository's agent material is reproduced by asking
+publication to render the parent commit's tree and comparing the result with
+the commit's tree. What that material holds — in a company home, its
+`AGENTS.md` and the company's skill with its catalog entry — and how it is
+rendered are publication's; workflow compares trees and judges no content.
+The repositories whose rendering commits coverage recognises are named by the
+integration gate's rule
+(`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
+a candidate).
+<!-- /planned:company-home-integration -->
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -101,6 +117,10 @@ there, never by reading through delivered work.
 - **Work → workflow:** work supplies `WorkEvidence` and invokes workflow's gate checks on attempt reservation, completion stamps, and `--finalize-ready`.
 - **Runner → workflow:** runner calls `WorkflowAssignments::assignment` on each tick, tracks progress via the factual progress fingerprint, and routes `workflow.finalized` and `runner.ci_completed` to the standing `integrator`.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
+<!-- planned:company-home-integration -->
+- **Runner → workflow (knowledge proposals):** runner routes `runner.proposal_approved` to a company home's standing `integrator`, naming the exact approved head to compose.
+- **Publication → workflow (review coverage):** publication supplies the rendering of a tree's agent material, from which coverage reproduces a rendering commit.
+<!-- /planned:company-home-integration -->
 
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
 - **Work → workflow (review coverage):** work supplies which review evidence is current for a commit and whether a candidate's derived approval is one GitHub does not show yet; the review status a commit carries on GitHub is no input to coverage.

@@ -167,6 +167,20 @@ around them is repository's company home adoption. Configuration and
 repository reach them through interfaces core declares and the CLI wires, so
 core imports nothing of this crate.
 
+<!-- planned:company-home-integration -->
+For a company's knowledge proposals the GitHub boundary also answers whether
+a pull request of a branch, open or closed, has a given head, and opens a pull
+request for a branch of the project's repository into its canonical branch, as
+the identity the `company-agent` role selects. It opens one only after
+answering that none exists for that head, so a crash between the two leaves
+GitHub as the record and a repeated ask opens no second one. The pull request
+carries the head commit's subject as its title and the commits' messages in a
+fixed form as its body. Its credential is stated in
+`project/instrukt/spec/feature/work/github-apps` (Company repositories). When
+to open one is the runner's decision; whether its head is a proposal is the
+company context's.
+<!-- /planned:company-home-integration -->
+
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
 Work also owns review evidence for exact commits that no todo's record
@@ -376,6 +390,13 @@ owning design snippet or decision record is declared.
   consults this when it admits a requested review
   (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
   requested reviewer's verdict under its own rules.
+
+<!-- planned:company-home-integration -->
+- **Work → runner (knowledge proposals)** — customer-supplier. Through its
+  GitHub boundary work answers whether a pull request of a branch has a given
+  head and opens a proposal's pull request as the identity a role selects; the
+  runner decides when.
+<!-- /planned:company-home-integration -->
 
 
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which
