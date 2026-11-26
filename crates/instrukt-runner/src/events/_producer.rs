@@ -92,6 +92,10 @@ impl Event {
             Self::MainFailing { project, .. } => {
                 EventRef::new(ReferenceKind::RepositoryRef, &format!("{project}/main"))?
             }
+            Self::CandidateHeld { project, .. } => EventRef::new(
+                ReferenceKind::RepositoryRef,
+                &format!("{project}/origin/integrate"),
+            )?,
             Self::WorkflowFinalized { todo, .. }
             | Self::AttentionExecutionStalled { todo, .. }
             | Self::AttentionInputWaiting { todo, .. }

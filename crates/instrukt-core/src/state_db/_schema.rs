@@ -51,7 +51,28 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V38),
     Sql(V39),
     Step(v40),
+    Sql(V41),
 ];
+
+/// Version 41: the runner's record of each ask to a held integration
+/// candidate's authoring session (`state-database`, "Runner tables",
+/// `review_asks`), keyed by project, commit and session, beside the
+/// `runtime_inputs` row each attempt queues. It starts empty.
+const V41: &str = "
+CREATE TABLE IF NOT EXISTS review_asks (
+    project    TEXT NOT NULL,
+    commit_sha TEXT NOT NULL,
+    session    TEXT NOT NULL,
+    candidate  TEXT NOT NULL,
+    attempt    INTEGER NOT NULL,
+    input_id   TEXT NOT NULL,
+    state      TEXT NOT NULL CHECK (state IN ('queued','asked','undelivered')),
+    cause      TEXT,
+    queued_at  TEXT NOT NULL,
+    changed_at TEXT NOT NULL,
+    PRIMARY KEY (project, commit_sha, session)
+);
+";
 
 /// Version 40: the shared remote record ends (`state-database`, Version
 /// 40). `listing_copies` and the reflection columns that tracked a record

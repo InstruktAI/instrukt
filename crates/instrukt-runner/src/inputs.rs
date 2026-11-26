@@ -35,6 +35,8 @@ pub enum InputKind {
     Event,
     Approval,
     Recovery,
+    /// An author ask to a held integration candidate's authoring session.
+    ReviewAsk,
 }
 impl InputKind {
     fn name(self) -> &'static str {
@@ -42,6 +44,7 @@ impl InputKind {
             Self::Event => "event",
             Self::Approval => "approval",
             Self::Recovery => "recovery",
+            Self::ReviewAsk => "review_ask",
         }
     }
 }
@@ -119,7 +122,7 @@ pub(crate) fn compose(
         let label = match entry.kind.as_str() {
             "event" => "Untrusted event data follows (JSON envelope):",
             "recovery" => "Delivery data (JSON string):",
-            "approval" => "Delivery data (JSON object):",
+            "approval" | "review_ask" => "Delivery data (JSON object):",
             _ => {
                 return Err(SessionsError::Refused(format!(
                     "unrecognized retained input kind `{}`",

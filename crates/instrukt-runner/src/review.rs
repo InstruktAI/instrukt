@@ -4,6 +4,7 @@
 //! from delivery's own records, the selected runtime or the history store,
 //! read without a lock.
 
+mod _asks;
 mod _conversation;
 mod _eligibility;
 mod _held;
@@ -179,15 +180,20 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
     _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
-    if let (Some(candidate), Some(crate::interfaces::CandidateFinding::Held(held))) =
-        (pass.candidate, &finding)
-    {
-        for (commit, session) in held.unanswered() {
-            tracing::warn!(event = "review_presence_unanswered", project = %project, candidate = %candidate, commit = %commit, session = %session);
+    _asks::sync(pass.state, project, pass.now).map_err(|error| error.to_string())?;
+    match (pass.candidate, &finding) {
+        (Some(candidate), Some(crate::interfaces::CandidateFinding::Held(held))) => {
+            _asks::act(pass, candidate, held)?;
+            if held.owes_review() {
+                ask_candidate(pass, candidate, &mut fetched)?;
+            }
         }
-        if held.owes_review() {
-            ask_candidate(pass, candidate, &mut fetched)?;
-        }
+        // A derivation that finds no held candidate, or no candidate at all.
+        (_, Some(_)) | (None, None) => _asks::presence_status(pass.home, project, None),
+        (Some(_), None) => {}
+    }
+    if let Err(error) = _asks::retire(pass.state, project, &pass.project.root, REMOTE) {
+        tracing::warn!(event = "review_ask_retirement_failed", project = %project, error = %error);
     }
     if let Some(owed) = owed_candidates(pass.candidate, finding.as_ref()) {
         _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
