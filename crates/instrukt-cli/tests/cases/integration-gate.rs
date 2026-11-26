@@ -783,3 +783,214 @@ fn a_required_dependency_check_on_a_later_github_page_reaches_the_integrator() {
         project.rt.opening("s1").replace(&head, "<dependency head>")
     );
 }
+
+/// How many `name` events the log holds whose envelope names `commit`.
+fn logged(project: &crate::fixtures::reviewed::Reviewed, name: &str, commit: &str) -> usize {
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        project.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.query_row(
+        "SELECT count(*) FROM events WHERE name = ?1 AND instr(envelope, ?2) > 0",
+        [name, commit],
+        |row| row.get::<_, usize>(0),
+    )
+    .unwrap()
+}
+
+/// `instrukt repo commit` with the routing option `routing` of everything
+/// staged in `dir`, as session `session`; returns the commit's id.
+fn commit_as(
+    project: &crate::fixtures::reviewed::Reviewed,
+    dir: &std::path::Path,
+    session: &str,
+    routing: &[&str],
+    message: &str,
+) -> String {
+    let out = project
+        .env
+        .instrukt(dir)
+        .env("T3CODE_THREAD_ID", session)
+        .args(["repo", "commit", "--message", message])
+        .args(routing)
+        .assert()
+        .success();
+    String::from_utf8(out.get_output().stdout.clone())
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+// spec: project/instrukt/spec/feature/workflow/integration-gate UC-IG7
+#[test]
+fn a_developers_agent_decides_whether_its_commit_owes_review() {
+    use crate::fixtures::reviewed::{REPOSITORY, Reviewed};
+    const BASIS: &str = "fixes a typo in the readme; no behaviour changes";
+    let project = Reviewed::opted_in();
+
+    // The agent judges its one-off change to owe no review and says why
+    // when committing.
+    let adhoc = project.env.path("adhoc");
+    project.repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "ad-hoc",
+        adhoc.to_str().unwrap(),
+        "main",
+    ]);
+    std::fs::write(adhoc.join("README.md"), "# demo, without the typo\n").unwrap();
+    project.env.git(&adhoc, ["add", "--all"]);
+    let oneoff = commit_as(
+        &project,
+        &adhoc,
+        "oneoff-author",
+        &["--exempt", BASIS],
+        "docs: fix a typo in the readme",
+    );
+    let shown = project
+        .as_session("anyone")
+        .args(["review", "show", &oneoff])
+        .assert()
+        .success();
+    let shown = String::from_utf8(shown.get_output().stdout.clone()).unwrap();
+    assert!(
+        shown.contains(&format!("exemption: {BASIS} (declared by t3:oneoff-author")),
+        "{shown}"
+    );
+
+    // Every other commit integrated with it is covered: an approved head
+    // and the integrator's merges, which git reproduces.
+    let feature = project.push("feature", "feature.txt");
+    project
+        .record("feature-reviewer", &feature, "approve")
+        .success();
+    project
+        .repo
+        .git(["checkout", "--quiet", "-b", "integrate", "main"]);
+    project.repo.git([
+        "merge",
+        "--quiet",
+        "--no-ff",
+        "-m",
+        "merge feature",
+        "feature",
+    ]);
+    project.repo.git([
+        "merge",
+        "--quiet",
+        "--no-ff",
+        "-m",
+        "merge ad-hoc",
+        "ad-hoc",
+    ]);
+    let candidate = project.repo.head();
+    project.repo.git(["push", "--quiet", "origin", "integrate"]);
+    project.repo.git(["checkout", "--quiet", "main"]);
+    project
+        .github
+        .set_branch(REPOSITORY, "integrate", &candidate);
+    project.tick();
+    assert_eq!(
+        logged(&project, "runner.review_needed", &candidate),
+        0,
+        "the change is integrated without a review being started for it"
+    );
+    let shown = project
+        .as_session("anyone")
+        .args(["review", "show", &candidate])
+        .assert()
+        .success();
+    let shown = String::from_utf8(shown.get_output().stdout.clone()).unwrap();
+    assert!(shown.contains("derived approval:"), "{shown}");
+    assert!(
+        shown.contains(&oneoff),
+        "the exemption covers the one-off commit: {shown}"
+    );
+
+    // A further commit reaches integration with neither a review nor a
+    // declared decision, from a session the runtime holds.
+    project.rt.open_session("author-a");
+    let work = project.env.path("author-work");
+    project.repo.git([
+        "worktree",
+        "add",
+        "--quiet",
+        "-b",
+        "author-work",
+        work.to_str().unwrap(),
+        &candidate,
+    ]);
+    std::fs::write(work.join("parser.rs"), "fn parse() {}\n").unwrap();
+    project.env.git(&work, ["add", "--all"]);
+    let undecided = commit_as(
+        &project,
+        &work,
+        "author-a",
+        &["--review"],
+        "feat: parse the input",
+    );
+    project.env.git(
+        &work,
+        ["push", "--quiet", "origin", "author-work:integrate"],
+    );
+    project
+        .github
+        .set_branch(REPOSITORY, "integrate", &undecided);
+    let started = project.rt.started_count();
+    project.tick();
+    project.tick();
+    let asks = project.rt.input_log("author-a");
+    assert_eq!(
+        asks.matches("Kind: review_ask").count(),
+        1,
+        "the authoring agent is asked to decide, once: {asks}"
+    );
+    assert!(
+        asks.contains(&format!(
+            "instrukt review exempt --commit {undecided} --basis <basis>"
+        )),
+        "{asks}"
+    );
+    assert_eq!(
+        logged(&project, "runner.candidate_held", &undecided),
+        1,
+        "the integrator is told once that the candidate is held"
+    );
+    assert_eq!(
+        (
+            logged(&project, "runner.review_needed", &undecided),
+            project.rt.started_count()
+        ),
+        (0, started),
+        "no review of it starts while the agent has not asked for one"
+    );
+
+    // Once the agent asks, the review it asked for is requested.
+    let report = project.report("parser-review.md", None);
+    let base = project.repo.git(["merge-base", &undecided, "main"]);
+    project
+        .env
+        .instrukt(&work)
+        .env("T3CODE_THREAD_ID", "author-a")
+        .args(["review", "start", "--worktree"])
+        .arg(&work)
+        .args([
+            "--branch",
+            "author-work",
+            "--head",
+            &undecided,
+            "--base",
+            &base,
+            "--report",
+        ])
+        .arg(&report)
+        .assert()
+        .success();
+    assert_eq!(
+        project.rt.started_count(),
+        started + 1,
+        "the reviewer of the head the agent asked about is started"
+    );
+}
