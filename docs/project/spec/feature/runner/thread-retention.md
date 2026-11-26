@@ -73,11 +73,11 @@ terms, and a feature needing it is available only on a runtime that states it
 (`project/instrukt/spec/feature/runner/session-continuity`). Archiving a thread that is already archived
 counts as done.
 
-A window set on a runtime whose adapter cannot archive is a configuration
-finding naming the runtime and the missing capability, wherever configuration
-enters (`project/instrukt/policy/checks-and-guards`). The runner's dispatch,
-event work and other maintenance do not depend on it. A runtime that is
-unreachable during a pass leaves its eligible threads for a later pass.
+How configuration treats a window set on a runtime whose adapter cannot
+archive is `project/instrukt/spec/feature/configuration/layered-configuration`'s.
+The runner's dispatch, event work and other maintenance do not depend on
+thread retention. A runtime that is unreachable during a pass leaves its
+eligible threads for a later pass.
 
 ### Mechanical work
 
