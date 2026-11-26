@@ -161,8 +161,7 @@ connection is configured here or the cluster store cannot be reached; when the
 store answers but the membership record cannot be read, the report carries
 that as a limitation of its own and each named computer without an answer
 carries its reason as above. A report covering any other computer waits no longer than
-the fleet query's maximum deadline, 120 seconds, which lets a member on the
-default once-a-minute tick answer; a covered computer whose answer has not
+the fleet query's maximum deadline, 120 seconds; a covered computer whose answer has not
 arrived by then is named as answering after the wait ends, and the report is
 written from the answers it has.
 <!-- /planned:fleet-eval-aggregation -->
