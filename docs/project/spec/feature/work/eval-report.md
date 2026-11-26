@@ -99,33 +99,29 @@ separate logging service.
 A report that names no other computer is this computer's alone: it reads as
 described above and needs no cluster Redis.
 
-A named computer contributes when its `instrukt run` is running and reaches
-the cluster store; requests and answers travel through the runner's bounded
-fleet query (`project/instrukt/spec/domain/runner`). It answers from its own
-work record and publication state, applying the requested range, whether or
-not history is switched on there. Its answer holds, per project, window and
-model, only the outcome measures, each window's eval set with its first and
-last stamp times and the commits that computer records setting it, and the
-limitations it found. No stamp, artifact, findings report or conversation
-leaves the computer, and no computer but the requesting one writes a report.
+Requests and answers travel through the runner's bounded fleet query
+(`project/instrukt/spec/domain/runner`), which decides which named computers
+answer. A computer answers from its own work record and publication state,
+applying the requested range, whether or not history is switched on there.
+Its answer holds, per project, window and model, only the outcome measures,
+each window's eval set with its first and last stamp times and the commits
+that computer records setting it, and the limitations it found. No stamp,
+artifact, findings report or conversation leaves the computer, and no
+computer but the requesting one writes a report.
 
-Each contributing computer forms its windows as this spec describes. In the
-report, a project's windows from every contributing computer follow one
-another in the order of their first stamps, and a window that follows one
-holding the same eval set joins it: the joined window spans the first and last
-times of both, its outcome measures add per model and in the human row, and
-the commits named setting its eval set are those either names. A todo's
-record is held on one computer only
-(`project/instrukt/spec/feature/work/state-database`); measures from different
-computers are added. A report of one computer shows exactly that computer's
-windows.
+Each contributing computer forms its windows from its own stamps and its own
+recorded eval-set changes, as this spec describes. The report shows no
+process change, restoration or commit setting an eval set that no
+contributing computer recorded, and counts no todo, review or finding twice;
+a todo's record is held on one computer only
+(`project/instrukt/spec/feature/work/state-database`). A report of one
+computer shows exactly that computer's windows.
 
 The report names every computer whose answer it holds, and each limitation a
-computer reports appears under that computer's identity. The report waits a
-bounded time for answers. A named computer that does not answer in that time,
-cannot be reached through the cluster store, or answers in a form this
-computer cannot read is named as a limitation of the report with that reason,
-and the report is written from the answers it has.
+computer reports appears under that computer's identity. A named computer the
+fleet query reports as not answering is named as a limitation of the report
+with the reason the fleet query gives, and the report is written from the
+answers it has.
 <!-- /planned:fleet-eval-aggregation -->
 
 ## Use cases
@@ -145,8 +141,9 @@ and the report is written from the answers it has.
 ```gherkin
   Given a developer records work on several of their computers
   When they request an evaluation report that includes those computers
-  Then they receive one report combining the outcomes every answering computer recorded, project by project and window by window
+  Then they receive one report holding the outcomes every answering computer recorded, project by project
   And the report names the computers whose outcomes it holds
+  And it shows only the process changes those computers recorded
   But when an included computer does not answer
   Then the report is still written from the computers that answered
   And it names the computer that did not answer as a limitation of the comparison
