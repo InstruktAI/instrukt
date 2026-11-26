@@ -133,7 +133,9 @@ computer the holder is a session bound to the todo, or the session that claimed
 it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
 it. The dispatcher records the handoff and retains conversations needed for
-later rounds or human questions. The runtime owns session ending and cleanup.
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
 Every tick also reads GitHub for what people did on the issues of the todos in
 this computer's record (`project/instrukt/spec/feature/work/github-record`).
 Every tick flushes pending work-record reflection under the
