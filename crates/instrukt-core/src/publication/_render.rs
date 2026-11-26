@@ -1528,10 +1528,10 @@ mod tests {
     #[test]
     fn a_current_foreign_unit_is_held_framed_under_its_id() {
         let unit = unit_of(CARE, true, "- MUST take care -- it lasts\n");
-        assert_eq!(
-            foreign_holding(CARE, Some(&unit), false),
-            UnitText::Held("# general/policy/care\n\n- MUST take care -- it lasts\n".to_owned())
-        );
+        let UnitText::Held(text) = foreign_holding(CARE, Some(&unit), false) else {
+            unreachable!("a current foreign unit is held");
+        };
+        insta::assert_snapshot!(text);
     }
 
     #[test]

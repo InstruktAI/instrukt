@@ -1246,10 +1246,7 @@ mod tests {
             "- we make things; roles: [roles](roles.md)\n",
         );
         let files = rendered_files(&view(&with_unit(Some(&unit))));
-        assert_eq!(
-            files[CARRIED],
-            "# Company\n\nWe make things. Roles: [roles](roles.md).\n"
-        );
+        insta::assert_snapshot!("carried_prose", files[CARRIED]);
         insta::assert_snapshot!(files[SKILL]);
     }
 
