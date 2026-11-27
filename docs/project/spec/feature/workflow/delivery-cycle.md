@@ -61,10 +61,10 @@ build, review, verify, fix, process deferrals, and finalize.
    `builder` and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact. With
    `runner.autostart` off for the todo's kind, the deliberate work start is
-   enforced on `builder` reservations until implementation has started: the
-   reservation needs a `--work-ready` stamp and no standing dispatch hold
-   (`project/instrukt/spec/feature/runner/work-dispatch`, Deliberate work
-   start).
+   enforced on `builder` reservations: for a todo that has had no `builder`
+   round, the reservation needs a `--work-ready` stamp and no standing
+   dispatch hold (`project/instrukt/spec/feature/runner/work-dispatch`,
+   Deliberate work start).
 <!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ### Live verification disposition

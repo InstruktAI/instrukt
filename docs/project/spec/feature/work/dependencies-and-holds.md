@@ -124,6 +124,7 @@ holders carry no dispatch hold; each child carries its own.
 
 ### Holds from GitHub
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 An attributable `hold` label addition by a collaborator with write access sets
 the dispatch hold with source `github`, reason `held from GitHub by <login>`,
 GitHub actor and time. An authorized removal releases the current hold and
@@ -132,6 +133,18 @@ release semantics as the CLI, including preservation of work, claims and
 running sessions. There is one current hold per todo, with its audit retained.
 Inbound action authorization, replay accounting and output-label reflection
 belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
+<!-- change:fix-autostart-prepare-work-boundary -->
+Every dispatch hold, whatever its source, shows as the `hold` label on the
+todo's issue. An attributable `hold` label addition by a collaborator with
+write access sets the dispatch hold with source `github`, reason `held from
+GitHub by <login>`, GitHub actor and time. An authorized removal releases the
+current hold, manual or automatic included, and retains the releasing GitHub
+login. These use the same item-level hold and release semantics as the CLI,
+including preservation of work, claims and running sessions. There is one
+current hold per todo, with its audit retained. Inbound action authorization,
+replay accounting and output-label reflection belong to
+`project/instrukt/spec/feature/work/github-record` (UC-GR9).
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ## Use cases
 

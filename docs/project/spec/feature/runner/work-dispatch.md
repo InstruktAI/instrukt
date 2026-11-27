@@ -168,17 +168,19 @@ role (`todo-orchestrator`,
 session holds the claim and routes primitives in prose from the factual ledger.
 Preparation — intake, diagnosis, architecture, planning and their reviews —
 therefore proceeds automatically for every kind, under the existing holds,
-prerequisites and approvals. Work begins with the first `builder` round. With
-autostart on for the kind, the orchestrator continues from preparation into
-work. With it off, the first `builder` reservation is refused until the todo's
-work is started deliberately (Deliberate work start, below) — whether the
-runner or a person started the orchestrator, and whether it continues in the
-same session or is started again — because the deliberate start is a
-human-owned gate (`project/instrukt/spec/feature/workflow/delivery-cycle`,
-Three hard integrity invariants). A todo whose implementation has started (a
-`builder` or `finalizer` round, or a build, build-review, verification or
-finalize-readiness stamp) is past that boundary. A `task` is picked up only
-when autostart enables `task`. Unclaimed active todos waiting on configured
+prerequisites and approvals: `runner.autostart` never governs preparation, and
+a dispatch hold pauses a todo in any phase, preparation included. Work begins
+with the first `builder` round. With autostart on for the kind, the
+orchestrator continues from preparation into work. With it off, the first
+`builder` reservation is refused until the todo's work is started deliberately
+(Deliberate work start, below) — whether the runner or a person started the
+orchestrator, and whether it continues in the same session or is started
+again — because the deliberate start is a human-owned gate
+(`project/instrukt/spec/feature/workflow/delivery-cycle`, Three hard integrity
+invariants). A todo that has had a `builder` round is past that boundary.
+Turning autostart on for a kind lets its newly prepared todos continue
+straight into work; a todo already on hold waits until it is released. A
+`task` is picked up only when autostart enables `task`. Unclaimed active todos waiting on configured
 human approval or a standing `--finalize-ready` handoff are suppressed from
 re-dispatch until approval arrives or a kickback/new build resets the handoff.
 The workflow supplies eligibility and assignment facts; the runner does not
@@ -267,14 +269,15 @@ not place a workspace. A due task keeps its own task execution placement.
 refused first `builder` reservation names its door: the orchestrator records
 `instrukt todo stamp <slug> --work-ready`
 (`project/instrukt/spec/feature/work/stamps`), which places an automatic
-dispatch hold, then releases its claim and stops. The todo shows as held and
-waiting on a person, and the runner does not dispatch it. Releasing that hold —
-`instrukt todo update <slug> --release`, or removing the hold label on GitHub —
-starts its work deliberately: the runner resumes the todo's recorded
-orchestrator on its next wake, or the releasing session continues with
-`instrukt todo work <slug>`. A `builder` reservation before implementation has
-started is admitted only for a todo carrying a `--work-ready` stamp and no
-standing dispatch hold.
+dispatch hold, then releases its claim and stops. Every todo of that kind stops
+there once. The todo shows as held and waiting on a person, its issue carries
+the `hold` label (`project/instrukt/spec/feature/work/github-record`), and the
+runner does not dispatch it. A collaborator removing the `hold` label from the
+issue starts its work deliberately; an agent releasing the hold on a person's
+direction is the same act. The runner then resumes the todo's recorded
+orchestrator on its next wake. A `builder` reservation for a todo that has had
+no `builder` round is admitted only when the todo carries a `--work-ready`
+stamp and no standing dispatch hold.
 <!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 Once the work record passes this computer's unassigned claim to a resuming
@@ -324,7 +327,7 @@ Scenario Outline: Choose how development work starts
   Examples:
     | pickup     | outcome                                                                          |
     | automatic  | follows its preparation                                                          |
-    | deliberate | waits for the developer's deliberate start, also when that agent carries on      |
+    | deliberate | is held until the developer releases it, also when that agent carries on         |
 ```
 <!-- /planned-change:fix-autostart-prepare-work-boundary -->
 

@@ -278,6 +278,7 @@ acknowledgement was lost, so confirmation retry changes no work fact.
 
 ### GitHub hold label and output labels
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 `hold` is the one inbound control label. Adding it on the todo's issue by a
 collaborator with repository write access sets the todo's dispatch hold, with
 generated reason `held from GitHub by <login>`, GitHub actor, source and time.
@@ -287,6 +288,21 @@ the claim, artifacts, prerequisites or work already running. Structural holders
 keep their existing no-hold rule. Label actions from a login without write
 access change no work record; unlike approval commands, authorized hold changes
 need no membership in `github.approvers`.
+<!-- change:fix-autostart-prepare-work-boundary -->
+`hold` is the one inbound control label, and reflection shows every dispatch
+hold — manual, automatic or from GitHub — as that label on the todo's issue.
+Adding it on the todo's issue by a collaborator with repository write access
+sets the todo's dispatch hold, with generated reason `held from GitHub by
+<login>`, GitHub actor, source and time. Removing it by a collaborator with
+write access releases the current dispatch hold, whatever placed it, and
+attributes that release to the removing login. Neither action changes the
+claim, artifacts, prerequisites or work already running. Structural holders
+keep their existing no-hold rule. Label actions from a login without write
+access change no work record; unlabeled or labeled actions by one of
+instrukt's own configured App bots are its reflection output and change no
+work record either. Unlike approval commands, authorized hold changes need no
+membership in `github.approvers`.
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 Reading the issue reads attributable label changes and applies each accepted
 change once, in source order, retaining its GitHub action identity. Applied
@@ -297,12 +313,23 @@ A label snapshot lacking its action and author is insufficient to attribute a
 new hold or release. Inability to verify the actor or read changes is reported
 and leaves the record unchanged for that action.
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 Every other label instrukt writes is output only. Reflection restores those
 labels from record status and never reads a collaborator's label edit as work
 state. Labels outside instrukt's output set remain collaborator-owned. Board
 lanes and `Record status` reflection retain the existing contract; moving a
 card changes no work fact. Hold semantics belong to
 `project/instrukt/spec/feature/work/dependencies-and-holds`.
+<!-- change:fix-autostart-prepare-work-boundary -->
+Every other label instrukt writes is output only. Reflection restores those
+labels from record status and never reads a collaborator's label edit as work
+state; it writes the `hold` label from the record too, and a collaborator's
+`hold` change reaches the record only as the attributable action above, never
+from the label snapshot. Labels outside instrukt's output set remain
+collaborator-owned. Board lanes and `Record status` reflection retain the
+existing contract; moving a card changes no work fact. Hold semantics belong to
+`project/instrukt/spec/feature/work/dependencies-and-holds`.
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 Reflection retains unfinished work across retries. Rate limiting defers
 reflection until the provider permits it; it does not lose local work. Issue,

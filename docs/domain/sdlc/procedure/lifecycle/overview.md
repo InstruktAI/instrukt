@@ -193,14 +193,15 @@ On every route — fast-track, planned and feature — the first `builder` round
 starts the work. When its reservation is refused because `runner.autostart` is
 off for the todo's kind, the work waits for a deliberate start, also when you
 are continuing from your own preparation: present what preparation produced,
-record `instrukt todo stamp <slug> --work-ready` (it places the dispatch hold),
-release your claim (`instrukt todo update <slug> --unclaim`) and stop.
-Releasing that hold starts the work. When the human, or a peer on their
-direction, releases it, the runner resumes you. When the human tells you in
-your own conversation to start, release it yourself
-(`instrukt todo update <slug> --release`), reclaim with
+record `instrukt todo stamp <slug> --work-ready` (it places the dispatch hold,
+shown as the `hold` label on the todo's issue), release your claim
+(`instrukt todo update <slug> --unclaim`) and stop. Releasing that hold starts
+the work. People release it on GitHub by removing the `hold` label, and the
+runner then resumes you. When a person tells you in your own conversation to
+start, releasing it yourself is the same act: run
+`instrukt todo update <slug> --release`, reclaim with
 `instrukt todo work <slug>` from `<slug>/work` and continue with the `builder`
-round. Rounds after implementation has started are not held back.
+round. Once the todo has had a `builder` round, later rounds are not held back.
 <!-- /planned:fix-autostart-prepare-work-boundary -->
 
 ## Preconditions
