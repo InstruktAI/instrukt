@@ -871,8 +871,8 @@ fn build_octocrab(
 ) -> Result<octocrab::Octocrab, AppError> {
     let rt = instrukt_outside::runtime::runtime().map_err(|_| AppError::Unreachable)?;
     let _guard = rt.enter();
-    let builder = super::_github::octocrab_builder(base_uri, None)
-        .map_err(|_| setup("invalid github.api_url"))?;
+    let builder =
+        super::_github::octocrab_builder(base_uri).map_err(|_| setup("invalid github.api_url"))?;
     configure(builder)
         .build()
         .map_err(|_| AppError::Unreachable)
@@ -916,7 +916,7 @@ pub(super) fn public_get(api: &str, route: &str) -> Result<(u16, http::HeaderMap
     let rt = instrukt_outside::runtime::runtime().map_err(|err| err.to_string())?;
     let crab = {
         let _guard = rt.enter();
-        super::_github::octocrab_builder(api, Some("2022-11-28"))
+        super::_github::octocrab_builder(api)
             .map_err(|err| err.to_string())?
             .build()
             .map_err(|err| err.to_string())?

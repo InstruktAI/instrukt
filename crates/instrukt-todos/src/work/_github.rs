@@ -11,7 +11,6 @@ use serde_json::Value;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SECONDARY_WAIT_SECONDS: i64 = 60;
-const API_VERSION: &str = "2026-03-10";
 const MAX_PAGES: usize = 500;
 
 /// A GitHub request did not succeed.
@@ -517,7 +516,6 @@ fn classify_for_gate<T>(error: GitHubError) -> instrukt_outside::Tried<T, GitHub
 
 pub(super) fn octocrab_builder(
     base_uri: &str,
-    api_version: Option<&str>,
 ) -> octocrab::Result<
     octocrab::OctocrabBuilder<
         octocrab::NoSvc,
@@ -526,31 +524,30 @@ pub(super) fn octocrab_builder(
         octocrab::NotLayerReady,
     >,
 > {
-    let mut builder = octocrab::Octocrab::builder()
-        .base_uri(base_uri)?
-        .set_connect_timeout(Some(CONNECT_TIMEOUT))
-        .set_read_timeout(Some(REQUEST_TIMEOUT))
-        .set_write_timeout(Some(REQUEST_TIMEOUT))
-        .add_header(http::header::USER_AGENT, "instrukt".to_owned())
-        .add_header(
-            http::header::ACCEPT,
-            "application/vnd.github+json".to_owned(),
-        );
-    if let Some(version) = api_version {
-        builder = builder.add_header(
-            http::header::HeaderName::from_static("x-github-api-version"),
-            version.to_owned(),
-        );
-    }
-    Ok(builder)
+    // octocrab already sends `X-GitHub-Api-Version: 2022-11-28` via its built-in
+    // request headers; appending another via `add_header` creates a duplicate
+    // comma-joined header that GitHub rejects with 400 Bad Request.
+    octocrab::Octocrab::builder()
+        .base_uri(base_uri)
+        .map(|builder| {
+            builder
+                .set_connect_timeout(Some(CONNECT_TIMEOUT))
+                .set_read_timeout(Some(REQUEST_TIMEOUT))
+                .set_write_timeout(Some(REQUEST_TIMEOUT))
+                .add_header(http::header::USER_AGENT, "instrukt".to_owned())
+                .add_header(
+                    http::header::ACCEPT,
+                    "application/vnd.github+json".to_owned(),
+                )
+        })
 }
 
 fn build_octocrab(base_uri: &str, token: &str) -> Result<octocrab::Octocrab, GitHubError> {
     let rt = instrukt_outside::runtime::runtime()
         .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
     let _guard = rt.enter();
-    let mut builder = octocrab_builder(base_uri, Some(API_VERSION))
-        .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+    let mut builder =
+        octocrab_builder(base_uri).map_err(|err| GitHubError::Unreachable(err.to_string()))?;
     if !token.is_empty() {
         if http::HeaderValue::from_str(&format!("Bearer {token}")).is_err() {
             return Err(GitHubError::Unauthorized { status: 401 });
