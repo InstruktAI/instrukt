@@ -158,11 +158,11 @@ the sync it runs remains `publication`.
 this computer's installation (a machine-wide object reached only by `any`):
 `instrukt backup list` is `installation-read`, and `instrukt backup run` and
 `instrukt backup restore` are `installation-write`, matching
-`instrukt review export` and `instrukt review import`. Because home backup and
-restore operate on machine-wide secrets and state, a session whose recorded
+`instrukt review export` and `instrukt review import`. A session whose recorded
 assignment names a company (a company conversation's among them) is refused
 every `instrukt backup` command whatever its class, naming the operator's door,
-and nothing runs (`project/instrukt/spec/feature/runner/home-backup`).
+and nothing runs (`project/instrukt/spec/feature/runner/home-backup`,
+`sdlc/policy/security-awareness`).
 <!-- /planned:instrukt-home-backup -->
 
 ### Caller and object resolution

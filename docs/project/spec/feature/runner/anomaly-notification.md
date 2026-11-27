@@ -79,13 +79,13 @@ backup is stale past runner's staleness threshold, active runner invocations
 (`instrukt tick` or `instrukt run`) invoke `runner.notify` once per staleness
 episode until a subsequent backup succeeds; on a backup-only host with neither
 `tick` nor `run`, staleness surfaces on local inspection (`instrukt status` and
-`instrukt events status`) rather than via push notification. Because home
-backup runs with neither an agent session nor a work item, `runner.notify`
-receives a non-session home-backup anomaly reference identifying this
-computer's condition (and never secrets or sensitive payload). Every active
-backup failure or staleness condition is listed in `instrukt events status`
-with its repair door, whether or not a notification command is configured,
-until a subsequent backup succeeds (`project/instrukt/policy/checks-and-guards`).
+`instrukt events status`) rather than via push notification. For a failed or
+stale home backup, `runner.notify` receives a non-session home-backup anomaly
+reference identifying this computer's condition and never secrets or sensitive
+payload (`sdlc/policy/security-awareness`). Every active backup failure or
+staleness condition is listed in `instrukt events status` with its repair door,
+whether or not a notification command is configured, until a subsequent backup
+succeeds (`project/instrukt/policy/checks-and-guards`).
 <!-- /planned:instrukt-home-backup -->
 
 ## Use cases
