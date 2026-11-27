@@ -354,12 +354,11 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
     repo.commit("the developer's first commit");
     repo.git(["switch", "-c", "ad-hoc"]);
     repo.write(
-        "staged-by-developer.md",
-        "staged, not part of the agent's work\n",
+        "unstaged-by-developer.md",
+        "unstaged, not part of the agent's work\n",
     );
-    repo.git(["add", "staged-by-developer.md"]);
     repo.write("parser.rs", "fn parse() {}\n");
-    let staged_before = staged(&repo);
+    repo.git(["add", "parser.rs"]);
 
     let committed = commit_with_a_held_project_hook(
         &env,
@@ -371,8 +370,6 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
             "true",
             "--todo",
             "nested-lists",
-            "--only",
-            "parser.rs",
         ],
     )
     .success();
@@ -380,14 +377,12 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
     assert_eq!(printed.trim_end(), repo.head(), "prints the commit's id");
     insta::assert_snapshot!("agent-commit", last_commit(&repo));
     insta::assert_snapshot!(commit_paths(&repo), @"parser.rs");
-    assert_eq!(
-        staged(&repo),
-        staged_before,
-        "the developer's index is as it was"
-    );
+    assert!(staged(&repo).is_empty(), "nothing else was staged");
 
     let head = repo.head();
     repo.write("parser.rs", "fn parse() { todo }\n");
+    repo.git(["add", "parser.rs"]);
+    let staged_before = staged(&repo);
     let refused = env
         .run(
             repo.path(),
@@ -396,8 +391,6 @@ fn a_native_session_commits_with_its_session_without_guessing_an_agent_author() 
                 "commit",
                 "--message",
                 "Follow-up\n\nsession: t3:thread-7",
-                "--only",
-                "parser.rs",
             ],
         )
         .failure();
@@ -420,12 +413,10 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     std::fs::write(&refusing, "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n").unwrap();
     std::fs::set_permissions(&refusing, std::fs::Permissions::from_mode(0o755)).unwrap();
     repo.write("notes.md", "a new file\n");
+    repo.git(["add", "notes.md"]);
     let head = repo.head();
-    env.run(
-        repo.path(),
-        ["repo", "commit", "--message", MESSAGE, "--only", "notes.md"],
-    )
-    .failure();
+    env.run(repo.path(), ["repo", "commit", "--message", MESSAGE])
+        .failure();
     assert_eq!(
         repo.head(),
         head,
@@ -433,11 +424,10 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     );
     insta::assert_snapshot!(
         repo.git(["status", "--porcelain", "--untracked-files=all"]),
-        @"?? notes.md"
+        @"A  notes.md"
     );
     std::fs::remove_file(&refusing).unwrap();
 
-    repo.git(["add", "notes.md"]);
     commit_with_a_held_project_hook(&env, &repo, &["--message", MESSAGE]).success();
     insta::assert_snapshot!("developer-commit", last_commit(&repo));
     insta::assert_snapshot!(commit_paths(&repo), @"notes.md");

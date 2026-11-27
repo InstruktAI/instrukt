@@ -130,16 +130,10 @@ fn a_configured_bot_role_commits_in_a_local_repository_without_installation_acce
     // Local attribution has no repository-installation credential dependency.
     std::fs::remove_file(env.instrukt_home().join("secrets.env")).unwrap();
     repo.write("change.md", "Local work.\n");
+    repo.git(["add", "change.md"]);
     env.instrukt(repo.path())
         .env("T3CODE_THREAD_ID", "local-author")
-        .args([
-            "repo",
-            "commit",
-            "--message",
-            "record local work",
-            "--only",
-            "change.md",
-        ])
+        .args(["repo", "commit", "--message", "record local work"])
         .assert()
         .success();
     insta::assert_snapshot!(
