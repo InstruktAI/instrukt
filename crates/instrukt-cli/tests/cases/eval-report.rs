@@ -61,9 +61,11 @@ impl Evaluated {
         Self::committing_as(None)
     }
 
-    /// A computer named `name` whose repositories commit as that computer,
-    /// so its commits never share an identity with another computer's
-    /// identical ones, whatever second they are made in.
+    /// A computer named `name` whose `flows` and `lists` repositories
+    /// (created after the git-identity overrides) commit as that computer,
+    /// so its flavor commits never share an identity with another computer's
+    /// identical ones, whatever second they are made in; `demo` keeps the
+    /// default identity captured earlier by `Project::with_runtime`.
     fn on_computer(name: &str) -> Self {
         Self::committing_as(Some(name))
     }
