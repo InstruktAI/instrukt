@@ -78,7 +78,6 @@ configured approval gate.
 
 The questions, each with the sources it names:
 
-<!-- planned-change:work-placement-by-slug -->
 | Question | What the filer faces |
 | --- | --- |
 | Fix in context or file | Is the repair documentation-only, or a bounded code change of about five minutes: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff (`sdlc/policy/todo-creation-discipline`)? Then the filer makes it at once in a short-lived one-off worktree and nothing is filed; finding it supplies the authority. A change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
@@ -88,17 +87,6 @@ The questions, each with the sources it names:
 | Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
 | Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
 | Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
-<!-- change:work-placement-by-slug -->
-| Question | What the filer faces |
-| --- | --- |
-| Fix in context or file | Is the repair documentation-only, or a bounded code change of about five minutes: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff (`sdlc/policy/todo-creation-discipline`)? Then the filer makes it at once in a short-lived one-off worktree and nothing is filed; finding it supplies the authority. A change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
-| Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
-| Validity | Has the intended outcome converged? A todo enters the lifecycle once its outcome has converged (`sdlc/policy/todo-creation-discipline`); contracts still to be written or reviewed are preparation work and never delay filing. An outcome still forming is not filed through this door yet. |
-| Evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
-| Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
-| Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
-| Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
-<!-- /planned-change:work-placement-by-slug -->
 
 The output ends with the approved form:
 `instrukt bugs report --approved '<description>' [--slug <slug>] [--body <text>] [--project <slug>] [--human-involved true|false]`.
