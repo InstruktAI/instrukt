@@ -130,14 +130,11 @@ fn invalid(message: impl Into<String>) -> ConfigError {
 /// The maps the file merges into the shipped defaults key by key.
 const KEYED_MAPS: [&str; 3] = ["roles", "profiles", "bundles"];
 
-/// The effective selection document: the shipped defaults with `file` laid
-/// over them. Maps merge by key, a field the file sets replaces the shipped
-/// one and a field it leaves out is inherited, and any other value (a list
-/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
-/// entries names nothing, so a bare `roles:` keeps every shipped role.
-fn effective(mut file: Value) -> Result<Value, ConfigError> {
-    let mut merged: Value =
-        serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
+fn shipped() -> Result<Value, ConfigError> {
+    serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))
+}
+
+fn without_empty_keyed_maps(file: &mut Value) {
     if let Some(fields) = file.as_mapping_mut() {
         for key in KEYED_MAPS {
             if fields
@@ -148,6 +145,16 @@ fn effective(mut file: Value) -> Result<Value, ConfigError> {
             }
         }
     }
+}
+
+/// The effective selection document: the shipped defaults with `file` laid
+/// over them. Maps merge by key, a field the file sets replaces the shipped
+/// one and a field it leaves out is inherited, and any other value (a list
+/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
+/// entries names nothing, so a bare `roles:` keeps every shipped role.
+fn effective(mut file: Value) -> Result<Value, ConfigError> {
+    let mut merged = shipped()?;
+    without_empty_keyed_maps(&mut file);
     // A role with no shipped entry takes its omitted class and grants from
     // the effective `default`; a shipped role takes them from its own entry
     // through the overlay.
@@ -175,6 +182,31 @@ fn effective(mut file: Value) -> Result<Value, ConfigError> {
         }
     }
     Ok(merged)
+}
+
+/// `file` reduced to the entries that differ from the shipped defaults,
+/// keeping `schema_version` first: the inverse of [`effective`].
+pub fn overrides_only(mut file: Value) -> Result<Value, ConfigError> {
+    let mut base = shipped()?;
+    without_empty_keyed_maps(&mut file);
+    let version = file
+        .as_mapping_mut()
+        .and_then(|fields| fields.remove("schema_version"));
+    if let Some(fields) = base.as_mapping_mut() {
+        fields.remove("schema_version");
+    }
+    super::_merge::prune(&mut file, &base);
+    if let Value::Mapping(fields) = file {
+        let mut ordered = serde_yaml_ng::Mapping::new();
+        if let Some(version) = version {
+            ordered.insert("schema_version".into(), version);
+        }
+        for (key, value) in fields {
+            ordered.insert(key, value);
+        }
+        return Ok(Value::Mapping(ordered));
+    }
+    Ok(file)
 }
 
 impl Agents {
@@ -874,5 +906,45 @@ mod tests {
             Agents::parse(&edited),
             Err(ConfigError::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn a_full_copy_of_the_shipped_defaults_with_one_change_reduces_to_that_change() {
+        let mut copy: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        let mut reversed = copy["roles"]["builder"]["order"]
+            .as_sequence()
+            .unwrap()
+            .clone();
+        reversed.reverse();
+        copy["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed.clone());
+
+        let reduced = super::overrides_only(copy).unwrap();
+        let mut expected: serde_yaml_ng::Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nroles: {{builder: {{}}}}\n",
+            super::VERSION
+        ))
+        .unwrap();
+        expected["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed);
+        assert_eq!(reduced, expected);
+    }
+
+    #[test]
+    fn reducing_a_file_to_its_overrides_leaves_its_effective_selection_unchanged() {
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        let mut reversed = edited["roles"]["builder"]["order"]
+            .as_sequence()
+            .unwrap()
+            .clone();
+        reversed.reverse();
+        edited["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed);
+        edited["roles"]["custom-role"] =
+            serde_yaml_ng::from_str("{order: [codex], tier: light}").unwrap();
+        edited["bundles"]["extra"] =
+            serde_yaml_ng::from_str("[{action: docs-read, scope: any}]").unwrap();
+
+        let before = super::effective(edited.clone()).unwrap();
+        let reduced = super::overrides_only(edited).unwrap();
+        let after = super::effective(reduced).unwrap();
+        assert_eq!(after, before);
     }
 }
