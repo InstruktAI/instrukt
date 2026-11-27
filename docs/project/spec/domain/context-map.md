@@ -142,7 +142,7 @@ runner holds no review request for it.
 <!-- change:commit-rereview-reuses-reviewer -->
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; the pinned base work admits the commit's verdict against; and which commit's standing verdict has a version with a given report digest; consulted when a requested review is admitted |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; the pinned base work admits the commit's verdict against; and, for that project, which commit's standing verdict has a version with a given report digest; consulted when a requested review is admitted |
 | runner → work | Customer / Supplier | The requested-review verdict-notice queuing, called by `instrukt review record` once its evidence write has closed, with the recorded version |
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 

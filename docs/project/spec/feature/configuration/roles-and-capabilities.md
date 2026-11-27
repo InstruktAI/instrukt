@@ -129,9 +129,9 @@ assignment and starts or wakes the session that works it, as `todo attempt`
 reserves one, and records no review evidence. The shipped `orchestrate` bundle
 carries it; focused roles without that bundle, the reviewers and builders among
 them, are refused it. The requested reviewer it starts or wakes resolves to the
-`commit-reviewer` role, the project and its placement from the latest ask
-recorded under its start key in the runner's requested-review record, and its
-`stamp` grant at `own` reaches that project's review evidence.
+`commit-reviewer` role, the project and its placement from the latest open or
+accepted ask recorded under its start key in the runner's requested-review
+record, and its `stamp` grant at `own` reaches that project's review evidence.
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 `instrukt init --company <key>` belongs to the Repository family: it is

@@ -358,8 +358,8 @@ decides what follows.
 A reviewer wake is addressed by a reviewed head. The runner asks work for the
 head's reviewer of record (`project/instrukt/spec/feature/work/github-apps`)
 and keyed-wakes that session with coordinates only. A head with no reviewer of
-record has no reviewer to wake. The requested-review caller wakes only a
-reviewer of record under a requested-reviewer key
+record has no reviewer to wake. The requested-review caller wakes only a reviewer of record under a
+requested-reviewer key of the asking project
 (`project/instrukt/spec/feature/runner/requested-review`).
 
 <!-- /planned:commit-rereview-reuses-reviewer -->

@@ -208,9 +208,9 @@ recorded, and `instrukt review show` names each by its number.
 
 The session that recorded the current version of a commit's verdict that
 stands here is that commit's reviewer of record. Work answers it with the
-commit's verdict, and `instrukt review show` names it. Work also answers which
-commit's verdict standing here has a version whose report has a given digest
-(Verdict publication names a version by that digest). A verdict this computer
+commit's verdict, and `instrukt review show` names it. Work also answers, for a
+project, which commit's verdict standing here has a version whose report has a
+given digest (Verdict publication names a version by that digest). A verdict this computer
 handed off or set aside has no reviewer of record here. The runner wakes a
 reviewer of record to review later work
 (`project/instrukt/spec/feature/runner/requested-review`). A wake records

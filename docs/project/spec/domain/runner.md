@@ -771,9 +771,9 @@ start key; work admits that reviewer's verdict like any other
 For a requested review the runner asks work whether the head's verdict stands
 here, with the session that recorded its current version, or was handed off,
 with the export that handed it off, for the pinned base work admits its
-verdict against and, for a re-review, for the commit whose standing verdict
-has a version with the prior report's digest; it reads the commit's review requests from its own delivery
-records.
+verdict against and, for a re-review, for the commit of that project whose
+standing verdict has a version with the prior report's digest; it reads the
+commit's review requests from its own delivery records.
 It starts the requested reviewer through the runtime adapter under its own
 start key, or wakes the existing reviewer of record under its start key; work
 admits that reviewer's verdict like any other and hands each version it records
