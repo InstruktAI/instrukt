@@ -735,8 +735,8 @@ mod tests {
 
     #[test]
     fn an_old_shape_company_layer_loads_with_its_event_responses_withheld() {
-        // Today's skeleton output: schema 6, a company repository, no
-        // `company_name`.
+        // A company layer of the shape written before the company identity:
+        // schema 6, a company repository, no `company_name`.
         let old: Value = serde_yaml_ng::from_str(&format!(
             "schema_version: {}\nproject: company-acme\ncompany_repository: true\nmodules: {{todos: false, events: true}}\nreview: {{automatic: true}}\n",
             super::super::PROJECT_SCHEMA_VERSION
