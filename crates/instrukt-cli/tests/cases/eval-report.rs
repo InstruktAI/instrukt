@@ -251,7 +251,7 @@ fn a_report_compares_outcomes_across_process_changes_and_models_in_every_project
     eval.approved_by_human(&lists, "list-markers");
     eval.at("2030-01-15T09:00:00Z");
 
-    let html = demo.join("scratchpad/eval/index.html");
+    let html = demo.join(".instrukt/scratchpad/eval/index.html");
     let (printed, page) = eval.report(&[], &html);
 
     insta::assert_snapshot!("printed", printed);
