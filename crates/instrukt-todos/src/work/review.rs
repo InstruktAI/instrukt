@@ -356,6 +356,9 @@ pub struct Recorded {
     pub version: u64,
     pub name: ContentDigest,
     pub moment: Moment,
+    pub base: CommitSha,
+    pub reviewer: SessionRef,
+    pub recorded_at: Timestamp,
 }
 
 /// Admits and records a head verdict (`instrukt review record`). Every read
@@ -466,6 +469,9 @@ pub fn record(
             version: number,
             name: version.name,
             moment: version.moment,
+            base: version.base,
+            reviewer: version.reviewer,
+            recorded_at: version.recorded_at,
         })
     })?;
     tracing::info!(event = "review_verdict_admitted", project = %project.slug, head = %recorded.head, version = recorded.version, verdict = request.verdict.as_str(), request = ?answers);

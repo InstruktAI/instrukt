@@ -14,6 +14,7 @@
 //! reaches no runtime.
 
 mod _admission;
+mod _notices;
 mod _rendering;
 mod _store;
 
@@ -27,6 +28,7 @@ use jiff::Timestamp;
 use serde::Serialize;
 
 pub use _admission::{Coordinate, Coordinates, FormRefusal, Kind, RawCoordinates, SourcePointer};
+pub use _notices::{NoticeError, RecordedVersion, queue_verdict_notices};
 pub use _store::{EarlierHead, TracedBy};
 
 use crate::interfaces::{HeadVerdicts, ProjectRef};

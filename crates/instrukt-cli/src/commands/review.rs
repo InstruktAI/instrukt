@@ -30,7 +30,8 @@ enum ReviewCommand {
     /// and starts or sends to the head's reviewer itself.
     Start(StartArgs),
     /// Record the calling session's verdict of the commits after the base
-    /// up to the head, with the complete report.
+    /// up to the head, with the complete report, and queue verdict notices
+    /// for sessions that asked for a requested review of the head.
     Record(RecordArgs),
     /// Record that a commit the canonical branch does not contain owes no
     /// independent review, with its basis.
@@ -283,6 +284,34 @@ fn record(args: RecordArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let clock = ctx.clock.clone();
     let env = crate::wiring::environment(ctx)?;
     let recorded = review::record(&ctx.home, &env, &project, &request, &|| clock.now())?;
+    let recorded_version = requested_review::RecordedVersion {
+        project: project.slug.clone(),
+        head: recorded.head.clone(),
+        number: recorded.version,
+        verdict: match request.verdict {
+            Verdict::Approve => instrukt_runner::interfaces::HeadVerdictValue::Approve,
+            Verdict::NeedsWork => instrukt_runner::interfaces::HeadVerdictValue::NeedsWork,
+        },
+        report_digest: recorded.name.to_string(),
+        base: recorded.base.clone(),
+        reviewer: recorded.reviewer.clone(),
+        recorded_at: recorded.recorded_at,
+    };
+    if let Err(error) =
+        requested_review::queue_verdict_notices(&ctx.home, &recorded_version, ctx.clock.now())
+    {
+        tracing::warn!(
+            event = "requested_review_notice_failed",
+            project = %project.slug,
+            head = %recorded.head,
+            version = recorded.version,
+            error = %error
+        );
+        eprintln!(
+            "instrukt: warning: could not queue verdict notice for {}: {error}; the verdict is recorded and readable with `instrukt review show {}`",
+            recorded.head, recorded.head
+        );
+    }
     ctx.out.line(&format!(
         "recorded {} version {}: {} {} {}",
         recorded.head,

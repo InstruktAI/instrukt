@@ -209,3 +209,49 @@ fn a_pull_request_head_under_automatic_review_is_not_reviewed_twice() {
         "no second reviewer is started"
     );
 }
+
+// spec: project/instrukt/spec/feature/runner/requested-review UC-RQ4
+#[test]
+fn a_developers_agent_learns_its_reviews_outcome_without_asking() {
+    let mut project = Reviewed::new();
+    project.rt.open_session("developer-agent");
+    let (worktree, head) = project.worktree("demo-feature", "feature", "one.txt");
+    let base = project.repo.git(["merge-base", &head, "main"]);
+    let report = project.report("one.md", None);
+    let commits = [(head.as_str(), "HEAD"), (base.as_str(), "BASE")];
+
+    project
+        .ask(&worktree, "feature", &head, &report, &[])
+        .success();
+    assert_eq!(project.rt.started_count(), 2, "developer + one reviewer");
+    let reviewer = project.rt.native_id("s2");
+
+    project
+        .record_at(&reviewer, &head, "needs_work", Some("2026-11-27T10:00:00Z"))
+        .success();
+    project.tick_at("2026-11-27T10:01:00Z".parse().unwrap());
+    assert_eq!(
+        project.rt.message_count("developer-agent"),
+        1,
+        "first recorded verdict is delivered to the asking session"
+    );
+    insta::assert_snapshot!(
+        "requested-review-verdict-notice",
+        project.redact(&project.rt.input_log("developer-agent"), &commits, &["s2"])
+    );
+
+    project.rt.consume("developer-agent");
+    project
+        .record_at(&reviewer, &head, "approve", Some("2026-11-27T10:02:00Z"))
+        .success();
+    project.tick_at("2026-11-27T10:03:00Z".parse().unwrap());
+    assert_eq!(
+        project.rt.message_count("developer-agent"),
+        2,
+        "revised verdict version is delivered to the asking session"
+    );
+    insta::assert_snapshot!(
+        "requested-review-verdict-notice-revised",
+        project.redact(&project.rt.input_log("developer-agent"), &commits, &["s2"])
+    );
+}
