@@ -132,8 +132,8 @@ fn link_tree(source: &Path, destination: &Path) -> Result<()> {
             link_tree(&src, &dst)?;
         } else if kind.is_symlink() {
             std::os::unix::fs::symlink(fs::read_link(&src)?, &dst)?;
-        } else if fs::hard_link(&src, &dst).is_err() {
-            fs::copy(&src, &dst)?;
+        } else {
+            fs::hard_link(&src, &dst)?;
         }
     }
     Ok(())
