@@ -25,7 +25,7 @@ use instrukt_core::fsx::LockGuard;
 use instrukt_core::git;
 use instrukt_core::ids::CommitSha;
 use instrukt_runner::interfaces::{
-    DeliveredRelease, DeliveredRemains, DeliveredResource, Lane, ProjectRef, SectionAdmission,
+    DeliveredRelease, DeliveredRemains, DeliveredResource, ProjectRef, SectionAdmission,
     SectionOutcome, TodoWorktree, WorkInterfaceError, WorktreeHolder, WorktreeReclamation,
     WorktreeStanding,
 };
@@ -436,19 +436,6 @@ fn worktree_command(verb: &str, path: &Path, to: Option<&Path>) -> Vec<std::ffi:
         args.push(to.into());
     }
     args
-}
-
-/// The todo's work branch: the one its record names, else the branch of
-/// its latest work- or preparation-lane attempt that was given one.
-pub(super) fn work_branch(record: &TodoRecord) -> Option<String> {
-    record.branch.clone().or_else(|| {
-        record
-            .bindings
-            .iter()
-            .rev()
-            .filter(|binding| matches!(binding.attempt.lane, Some(Lane::Work | Lane::Prepare)))
-            .find_map(|binding| binding.attempt.branch.clone())
-    })
 }
 
 /// The head the todo handed to integration: its latest finalized hand-off,

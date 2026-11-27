@@ -167,20 +167,6 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
-#[test]
-fn native_discussion_directs_agents_to_the_membership_commands() {
-    let p = Tracked::new(false);
-    let out = p
-        .env
-        .run(p.repo.path(), ["config", "get", "runtime.discuss"])
-        .success();
-    insta::assert_snapshot!(
-        "native-discussion-instruction",
-        String::from_utf8_lossy(&out.get_output().stdout)
-    );
-    assert_eq!(p.rt.calls().len(), 0);
-}
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS6
 #[test]
 fn an_unset_runtime_is_the_compiled_one() {
@@ -323,7 +309,7 @@ fn a_busy_parents_native_result_uses_no_instrukt_waiting_slot() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS16
 #[test]
 fn native_failure_or_input_wait_never_becomes_instrukt_completion() {
-    for state in ["failed", "waiting"] {
+    for state in ["failed", "needs-input"] {
         let (crew, child) = pending_builder();
         crew.runtime.open_session("lead-1");
         crew.runtime.set_status(
@@ -1111,6 +1097,7 @@ fn a_titleless_persisted_request_retries_with_its_original_key_only_title() {
     db.execute("UPDATE runtime_bindings SET request=?1", [old.to_string()])
         .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
     p.tick();
     let normalized: String = db
@@ -1265,51 +1252,8 @@ fn an_older_public_placement_proof_is_normalized_before_binding() {
     assert_eq!(fake.message_count(&id), 1);
 }
 
-fn previous_driver_record(p: &Tracked) -> serde_json::Value {
-    p.github
-        .comments(flavor::REPOSITORY, 1)
-        .iter()
-        .rev()
-        .find_map(|comment| {
-            comment["body"].as_str()?.lines().find_map(|line| {
-                line.strip_prefix("<!-- instrukt:work-record:v2:")
-                    .and_then(|v| v.strip_suffix(" -->"))
-                    .map(|v| {
-                        serde_json::from_str::<serde_json::Value>(v).unwrap()["record"].clone()
-                    })
-            })
-        })
-        .unwrap()
-}
-fn previous_driver_binding(record: &serde_json::Value) -> serde_json::Value {
-    let mut binding = record["bindings"][0].clone();
-    let mut old: serde_json::Value =
-        serde_json::from_str(include_str!("../fixtures/native-placement-v14.json")).unwrap();
-    for (field, value) in old.as_object_mut().unwrap() {
-        *value = binding["native_placement"][field].clone();
-    }
-    binding["native_placement"] = old;
-    binding
-}
-fn retain_previous_driver_input(p: &Tracked, id: &str) {
-    let mut record = previous_driver_record(p);
-    let old = previous_driver_binding(&record);
-    record["bindings"] = serde_json::json!([old]);
-    record["schema"] = 2.into();
-    let db = instrukt_core::state_db::rusqlite::Connection::open(
-        p.env.instrukt_home().join("state/instrukt.db"),
-    )
-    .unwrap();
-    db.execute(
-        "UPDATE session_bindings SET evidence=?1,display_title=NULL WHERE session=?2",
-        instrukt_core::state_db::rusqlite::params![old.to_string(), format!("t3:{id}")],
-    )
-    .unwrap();
-    db.execute("INSERT OR REPLACE INTO listing_copies(project,issue_number,slug,kind,status,remote_revision,record,copied_at) VALUES('demo',1,?1,'change','active',?2,?3,'2026-11-09T12:00:00Z')",instrukt_core::state_db::rusqlite::params![record["slug"].as_str().unwrap(),record["revision"].as_u64().unwrap(),record.to_string()]).unwrap();
-    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
-    db.pragma_update(None, "user_version", 14).unwrap();
-}
-fn retained_driver_titles(p: &Tracked, id: &str) -> (serde_json::Value, serde_json::Value) {
+/// The binding of session `id` as the state database records it.
+fn previous_driver_binding(p: &Tracked, id: &str) -> serde_json::Value {
     let db = instrukt_core::state_db::rusqlite::Connection::open(
         p.env.instrukt_home().join("state/instrukt.db"),
     )
@@ -1321,23 +1265,50 @@ fn retained_driver_titles(p: &Tracked, id: &str) -> (serde_json::Value, serde_js
             |row| row.get(0),
         )
         .unwrap();
-    let copied: String = db
+    let mut binding: serde_json::Value = serde_json::from_str(&evidence).unwrap();
+    let mut old: serde_json::Value =
+        serde_json::from_str(include_str!("../fixtures/native-placement-v14.json")).unwrap();
+    for (field, value) in old.as_object_mut().unwrap() {
+        *value = binding["native_placement"][field].clone();
+    }
+    binding["native_placement"] = old;
+    binding
+}
+fn retain_previous_driver_input(p: &Tracked, id: &str) {
+    let old = previous_driver_binding(p, id);
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    db.execute(
+        "UPDATE session_bindings SET evidence=?1,display_title=NULL WHERE session=?2",
+        instrukt_core::state_db::rusqlite::params![old.to_string(), format!("t3:{id}")],
+    )
+    .unwrap();
+    db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
+    db.pragma_update(None, "user_version", 14).unwrap();
+}
+/// The readable title the binding of session `id` carries after
+/// conversion.
+fn retained_driver_title(p: &Tracked, id: &str) -> serde_json::Value {
+    let db = instrukt_core::state_db::rusqlite::Connection::open(
+        p.env.instrukt_home().join("state/instrukt.db"),
+    )
+    .unwrap();
+    let evidence: String = db
         .query_row(
-            "SELECT record FROM listing_copies WHERE project='demo' AND issue_number=1",
-            [],
+            "SELECT evidence FROM session_bindings WHERE session=?1",
+            [format!("t3:{id}")],
             |row| row.get(0),
         )
         .unwrap();
     let evidence: serde_json::Value = serde_json::from_str(&evidence).unwrap();
-    let copied: serde_json::Value = serde_json::from_str(&copied).unwrap();
-    (
-        evidence["native_placement"]["title"].clone(),
-        copied["bindings"][0]["native_placement"]["title"].clone(),
-    )
+    evidence["native_placement"]["title"].clone()
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
-fn previous_readable_driver_resumes_after_local_and_cached_conversion() {
+fn previous_readable_driver_resumes_after_its_local_conversion() {
     let (p, fake, id, tree, title) = deliberate_preparation();
     p.env
         .instrukt(&tree)
@@ -1349,9 +1320,7 @@ fn previous_readable_driver_resumes_after_local_and_cached_conversion() {
     p.env
         .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
         .success();
-    let (local, copied) = retained_driver_titles(&p, &id);
-    assert_eq!(local, title);
-    assert_eq!(copied, title);
+    assert_eq!(retained_driver_title(&p, &id), title);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 2);
@@ -1379,9 +1348,7 @@ fn renamed_previous_readable_driver_recovers_its_original_phase_title() {
     p.env
         .run(p.repo.path(), ["sessions", "list", "--all", "--json"])
         .success();
-    let (local, copied) = retained_driver_titles(&p, &id);
-    assert_eq!(local, title);
-    assert_eq!(copied, title);
+    assert_eq!(retained_driver_title(&p, &id), title);
     p.tick();
     assert_eq!(fake.threads().len(), 1);
     assert_eq!(fake.message_count(&id), 2);
@@ -1481,48 +1448,6 @@ fn previous_whole_key_driver_still_resumes_after_a_rename() {
     assert_eq!(fake.title(&id), key);
 }
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS17
-#[test]
-fn remote_previous_driver_recovers_its_readable_title_after_a_rename() {
-    let (p, fake, id, tree, title) = deliberate_preparation();
-    p.env
-        .instrukt(&tree)
-        .env("T3CODE_THREAD_ID", &id)
-        .args([
-            "todo",
-            "update",
-            "native-parser",
-            "--slug",
-            "renamed-native-parser",
-        ])
-        .assert()
-        .success();
-    let mut record = previous_driver_record(&p);
-    let base = record["revision"].as_u64().unwrap();
-    record["bindings"] = serde_json::json!([previous_driver_binding(&record)]);
-    record["schema"] = 2.into();
-    record["revision"] = (base + 1).into();
-    let envelope = serde_json::json!({"base":base,"record":record});
-    p.github.seed_comment(
-        flavor::REPOSITORY,
-        1,
-        "instrukt-test",
-        "COLLABORATOR",
-        &format!("<!-- instrukt:work-record:v2:{envelope} -->"),
-    );
-    p.env
-        .instrukt(&tree)
-        .env("T3CODE_THREAD_ID", &id)
-        .args(["todo", "update", "renamed-native-parser", "--unclaim"])
-        .assert()
-        .success();
-    p.tick();
-    assert_eq!(fake.threads().len(), 1);
-    assert_eq!(fake.message_count(&id), 2);
-    assert_eq!(fake.title(&id), title);
-}
-
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
 #[test]
 fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     let p = Tracked::new(true);
@@ -1554,6 +1479,7 @@ fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     )
     .unwrap();
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+    crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
     fake.change("s1", "title", key.clone().into());
     p.env
@@ -1583,8 +1509,17 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     let p = Tracked::new(true);
     change(&p, "parser");
     let fake = FakeT3::create(&p.env);
-    fake.prepare_worktree_until_read(2);
-    p.tick();
+    fake.prepare_worktree();
+    std::thread::scope(|scope| {
+        let pickup = scope.spawn(|| p.tick());
+        common::wait_until(
+            "the pickup reads its launched thread while T3 still prepares the worktree",
+            std::time::Duration::from_secs(45),
+            || fake.read_while_preparing("s1"),
+        );
+        fake.finish_preparation("s1");
+        pickup.join().unwrap();
+    });
     assert_eq!(p.rt.started_count(), 1);
     let native = format!("t3:{}", fake.native_id("s1"));
     let shown: serde_json::Value = serde_json::from_slice(
@@ -1694,7 +1629,7 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     c.slack.direct("D30", "USTEVEN", "Who signs it off?");
     let successor = c.wait_for_new_session(&before);
     assert_eq!(c.runtime.project_id(&successor), own);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait("the work reaches the successor", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1724,4 +1659,97 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
 "#
     );
     assert_eq!(c.runtime.message_count(&successor), received);
+}
+
+// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS30
+#[test]
+fn an_unaccepted_pickup_idle_in_another_runtime_project_rolls_over_to_the_checkouts_own() {
+    let p = Tracked::new(true);
+    change(&p, "parser");
+    let fake = FakeT3::create(&p.env);
+    // T3 creates the orchestrator, and the runner dies before it accepts
+    // the start: the pickup stays recorded and unaccepted.
+    fake.flag("die-after-start", true);
+    p.env.run(p.env.home(), ["tick"]);
+    let key = fake.key("s1");
+    let own = fake.project_at(p.repo.path()).unwrap();
+    // The thread belongs to a project rooted at a folder containing the
+    // checkout, holds a folder of that project that is no worktree of the
+    // checkout, and is idle; the retained request names that project.
+    let ancestor = p.repo.path().parent().unwrap().to_path_buf();
+    fake.add_project(&ancestor);
+    let foreign = fake.project_at(&ancestor).unwrap();
+    let created = fake.worktree("s1");
+    p.env.git(
+        p.repo.path(),
+        ["worktree", "remove", "--force", created.to_str().unwrap()],
+    );
+    p.env.git(p.repo.path(), ["branch", "-D", "parser/work"]);
+    let misplaced = p.env.path("foreign-worktrees/parser");
+    std::fs::create_dir_all(&misplaced).unwrap();
+    fake.place_thread("s1", &ancestor);
+    fake.change("s1", "worktreePath", misplaced.to_str().unwrap().into());
+    fake.set_status("s1", "completed");
+    state_db(&p)
+        .execute(
+            "UPDATE runtime_bindings SET project_id=?1,request=json_set(request,'$.native_launch.project_id',?1) WHERE semantic_key=?2",
+            [foreign.as_str(), key.as_str()],
+        )
+        .unwrap();
+    p.tick();
+    // A successor starts in the checkout's own project, on a registered
+    // worktree of the todo's branch, and is the orchestrator the todo binds.
+    let threads = fake.threads();
+    assert_eq!(threads.len(), 2, "{threads:?}");
+    let successor = threads
+        .iter()
+        .find(|id| **id != fake.native_id("s1"))
+        .unwrap()
+        .clone();
+    assert_eq!(fake.project_id(&successor), own);
+    assert_eq!(fake.key(&successor), key);
+    let worktree = fake.worktree(&successor);
+    insta::assert_snapshot!(p.env.git(&worktree, ["branch", "--show-current"]), @"parser/work");
+    assert!(
+        p.env
+            .git(p.repo.path(), ["worktree", "list", "--porcelain"])
+            .lines()
+            .any(|line| line == format!("worktree {}", worktree.display()))
+    );
+    let shown: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.repo.path(), ["todo", "show", "parser", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let orchestrator = shown["ledger"]["active_attempts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|attempt| attempt["role"] == "todo-orchestrator")
+        .unwrap();
+    assert_eq!(orchestrator["session"], format!("t3:{successor}"));
+    // The misplaced thread is left as it is and receives nothing more, and
+    // no failed start is reported for the pickup.
+    assert_eq!(fake.project_id("s1"), foreign);
+    assert_eq!(fake.message_count("s1"), 1);
+    assert_eq!(fake.message_count(&successor), 1);
+    let events: serde_json::Value = serde_json::from_slice(
+        &p.env
+            .run(p.env.home(), ["events", "status", "--json"])
+            .success()
+            .get_output()
+            .stdout,
+    )
+    .unwrap();
+    let start = format!("runtime-start:t3:{key}");
+    let failures: Vec<_> = events["workers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|worker| worker["worker"] == start.as_str())
+        .collect();
+    assert!(failures.is_empty(), "{failures:?}");
 }

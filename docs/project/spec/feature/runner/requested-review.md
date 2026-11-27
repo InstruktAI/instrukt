@@ -105,8 +105,8 @@ A refused ask starts no reviewer, sends nothing and records nothing.
 ### The reviewer's assignment
 
 instrukt renders the assignment from the admitted coordinates in one fixed
-wording, as a runner-authored assignment input
-(`project/instrukt/spec/feature/runner/conversation-links`). It holds, in this order:
+wording, as a runner-authored `[Instrukt Assignment]` control frame. It holds,
+in this order:
 
 1. the procedure the reviewer executes, `sdlc/procedure/lifecycle/work/review-commits`,
    read with its closure, for the one-off worktree review it describes;
@@ -179,7 +179,7 @@ records its verdict. The reply does not wait for the review.
 When the runtime does not accept the start or the send within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
 It replays the ask with the identities the first one recorded
-(`project/instrukt/policy/checks-and-guards`). A send is sent again under its
+(`project/instrukt/spec/feature/runner/session-continuity`). A send is sent again under its
 command identity, which the runtime accepts once: a send it already accepted
 opens no second turn and is reported accepted
 (`project/instrukt/spec/feature/runner/t3-contract`). Nothing recognises a send

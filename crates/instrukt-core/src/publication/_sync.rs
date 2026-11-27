@@ -5,14 +5,18 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod _project_docs;
+
 use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
 use super::_patch::{Claim, Contribution, patch};
-use super::_render::{GENERATED_LINE, Renderer};
+use super::_render::{GENERATED_LINE, Renderer, UnitRendering};
 use super::_source::{self, Committed, Project};
 use super::_tree::{self, ClaimRecord, ProjectClaimRecord};
 use super::_tx::{LinkOutcome, STAGING_PREFIX, Transaction, destination, own_destination, sweep};
+use super::_units;
+use super::_units::LEGEND;
 use super::{PublicationError, PublishedRecord, record_path};
 use crate::config::{self, Configuration, Layer, Module};
 use crate::docs::{
@@ -22,7 +26,7 @@ use crate::docs::{
 use crate::fsx::LockGuard;
 use crate::git;
 use crate::home::Home;
-use crate::ids::{CommitSha, DomainName, ProjectSlug};
+use crate::ids::{CommitSha, DomainName, ProjectSlug, SnippetId};
 use crate::index::GlobalIndex;
 use crate::interfaces::{Answer, CoreWiring};
 
@@ -58,6 +62,10 @@ pub enum Refusal {
     /// The committed tree holds a domain folder with a reserved name, by
     /// its repository directory (`docs/domain/general/`).
     ReservedDomain(Vec<String>),
+    /// The committed compressed units of a position the sync publishes, or
+    /// a position itself, have content findings
+    /// (`project/instrukt/spec/domain/publication`, Unit findings).
+    Units(Vec<super::UnitFinding>),
 }
 
 impl fmt::Display for Refusal {
@@ -78,6 +86,11 @@ impl fmt::Display for Refusal {
                     named.join(" and ")
                 )
             }
+            Refusal::Units(findings) => write!(
+                f,
+                "the committed compressed units have {} finding(s); fix or remove each unit named, then commit",
+                findings.len()
+            ),
         }
     }
 }
@@ -164,7 +177,7 @@ pub enum LinkState {
     Current,
 }
 
-/// What a sync reports about an agent file without refusing.
+/// What a sync reports about an agent file, or about the index it persists, without refusing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyncFinding {
     /// A runtime's settings file left untouched: the user's, unparseable or
@@ -178,6 +191,16 @@ pub enum SyncFinding {
     /// The selected runtime could not be asked which agent runtimes are
     /// configured: no global agent file was written in this sync.
     RuntimeUnreachable { runtime: String, cause: String },
+    /// Another project's index entry, brought forward to the current index
+    /// version, persisted without its source digest: its published file
+    /// could not be read. It gains one when its owner next publishes it.
+    EntryUndigested { id: SnippetId, owner: ProjectSlug },
+    /// A unit the global files hold its source's prose in place of, for its
+    /// finding.
+    UnitInProse { finding: super::UnitFinding },
+    /// A published unit of an always-on source the eval fingerprint counts
+    /// as none, for its finding.
+    FingerprintUnitDegraded { finding: super::UnitFinding },
 }
 
 /// A sync that could not run to its end, with the leftovers it found and
@@ -304,6 +327,9 @@ struct Reported<'r> {
 /// Everything a sync computed before it writes anything.
 struct Prepared {
     committed: Committed,
+    /// The committed tree is a company's repository: none of its documents
+    /// is published as documentation.
+    company: bool,
     /// The published positions the committed tree holds, by the domain
     /// name each is addressed by.
     held: Vec<DomainName>,
@@ -314,6 +340,9 @@ struct Prepared {
     owners: BTreeMap<DomainName, ProjectSlug>,
     /// Global agent files, each with where it is written.
     global: Vec<GlobalWrite>,
+    /// The uncompressed copy of each runtime's global file, by where it is
+    /// written in the home.
+    copies: Vec<(PathBuf, String)>,
     /// Merged settings files, by where each is written.
     settings: Vec<(PathBuf, Vec<u8>)>,
     /// Links to global agent files, each `(where it stands, what it points
@@ -361,7 +390,18 @@ fn publish(
         commit: commit.clone(),
         refusal,
     };
-    let (held, reserved) = _tree::held_positions(&committed);
+    // A company's repository publishes no knowledge: its documents are the
+    // company's, never positions, snippets or third-party docs
+    // (`project/instrukt/spec/domain/publication`).
+    let company = super::_render::company_home(
+        &config::classify_root(committed.file(config::CONFIG_FILE_NAME)),
+        committed.entry_index(super::_company::COMPANY_INDEX) == super::_source::EntryIndex::Absent,
+    );
+    let (held, reserved) = if company {
+        (Vec::new(), Vec::new())
+    } else {
+        _tree::held_positions(&committed)
+    };
     if !reserved.is_empty() {
         return Ok(refused(Refusal::ReservedDomain(reserved)));
     }
@@ -372,31 +412,63 @@ fn publish(
         flavor_roles: request.wiring.flavor_roles.clone().filter(|_| todos),
         ..request.wiring.clone()
     };
-    let validation = docs::validate(&ValidationRequest {
-        repo_root: checkout.path(),
-        home,
-        paths: &[],
-        wiring: &wiring,
-    })?;
-    if !validation.findings.is_empty() {
-        return Ok(refused(Refusal::Findings(validation.findings)));
+    let mut notices: Vec<Notice> = Vec::new();
+    if !company {
+        let validation = docs::validate(&ValidationRequest {
+            repo_root: checkout.path(),
+            home,
+            paths: &[],
+            wiring: &wiring,
+        })?;
+        if !validation.findings.is_empty() {
+            return Ok(refused(Refusal::Findings(validation.findings)));
+        }
+        // Sync reports the notices about what it renders; the rest are
+        // `instrukt docs validate`'s.
+        notices.extend(
+            validation
+                .notices
+                .into_iter()
+                .filter(|n| n.code == NoticeCode::DomainWithoutIndex),
+        );
     }
-    // Sync reports the notices about what it renders; the rest are
-    // `instrukt docs validate`'s.
-    let mut notices: Vec<Notice> = validation
-        .notices
-        .into_iter()
-        .filter(|n| n.code == NoticeCode::DomainWithoutIndex)
-        .collect();
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(
         Some(project.slug.clone()),
         Some(home),
-        committed.doc_sources(),
+        if company {
+            Vec::new()
+        } else {
+            committed.doc_sources()
+        },
     );
-    let contribution = Contribution::of(&project.slug, &corpus, &held);
-    if let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
+    // A company's repository holds no published position, so it has no
+    // compressed unit to check.
+    if !company {
+        let positions: Vec<Position> = held
+            .iter()
+            .map(Position::of_domain)
+            .chain(
+                committed
+                    .below("docs/project/")
+                    .next()
+                    .map(|_| Position::Project),
+            )
+            .collect();
+        let mut unit_findings = _units::reserved_folders(&committed);
+        unit_findings.extend(_units::published_findings(
+            &committed,
+            &corpus,
+            &positions,
+            Some(&project.slug),
+        ));
+        if !unit_findings.is_empty() {
+            return Ok(refused(Refusal::Units(unit_findings)));
+        }
+    }
+    if !company
+        && let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
         && claim.owner != project.slug
     {
         return Ok(refused(Refusal::Claim(Claim::ProjectOwned {
@@ -405,10 +477,31 @@ fn publish(
         })));
     }
     let owners = _tree::claims(home)?;
-    let index = GlobalIndex::load(home)?.unwrap_or_default();
-    let patched = match patch(&index, &owners, &contribution) {
-        Ok(patched) => patched,
-        Err(claim) => return Ok(refused(Refusal::Claim(claim))),
+    let (index, undigested) = GlobalIndex::load_with_undigested(home)?.unwrap_or_default();
+    let patched = if company {
+        index.clone()
+    } else {
+        // The invoking project's own entries are replaced by its patch; every
+        // other project's entry left without a digest is persisted so, and
+        // named. A company's sync persists no index.
+        report.findings.extend(
+            index
+                .snippets
+                .iter()
+                .filter(|entry| {
+                    undigested.contains(&entry.id) && entry.source_project != project.slug
+                })
+                .map(|entry| SyncFinding::EntryUndigested {
+                    id: entry.id.clone(),
+                    owner: entry.source_project.clone(),
+                }),
+        );
+        let mut contribution = Contribution::of(&project.slug, &corpus, &held);
+        contribution.record_lineage(&committed, &corpus);
+        match patch(&index, &owners, &contribution) {
+            Ok(patched) => patched,
+            Err(claim) => return Ok(refused(Refusal::Claim(claim))),
+        }
     };
 
     // Rendering reads the committed tree and the home as it stands; it
@@ -419,14 +512,17 @@ fn publish(
     let renderer = Renderer {
         home,
         project: &project.slug,
+        tree: &committed,
         corpus: &corpus,
         owned: &owned,
         index: &patched,
         indexes: &indexes,
         values: &values,
+        units: UnitRendering::Compressed,
     };
     let GlobalPlan {
         global,
+        copies,
         settings,
         links,
         findings,
@@ -443,18 +539,20 @@ fn publish(
     } else {
         GlobalPlan::default()
     };
-    *report.findings = findings;
+    report.findings.extend(findings);
     notices.sort();
     notices.dedup();
     *report.notices = notices;
 
     let prepared = Prepared {
         committed,
+        company,
         held,
         index,
         patched,
         owners,
         global,
+        copies,
         settings,
         links,
     };
@@ -478,7 +576,16 @@ fn publish(
         write(home, project, commit, request.now, &prepared, &mut tx)
     });
     match written {
-        Ok((global_files, links)) => {
+        Ok(Written {
+            global_files,
+            links,
+            degraded,
+        }) => {
+            report.findings.extend(
+                degraded
+                    .into_iter()
+                    .map(|finding| SyncFinding::FingerprintUnitDegraded { finding }),
+            );
             let changed = tx.changed()
                 || report
                     .editor
@@ -514,7 +621,8 @@ pub(super) fn lock_outputs(home: &Home) -> Result<LockGuard, PublicationError> {
 /// write. A location the repository or instrukt controls — a rendered
 /// output in the project or one recorded for retraction; in the home a
 /// published domain, a third-party doc, the index, the eval
-/// fingerprint records, the outputs record or the published record — that
+/// fingerprint records, an uncompressed copy of a global agent file, the
+/// outputs record or the published record — that
 /// lies behind a symbolic link refuses the sync; a link at the location
 /// itself is replaced by the write. An agent-CLI file in the user's home
 /// whose directory's link leads nowhere refuses too. The writes check again
@@ -554,6 +662,7 @@ fn preflight(
     targets.push(_tree::project_claim_path(home, &project.slug));
     targets.push(home.index_file());
     targets.extend(_fingerprint::record_paths(home, commit));
+    targets.extend(prepared.copies.iter().map(|(path, _)| path.clone()));
     targets.push(record_path(home, &project.slug));
     for target in targets {
         own_destination(root, &relative_to(root, &target)?)?;
@@ -620,6 +729,7 @@ pub(super) fn committed_index(
 #[derive(Default)]
 struct GlobalPlan {
     global: Vec<GlobalWrite>,
+    copies: Files<String>,
     settings: Files<Vec<u8>>,
     links: Vec<(PathBuf, PathBuf)>,
     findings: Vec<SyncFinding>,
@@ -634,9 +744,12 @@ struct GlobalPlan {
 /// whatever it holds; one that keeps a reference for an agent program to
 /// resolve is written as rendered and named. A settings file that cannot
 /// take the key, or is a symbolic link, is the user's: it is left untouched
-/// and named, and the instruction file is still written.
+/// and named, and the instruction file is still written. A file that holds a
+/// unit names its uncompressed copy, rendered with every source in prose and
+/// written once per runtime file name into the home's `rendered/` folder; a
+/// unit held in prose for a finding is reported.
 fn global_files(
-    _home: &Home,
+    home: &Home,
     renderer: &Renderer<'_>,
     answer: Option<Answer>,
 ) -> Result<GlobalPlan, PublicationError> {
@@ -666,14 +779,38 @@ fn global_files(
     // One rendering per runtime, with the references it keeps: every file
     // written from it is named with them.
     let mut rendered = BTreeMap::new();
+    let prose = Renderer {
+        units: UnitRendering::Prose,
+        ..*renderer
+    };
+    let mut copies: BTreeMap<&str, String> = BTreeMap::new();
     for file in &targets.files {
         let runtime = file.destination;
         let global = match rendered.entry(file.runtime.clone()) {
             std::collections::btree_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(renderer.global_file(&file.runtime)?)
+                let global = renderer.global_file(&file.runtime)?;
+                for finding in &global.fallbacks {
+                    let finding = SyncFinding::UnitInProse {
+                        finding: finding.clone(),
+                    };
+                    if !plan.findings.contains(&finding) {
+                        plan.findings.push(finding);
+                    }
+                }
+                entry.insert(global)
             }
         };
+        let copy = home
+            .rendered_dir()
+            .join(format!("{}.uncompressed.md", runtime.cli));
+        if !copies.contains_key(runtime.cli) {
+            let uncompressed = prose.global_file(&file.runtime)?;
+            copies.insert(
+                runtime.cli,
+                global_file_text(runtime.cli, &uncompressed.text, None),
+            );
+        }
         plan.findings
             .extend(
                 global
@@ -684,7 +821,11 @@ fn global_files(
                         reference: reference.clone(),
                     }),
             );
-        let text = global_file_text(runtime.cli, &global.text);
+        let text = global_file_text(
+            runtime.cli,
+            &global.text,
+            global.units.then_some(copy.as_path()),
+        );
         plan.global.push(GlobalWrite {
             at: destination(&file.home, Path::new(runtime.file))?,
             path: file.path(),
@@ -727,6 +868,15 @@ fn global_files(
             }
         }
     }
+    plan.copies = copies
+        .into_iter()
+        .map(|(cli, text)| {
+            (
+                home.rendered_dir().join(format!("{cli}.uncompressed.md")),
+                text,
+            )
+        })
+        .collect();
     for link in &targets.links {
         let folder = link.link.parent().unwrap_or(Path::new("/"));
         let name = link
@@ -740,6 +890,14 @@ fn global_files(
     Ok(plan)
 }
 
+/// What the writes of a publishing sync did: the global files and links it
+/// wrote, and each published unit the eval fingerprint counted as none.
+struct Written {
+    global_files: Vec<GlobalDestination>,
+    links: Vec<EnsuredLink>,
+    degraded: Vec<super::UnitFinding>,
+}
+
 /// The writes of a publishing sync, all through `tx`.
 fn write(
     home: &Home,
@@ -748,7 +906,7 @@ fn write(
     now: jiff::Timestamp,
     prepared: &Prepared,
     tx: &mut Transaction,
-) -> Result<(Vec<GlobalDestination>, Vec<EnsuredLink>), PublicationError> {
+) -> Result<Written, PublicationError> {
     let root = home.root();
     let in_home = |path: &Path| own_destination(root, &relative_to(root, path)?);
     let staging = crate::fsx::temp_dir_in(tempfile::Builder::new().prefix(STAGING_PREFIX), root)
@@ -762,6 +920,7 @@ fn write(
     for domain in &prepared.held {
         let staged = staging.path().join(domain.as_str());
         _tree::stage_position(&prepared.committed, &Position::of_domain(domain), &staged)?;
+        _tree::stage_units(&prepared.committed, &Position::of_domain(domain), &staged)?;
         tx.replace_dir(&staged, &in_home(&home.domain_dir(domain))?)?;
         let claim = ClaimRecord {
             position: domain.clone(),
@@ -776,56 +935,11 @@ fn write(
             tx.remove_file(&in_home(&_tree::claim_path(home, domain))?)?;
         }
     }
-    // Project positions use the same transaction and whole-tree replacement.
-    let project_dir = in_home(&home.project_docs_dir(&project.slug))?;
-    let claim_path = in_home(&_tree::project_claim_path(home, &project.slug))?;
-    if prepared.committed.below("docs/project/").next().is_some() {
-        let staged = staging.path().join("project").join(project.slug.as_str());
-        _tree::stage_position(&prepared.committed, &Position::Project, &staged)?;
-        tx.replace_dir(&staged, &project_dir)?;
-        let claim = ProjectClaimRecord {
-            project: project.slug.clone(),
-            owner: project.slug.clone(),
-        };
-        let text = serde_yaml_ng::to_string(&claim).map_err(PublicationError::Render)?;
-        tx.write(&claim_path, text.as_bytes())?;
-    } else {
-        tx.remove_dir(&project_dir)?;
-        tx.remove_file(&claim_path)?;
+    // A company's repository publishes no project position, no third-party
+    // doc and no contribution to the index.
+    if !prepared.company {
+        _project_docs::publish_project_docs(home, project, prepared, &staging, tx)?;
     }
-    // Third-party docs: file by file, owner-scoped.
-    let docs = home.docs_dir();
-    let mine = |owner: &ProjectSlug| owner == &project.slug;
-    for doc in prepared
-        .patched
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        let source = Path::new("docs").join(&doc.path);
-        if let Some(bytes) = prepared.committed.file(&source.to_string_lossy()) {
-            tx.write(&in_home(&docs.join(&doc.path))?, bytes)?;
-        }
-    }
-    let third_party: BTreeSet<&PathBuf> = prepared
-        .patched
-        .third_party
-        .iter()
-        .map(|d| &d.path)
-        .collect();
-    for old in prepared
-        .index
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        if !third_party.contains(&old.path) {
-            tx.remove_file(&in_home(&docs.join(&old.path))?)?;
-        }
-    }
-    let index_text =
-        serde_yaml_ng::to_string(&prepared.patched).map_err(PublicationError::Render)?;
-    tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
 
     // Outside the home, from the owner of `docs/general/`: the global agent
     // files with their settings keys, written whole and never removed;
@@ -844,6 +958,11 @@ fn write(
     for (path, bytes) in &prepared.settings {
         tx.write(path, bytes)?;
     }
+    // The uncompressed copies, written whole with their files and never
+    // removed.
+    for (path, text) in &prepared.copies {
+        tx.write(&in_home(path)?, text.as_bytes())?;
+    }
     // The links the instances read through, ensured after their files.
     let mut links = Vec::new();
     for (link, target) in &prepared.links {
@@ -859,7 +978,8 @@ fn write(
         });
     }
 
-    let fingerprint = _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
+    let (fingerprint, degraded) =
+        _fingerprint::compute(home, &prepared.patched, &project.slug, commit)?;
     for (path, bytes) in _fingerprint::records(home, &fingerprint, now)? {
         tx.write(&in_home(&path)?, &bytes)?;
     }
@@ -880,7 +1000,11 @@ fn write(
         &in_home(&record_path(home, &project.slug))?,
         text.as_bytes(),
     )?;
-    Ok((global_files, links))
+    Ok(Written {
+        global_files,
+        links,
+        degraded,
+    })
 }
 
 /// The URL of the `origin` remote of the repository at `dir`; `None` when
@@ -901,16 +1025,25 @@ fn relative_to(root: &Path, path: &Path) -> Result<PathBuf, PublicationError> {
 }
 
 /// The text written to the global file of the agent runtime `cli`: the
-/// generated line, then `rendering`. Where the runtime's file format puts
+/// generated line, then, for a file that holds a unit, the line naming its
+/// uncompressed `copy` and how to read a snippet in full followed by the
+/// units' legend, then `rendering`. Where the runtime's file format puts
 /// something of its own first, as Cursor's rule file does with its
 /// frontmatter, the generated line follows it.
-fn global_file_text(cli: &str, rendering: &str) -> String {
+fn global_file_text(cli: &str, rendering: &str, copy: Option<&Path>) -> String {
+    let opening = match copy {
+        Some(copy) => format!(
+            "{GENERATED_LINE}\nFull prose: `{}` (no runtime loads it); any snippet: `instrukt docs get <id>`.\n\n{LEGEND}\n\n",
+            copy.display()
+        ),
+        None => format!("{GENERATED_LINE}\n"),
+    };
     if cli == "cursor" {
         format!(
-            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{GENERATED_LINE}\n{rendering}"
+            "---\ndescription: Instrukt doctrine\nglobs: \"\"\nalwaysApply: true\n---\n\n{opening}{rendering}"
         )
     } else {
-        format!("{GENERATED_LINE}\n{rendering}")
+        format!("{opening}{rendering}")
     }
 }
 
@@ -922,11 +1055,23 @@ mod tests {
 
     #[test]
     fn cursors_frontmatter_comes_first_and_the_generated_line_right_after_it() {
-        insta::assert_snapshot!(global_file_text("cursor", RENDERING));
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING, None));
     }
 
     #[test]
     fn another_runtimes_file_opens_with_the_generated_line() {
-        insta::assert_snapshot!(global_file_text("claude", RENDERING));
+        insta::assert_snapshot!(global_file_text("claude", RENDERING, None));
+    }
+
+    const COPY: &str = "/home/someone/.instrukt/rendered/claude.uncompressed.md";
+
+    #[test]
+    fn a_file_holding_a_unit_names_its_copy_then_the_legend_after_the_generated_line() {
+        insta::assert_snapshot!(global_file_text("claude", RENDERING, Some(Path::new(COPY))));
+    }
+
+    #[test]
+    fn a_cursor_file_holding_a_unit_opens_with_its_frontmatter_before_the_copy_line() {
+        insta::assert_snapshot!(global_file_text("cursor", RENDERING, Some(Path::new(COPY))));
     }
 }

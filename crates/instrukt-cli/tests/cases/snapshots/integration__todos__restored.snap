@@ -1,12 +1,13 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
+assertion_line: 166
 expression: "redact(&format!(\"{withdrawn}---\\n{restored}---\\n{shown}\"))"
 ---
 withdrew nested-lists (<id 1>); recoverable until <time> with `instrukt todo reactivate <id 1>`
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 restored nested-lists (<id 1>) as active
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 nested-lists · feature · active
 identity: <id 1>
@@ -15,8 +16,7 @@ created: <time> by Test Developer
 revision: 4
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: not held
 hold: none
 artifacts:

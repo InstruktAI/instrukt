@@ -97,6 +97,19 @@ pub enum RepositoryError {
     #[error(transparent)]
     Publication(#[from] PublicationError),
     #[error(transparent)]
+    PublicationState(#[from] crate::publication::PublicationStateError),
+    #[error(transparent)]
+    Generation(#[from] crate::config::GenerationRefusal),
+    #[error(transparent)]
+    CompanyRepository(#[from] crate::interfaces::CompanyRepositoryError),
+    #[error(
+        "{}: cannot be read as the company's creation intent ({reason}); remove it to start the creation anew",
+        path.display()
+    )]
+    CompanyIntent { path: PathBuf, reason: String },
+    #[error("the company skeleton cannot be composed: {findings}")]
+    Skeleton { findings: String },
+    #[error(transparent)]
     Id(#[from] IdError),
     #[error(transparent)]
     Config(#[from] ConfigError),

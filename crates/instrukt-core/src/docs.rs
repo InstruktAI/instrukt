@@ -99,7 +99,7 @@ use std::path::PathBuf;
 
 pub(crate) use _company::{
     CompanyDocument, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText,
-    company_document, company_paths,
+    company_document, company_paths, company_references,
 };
 pub use _corpus::{
     BaselineManifest, Companion, Corpus, Lens, PendingBlock, Snippet, SourceFile, ThirdPartyDoc,
@@ -119,7 +119,8 @@ pub use _position::{
     is_reserved_domain_folder,
 };
 pub use _refs::{RefTarget, Reference};
-pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
+pub(crate) use _render::render_unit_body;
+pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, fenced, render};
 pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
 pub use _schema::{
     EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,
@@ -131,6 +132,62 @@ pub use _selection::{
 pub use _text::Directive;
 pub use _transfer::{TransferOutcome, transfer_pending};
 pub use _validate::{Validation, ValidationRequest, validate};
+
+/// A text split into its frontmatter block, without its fences, and the
+/// body after it; no frontmatter when the text opens no closed block.
+pub(crate) fn split_frontmatter(text: &str) -> (Option<&str>, &str) {
+    let split = _text::split_frontmatter(text);
+    (split.frontmatter, split.body)
+}
+
+/// The current-contract body of a snippet's whole `text`
+/// (`project/instrukt/spec/domain/docs`, Current-contract body): its body
+/// after its frontmatter with every pending block resolved to its current
+/// side and the marker lines removed, nothing resolved from the computer.
+pub(crate) fn current_contract_body(text: &str) -> String {
+    let body = _text::split_frontmatter(text).body;
+    _markers::resolve(body, &_markers::scan(body), |_| _markers::Side::Current)
+}
+
+/// The `@config`, `@exec` and `@include` directives of `text`, outside
+/// fenced and inline code, read as one body: no frontmatter split, no lens.
+pub(crate) fn directives(text: &str) -> Vec<Directive> {
+    _text::directives(&_text::lines(text))
+}
+
+/// The targets of the reference links of `text`'s `Required reads` and
+/// `See Also` sections, in order.
+pub(crate) fn reference_link_targets(text: &str) -> Vec<String> {
+    _refs::links(&_text::lines(text))
+        .into_iter()
+        .map(|link| link.target)
+        .collect()
+}
+
+/// The required reads a rendering of a snippet's `body` through `lens`
+/// reports, read without resolving any configured value.
+pub(crate) fn lens_required_reads(
+    body: &str,
+    lens: Lens<'_>,
+    project: Option<&crate::ids::ProjectSlug>,
+) -> Vec<Reference> {
+    let values = Values::committed();
+    let cx = RenderContext {
+        home: None,
+        values: &values,
+        project,
+    };
+    _render::dependency_reads(body, lens, &cx).unwrap_or_default()
+}
+
+/// The entries of the `Required reads` section of `text`, read as one body:
+/// no frontmatter split, no lens, nothing resolved.
+pub(crate) fn body_required_reads(
+    text: &str,
+    project: Option<&crate::ids::ProjectSlug>,
+) -> Vec<Reference> {
+    _corpus::section_reads(&_text::lines(text), project, std::path::Path::new(""))
+}
 
 /// The `@` references visible in `text`, each without its `@`, as the
 /// docs model recognizes them: outside fenced code, inline code and HTML

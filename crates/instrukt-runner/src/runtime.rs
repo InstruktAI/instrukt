@@ -7,6 +7,7 @@ mod _t3_diagnostics;
 mod _t3_fingerprint;
 pub(crate) mod _t3_home;
 mod _t3_notifications;
+mod _t3_options;
 mod _t3_readiness;
 pub mod conversations;
 
@@ -142,6 +143,36 @@ pub struct Thread {
     pub native_details: serde_json::Value,
 }
 
+/// A thread the runtime lists for a project and reports finished, as thread
+/// retention reads it (`project/instrukt/spec/feature/runner/session-continuity`,
+/// `finished_threads`). A time the runtime does not report is `None`, never
+/// substituted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FinishedThread {
+    pub session: SessionRef,
+    /// When the thread finished.
+    pub finished_at: Option<jiff::Timestamp>,
+    /// Its latest activity, a person reading or writing to it included.
+    pub latest_activity: Option<jiff::Timestamp>,
+    /// Not running, queued, snoozed or waiting on a person's input or
+    /// approval.
+    pub quiet: bool,
+    /// A person pinned it.
+    pub pinned: bool,
+}
+
+/// What an archive request found and did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveOutcome {
+    /// The thread is archived.
+    Archived,
+    /// It was archived already, which is done.
+    AlreadyArchived,
+    /// The observation it was chosen from no longer holds; nothing was
+    /// archived.
+    Changed,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NativeActivity {
     pub at: jiff::Timestamp,
@@ -175,6 +206,8 @@ pub enum Capability {
     InputConsumption,
     AssignmentEvidence,
     ConfiguredRuntimes,
+    /// Listing finished threads and archiving them (thread retention).
+    Archive,
 }
 impl std::fmt::Display for Capability {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -188,6 +221,7 @@ impl std::fmt::Display for Capability {
             Self::InputConsumption => "input consumption observation",
             Self::AssignmentEvidence => "assignment evidence recovery",
             Self::ConfiguredRuntimes => "configured agent runtimes",
+            Self::Archive => "thread archiving",
         })
     }
 }
@@ -494,6 +528,28 @@ pub trait RuntimeAdapter: instrukt_core::interfaces::CallerIdentityLookup {
         Err(SessionsError::MissingCapability {
             runtime: self.runtime().name().into(),
             capability: Capability::Notify,
+        })
+    }
+    /// The threads the runtime lists for the project at `checkout` and
+    /// reports finished, with their finishing time, latest activity,
+    /// quietness and pin.
+    fn finished_threads(&self, _checkout: &Path) -> Result<Vec<FinishedThread>, SessionsError> {
+        Err(SessionsError::MissingCapability {
+            runtime: self.runtime().name().into(),
+            capability: Capability::Archive,
+        })
+    }
+    /// Archives the thread `observed` names only while that observation still
+    /// holds at `now`, the caller's clock: present, finished, quiet, not
+    /// pinned and without activity after its observed latest activity.
+    fn archive(
+        &self,
+        _observed: &FinishedThread,
+        _now: jiff::Timestamp,
+    ) -> Result<ArchiveOutcome, SessionsError> {
+        Err(SessionsError::MissingCapability {
+            runtime: self.runtime().name().into(),
+            capability: Capability::Archive,
         })
     }
 }

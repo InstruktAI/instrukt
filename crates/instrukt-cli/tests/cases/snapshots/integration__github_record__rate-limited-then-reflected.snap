@@ -1,15 +1,68 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}---\\n{}\",\nretained_artifacts(&project)))"
+assertion_line: 582
+expression: "redact(&format!(\"{limited}---\\n{still_limited}---\\n{accepted}---\\n{reflected}---\\n{while_reflecting}---\\n{}\",\nretained_artifacts(&project)))"
 ---
-wrote prd of nested-lists: <digest 1>
-reflection: pending: GitHub: GitHub App API deferred requests (rate limited)
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 2
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: GitHub rate limited until <time>
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (1 version)
+    <digest 2> by Test Developer at <time>
+stamps:
+  none
 ---
-wrote prd of nested-lists: <digest 2>
-reflection: pending: GitHub: GitHub App API deferred requests (rate limited)
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 3
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: GitHub rate limited until <time>
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (2 versions)
+    <digest 2> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+stamps:
+  none
 ---
-wrote log of nested-lists: <digest 3>
+nested-lists · feature · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the depth of nested lists when parsing Markdown.
 reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  prd (2 versions)
+    <digest 2> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+  log (1 version)
+    <digest 4> by Test Developer at <time>
+stamps:
+  none
 ---
 input
   v1: Keep the depth of nested lists when parsing Markdown.
@@ -21,3 +74,19 @@ prd
 log
   v1: Started.
   current: Started.
+---
+wrote log of nested-lists: <digest 5>
+reflection: pending: not yet reflected
+---
+input
+  v1: Keep the depth of nested lists when parsing Markdown.
+  current: Keep the depth of nested lists when parsing Markdown.
+prd
+  v1: Lists keep their depth through parse and render.
+  v2: Lists keep their depth, and numbering restarts per level.
+  current: Lists keep their depth, and numbering restarts per level.
+log
+  v1: Started.
+  v2: Joined the cases.
+  v3: Rendered the depth.
+  current: Rendered the depth.

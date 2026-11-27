@@ -1,5 +1,5 @@
 ---
-description: Company plugin — a company's repository carries the company's knowledge as a Claude plugin, rendered by instrukt on request from the documents its `docs/index.yaml` selects into `plugins/<key>/` and listed in the repository's plugin catalog; the plugin carries everything it names, its version is raised exactly when its rendering changes, and a check and a validation write nothing.
+description: Company plugin — a company's repository carries the company's knowledge as a Claude plugin, rendered by instrukt on request from the documents its `docs/index.yaml` selects and listed in the repository's plugin catalog; the plugin carries everything it names, its version is raised exactly when its rendering changes, and a check and a validation write nothing.
 ---
 # Company Plugin — Spec
 
@@ -22,9 +22,13 @@ its rendering changes.
 
 ### What the plugin holds
 
-The plugin is the folder `plugins/<key>/` at the repository's root, `<key>`
-being the company's key. It conforms to Claude's plugin, skill and plugin
-catalog formats (See Also), which decide where each of its files stands.
+The company's skill is the folder `skills/<key>/` at the repository's root,
+`<key>` being the company's key, outside any vendor's folder. The plugin that
+carries the skill to Claude is the skill's entry in the repository's catalog,
+which is the plugin's manifest (The catalog entry); no other folder holds the
+plugin, and nothing in it is a link. The skill, the catalog and the entry
+conform to Claude's skill and plugin catalog formats (See Also), which decide
+where each of their files stands.
 
 - **The manifest** names the plugin by the company's key and carries its
   version, a description and the company as its author.
@@ -41,10 +45,17 @@ catalog formats (See Also), which decide where each of its files stands.
   document by one line: that file's path inside the skill and the document's
   `description`. A document that requires another names it by where the
   plugin carries it.
-- **Every document once.** Each document the index selects, and each
-  document their required reads reach, is carried exactly once: in the main
-  file where an `expanded` document brings it in, otherwise as a file of its
-  own.
+- **Compressed in the main file.** The main file holds each document it
+  holds in full as that document's current compressed unit, and in its prose
+  where the unit is stale or missing
+  (`project/instrukt/spec/feature/publication/compressed-units`). A document
+  the main file holds compressed is also carried in its prose as a file of
+  its own, and the main file names that file with the document's compressed
+  rules, so a reader without the repository reaches its full prose.
+- **Every document's prose once.** Each document the index selects, and each
+  document their required reads reach, is carried in its prose exactly once:
+  in the main file where an `expanded` document brings it in and the main
+  file holds it in prose, otherwise as a file of its own.
 - **References between documents.** A reference in one company document's
   text to another, in each form the company's knowledge admits
   (`project/instrukt/spec/feature/publication/agent-entrypoints`, The
@@ -70,9 +81,12 @@ naming the document and what is wrong:
 - **The index.** A repository without `docs/index.yaml` holds no knowledge
   to render: that is a finding naming the file, for a rendering, a check and
   a validation alike. So does a repository whose root `instrukt.yaml` makes
-  it a project
+  it a project rather than a company's
   (`project/instrukt/spec/feature/publication/agent-entrypoints`, What makes
-  a repository a company home): that is a finding naming that file.
+  a repository a company home): that is a finding naming that file. A project
+  layer that declares the repository a company's makes it one: a company's
+  home is also a project
+  (`project/instrukt/spec/feature/configuration/company-homes`, The home).
 - **Nothing the plugin names lies outside it.** A reference in a document's
   text to a company document the plugin does not carry — one the index does
   not select and no required read reaches — or to a file under `docs/` that
@@ -89,73 +103,83 @@ With a finding, no file is written or removed.
 
 ### The version
 
-- The manifest's version is three numbers. In a repository that holds no
-  manifest for the plugin, the rendering carries instrukt's first version.
-- Where the repository holds one, its version is kept when the plugin's
-  rendering equals what `plugins/<key>/` holds, file for file, and its last
-  number is raised by one otherwise. instrukt changes only the last number:
-  the first two are whatever the manifest in the repository holds.
+- The manifest's version is three numbers. In a repository whose catalog
+  holds no entry for the plugin, the rendering carries instrukt's first
+  version.
+- Where the catalog holds one, its version is kept when the skill's rendering
+  equals what `skills/<key>/` holds, file for file, and its last number is
+  raised by one otherwise. instrukt changes only the last number: the first
+  two are whatever the entry in the repository holds.
 - Rendering twice in a row changes nothing the second time.
-- A manifest in the repository that cannot be read, or whose version is not
-  three numbers, is a finding naming it.
-- A file git ignores is no part of what `plugins/<key>/` holds: it is neither
+- An entry an earlier rendering wrote holds no version; the version of the
+  manifest that rendering left at `plugins/<key>/.claude-plugin/plugin.json`
+  is the one the entry holds.
+- An entry whose version is not three numbers, or that holds none without
+  such a manifest of three numbers, is a finding naming it.
+- A file git ignores is no part of what `skills/<key>/` holds: it is neither
   compared nor removed.
 
 ### What the rendering is a function of
 
-The plugin and its catalog entry are a function of the repository's index and
-documents, the company's key, the name people write the company by, the
-plugin the repository already holds, and the rendering instrukt release.
+The plugin and its catalog entry are a function of the repository's index,
+documents and compressed units, the company identity its committed project
+layer declares, the plugin the repository already holds, and the rendering
+instrukt release.
 Nothing else from the computer enters: no home, no publication, no
-configuration layer and no environment. A fresh clone and the binary are
-enough, and a home and a clone of the repository render the same bytes.
+configuration layer of the computer, no caller's argument and no environment.
+A fresh clone and the binary are enough, and a home and a clone of the
+repository render the same bytes.
 
-The caller gives the key and the name with every request, for a rendering, a
-check and a validation alike. instrukt takes neither from the repository's
-name, the folder it lies in, a settings document or the environment.
-
-- **The key** follows the grammar of a company's key
-  (`project/instrukt/spec/feature/configuration/company-homes`).
-- **The name** is one line of text that is not blank. Whatever characters it
-  holds, each file that carries it stays valid in its format.
-- A request without one of them, or with one that breaks its form, is a usage
-  error: nothing is read.
+The company identity, the company's key and the name people write the
+company by, is read from the repository's committed project layer
+(`project/instrukt/spec/domain/configuration`, The company identity). No
+caller gives either, and instrukt takes neither from the repository's name,
+the folder it lies in, a settings document or the environment. Whatever
+characters the name holds, each file that carries it stays valid in its
+format. A repository without a company identity has configuration's finding,
+and a rendering, a check and a validation refuse with it and write nothing,
+as a missing prerequisite is refused where it enters
+(`sdlc/principle/design-fundamentals`, Fail Fast).
 
 ### The catalog entry
 
 `.claude-plugin/marketplace.json` at the repository's root is the
 repository's plugin catalog. A rendering sets the company's plugin's entry in
-it and nothing else:
+it, and creates the catalog where the repository holds none, and changes
+nothing else in it:
 
-- The entry names the plugin by the company's key, gives the plugin's folder
-  as its source, in the form Claude's catalog format gives a folder of the
-  catalog's own repository (See Also), and carries the plugin's description.
-  It carries no version of instrukt's: the plugin's version is the
-  manifest's alone.
+- The entry is the plugin's whole definition, so the repository holds no
+  other manifest for it. It names the plugin by the company's key, gives the
+  repository's root as its source, in the form Claude's catalog format gives
+  the catalog's own repository (See Also), lists `skills/<key>/` as the
+  plugin's one skill, and carries the plugin's version, its description and
+  the company as its author.
 - An entry already listed under that name receives those values and keeps
   every other field it holds; without one, the entry is added after the
   others.
 - Every other entry, and every other part of the catalog, keeps its value and
-  its place.
+  its place, so one catalog lists the skills of several plugins.
 - The catalog is compared by its values, never by its bytes. Where the entry
   already holds those values, the file is left byte for byte, whatever its
   formatting. Where it does not, the catalog is written as one JSON document:
   every member in the order it stood in, indented by two spaces, ending in
   one newline.
-- A repository without a catalog is a finding naming the file. instrukt
-  creates none: a catalog's own name and owner are its repository's. A
+- A repository without a catalog receives one named by the company's key,
+  with the company as its owner, listing the company's plugin alone. A
   catalog that cannot be read as one is a finding, and is left as it is.
 
 ### Rendering, checking and validating
 
 A caller asks for one of three things in a company's repository:
 
-- **A rendering** writes each file of the plugin whose content differs,
-  removes each file under `plugins/<key>/` that the rendering does not hold,
+- **A rendering** writes each file of the skill whose content differs,
+  removes each file under `skills/<key>/` that the rendering does not hold,
   and sets the catalog entry. It reports the plugin's version and each file
   it changed. The folder is instrukt's: it is written whole, whatever it
-  held. A rendering stages and commits nothing; committing what it changed is
-  its caller's.
+  held. Nothing else in the repository, a `plugins/<key>/` folder included,
+  is written or removed, and nothing else is read but the version of that
+  earlier manifest. A rendering stages and commits nothing;
+  committing what it changed is its caller's.
 - **A check** writes nothing. It names each file whose content in the working
   tree differs from the rendering, each file a rendering would remove and
   each finding, and exits non-zero when it names any.
@@ -165,13 +189,17 @@ A caller asks for one of three things in a company's repository:
 
 The three read the same repository and report the same findings. Nothing is
 read, written or removed through a symbolic link: one at or above
-`plugins/<key>/`, anywhere inside it, or at or above the catalog is a finding
+`skills/<key>/`, anywhere inside it, or at or above the catalog is a finding
 naming it. The command that asks for each of the three is the publication
 context's (`project/instrukt/spec/domain/publication`).
 
 The `pre-commit` section, a sync, a start and a tick render no plugin, and
-rendering a repository's `AGENTS.md` renders none. A commit on a branch
-carries the plugin its base held.
+rendering a repository's `AGENTS.md` without `--plugin` renders none.
+`instrukt docs render --plugin` renders the repository's whole agent
+material, its entrypoints and this plugin, as one operation, and with
+`--check` checks it as a check does
+(`project/instrukt/spec/domain/publication`). A commit on a branch carries the
+plugin its base held.
 
 ## Use cases
 
@@ -181,10 +209,10 @@ carries the plugin its base held.
 Given an operator keeps a company's knowledge as documents in the company's repository, with an index that selects some in full and lists others
 And the repository holds a plugin catalog that lists other plugins
 When the operator has the company's plugin rendered
-Then the repository holds the company's plugin, whose skill carries the fixed company passage and each selected document in full
-And the plugin carries each listed document as a file of its own, named in the skill with its description
-And nothing the plugin names lies outside it
-And the catalog lists the company's plugin by its folder in the repository, with every other entry as it was
+Then the repository holds the company's skill at its root, carrying the fixed company passage and each selected document in full
+And the skill carries each listed document as a file of its own, named in its main file with its description
+And nothing the skill names lies outside it
+And the catalog lists the company's plugin with that skill, with every other entry as it was
 But when a document refers to something outside the company's own documents
 Then the rendering reports the document and the reference, and no file is changed
 ```
@@ -229,17 +257,23 @@ And no file is changed
   `visibility` selects nothing.
 - A version is raised against what the working tree holds. Two branches that
   each render the plugin and are then merged can carry one version for
-  different content; a rendering is asked for where the catalog is installed
-  from, the repository's default branch.
-- Between the merge of a change to the knowledge and the rendering asked for
-  on the default branch, the catalog serves the previous plugin.
+  different content. Where the company's standing integrator renders each
+  candidate (`project/instrukt/spec/feature/workflow/integration-gate`, A
+  company home's candidate), the catalog serves the rendering the promoted
+  candidate carries; elsewhere a rendering is asked for where the catalog is
+  installed from, the repository's default branch.
+- In a repository whose default branch no integrator renders, between the
+  merge of a change to the knowledge and the rendering asked for on the
+  default branch, the catalog serves the previous plugin.
 - The rendering depends on the instrukt release that renders it. A release
   that renders a plugin differently raises that plugin's version at its next
   rendering although no document changed.
-- instrukt and the shared workflows repository's publisher
-  (`project/instrukt/policy/shared-workflows`) each write `plugins/<key>/`
-  whole and each raise its version; a repository whose plugin both render
-  receives each renderer's bytes in turn.
+- The shared workflows repository's publisher
+  (`project/instrukt/policy/shared-workflows`) writes the company's plugin in
+  a layout of its own under `plugins/<key>/` and sets the same catalog entry;
+  in a repository both render, the entry holds what the last renderer set.
+  Where the company's integrator renders each candidate, that publisher is a
+  second writer of the default branch beside it (`general/policy/commits`).
 - When and whether a Claude client takes a new copy of an installed plugin is
   Claude's (See Also).
 - What Claude does with a skill's main file before an agent reads it, and how
@@ -250,8 +284,6 @@ And no file is changed
 - Whether Claude accepts a plugin under the company's key is Claude's (See
   Also): the key is held to the grammar of a company's key and to nothing
   else.
-- A `version` an operator sets on the plugin's catalog entry stays as it is,
-  and so does not follow the manifest's.
 
 ## See Also
 

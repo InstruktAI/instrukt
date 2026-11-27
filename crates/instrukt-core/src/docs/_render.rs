@@ -201,9 +201,22 @@ pub fn render(text: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rend
 }
 
 fn render_body(body: &str, lens: Lens<'_>, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
-    let lensed = lensed(body, lens);
-    let required_reads = section_reads(&lensed, cx);
-    let (resolved, config_refusals) = resolve_values(&lensed, cx.values)?;
+    render_lensed(&lensed(body, lens), cx)
+}
+
+/// A compressed unit's body through the steps of a rendering that follow
+/// the frontmatter strip and the lens: the `@config` values, the reference
+/// links and the `Required reads` strip, over exactly the text it is given.
+/// It splits no frontmatter and applies no lens, so it reads the body the
+/// unit's checks read, and a pending marker in it is plain text.
+pub(crate) fn render_unit_body(body: &str, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
+    render_lensed(body, cx)
+}
+
+/// Every step after the lens, over `lensed`.
+fn render_lensed(lensed: &str, cx: &RenderContext<'_>) -> Result<Rendered, DocsError> {
+    let required_reads = section_reads(lensed, cx);
+    let (resolved, config_refusals) = resolve_values(lensed, cx.values)?;
     let references = _refs::links(&_text::lines(&resolved))
         .into_iter()
         .map(|link| (link.span, link.text))
@@ -287,7 +300,7 @@ fn resolve_values(
 
 /// A value as a fenced block whose fence is longer than any backtick run
 /// inside it; nothing for an empty value.
-fn fenced(value: &str) -> String {
+pub fn fenced(value: &str) -> String {
     let output = value.trim_end_matches(['\n', '\r']);
     if output.trim().is_empty() {
         return String::new();

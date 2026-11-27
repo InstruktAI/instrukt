@@ -9,6 +9,7 @@ members = [
     "crates/instrukt-connector",
     "crates/instrukt-company",
     "crates/instrukt-connector-slack",
+    "crates/instrukt-outside",
 ]
 
 [workspace.package]
@@ -23,6 +24,7 @@ darwin-libproc = "=0.1.2"
 jsonwebtoken = "=9.3.1"
 pem = "=3.0.6"
 ring = "=0.17.14"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
@@ -30,15 +32,28 @@ instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }
 instrukt-company = { path = "crates/instrukt-company", version = "0.1.0" }
 instrukt-connector-slack = { path = "crates/instrukt-connector-slack", version = "0.1.0" }
+instrukt-outside = { path = "crates/instrukt-outside", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"
+async-trait = "0.1"
+backon = { version = "1.6", default-features = false, features = ["std", "std-blocking-sleep", "tokio-sleep"] }
 base64 = "0.23"
+http = "1"
+oauth2 = { version = "5", default-features = false }
+octocrab = { version = "0.54", default-features = false, features = ["follow-redirect", "rustls", "rustls-ring", "jwt-aws-lc-rs", "timeout", "tracing", "default-client"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form", "query", "stream"] }
+rmcp = { version = "3.12", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+slack-morphism = { version = "2.34", features = ["hyper"] }
+tokio = { version = "1.54", features = ["full"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
+futures-util = "0.3"
 tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 url = "2"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hex = "0.4"
 hmac = "=0.12.1"
+httpdate = "=1.0.3"
 form_urlencoded = "=1.2.3"
 dotenvy = "=0.15.7"
 indexmap = { version = "2", features = ["serde"] }
@@ -58,7 +73,6 @@ sha2 = "=0.10.9"
 tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
-ureq = "3"
 walkdir = "2"
 
 # test-only

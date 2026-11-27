@@ -73,23 +73,16 @@ these bindings and records role-associated execution evidence through work’s
 mutation surface. A binding is distinct from a claim; different roles can
 have different sessions without transferring execution ownership.
 
-The runner records and reflects the todo's item-level execution claim before
-starting any session. `claim.held` exposes that claim. Session identities are
-retained only in per-todo, per-role bindings. A dispatch hold pauses automatic
-pickup without establishing or transferring the claim.
+The runner records the todo's item-level execution claim before starting any
+session. `claim.held` exposes that claim. Session identities are retained only
+in per-todo, per-role bindings. A dispatch hold pauses automatic pickup without
+establishing or transferring the claim.
 
-A todo's recorded orchestrator is its latest driver binding for the
-orchestrator role that has not failed. That binding's own native session
-re-enters through `instrukt todo work <slug>` without `--placement-evidence`
-when it calls on the same computer, under the selected runtime the binding
-recorded, from the binding's worktree on its branch: the same binding is
-reopened with its key, attempt, title and worktree, and that session holds the
-todo's claim. A claim on this computer that no session holds yet passes to that
-session, and the todo is then no longer offered for automatic pickup. Any other
-caller — another session, a caller with no native session, an orchestrator a
-later binding superseded, or one outside the binding's worktree or branch —
-still supplies placement evidence, and a claim held by another session or
-computer refuses entry, leaving the record unchanged.
+The retained driver binding identifies the session, runtime, worktree and
+branch used by `instrukt todo work <slug>`. A caller with matching coordinates
+can reopen that binding and take up a local unassigned claim. New placement
+requires native placement evidence. A claim held by a different session or
+computer refuses entry.
 
 `instrukt todo update <slug> --hold --reason <reason>` sets a hold with its
 source, causal reason, time and recording session. A missing or blank reason
@@ -107,13 +100,8 @@ attention any placed hold raises
 `--reason` require each other, a blank reason is refused, and a hold is
 refused together with `--icebox`; a refused creation records nothing.
 
-A dispatch hold is the wait on a condition outside the project's todos, such
-as an unmerged one-off branch, a binary rollout or an external gate, and its
-reason names that condition. A wait on another todo is a prerequisite, which
-the dependent leaves on its own when the prerequisite delivers. Work whose
-outcome has not converged is parked in the icebox, which takes it out of the
-lifecycle (`project/instrukt/spec/feature/work/todos`), while a hold keeps
-converged work in it.
+Prerequisites block automatic pickup until they deliver. Iceboxed status and
+a dispatch hold each exclude a todo from automatic pickup.
 
 `instrukt todo update <slug> --release` releases the dispatch hold while
 preserving the todo's intent, artifacts, dependencies and execution-claim
@@ -127,8 +115,9 @@ holders carry no dispatch hold; each child carries its own.
 An attributable `hold` label addition by a collaborator with write access sets
 the dispatch hold with source `github`, reason `held from GitHub by <login>`,
 GitHub actor and time. An authorized removal releases the current hold and
-retains the releasing GitHub login. These use the same item-level hold and
-release semantics as the CLI, including preservation of work, claims and
+retains the releasing GitHub login. Both arrive and take effect when the
+runner's reflection pass reads the todo's issue, using the same item-level hold
+and release semantics as the CLI, including preservation of work, claims and
 running sessions. There is one current hold per todo, with its audit retained.
 Inbound action authorization, replay accounting and output-label reflection
 belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
@@ -165,33 +154,28 @@ belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).
   Then the documentation still belongs to the original todo
 ```
 
-### UC-DH4: A developer's orchestrator continues in its own conversation after they approve there
+### UC-DH4: Reopen a recorded workspace binding
 
 ```gherkin
-  Given a developer's todo orchestrator released its todo's claim to wait for their approval
-  When the developer approves in that orchestrator's conversation
-  And the orchestrator picks the todo up again from its worktree without placement evidence
-  Then the orchestrator holds the todo's claim under its same recorded assignment and worktree
-  And the todo is no longer offered for automatic pickup
+Given a session has a retained driver binding for a todo on this computer
+When that session enters from the recorded worktree and branch
+Then its recorded binding is reopened with its original assignment identity
 ```
 
-### UC-DH5: A resuming orchestrator takes over the runner's pending claim on its todo
+### UC-DH5: Assign a local unassigned claim
 
 ```gherkin
-  Given a developer's todo orchestrator released its todo's claim
-  And the runner on the same computer claimed the todo but has not given it to a conversation
-  When the orchestrator picks the todo up again from its worktree without placement evidence
-  Then the orchestrator holds the todo's claim under its same recorded assignment
-  And the todo is no longer offered for automatic pickup
+Given the runner holds a local claim with no session assigned
+When the session with the matching recorded placement enters
+Then the claim records that session
 ```
 
-### UC-DH6: Only the recorded orchestrator resumes without placement evidence
+### UC-DH6: Refuse conflicting workspace entry
 
 ```gherkin
-  Given a developer's todo orchestrator released its todo's claim
-  When another conversation picks the todo up from that worktree without placement evidence
-  Then the pickup is refused
-  And the todo stays unclaimed with its recorded assignment unchanged
+Given a todo's execution claim is held by one session
+When a different session attempts workspace entry
+Then the existing claim and binding remain unchanged
 ```
 
 ### UC-DH7: File converged work that waits on something outside the project's todos

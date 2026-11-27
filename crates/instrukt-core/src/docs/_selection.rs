@@ -8,7 +8,9 @@
 //! These are text functions only. Which snippets a selection holds, in
 //! which order, and how each body passes the read pipeline is the caller's:
 //! it hands over the snippets in full in traversal order, the listed ones
-//! and the position's triggered procedures.
+//! and the position's triggered procedures. Which listing-line form a
+//! rendering uses, inline ([`Selection::render`]) or headed
+//! ([`Selection::render_headed`]), is the caller's too.
 
 use std::collections::BTreeSet;
 
@@ -29,8 +31,8 @@ impl Listing {
     /// or for a triggered procedure
     /// `` - <id>: <description> — when: <trigger> — `instrukt docs get <id> --closure` ``.
     pub fn line(&self) -> String {
-        match self.trigger.as_deref().map(str::trim) {
-            Some(trigger) if !trigger.is_empty() => format!(
+        match self.trigger_text() {
+            Some(trigger) => format!(
                 "- {}: {} — when: {trigger} — `{}`",
                 self.id,
                 self.description.trim(),
@@ -44,6 +46,39 @@ impl Listing {
             ),
         }
     }
+
+    /// The listing line of the headed form, carrying no command:
+    /// `- <id>: <description>`, or for a triggered procedure
+    /// `- <id>: <description> — when: <trigger>`. Its heading names the
+    /// command.
+    pub fn headed_line(&self) -> String {
+        match self.trigger_text() {
+            Some(trigger) => format!(
+                "- {}: {} — when: {trigger}",
+                self.id,
+                self.description.trim()
+            ),
+            None => format!("- {}: {}", self.id, self.description.trim()),
+        }
+    }
+
+    /// The trigger the listing carries, when it has a non-empty one.
+    fn trigger_text(&self) -> Option<&str> {
+        self.trigger
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+    }
+}
+
+/// How a rendering's listing lines lead to their command
+/// (`project/instrukt/spec/feature/docs/progressive-retrieval`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListingForm {
+    /// Each line carries its command.
+    Inline,
+    /// A heading over each run of lines of one kind carries the command once.
+    Headed,
 }
 
 /// The line naming a snippet another repository publishes:
@@ -71,7 +106,9 @@ pub struct InFull {
     /// `project`), whose heading it sits under.
     pub position: String,
     /// Its body after the read pipeline: frontmatter and required reads
-    /// stripped, its own H1 first.
+    /// stripped, its own H1 first. A caller may hold a source's compressed
+    /// unit here instead, framed under an H1 naming the source; it is
+    /// demoted like any body.
     pub body: String,
     /// A procedure's `activation_trigger`, shown directly under its
     /// heading.
@@ -162,8 +199,23 @@ impl Selection {
     /// with its headings demoted, a named read as its line, consecutive
     /// lines as one list; then the named listed snippets and the listing
     /// lines, back under the position's heading; then the triggered
-    /// procedures neither rendered in full nor listed.
+    /// procedures neither rendered in full nor listed. Each listing line
+    /// carries its command (the inline form).
     pub fn render(&self) -> String {
+        self.render_as(ListingForm::Inline)
+    }
+
+    /// The rendered section of [`Selection::render`] with its listing lines
+    /// in the headed form: the listed snippets without a trigger under
+    /// one heading naming `instrukt docs get <id>`, then every triggered
+    /// procedure — one `listed` names included — under one naming
+    /// `instrukt docs get <id> --closure`, each line without its
+    /// command.
+    pub fn render_headed(&self) -> String {
+        self.render_as(ListingForm::Headed)
+    }
+
+    fn render_as(&self, form: ListingForm) -> String {
         let mut blocks: Vec<String> = vec![heading(&self.position)];
         let mut current = self.position.as_str();
         let shown: BTreeSet<&SnippetId> = self
@@ -199,22 +251,51 @@ impl Selection {
                 },
             }
         }
-        let lines: Vec<String> = self
-            .references
+        let listings = self
+            .listed
             .iter()
-            .cloned()
-            .chain(
-                self.listed
+            .chain(self.triggered.iter().filter(|t| !shown.contains(&t.id)));
+        let tail: Vec<String> = match form {
+            ListingForm::Inline => {
+                let lines: Vec<String> = self
+                    .references
                     .iter()
-                    .chain(self.triggered.iter().filter(|t| !shown.contains(&t.id)))
-                    .map(Listing::line),
-            )
-            .collect();
-        if !lines.is_empty() {
+                    .cloned()
+                    .chain(listings.map(Listing::line))
+                    .collect();
+                if lines.is_empty() {
+                    Vec::new()
+                } else {
+                    vec![lines.join("\n")]
+                }
+            }
+            ListingForm::Headed => {
+                let (triggered, plain): (Vec<&Listing>, Vec<&Listing>) =
+                    listings.partition(|l| l.trigger_text().is_some());
+                let mut tail = Vec::new();
+                if !self.references.is_empty() {
+                    tail.push(self.references.join("\n"));
+                }
+                for (title, run) in [
+                    ("## Listed — read each with `instrukt docs get <id>`", plain),
+                    (
+                        "## Triggered procedures — read each with `instrukt docs get <id> --closure`",
+                        triggered,
+                    ),
+                ] {
+                    if !run.is_empty() {
+                        let lines: Vec<String> = run.iter().map(|l| l.headed_line()).collect();
+                        tail.push(format!("{title}\n\n{}", lines.join("\n")));
+                    }
+                }
+                tail
+            }
+        };
+        if !tail.is_empty() {
             if current != self.position {
                 blocks.push(heading(&self.position));
             }
-            blocks.push(lines.join("\n"));
+            blocks.extend(tail);
         }
         let mut text = blocks.join("\n\n");
         text.push('\n');
@@ -270,4 +351,75 @@ pub(crate) fn responsibilities<'a>(
             .collect::<Vec<_>>()
             .join("\n")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id(value: &str) -> SnippetId {
+        SnippetId::parse(value).unwrap()
+    }
+
+    fn listing(value: &str, trigger: Option<&str>) -> Listing {
+        Listing {
+            id: id(value),
+            description: format!("What {value} says."),
+            trigger: trigger.map(str::to_owned),
+        }
+    }
+
+    fn selection(listed: Vec<Listing>, triggered: Vec<Listing>) -> Selection {
+        Selection {
+            position: "general".to_owned(),
+            in_full: vec![Entry::InFull(InFull {
+                id: id("general/procedure/held"),
+                position: "general".to_owned(),
+                body: "# Held — Procedure\n\nDo the held thing.\n".to_owned(),
+                trigger: Some("Use when holding.".to_owned()),
+            })],
+            references: Vec::new(),
+            listed,
+            triggered,
+        }
+    }
+
+    #[test]
+    fn headed_form_heads_plain_listings_with_the_get_command() {
+        let rendered = selection(
+            vec![
+                listing("general/policy/first", None),
+                listing("general/policy/second", None),
+            ],
+            Vec::new(),
+        )
+        .render_headed();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn headed_form_heads_a_listed_triggered_procedure_with_the_closure_command() {
+        let rendered = selection(
+            vec![
+                listing("general/policy/plain", None),
+                listing("general/procedure/listed", Some("Use when listed.")),
+            ],
+            vec![listing("general/procedure/other", Some("Use when other."))],
+        )
+        .render_headed();
+        insta::assert_snapshot!(rendered);
+    }
+
+    #[test]
+    fn headed_form_does_not_relist_a_triggered_procedure_shown_in_full() {
+        let rendered = selection(
+            Vec::new(),
+            vec![
+                listing("general/procedure/held", Some("Use when holding.")),
+                listing("general/procedure/other", Some("Use when other.")),
+            ],
+        )
+        .render_headed();
+        insta::assert_snapshot!(rendered);
+    }
 }

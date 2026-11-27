@@ -1,0 +1,17 @@
+{
+  "suppressions": {
+    "clippy::disallowed_methods": 24,
+    "clippy::enum_variant_names": 1,
+    "clippy::expect_used": 24,
+    "clippy::panic": 10,
+    "clippy::result_large_err": 2,
+    "clippy::too_many_arguments": 18,
+    "clippy::unwrap_used": 94,
+    "clippy::zombie_processes": 2,
+    "dead_code": 39,
+    "shellcheck::SC2016": 2,
+    "shellcheck::SC2086": 3,
+    "unused_imports": 2
+  },
+  "threshold": 1000
+}

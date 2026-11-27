@@ -1,10 +1,9 @@
 ---
 source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
-assertion_line: 884
 expression: "stdout(&env, &read)"
 ---
 # instrukt docs get --closure: acme/procedure/start
-# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, beta, beta/spec/thing
+# Required reads (included): acme/policy/rules, acme/principle/care, acme/concept/terms, general, general/spec/ground
 
 ---
 id: acme/policy/rules
@@ -100,20 +99,20 @@ Terms.
 Text.
 
 ---
-id: beta/spec/thing
+id: general/spec/ground
 type: spec
-domain: beta
+domain: general
 scope: global
-description: What a thing is.
-source: [TMP]/demo/docs/domain/beta/spec/thing.md
+description: What every domain stands on.
+source: [TMP]/platform/docs/general/spec/ground.md
 ---
-# Thing — Spec
+# Ground — Spec
 
 ## What it is
 
 ### Detail
 
-A thing.
+The ground.
 
 ## Canonical fields
 

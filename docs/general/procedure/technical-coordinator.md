@@ -10,7 +10,6 @@ visibility: public
 ## Required reads
 
 - [general/policy/message-identity-headers](../policy/message-identity-headers.md)
-- [general/policy/no-output-turn](../policy/no-output-turn.md)
 - [general/principle/origin-routing](../principle/origin-routing.md)
 - [general/procedure/mcp-server-tools](mcp-server-tools.md)
 
@@ -217,9 +216,7 @@ coordination:
      and any decision owned by the human;
    - keep human-facing summaries free of raw tool traces, command diagnostics,
      and intermediate coordination noise (and in company-facing replies, speak
-     in the company's own terms without exposing host internals);
-   - when nothing is owed, close the turn with bare `NOOP`
-     (`general/policy/no-output-turn`).
+     in the company's own terms without exposing host internals).
 
 ## Outputs
 
@@ -258,6 +255,3 @@ every coordination move in the shared git-backed `docs/` and live target-repo
 - [general/procedure/company-assistance](company-assistance.md)
 - [general/procedure/company-onboarding/overview](company-onboarding/overview.md)
 - [general/procedure/company-onboarding/service-connection](company-onboarding/service-connection.md)
-- [sdlc/procedure/greenfield-intake](../../domain/sdlc/procedure/greenfield-intake.md)
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
-- [sdlc/procedure/lifecycle/work/review-commits](../../domain/sdlc/procedure/lifecycle/work/review-commits.md)

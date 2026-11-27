@@ -6,7 +6,10 @@
 //! the snippet requiring it, each once per file — in traversal order, under
 //! the heading of the position each belongs to; the section shapes are the
 //! docs context's ([`docs::Selection`]). Planned material is dropped and a
-//! pending snippet is never inlined.
+//! pending snippet is never inlined. A snippet whose compressed unit is
+//! current is held as that unit, framed under its id, and the file opens
+//! with the units' legend
+//! (`project/instrukt/spec/feature/publication/compressed-units`).
 //!
 //! Where the snippets and the domain indexes come from is a [`Source`]:
 //! the renderer reads a snippet, and a bare domain's `index.yaml`, only
@@ -31,6 +34,9 @@ use std::path::{Path, PathBuf};
 
 use super::_patch::Contribution;
 use super::_source::{Committed, EntryIndex};
+use super::_units::{
+    self, Decision, Fallback, LEGEND, RepositoryUnits, UnitFinding, UnitFindingKind,
+};
 use super::PublicationError;
 use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
 use crate::docs::{
@@ -73,9 +79,13 @@ pub fn is_rendering(bytes: &[u8]) -> bool {
 }
 
 /// What one sync's renderings read.
+#[derive(Clone, Copy)]
 pub(super) struct Renderer<'a> {
     pub home: &'a Home,
     pub project: &'a ProjectSlug,
+    /// The committed tree of the project, whose units its own positions'
+    /// snippets are held as.
+    pub tree: &'a Committed,
     /// The committed documentation of the project.
     pub corpus: &'a Corpus,
     /// The domains the project publishes in this sync.
@@ -87,6 +97,17 @@ pub(super) struct Renderer<'a> {
     /// included); a position without one is absent.
     pub indexes: &'a BTreeMap<DomainName, PositionIndex>,
     pub values: &'a Values<'a>,
+    /// How the sources of the global files are held.
+    pub units: UnitRendering,
+}
+
+/// How a global file holds the sources it holds in full.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum UnitRendering {
+    /// Each source as its current unit, in prose where it has none.
+    Compressed,
+    /// Every source in prose, as the uncompressed copy holds it.
+    Prose,
 }
 
 /// What one rendered file holds so far, in traversal order — each snippet
@@ -100,6 +121,10 @@ struct Expansion {
     seen: BTreeSet<SnippetId>,
     domains: BTreeSet<DomainName>,
     references: Vec<String>,
+    /// How many of the snippets in full are held as their units.
+    units: usize,
+    /// The unit findings that held a source in prose in place of its unit.
+    fallbacks: Vec<UnitFinding>,
 }
 
 impl Expansion {
@@ -139,6 +164,8 @@ impl Renderer<'_> {
         }
         let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = rendering.triggered(|e| global_of(e, &general), &shown);
+        // A global file heads its listing lines with their command
+        // (`project/instrukt/spec/feature/publication/agent-entrypoints`).
         let mut blocks = vec![
             Selection {
                 position: general.as_str().to_owned(),
@@ -147,7 +174,7 @@ impl Renderer<'_> {
                 listed,
                 triggered,
             }
-            .render(),
+            .render_headed(),
         ];
         if let Some(configured) = docs::responsibilities(
             self.index
@@ -170,6 +197,8 @@ impl Renderer<'_> {
                 domain_line(domain, domain_index.description.as_deref())
             ));
         }
+        let mut own_units = 0;
+        let mut own_fallbacks = Vec::new();
         if let Some(PositionIndex::General(general_index)) = index {
             // What the general section holds in full is not repeated.
             let mut own = Expansion {
@@ -177,6 +206,8 @@ impl Renderer<'_> {
                 seen: expansion.seen.clone(),
                 domains: expansion.domains.clone(),
                 references: Vec::new(),
+                units: 0,
+                fallbacks: Vec::new(),
             };
             let names: &[&str] = if matches!(cli, "claude" | "claudeAgent") {
                 &["claude", "claudeAgent"]
@@ -188,6 +219,8 @@ impl Renderer<'_> {
                     rendering.expand(ids, file, &mut own)?;
                 }
             }
+            own_units = own.units;
+            own_fallbacks = std::mem::take(&mut own.fallbacks);
             if let Some(first) = own.order.first() {
                 blocks.push(
                     Selection {
@@ -203,7 +236,14 @@ impl Renderer<'_> {
         }
         let text = finish(&blocks.join("\n"));
         let references = kept_references(&text);
-        Ok(GlobalFile { text, references })
+        let mut fallbacks = expansion.fallbacks;
+        fallbacks.extend(own_fallbacks);
+        Ok(GlobalFile {
+            text,
+            references,
+            units: expansion.units + own_units > 0,
+            fallbacks,
+        })
     }
 
     /// Where this renderer's snippets and domain indexes come from.
@@ -211,10 +251,13 @@ impl Renderer<'_> {
         Published {
             home: self.home,
             project: self.project,
+            tree: self.tree,
             corpus: self.corpus,
             owned: self.owned,
             indexes: self.indexes,
             values: self.values,
+            units: self.units,
+            index: self.index,
         }
     }
 
@@ -243,14 +286,19 @@ impl Rendering<'_> {
     /// The root `AGENTS.md`'s text below the generated line: the rendering
     /// of `docs/project/index.yaml` (`expanded`, `listed`, then the
     /// project's triggered procedures), then the configured
-    /// responsibilities; empty when there are none.
-    fn root_agents(&self, project_index: &PositionIndex) -> Result<String, PublicationError> {
+    /// responsibilities; empty when there are none. With whether it holds a
+    /// unit.
+    fn root_agents(
+        &self,
+        project_index: &PositionIndex,
+    ) -> Result<(String, bool), PublicationError> {
         let mut expansion = Expansion::default();
         let index_file = "docs/project/index.yaml";
         self.expand(project_index.expanded(), index_file, &mut expansion)?;
         let listed = self.listings(project_index.listed(), index_file, &mut expansion)?;
         let shown: BTreeSet<SnippetId> = expansion.shown(&listed).into_iter().cloned().collect();
         let triggered = self.triggered(|e| self.local(e), &shown);
+        let units = expansion.units > 0;
         let mut blocks = Vec::new();
         if !expansion.order.is_empty()
             || !expansion.references.is_empty()
@@ -273,7 +321,7 @@ impl Rendering<'_> {
         {
             blocks.push(configured);
         }
-        Ok(finish(&blocks.join("\n\n")))
+        Ok((finish(&blocks.join("\n\n")), units))
     }
 
     /// Whether `entry` is one of this project's own snippets.
@@ -335,10 +383,21 @@ impl Rendering<'_> {
                 for nested in &rendered.required_reads {
                     self.follow(nested, &source, into)?;
                 }
+                let body = match self.source.unit(id)? {
+                    UnitText::Held(framed) => {
+                        into.units += 1;
+                        framed
+                    }
+                    UnitText::Prose => rendered.text,
+                    UnitText::Fallback(findings) => {
+                        into.fallbacks.extend(findings);
+                        rendered.text
+                    }
+                };
                 into.order.push(Entry::InFull(InFull {
                     id: id.clone(),
                     position: position_name(id),
-                    body: rendered.text,
+                    body,
                     trigger: self.entry(id).and_then(trigger_of).map(str::to_owned),
                 }));
                 Ok(())
@@ -439,6 +498,13 @@ trait Source {
         file: &str,
     ) -> Result<Option<(Rendered, String)>, PublicationError>;
 
+    /// How the rendering holds `id`: as its framed and rendered unit, or in
+    /// prose, with the findings that kept its unit out
+    /// (`project/instrukt/spec/feature/publication/compressed-units`).
+    fn unit(&self, _id: &SnippetId) -> Result<UnitText, PublicationError> {
+        Ok(UnitText::Prose)
+    }
+
     /// The `index.yaml` of the position addressed by `domain`, read when a
     /// rendering asks for it; `None` when it has none.
     fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError>;
@@ -449,6 +515,18 @@ trait Source {
     fn missing_domain(&self, domain: &DomainName, file: &str) -> Option<PublicationError>;
 }
 
+/// How a rendering holds one snippet it holds in full.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum UnitText {
+    /// As its unit, framed under its id and rendered.
+    Held(String),
+    /// In its prose: its unit is stale or missing, or units are not held.
+    Prose,
+    /// In its prose, in place of a unit with these findings, which the
+    /// rendering reports.
+    Fallback(Vec<UnitFinding>),
+}
+
 /// The published source: the publishing project's committed corpus for
 /// the domains it publishes in this sync, the computer's published tree
 /// for every other, and every published position's `index.yaml` as this
@@ -456,13 +534,117 @@ trait Source {
 struct Published<'a> {
     home: &'a Home,
     project: &'a ProjectSlug,
+    tree: &'a Committed,
     corpus: &'a Corpus,
     owned: &'a BTreeSet<DomainName>,
     indexes: &'a BTreeMap<DomainName, PositionIndex>,
     values: &'a Values<'a>,
+    units: UnitRendering,
+    /// The global index as this sync leaves it, whose entries carry each
+    /// published snippet's recorded source digest.
+    index: &'a GlobalIndex,
+}
+
+impl Published<'_> {
+    /// The source `id` is, with the source digest the global index records
+    /// for it, and what stands where its unit belongs: from the committed
+    /// tree for a position the project publishes, from the home's published
+    /// tree, through no symbolic link, for every other; `None` when the
+    /// snippet is pending, has no recorded digest or cannot be read here.
+    fn unit_read(
+        &self,
+        id: &SnippetId,
+    ) -> Result<Option<(_units::Source, _units::UnitRead)>, PublicationError> {
+        let Some(digest) = self
+            .index
+            .snippets
+            .iter()
+            .find(|entry| &entry.id == id)
+            .and_then(|entry| entry.content_sha256.as_deref())
+        else {
+            return Ok(None);
+        };
+        let own = id.domain().is_none_or(|d| self.owned.contains(&d));
+        if own {
+            let Some(snippet) = self.corpus.snippet(id) else {
+                return Ok(None);
+            };
+            let View::Visible { version, body } = snippet.view(Lens::Current) else {
+                return Ok(None);
+            };
+            let path = snippet.path().display().to_string();
+            let source = _units::Source::recorded(
+                id,
+                &path,
+                version.body(),
+                &body,
+                Some(self.project),
+                digest,
+            );
+            let read = RepositoryUnits::of(self.tree).read(&path);
+            return Ok(Some((source, read)));
+        }
+        let (Some(domain), Some(rel)) = (id.domain(), id.as_str().split_once('/')) else {
+            return Ok(None);
+        };
+        let path = self.home.docs_dir().join(format!("{}.md", id.as_str()));
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(None);
+        };
+        let Some(origin) = docs::published_source(id) else {
+            return Ok(None);
+        };
+        let corpus =
+            Corpus::from_sources(None, Some(self.home), [SourceFile { path: origin, text }]);
+        let Some(snippet) = corpus.snippet(id) else {
+            return Ok(None);
+        };
+        let View::Visible { version, body } = snippet.view(Lens::Current) else {
+            return Ok(None);
+        };
+        let shown = path.display().to_string();
+        let source = _units::Source::recorded(id, &shown, version.body(), &body, None, digest);
+        let read = _units::read_home(self.home, &domain, &format!("{}.md", rel.1));
+        Ok(Some((source, read)))
+    }
 }
 
 impl Source for Published<'_> {
+    /// A unit with any finding, or whose rendering keeps a reference for an
+    /// agent program, is held in prose and reported; a global file is
+    /// written despite it.
+    fn unit(&self, id: &SnippetId) -> Result<UnitText, PublicationError> {
+        if self.units == UnitRendering::Prose {
+            return Ok(UnitText::Prose);
+        }
+        let Some((source, read)) = self.unit_read(id)? else {
+            return Ok(UnitText::Prose);
+        };
+        match _units::decide(read, &source) {
+            Decision::Unit(unit) => {
+                let own = id.domain().is_none_or(|d| self.owned.contains(&d));
+                let cx = RenderContext {
+                    home: Some(self.home),
+                    values: self.values,
+                    project: own.then_some(self.project),
+                };
+                let rendered = docs::render_unit_body(&unit.body, &cx)
+                    .map_err(|e| render_error(&unit.path, &e.to_string()))?;
+                if let Some(reference) = kept_references(&rendered.text).into_iter().next() {
+                    return Ok(UnitText::Fallback(vec![UnitFinding {
+                        path: unit.path,
+                        kind: UnitFindingKind::RenderingRule {
+                            rule: format!("it keeps `{reference}` for an agent program to resolve"),
+                        },
+                    }]));
+                }
+                Ok(UnitText::Held(_units::frame(id.as_str(), &rendered.text)))
+            }
+            Decision::Prose(Fallback::Findings(findings)) => Ok(UnitText::Fallback(findings)),
+            Decision::Prose(Fallback::Missing | Fallback::Stale(_)) => Ok(UnitText::Prose),
+        }
+    }
+
     fn load(
         &self,
         id: &SnippetId,
@@ -591,6 +773,42 @@ impl Source for Repository<'_> {
         Ok(Some((rendered, source)))
     }
 
+    /// A unit with findings is a finding of the rendering, which leaves the
+    /// file as it is.
+    fn unit(&self, id: &SnippetId) -> Result<UnitText, PublicationError> {
+        let Some(snippet) = self.corpus.snippet(id) else {
+            return Ok(UnitText::Prose);
+        };
+        let View::Visible { version, body } = snippet.view(Lens::Current) else {
+            return Ok(UnitText::Prose);
+        };
+        let path = snippet.path().display().to_string();
+        let source = _units::Source::snippet(
+            id,
+            &path,
+            version.body(),
+            &body,
+            Lens::Current,
+            self.project,
+        );
+        match RepositoryUnits::of(self.tree).decide(&source) {
+            Decision::Unit(unit) => {
+                let cx = RenderContext {
+                    home: None,
+                    values: &self.values,
+                    project: self.project,
+                };
+                let rendered = docs::render_unit_body(&unit.body, &cx)
+                    .map_err(|e| self.failure(&unit.path, e))?;
+                Ok(UnitText::Held(_units::frame(id.as_str(), &rendered.text)))
+            }
+            Decision::Prose(Fallback::Findings(findings)) => {
+                Err(PublicationError::UnitFindings { findings })
+            }
+            Decision::Prose(Fallback::Missing | Fallback::Stale(_)) => Ok(UnitText::Prose),
+        }
+    }
+
     fn domain_index(&self, domain: &DomainName) -> Result<Option<PositionIndex>, PublicationError> {
         super::_sync::committed_index(self.tree, &Position::of_domain(domain))
     }
@@ -710,6 +928,8 @@ pub enum RenderFindingKind {
     /// The entry index is, or lies behind, a symbolic link, through which
     /// nothing is read.
     LinkedIndex { index: String },
+    /// The unit of a document the rendering holds in full has a finding.
+    Unit { finding: UnitFinding },
 }
 
 impl std::fmt::Display for RenderFinding {
@@ -776,6 +996,10 @@ impl std::fmt::Display for RenderFinding {
                 f,
                 "{path}: {document} is listed, but {carrier} in `expanded` already brings it in full; remove it from `listed`; nothing is rendered until it is fixed"
             ),
+            RenderFindingKind::Unit { finding } => write!(
+                f,
+                "{path}: {finding}; the unit stands in for nothing until it is fixed or removed, and the file is left as it is until then"
+            ),
             RenderFindingKind::LinkedIndex { index } => write!(
                 f,
                 "{path}: {index} is a symbolic link or lies in a linked folder, and nothing is read through a link; replace the link with what it points to; the file is left as it is until then"
@@ -803,9 +1027,10 @@ pub(super) fn project_without_index() -> Notice {
 
 /// Renders the root `AGENTS.md` of the repository whose view is `tree`,
 /// from the tree alone. What the root `instrukt.yaml` is decides the mode: a
-/// project layer renders from `docs/project/index.yaml`; a company's
-/// settings document, or no root document beside a `docs/index.yaml`, is a
-/// company home, rendered from that index; no root document and no company
+/// project layer declaring `company_repository`, a company's settings
+/// document, or no root document beside a `docs/index.yaml`, is a company
+/// home, rendered from that index; any other project layer renders from
+/// `docs/project/index.yaml`; no root document and no company
 /// index renders nothing. Every `AGENTS.md` below the root that is
 /// instrukt's rendering is removed; the root's is removed only where the
 /// mode's entry index is absent, and left as it is where the index reports a
@@ -827,13 +1052,13 @@ pub(super) fn render_tree(
             });
             return Ok(plan);
         }
-        RootDocument::ProjectLayer(project) => {
-            render_project(tree, project.as_ref(), override_beside_root, &mut plan)?;
-            Some(project_index.as_str())
-        }
         root if company_home(&root, company_index_absent) => {
             super::_company::render(tree, override_beside_root, &mut plan);
             Some(super::_company::COMPANY_INDEX)
+        }
+        RootDocument::ProjectLayer { slug, .. } => {
+            render_project(tree, slug.as_ref(), override_beside_root, &mut plan)?;
+            Some(project_index.as_str())
         }
         _ => None,
     };
@@ -849,14 +1074,19 @@ pub(super) fn render_tree(
 
 /// Whether a tree whose root document is `root` renders as a company home
 /// (`project/instrukt/spec/feature/publication/agent-entrypoints`, "What makes
-/// a repository a company home"): a company's settings document, or no root
-/// document beside a `docs/index.yaml` that is there, read or linked. The one
-/// rule rendering and [`super::is_company_index`] decide by.
+/// a repository a company home"): a project layer declaring
+/// `company_repository`, a company's settings document, or no root document
+/// beside a `docs/index.yaml` that is there, read or linked. Any other
+/// project layer is a project, whatever `docs/` holds. The one rule
+/// rendering and [`super::is_company_index`] decide by.
 pub(super) fn company_home(root: &RootDocument, company_index_absent: bool) -> bool {
     match root {
+        RootDocument::ProjectLayer {
+            company_repository, ..
+        } => *company_repository,
         RootDocument::CompanySettings(_) => true,
         RootDocument::Absent => !company_index_absent,
-        RootDocument::ProjectLayer(_) | RootDocument::Unreadable(_) => false,
+        RootDocument::Unreadable(_) => false,
     }
 }
 
@@ -917,8 +1147,16 @@ fn render_project(
         project,
         index: &index,
     };
-    let text = match rendering.root_agents(&project_index) {
-        Ok(text) => text,
+    let (text, units) = match rendering.root_agents(&project_index) {
+        Ok(rendered) => rendered,
+        Err(PublicationError::UnitFindings { findings }) => {
+            plan.findings
+                .extend(findings.into_iter().map(|finding| RenderFinding {
+                    path: path.clone(),
+                    kind: RenderFindingKind::Unit { finding },
+                }));
+            return Ok(());
+        }
         Err(PublicationError::CommittedDirectives { findings }) => {
             plan.findings
                 .extend(findings.into_iter().map(|finding| RenderFinding {
@@ -946,9 +1184,19 @@ fn render_project(
     plan.writes.push(PlannedFile {
         current: tree.file(AGENTS_FILE).map(<[u8]>::to_vec),
         path,
-        text: format!("{GENERATED_LINE}\n{text}"),
+        text: format!("{}{text}", opening(units)),
     });
     Ok(())
+}
+
+/// A committed entrypoint's opening: the generated line, then, when the
+/// file holds a unit, the legend.
+pub(super) fn opening(units: bool) -> String {
+    if units {
+        format!("{GENERATED_LINE}\n{LEGEND}\n\n")
+    } else {
+        format!("{GENERATED_LINE}\n")
+    }
 }
 
 /// Whether `entry` is a published snippet of `domain`.
@@ -1034,13 +1282,18 @@ pub(super) fn finish(text: &str) -> String {
     }
 }
 
-/// A rendered global agent file and the references it keeps.
+/// A rendered global agent file, the references it keeps and how it holds
+/// units.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct GlobalFile {
     pub text: String,
     /// Each reference the docs model sees in `text`, as `@<target>`: an
     /// agent program would try to load it.
     pub references: Vec<String>,
+    /// Whether it holds at least one unit.
+    pub units: bool,
+    /// Each unit finding that held a source in prose in its unit's place.
+    pub fallbacks: Vec<UnitFinding>,
 }
 
 /// The references the docs model sees in a rendered `text`, as
@@ -1053,305 +1306,4 @@ fn kept_references(text: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const LAYER: &str = "schema_version: 6\nproject: demo\n";
-    const INDEX: &str = "expanded:\n  - project/demo/policy/house\n";
-
-    /// A project policy whose rule is `rule`, requiring each of `reads`.
-    fn policy(rule: &str, reads: &[&str]) -> String {
-        let mut text = "---\ndescription: House.\n---\n\n# House — Policy\n".to_owned();
-        if !reads.is_empty() {
-            text.push_str("\n## Required reads\n\n");
-            for read in reads {
-                text.push_str(&format!("- {read}\n"));
-            }
-        }
-        text.push_str(&format!("\n## Rules\n\n{rule}\n"));
-        text
-    }
-
-    /// A project tree: its layer and index, `house` as `house`, and `more`
-    /// files beside them.
-    fn plan(house: &str, more: &[(&str, &str)]) -> RenderPlan {
-        let mut files = vec![
-            (CONFIG_FILE_NAME, LAYER),
-            ("docs/project/index.yaml", INDEX),
-            ("docs/project/policy/house.md", house),
-        ];
-        files.extend_from_slice(more);
-        rendered(Committed::of(&files))
-    }
-
-    fn rendered(tree: Committed) -> RenderPlan {
-        render_tree(&tree, tree.file(OVERRIDE_FILE).is_some()).unwrap()
-    }
-
-    /// An earlier release's rendering, opening with the line it wrote.
-    fn earlier_rendering() -> String {
-        format!("{EARLIER_GENERATED_LINE}\n# Old\n")
-    }
-
-    fn root(plan: &RenderPlan) -> &PlannedFile {
-        plan.writes
-            .iter()
-            .find(|file| file.path == Path::new(AGENTS_FILE))
-            .unwrap()
-    }
-
-    #[test]
-    fn a_rendering_is_recognised_by_either_generated_line_exactly() {
-        for line in [GENERATED_LINE, EARLIER_GENERATED_LINE] {
-            assert!(is_rendering(format!("{line}\n# Body\n").as_bytes()));
-            assert!(is_rendering(format!("{line}\r\n# Body\r\n").as_bytes()));
-            assert!(is_rendering(line.as_bytes()));
-        }
-        let near_match = GENERATED_LINE.replacen("instrukt", "instrukt-example", 1);
-        let one_character_off = GENERATED_LINE.replacen("index", "indeX", 1);
-        for other in [
-            near_match.as_str(),
-            "<!-- Generated by instrukt-example -->",
-            "<!-- Generated from docs/index.yaml by the company publisher -->",
-            one_character_off.as_str(),
-            "# Instructions a person wrote",
-            "",
-        ] {
-            assert!(
-                !is_rendering(format!("{other}\n# Body\n").as_bytes()),
-                "{other}"
-            );
-        }
-        assert!(!is_rendering(b""));
-    }
-
-    #[test]
-    fn an_unheld_read_is_exactly_its_reference_line() {
-        let plan = plan(&policy("Be kind.", &["sdlc/policy/tests"]), &[]);
-        assert_eq!(plan.findings, []);
-        insta::assert_snapshot!(root(&plan).text);
-    }
-
-    #[test]
-    fn a_held_snippet_is_inlined() {
-        let plan = plan(&policy("Every change keeps the house kind.", &[]), &[]);
-        let written: Vec<&Path> = plan.writes.iter().map(|file| file.path.as_path()).collect();
-        assert_eq!(written, [Path::new(AGENTS_FILE)]);
-        assert!(is_rendering(root(&plan).text.as_bytes()));
-        insta::assert_snapshot!(root(&plan).text);
-    }
-
-    #[test]
-    fn a_required_read_keeps_its_place_whether_held_or_named() {
-        let care = "---\ndescription: Care.\n---\n\n# Care — Policy\n\n## Rules\n\nTake care.\n";
-        let plan = plan(
-            &policy("Be kind.", &["general", "sdlc", "sdlc/policy/tests"]),
-            &[
-                (
-                    "docs/general/index.yaml",
-                    "expanded:\n  - general/policy/care\n",
-                ),
-                ("docs/general/policy/care.md", care),
-            ],
-        );
-        assert_eq!(plan.findings, []);
-        insta::assert_snapshot!(root(&plan).text);
-    }
-
-    /// The position headings of a rendering, in order.
-    fn headings(text: &str) -> Vec<&str> {
-        text.lines().filter(|line| line.starts_with("# ")).collect()
-    }
-
-    #[test]
-    fn a_held_read_and_a_named_one_open_the_same_headings() {
-        let tests =
-            "---\ndescription: Tests.\n---\n\n# Tests — Policy\n\n## Rules\n\nTest first.\n";
-        let sdlc = [
-            (
-                "docs/domain/sdlc/index.yaml",
-                "description: Code work\nexpanded:\n  - sdlc/policy/tests\n",
-            ),
-            ("docs/domain/sdlc/policy/tests.md", tests),
-        ];
-        for read in ["sdlc/policy/tests", "sdlc"] {
-            let house = policy("Be kind.", &[read]);
-            let held = plan(&house, &sdlc);
-            let named = plan(&house, &[]);
-            assert_eq!(held.findings, []);
-            assert_eq!(named.findings, []);
-            assert_eq!(
-                headings(&root(&held).text),
-                headings(&root(&named).text),
-                "reading `{read}`"
-            );
-        }
-    }
-
-    #[test]
-    fn a_root_file_without_the_line_is_written_over_without_a_finding() {
-        let mine = "# My own instructions\n";
-        let plan = plan(&policy("Be kind.", &[]), &[(AGENTS_FILE, mine)]);
-        assert_eq!(root(&plan).current.as_deref(), Some(mine.as_bytes()));
-        assert!(root(&plan).differs());
-        assert_eq!(plan.findings, []);
-    }
-
-    #[test]
-    fn an_index_selecting_nothing_renders_the_generated_line_alone() {
-        let plan = rendered(Committed::of(&[
-            (CONFIG_FILE_NAME, LAYER),
-            ("docs/project/index.yaml", ""),
-        ]));
-        assert_eq!(root(&plan).text, format!("{GENERATED_LINE}\n"));
-    }
-
-    #[test]
-    fn every_rendering_below_the_root_is_removed_and_nothing_else() {
-        let current = format!("{GENERATED_LINE}\n# Old\n");
-        let near_match = format!(
-            "{}\n# Theirs\n",
-            GENERATED_LINE.replacen("instrukt", "instrukt-example", 1)
-        );
-        let plan = plan(
-            &policy("Be kind.", &[]),
-            &[
-                ("old/AGENTS.md", &current),
-                ("older/AGENTS.md", &earlier_rendering()),
-                ("theirs/AGENTS.md", &near_match),
-                ("mine/AGENTS.md", "# Mine\n"),
-                ("tools/AGENTS.master.md", "## Tools\n\nThe tools.\n"),
-            ],
-        );
-        assert_eq!(
-            plan.removals,
-            [
-                PathBuf::from("old/AGENTS.md"),
-                PathBuf::from("older/AGENTS.md")
-            ]
-        );
-        assert_eq!(
-            plan.writes
-                .iter()
-                .map(|file| &file.path)
-                .collect::<Vec<_>>(),
-            [Path::new(AGENTS_FILE)]
-        );
-        assert_eq!(plan.findings, []);
-    }
-
-    #[test]
-    fn a_root_rendering_is_removed_only_without_an_index() {
-        let without = rendered(Committed::of(&[
-            (CONFIG_FILE_NAME, LAYER),
-            ("AGENTS.master.md", "## Purpose\n\nThe demo project.\n"),
-            (AGENTS_FILE, &earlier_rendering()),
-        ]));
-        assert_eq!(without.removals, [PathBuf::from(AGENTS_FILE)]);
-        assert_eq!(without.writes, []);
-        assert_eq!(without.notices, [project_without_index()]);
-
-        // A present index whose rendering reports a finding: the root file is
-        // neither written nor removed.
-        let found = plan(
-            &policy("<!-- @config: project -->", &[]),
-            &[(AGENTS_FILE, &earlier_rendering())],
-        );
-        assert_eq!(found.writes, []);
-        assert_eq!(found.removals, Vec::<PathBuf>::new());
-        assert_eq!(found.findings.len(), 1);
-    }
-
-    #[test]
-    fn a_linked_index_is_a_finding_naming_it_and_the_root_file_stays() {
-        let tree = Committed::of(&[
-            (CONFIG_FILE_NAME, LAYER),
-            (AGENTS_FILE, &earlier_rendering()),
-        ])
-        .with_link("docs/project/index.yaml");
-        let plan = rendered(tree);
-        assert_eq!(plan.writes, []);
-        assert_eq!(plan.removals, Vec::<PathBuf>::new());
-        assert_eq!(
-            plan.findings,
-            [RenderFinding {
-                path: PathBuf::from(AGENTS_FILE),
-                kind: RenderFindingKind::LinkedIndex {
-                    index: "docs/project/index.yaml".to_owned(),
-                },
-            }]
-        );
-        let below = rendered(
-            Committed::of(&[
-                (CONFIG_FILE_NAME, LAYER),
-                (AGENTS_FILE, &earlier_rendering()),
-            ])
-            .with_link("docs"),
-        );
-        assert_eq!(below.findings, plan.findings);
-        assert_eq!(below.removals, Vec::<PathBuf>::new());
-    }
-
-    #[test]
-    fn an_override_beside_a_planned_root_is_named_and_below_the_root_is_not() {
-        let plan = plan(
-            &policy("Be kind.", &[]),
-            &[
-                (OVERRIDE_FILE, "# Override\n"),
-                ("tools/AGENTS.override.md", "# Tools override\n"),
-            ],
-        );
-        assert_eq!(
-            plan.findings,
-            [RenderFinding {
-                path: PathBuf::from(OVERRIDE_FILE),
-                kind: RenderFindingKind::OverrideBesideRoot,
-            }]
-        );
-    }
-
-    #[test]
-    fn a_configured_value_in_a_document_held_in_full_is_a_finding_naming_it() {
-        let plan = plan(&policy("<!-- @config: project -->", &[]), &[]);
-        assert_eq!(
-            plan.findings,
-            [RenderFinding {
-                path: PathBuf::from(AGENTS_FILE),
-                kind: RenderFindingKind::ConfigInCommittedRendering {
-                    document: "docs/project/policy/house.md".to_owned(),
-                },
-            }]
-        );
-        assert_eq!(plan.writes, []);
-    }
-
-    #[test]
-    fn a_visible_reference_is_kept_and_one_in_code_is_none() {
-        assert_eq!(
-            kept_references("Read it (@notes/house.md) first.\n"),
-            ["@notes/house.md"]
-        );
-        assert_eq!(
-            kept_references("```\nRead it (@notes/house.md) first.\n```\n"),
-            Vec::<String>::new()
-        );
-    }
-
-    #[test]
-    fn finishing_drops_lock_sentinels_and_collapses_blank_runs() {
-        let sentinel = "<!-- LOCKED_FILE: keep -->";
-        let text = format!("{sentinel}\n\n\n# A\n\n\n\nb\n\n");
-        assert_eq!(finish(&text), finish("# A\n\nb"));
-        assert_eq!(finish("# A\n\nb").lines().count(), 3);
-    }
-
-    #[test]
-    fn a_domain_line_without_a_description_is_its_command() {
-        let domain = DomainName::parse("sdlc").unwrap();
-        assert_eq!(domain_line(&domain, Some(" ")), domain_line(&domain, None));
-        assert_ne!(
-            domain_line(&domain, Some("Code work")),
-            domain_line(&domain, None)
-        );
-    }
-}
+mod tests;

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "scrubbed(&env, &stderr(&refused))"
+---
+instrukt: github.org is not declared; adding a company needs the GitHub organisation that owns this computer's company repositories, so declare it with `instrukt config patch --global`; no repository and no home was created

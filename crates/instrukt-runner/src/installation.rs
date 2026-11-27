@@ -5,6 +5,7 @@
 mod _demand;
 pub(crate) mod _launch;
 mod _package;
+mod _proposals;
 mod _redis;
 mod _services;
 use crate::install::{Scheduler, WakeUp};
@@ -494,6 +495,14 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             FindingKind::EventsNeedTransport | FindingKind::AutomaticReviewNotReady
         ) {
             report.finding(label, &finding.message);
+        } else if instrukt_core::config::withholds_thread_retention(finding) {
+            report.finding(
+                label,
+                format!(
+                    "{}; thread retention is withheld on this computer while the runner's other work runs",
+                    finding.message
+                ),
+            );
         } else if instrukt_core::config::withholds_reclamation(finding)
             && withheld.contains(&finding.document)
         {
@@ -506,6 +515,10 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             );
         }
     }
+    // The proposal pull-request credential is checked where it enters, on
+    // install and on its check alike, for every company home admitted for
+    // automatic review.
+    _proposals::readiness(request, &candidate, report);
     if !request.check {
         return;
     }
@@ -911,8 +924,6 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
     let runner = state.read(|conn, path| {
         conn.query_row("SELECT at,outcome FROM runner_admission WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
     })?.flatten();
-    let links = crate::links::status(request.home)
-        .map_err(|e| inspection_error("conversation links", e))?;
     let conversations = request
         .company
         .map(|company| company.status(request.home, request.now))
@@ -923,7 +934,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         "runner": runner, "workers": workers, "skipped_wake": skipped_wake,
         "activation_failures": failures, "consumers": consumers,
         "stopped_executions": stopped_executions, "input_findings": input_findings,
-        "set_aside": set_aside, "links": links, "conversations": conversations
+        "set_aside": set_aside, "conversations": conversations
     }))
 }
 
@@ -991,6 +1002,9 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         ));
     }
     let mut report = Report::default();
+    if let Ok(candidate) = &candidate {
+        _proposals::findings(request, candidate, &mut report);
+    }
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let infrastructure = converge(&Request {

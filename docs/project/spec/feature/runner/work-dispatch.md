@@ -41,10 +41,14 @@ module withholds only that module's own work: with a `modules.todos` finding (fo
 example, a project whose code is not on GitHub) the project gets no todo dispatch.
 Whether the runner considers the project, and its canonical checkout
 synchronization (the `main` fast-forward that feeds the blueprint), still follow
-its switches; its other work is unaffected. No part
+its switches; its other work is unaffected.
+A machine layer whose retention window the selected runtime cannot carry is
+admitted with thread retention withheld, as
+`project/instrukt/spec/feature/configuration/layered-configuration` decides.
+No part
 of the runner reads those files on its own
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters; nothing running handles a missing one).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter; nothing running handles a missing one).
 
 Company connections and the conversation relay follow the admitted generation
 as it changes. Adding a connector starts it, changing its settings or tokens
@@ -63,8 +67,8 @@ measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
-defect is fixed in the code).
+(`project/instrukt/design/architecture/outside-gate`: transient outside outages
+are retried while code defects are fixed in code).
 
 | Capability | Runner responsibility |
 | --- | --- |
@@ -80,13 +84,10 @@ whose effective configuration (project over global) enables `todos` or
 `events`, without a separate registry. A project whose code is not on GitHub
 gets no todo pickup: todos need the project's code on GitHub
 (`project/instrukt/spec/feature/work/github-record`).
-Before starting a session for a todo, the runner refreshes the todo from
-GitHub, so work starts from its current state, then commits a claim on the
-item and reflects it to GitHub; a revision conflict means another computer
-claimed it first, and this runner leaves the item. When GitHub cannot be
-reached, the claim stays local and pending and no session starts; the next
-tick refreshes the todo and reflects the claim, then dispatches, or drops the
-claim on a conflict.
+Pickup considers the todos of this computer's work record. Before starting a
+session for a todo, the runner commits a claim on it in that record; the
+claim needs no answer from GitHub, so an unreachable GitHub delays the
+claim's reflection and never the session.
 
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
@@ -95,17 +96,18 @@ computer the holder is a session bound to the todo, or the session that claimed
 it through `instrukt todo work`; any other caller is refused as "claimed
 elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
 it. The dispatcher records the handoff and retains conversations needed for
-later rounds or human questions. The runtime owns session ending and cleanup.
-Every tick also polls GitHub for the todos this computer has an interest in,
-with conditional requests: the todos it holds claims on, one pickup listing per
-project with `todos` on, and the prerequisites its own work is blocked on
-(`project/instrukt/spec/feature/work/github-record`). Pickup considers the todos
-of that listing. Every tick flushes pending work-record reflection under the
-per-computer reflection lock; commands that write the record flush it under that
-lock too. Reflection holds that lock across GitHub requests and takes the writer
-lock only briefly for each local commit of what it learned. Lock order is always
-reflection → writer; the local transaction releases the writer lock before a
-flush acquires the reflection lock. Local readers take neither lock.
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
+Every tick is the single path that talks to GitHub for the work record: it
+reads inbound human controls from the issues of this computer's live todos
+before pickup and flushes pending work-record reflection after pickup,
+serializing both under the per-computer reflection lock
+(`project/instrukt/spec/feature/work/github-record`). Todo commands never
+read GitHub, never flush reflection and never acquire the reflection lock.
+Reflection holds that lock across GitHub requests and takes the writer lock
+only briefly for each local commit of what it learned. Lock order is always
+reflection → writer. Local readers take neither lock.
 
 ### Enablement and infrastructure
 
@@ -166,8 +168,13 @@ current in the background (`project/instrukt/spec/feature/runner/session-continu
 to check installation, enablement, login, reported models and quota windows; a
 failed or slow refresh never refuses a start, and the runtime's own refusal at
 the start is the signal. Runner
-starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
-effort/options cannot be expressed there and remain explicit start evidence.
+starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options.
+A runner start hands them to T3's native launch with its effort translated to
+the provider's native option, exactly as native delegation does; a start whose
+options the selected model does not accept is refused before creation with the
+reason (`project/instrukt/spec/feature/runner/session-continuity`). An
+agent-driven `t3 thread start` passes `--provider` and `--model`; effort/options
+have no flag there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
@@ -176,7 +183,7 @@ The responsible orchestrator delegates the intent checker natively on the
 computer where the originating conversation is readable, using the configured
 native instruction. Work records the attempt and native child id through
 `todo attempt` and `todo bind`. The runtime delivers its result to its parent;
-GitHub carries the checked record and stamp, not the conversation.
+the work record carries the checked record and stamp, not the conversation.
 
 ### Dispatch evidence
 
@@ -275,7 +282,9 @@ And the developer sees in status that the project's event responses are not admi
   safe worktree removal first or the runtime's existing-worktree start where
   available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
   uses its existing workspace.
-- T3 host CLI cannot express effort/options; native delegation receives them as resolved facts.
+- T3's host CLI cannot express effort/options, so an agent-driven `t3 thread
+  start` runs at T3's default effort; runner starts and native delegation
+  receive them as resolved facts.
 
 ## See Also
 

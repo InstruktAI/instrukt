@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/cases/mcp-access.rs
 expression: flawed.concat()
 ---
-instrukt: MCP server `nameless` reports a failure: its initialization's `serverInfo` lacks `version`
+instrukt: MCP server `nameless` reports a failure: expect initialized result, but received: Some(CustomResult(CustomResult(Object {"protocolVersion": String("2025-06-18"), "capabilities": Object {"tools": Object {}}, "serverInfo": Object {"name": String("stand-in")}})))
 instrukt: MCP server `shapeless` reports a failure: its tool `odd` has no input shape of type object

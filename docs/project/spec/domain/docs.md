@@ -78,7 +78,9 @@ Not to be confused with the generated global index.
 
 **Listing line**
 : The one line that stands for a snippet wherever a rendering lists rather
-than expands it: its id, its description, and the command that reads it
+than expands it: its id and its description, leading to the command that
+reads it — on the line itself in the inline form, or once in a heading over
+a run of lines of one kind in the headed form
 (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 
 **Root rules**
@@ -160,6 +162,13 @@ project store, not the primary worktree.
 one pass; a bare-domain required read contributes that domain's `expanded`
 set.
 
+**Current-contract body**
+: A snippet's body after its frontmatter under the default lens: planned
+additions dropped, each planned change reduced to its current side, marker
+lines removed, nothing resolved. Publication digests it as a source's
+delivered prose
+(`project/instrukt/spec/domain/publication`).
+
 **Published commit**
 : The commit of a project's canonical main that publication last published;
 recorded by publication.
@@ -205,6 +214,23 @@ recorded by publication.
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
 
+A company repository's `docs/` folder is the company's knowledge, not
+documentation positions. Validation asks publication whether the repository
+it validates is a company's (`project/instrukt/spec/domain/publication`);
+in one, it reads no file under `docs/` as a snippet, a position index or a
+third-party doc, places none of them and reports no finding or notice on
+them. The company's index and documents are judged by publication's company
+rendering (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+In every other repository a `docs/index.yaml` stays a misplaced index, as
+`project/instrukt/spec/feature/docs/position-index` states.
+
+Nor does docs own compressed units: `docs/_compressed/`, the units in it,
+their currency and their structural rules are publication's
+(`project/instrukt/spec/domain/publication`). That folder lies outside
+every position, and docs' walks skip it as they skip every folder whose
+name begins with an underscore, so a unit is never a snippet, never an
+index or schema file, and never a finding of validation.
+
 ## Canonical fields
 
 ### Aggregates
@@ -223,6 +249,10 @@ recorded by publication.
   - Every reference to a snippet is its id; a required read is an id or a
     bare domain name, listed under `## Required reads`, which is the first H2
     when present.
+  - Its Required reads and See Also run upward only: a `general` snippet
+    names only `general`, a domain snippet only its own domain and `general`,
+    a project snippet its own project, `general` and any domain
+    (`general/policy/referencing-doc-snippets`).
   - A companion shares its parent's identity and never appears in a listing.
   - `delivered_by` is the only pending frontmatter field; pending material for
     a live snippet lives only in companions and planned blocks.
@@ -239,8 +269,8 @@ recorded by publication.
   `general`'s `agents` map.
 - **Invariants:**
   - Only the keys allowed at its position appear.
-  - Every id it names is a delivered snippet; a domain's and the project's
-    name only their own position's snippets, `general`'s may name any domain's.
+  - Every id it names is a delivered snippet of its own position, `general`'s
+    index included.
   - No `listed` id is already in the closure of `expanded`.
   - One per position; never nested.
 - **Identifier:** its position.
@@ -329,6 +359,11 @@ This context emits no events.
   and pending markers.
 - **Runner** — customer / supplier: docs supplies procedures and their event
   subscriptions.
+
+For compressed units, docs supplies publication a source's current-contract
+body, its `@config` directives and its reference forms, which publication
+digests and compares with a unit's
+(`project/instrukt/spec/domain/publication`).
 
 ## Known caveats
 

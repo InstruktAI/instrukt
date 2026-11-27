@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/src/commands/docs.rs
+expression: "units_lines(&report).join(\"\\n\")"
+---
+stale: general/policy/alpha (docs/general/policy/alpha.md): renew docs/_compressed/general/policy/alpha.md declaring source_sha256 0000000000000000000000000000000000000000000000000000000000000000
+finding: docs/_compressed/general/policy/beta.md: carries `@exec: true`, which no rendering supports

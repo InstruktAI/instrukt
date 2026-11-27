@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 469
+expression: "conversation.join(\"\\n---\\n\").replace(prefix, \"<prefix>\")"
+---
+instrukt-test: [instrukt record · nested-lists · rev 1 on rev 0]
+<!-- instrukt:work-record:v2:{} -->
+
+---
+maintainer: Should tables keep their depth too?
+---
+contributor: Only lists, I think.
+---
+maintainer: /instrukt approve prd <prefix>
+---
+instruktai[bot]: @maintainer: recorded your approval of prd `<prefix>`.
+
+<!-- instrukt:command-reply:1022 -->

@@ -136,6 +136,5 @@ fix or verification approach.
 - If the cause is a process-design gap, diagnose and report it without changing the process;
   the driving session owns the authority escalation.
 - If an artifact write is refused, preserve the refusal and report it to the
-  driving session. A remote revision conflict follows `instrukt todo refresh
-  {slug}` and reapplication of the intended change; no alternate write path
-  or transfer of the driver's claim is implied.
+  driving session; no alternate write path or transfer of the driver's claim
+  is implied.

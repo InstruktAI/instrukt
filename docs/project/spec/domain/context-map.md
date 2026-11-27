@@ -20,6 +20,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 
 ### Bounded contexts
 
+
 | Context | Owns | Domain spec |
 | --- | --- | --- |
 | docs | Snippet model, validation, index reading and retrieval | `project/instrukt/spec/domain/docs` |
@@ -28,11 +29,12 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | repository | Repository initialization, git hooks and commit composition | `project/instrukt/spec/domain/repository` |
 | specs | Use-case inventory, test bindings and reservation | `project/instrukt/spec/domain/specs` |
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
-| work | Local-leading work record, versioned GitHub reflection, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
+| work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
+
 
 ### Modules
 
@@ -141,6 +143,41 @@ Worktree reclamation adds these crossings; its contract is
 | workflow → runner | Customer / Supplier | Each todo worktree's standing on the computer (delivered, idle or under way) and what a delivered todo still owes of its worktree and work branch |
 | work → runner | Customer / Supplier | Through work's command contract: the section of the work record in which no role attempt opens on a todo's worktree, and the release of a delivered todo's worktree and work branch |
 
+Adding a company adds these crossings; its contract is
+`project/instrukt/spec/feature/configuration/company-homes` (Generation), and
+repository's company home adoption carries it out.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| work GitHub boundary → configuration | Customer / Supplier | Whether a login names an organisation, a personal account or nothing, through an interface configuration declares and the CLI wires |
+| work GitHub boundary → repository | Customer / Supplier | Creating the company's private repository in the owning organisation, making its GitHub administrator an administrator and setting its default branch, through an interface core declares and the CLI wires |
+| configuration → repository | Customer / Supplier | The generation decision for a company's key, the skeleton's project layer and ignore lines, and the operation that writes the home's settings document |
+| publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
+| publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
+
+Carrying a company's knowledge to its default branch adds these crossings;
+their contracts are `project/instrukt/spec/feature/runner/pull-request-review`
+and `project/instrukt/spec/feature/workflow/integration-gate` (A company
+home's candidate).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| company → repository | Customer / Supplier | The proposal recording the `post-commit` hook run invokes, through an interface core declares and the CLI wires |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
+| configuration → runner | Customer / Supplier | A company repository's company identity, whose finding withholds the home's event responses |
+| runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
+| configuration → publication | Customer / Supplier | The company identity a company repository's committed project layer declares, with its finding |
+| publication → workflow | Customer / Supplier | Publication's one operation rendering a tree's agent material, from which candidate coverage reproduces a rendering commit |
+
+Thread retention adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/thread-retention`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
+| work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator
@@ -150,16 +187,13 @@ hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
 External models are translated through **Anti-corruption layer (ACL)**
-relationships: work's GitHub reflection boundary translates issues, artifacts
-and stamps; blueprint's engine adapter translates the engine graph into its
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
 node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
-Conversation-link relay and its identity-envelope vocabulary belong to runner
-under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
-shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
-additional contexts.
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
@@ -172,6 +206,7 @@ formats, for the company plugin it renders into a company's repository
 
 - `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no consumer daemon beside the runner.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
+- `project/instrukt/design/architecture/outside-gate` — internal daemon utility through which long-lived retrying loops (connectors, relay, background pollers) share cooldowns, wait, and report outages once per episode.
 
 ## Ubiquitous language
 

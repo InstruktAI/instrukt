@@ -1,5 +1,5 @@
 ---
-description: 'Vocabulary and protocol for agent-to-agent exchanges when compression is enabled. Compression itself is opt-in per `communication-compression`.'
+description: 'Vocabulary and protocol for agent-to-agent exchanges when compression is enabled, and the fixed notation compressed units are written in. Compression of an exchange is opt-in per `communication-compression`.'
 visibility: 'public'
 ---
 
@@ -12,6 +12,8 @@ visibility: 'public'
 ## What it is
 
 Defines the vocabulary and protocol for compressed agent-to-agent exchanges _when compression is in use_. Per `communication-compression`, compression is opt-in — invoked by explicit human authorization or in agent-only channels that genuinely have no human observer. The default register for every exchange is `L1` prose. This spec is the reference for what compression looks like once enabled; it does not prescribe when to enable it.
+
+It also defines the compressed-unit notation: the one fixed, plain-ASCII form in which a compressed unit — the dense counterpart an entrypoint rendering holds in place of a prose source — is written.
 
 ## Canonical fields
 
@@ -71,6 +73,22 @@ If the receiving agent does not recognize or follow the proposed protocol, it re
 
 Durable artifacts are always prose. Requirements, reports, plans, commit messages, and doc snippets must remain readable without access to the working exchange.
 
+A compressed unit is no authored artifact of its own: it is a derived rendering form of one prose source, committed beside the documentation and written in the compressed-unit notation below. Its source stays prose and stays the authority; every rendering that holds a unit names its source, whose full prose one read returns.
+
+### Compressed-unit notation
+
+A unit is read by agents of every model family, and by the people who open what agents were given, without shared working context. Its notation is therefore fixed, explained by one legend in every rendering that holds a unit, and limited to these elements:
+
+- **Plain ASCII.** No typographic quotes, dashes, arrows or other symbols outside ASCII.
+- **One flat list.** Each line `- ` and one line per rule; a heading only where the source has parts a reader must tell apart, such as a procedure's ordered steps, which stay numbered.
+- **Rule lines** open with one keyword: `MUST` (required), `NEVER` (forbidden), `MAY` (permitted, not required), `PREFER` (the default, which yields to a stated reason). The rule follows in telegraphic words.
+- **The reason** follows the rule after ` -- `, in one clause naming the invariant the rule protects or the failure it prevents.
+- **Fact lines** state a term the rules rest on: `<term> = <meaning>`.
+- **Connectives.** `->` reads "leads to" or "then"; `|` reads "or"; `vs` names two forces held in tension.
+- **Verbatim.** Snippet ids, commands, paths, code spans and `@config` directives stand exactly as in the source, in backticks where the source has them.
+
+Writing and renewing a unit follows `general/procedure/compressed-unit-authoring`.
+
 ### Output validity
 
 Default emit state is false in agent-to-agent exchanges. Output is valid only when it does one of the following:
@@ -86,15 +104,15 @@ The following are invalid output:
 - echoing what the other side just said
 - narration that announces work without delivering findings
 
-Linked-output wrappers do not make a message actionable. The wrapped payload is what determines whether the output is valid.
-
-When no valid form applies, the turn still has to close. It closes with the no-output sentinel under `general/policy/no-output-turn`; writing the silence out in prose produces one of the invalid forms above.
+When no valid form applies, do not pad the turn with acknowledgment-only or narration filler.
 
 ## Allowed values
 
 - Registers: `human-present`, `human-aware`, `agent-only`, `structured-report`
 - Levels: `L1`, `L2`, `L3`, `L4`
 - Phase markers: `[inhale]`, `[hold]`, `[exhale]`, `[✓exhale]`
+- Compressed-unit keywords: `MUST`, `NEVER`, `MAY`, `PREFER`
+- Compressed-unit connectives: ` -- `, `=`, `->`, `|`, `vs`
 
 ## Known caveats
 
@@ -102,3 +120,4 @@ When no valid form applies, the turn still has to close. It closes with the no-o
 - `L4` assumes tight shared context and is unsafe across model families.
 - Phase markers govern level switching only within an already-enabled compressed exchange.
 - If compressed exchange produces correction churn or ambiguity, drop to a less compressed level immediately.
+- A compressed unit keeps its source's rules, not its reasoning beyond one clause; a case the rules do not settle is read in the source's full prose.

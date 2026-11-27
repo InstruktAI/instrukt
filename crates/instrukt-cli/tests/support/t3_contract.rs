@@ -9,13 +9,15 @@ use crate::common::{self, TestEnv};
 use anyhow::{Context, Result, bail, ensure};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use instrukt_core::{
+    config::company_repository,
     home::Home,
-    ids::{SessionId, SessionRef},
+    ids::{ProjectSlug, SessionId, SessionRef},
 };
 use instrukt_runner::{
     process,
     runtime::{
-        ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart, T3,
+        ArchiveOutcome, ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart,
+        T3,
         conversations::{Role, SourceWake},
     },
     sessions::SessionState,
@@ -809,11 +811,103 @@ pub fn websocket_dispatch(id: &str) -> Result<Value> {
     Ok(json!({"queued":true,"inputs_after_replay":count,"missing_provenance_rejected":true}))
 }
 
+/// The thread the thread-retention check archives.
+pub const RETENTION_THREAD: &str = "contract-retention";
+
+/// Brings the retention fixture thread to settled and opened on the real
+/// release with management commands alone: created without a message,
+/// settled, then visited as a person opening it.
+fn retention_fixture(token: &str, project: &str) -> Result<()> {
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.create","commandId":"contract-retention-create","threadId":RETENTION_THREAD,"projectId":project,"title":"contract retention","modelSelection":{"instanceId":"codex","model":"default"},"runtimeMode":"approval-required","interactionMode":"default","createdBy":"user","creationSource":"web","branch":null,"worktreePath":null}),
+    )?;
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.settle","commandId":"contract-retention-settle","threadId":RETENTION_THREAD}),
+    )?;
+    let visited = jiff::Timestamp::now()
+        .strftime("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string();
+    rpc(
+        token,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.visit","commandId":"contract-retention-visit","threadId":RETENTION_THREAD,"visitedAt":visited,"opened":true}),
+    )?;
+    Ok(())
+}
+
+/// Thread archiving through the adapter's public finished-thread listing
+/// and archive, on whichever boundary the worker runs against: the settled,
+/// opened fixture thread's decoded facts, its archive (whose re-read
+/// validates every table it consumes), its absence from the listing
+/// afterwards, and T3's refusal of a second raw `thread.archive` while its
+/// projection row shows it archived.
+pub fn retention(checkout: &Path) -> Result<Value> {
+    let adapter = T3::default();
+    let observed = adapter
+        .finished_threads(checkout)?
+        .into_iter()
+        .find(|thread| thread.session.id.as_str() == RETENTION_THREAD)
+        .context("the settled fixture thread is not listed finished")?;
+    let db = input_database()?;
+    let opened: Option<f64> = db.query_row(
+        "SELECT json_extract(payload_json,'$.opens.openedAt') FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+        [RETENTION_THREAD],
+        |row| row.get(0),
+    )?;
+    let opened = opened
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms.round() as i64).ok())
+        .context("the fixture thread's opening is not recorded")?;
+    let opening_counted = observed
+        .latest_activity
+        .is_some_and(|latest| latest >= opened);
+    let outcome = adapter.archive(&observed, jiff::Timestamp::now())?;
+    ensure!(
+        outcome == ArchiveOutcome::Archived,
+        "the fixture thread was not archived: {outcome:?}"
+    );
+    let listed: Vec<Value> = serde_json::from_str(&cli(
+        &[
+            "thread",
+            "list",
+            "--project",
+            checkout.to_str().context("checkout path")?,
+            "--json",
+        ],
+        None,
+    )?)?;
+    let mut token = Token::scoped(&["orchestration:operate"])?;
+    let second = rpc_exit(
+        &token.secret,
+        "orchestration.dispatchCommand",
+        json!({"type":"thread.archive","commandId":"contract-retention-again","threadId":RETENTION_THREAD}),
+    )?;
+    token.revoke()?;
+    let row_archived: bool = db.query_row(
+        "SELECT archived_at IS NOT NULL FROM orchestration_v2_projection_threads WHERE thread_id=?1",
+        [RETENTION_THREAD],
+        |row| row.get(0),
+    )?;
+    Ok(json!({
+        "finished": observed.finished_at.is_some(),
+        "quiet": observed.quiet,
+        "pinned": observed.pinned,
+        "opening_counted": opening_counted,
+        "archived": true,
+        "listed_after_archive": listed.iter().any(|thread| thread["threadId"] == RETENTION_THREAD),
+        "second_archive_refused": second["_tag"] == "Failure",
+        "row_archived": row_archived,
+    }))
+}
+
 /// Provider-free launch management: no opening message or provider turn is requested.
 pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     let mut token = Token::issue(true)?;
     let input = json!({"commandId":"contract-keyed-launch","threadId":"contract-keyed-thread","projectId":project,
-        "title":"Readable contract title","generateTitle":false,"modelSelection":{"instanceId":"codex","model":"default"},
+        "title":"Readable contract title","generateTitle":false,"modelSelection":{"instanceId":"codex","model":"default","options":[{"id":"reasoningEffort","value":"high"}]},
         "runtimeMode":"approval-required","interactionMode":"default","creationSource":"mcp",
         "workspaceStrategy":{"type":"existing_worktree","worktreePath":root.join("project"),"branch":"main"}});
     let first = rpc(&token.secret, "orchestration.launchThread", input.clone())?;
@@ -833,6 +927,10 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
         "native captured mode pair"
     );
     ensure!(
+        thread["modelSelection"]["options"] == json!([{"id":"reasoningEffort","value":"high"}]),
+        "native launch model-selection options"
+    );
+    ensure!(
         thread["projectId"] == project
             && thread["worktreePath"] == root.join("project").to_str().unwrap(),
         "native existing-worktree placement"
@@ -843,21 +941,62 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
     );
     token.revoke()?;
     Ok(
-        json!({"same_thread":true,"modes_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
+        json!({"same_thread":true,"modes_retained":true,"options_retained":true,"existing_worktree":true,"native_created_by":"user","opening_provider_turn":"not requested"}),
     )
+}
+
+/// The title of the live project the project snapshot lists with id `id`.
+fn project_title(id: &str) -> Result<Option<String>> {
+    let port = descriptor_port(Path::new(&std::env::var("T3CODE_HOME")?))?;
+    let mut token = Token::scoped(&["orchestration:read"])?;
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        follow_redirects: false,
+        ..Default::default()
+    })?;
+    let url = format!("http://127.0.0.1:{port}/api/projects");
+    let bearer = format!("Bearer {}", token.secret);
+    let body = instrukt_outside::runtime::block_on(async move {
+        let resp = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer)
+            .send()
+            .await?;
+        resp.error_for_status()?.text().await
+    })??;
+    let snapshot: Value = serde_json::from_str(&body)?;
+    token.revoke()?;
+    Ok(snapshot["projects"]
+        .as_array()
+        .context("project snapshot")?
+        .iter()
+        .find(|project| project["id"] == id && project["deletedAt"].is_null())
+        .and_then(|project| project["title"].as_str().map(str::to_owned)))
 }
 
 /// Project registration and resolution: a root without a project is
 /// reported, ensured once and then reused, `t3 project add` refuses a root
 /// that has one, and a launch for a checkout whose only containing project
-/// is rooted at an ancestor registers the checkout and resolves to it.
-/// `project` is a registered project's root.
+/// is rooted at an ancestor registers the checkout and resolves to it. An
+/// ensured company home is titled with its repository name; another root
+/// keeps the title T3 gives it. `project` is a registered project's root.
 pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
     let adapter = T3::default();
     let added = root.join("added-root");
     fs::create_dir_all(&added)?;
     let before = adapter.execution_root(&added, ExecutionRootMode::Check)?;
     let ensured = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
+    let company_name = ProjectSlug::parse("contract")?;
+    let company = Home::from_env()?.company_dir(&company_name);
+    fs::create_dir_all(&company)?;
+    let company_project = adapter
+        .execution_root(&company, ExecutionRootMode::Ensure)?
+        .project_id
+        .context("ensured company home project")?;
+    let company_title = project_title(&company_project)?;
+    ensure!(
+        company_title == Some(company_repository(&company_name)?.to_string()),
+        "the ensured company home is not titled with its repository name"
+    );
     let duplicate = cli(&["project", "add", added.to_str().unwrap()], None);
     let reused = adapter.execution_root(&added, ExecutionRootMode::Ensure)?;
     ensure!(
@@ -893,6 +1032,8 @@ pub fn project_boundary(root: &Path, project: &Path) -> Result<Value> {
     Ok(json!({
         "check_before_add": {"present": before.project_id.is_some(), "created": before.created},
         "ensure": {"present": ensured.project_id.is_some(), "created": ensured.created},
+        "ensured_title": project_title(ensured.project_id.as_deref().unwrap_or_default())?,
+        "company_home_title": company_title,
         "duplicate_add_refused": duplicate.is_err(),
         "ensure_again": {"present": reused.project_id.is_some(), "created": reused.created},
         "ancestor_only_launch_registers_the_checkout": registered.project_id.is_some()
@@ -1002,6 +1143,8 @@ pub fn real(root: &Path) -> Result<()> {
     ensure!(changed, "durable input change was not observed");
     let result = observe(id)?;
     let websocket = websocket_dispatch(id)?;
+    retention_fixture(&token.secret, &project)?;
+    let retention = retention(&root.join("project"))?;
     ensure!(
         adapter
             .read_state(&SessionRef::parse("t3:contract-missing")?)?
@@ -1093,15 +1236,16 @@ pub fn real(root: &Path) -> Result<()> {
     let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"projects":projects})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects})
             .to_string(),
     )?;
     Ok(())
 }
 
 fn grammar() -> Result<()> {
-    let commands: [(&str, &[&str], &[&str]); 4] = [
+    let commands: [(&str, &[&str], &[&str]); 5] = [
         ("server", &["--help"], &["--base-dir", "--no-browser"]),
+        ("project add", &["project", "add", "--help"], &["--title"]),
         (
             "start",
             &["thread", "start", "--help"],
@@ -1137,6 +1281,9 @@ fn grammar() -> Result<()> {
       "list": [
         "--project string",
         "--json"
+      ],
+      "project add": [
+        "--title string"
       ],
       "server": [
         "--base-dir string",

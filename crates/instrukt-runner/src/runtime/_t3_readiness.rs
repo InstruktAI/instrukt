@@ -542,19 +542,24 @@ impl std::io::Write for FrameStream {
 
 use super::DispatchError::{self, AfterFrame, BeforeFrame};
 
+/// One `orchestration.dispatchCommand` of `payload`, over a token labelled
+/// `label` issued and revoked around it; T3's refusal is attributed to
+/// `operation`.
 pub(super) fn dispatch(
     home: &Home,
     env: &Env,
+    label: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<(), DispatchError> {
     let endpoint = server_endpoint(home, env).map_err(BeforeFrame)?;
-    let mut token = Token::issue_scoped("orchestration:operate", "instrukt-conversation-send")
-        .map_err(BeforeFrame)?;
+    let mut token = Token::issue_scoped("orchestration:operate", label).map_err(BeforeFrame)?;
     let outcome = rpc(
         &endpoint,
         &token.secret,
         "orchestration.dispatchCommand",
+        operation,
         payload,
         before_write,
     )
@@ -571,10 +576,13 @@ pub(super) fn dispatch(
     outcome
 }
 
+/// One RPC `tag` with `payload`; a refusal of a command or launch carries
+/// T3's detail attributed to `operation`.
 fn rpc(
     endpoint: &url::Url,
     token: &str,
     tag: &str,
+    operation: &str,
     payload: serde_json::Value,
     before_write: &mut dyn FnMut() -> Result<(), SessionsError>,
 ) -> Result<serde_json::Value, DispatchError> {
@@ -686,12 +694,7 @@ fn rpc(
                     .unwrap_or("T3 refused the WebSocket dispatch");
                 return Err(AfterFrame(SessionsError::Failed {
                     runtime: "t3".into(),
-                    operation: match tag {
-                        "orchestration.launchThread" => "launch",
-                        "orchestration.getThreadProjection" => "thread projection",
-                        _ => "send",
-                    }
-                    .into(),
+                    operation: operation.into(),
                     detail: detail.into(),
                 }));
             }
@@ -704,9 +707,14 @@ fn rpc(
 }
 
 fn read_rpc(endpoint: &url::Url, token: &str) -> Result<Snapshot, SessionsError> {
-    let value = rpc(endpoint, token, "server.getConfig", json!({}), &mut || {
-        Ok(())
-    })
+    let value = rpc(
+        endpoint,
+        token,
+        "server.getConfig",
+        "readiness",
+        json!({}),
+        &mut || Ok(()),
+    )
     .map_err(DispatchError::into_inner)?;
     let snapshot: Snapshot = serde_json::from_value(value)
         .map_err(|_| refused("unrecognized provider snapshot shape"))?;
@@ -1064,21 +1072,41 @@ pub(super) fn fetch_live_projects(
         .map_err(|_| ExecutionRootCause::MalformedMetadata)?;
     origin.set_path("/api/projects");
     origin.set_query(None);
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .into();
-    let text = agent
-        .get(origin.as_str())
-        .header("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|error| {
-            tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            ExecutionRootCause::Unreachable
-        })?
-        .body_mut()
-        .read_to_string()
-        .map_err(|_| ExecutionRootCause::Unreachable)?;
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        request_timeout: TIMEOUT,
+        follow_redirects: false,
+        ..Default::default()
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
+    let url = origin.as_str().to_owned();
+    let bearer = format!("Bearer {token}");
+    let text = instrukt_outside::runtime::block_on(async {
+        let response = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+            .send()
+            .await
+            .map_err(|error| error.without_url().to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+        response
+            .text()
+            .await
+            .map_err(|error| error.without_url().to_string())
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
     live_projects(&text)
 }
 
@@ -1194,6 +1222,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "orchestration.getThreadProjection",
+                    "thread projection",
                     json!({"threadId": session.id}),
                     &mut || Ok(()),
                 )
@@ -1228,6 +1257,7 @@ pub(super) fn resolve_launch(
                     &endpoint,
                     &token.secret,
                     "server.getConfig",
+                    "readiness",
                     json!({}),
                     &mut || Ok(()),
                 )
@@ -1260,18 +1290,18 @@ pub(super) fn resolve_launch(
                         "; native caught project-default escalation uses managed ceiling",
                     );
                 }
-                let instance = &request
+                let selection = request
                     .selection
                     .as_ref()
-                    .ok_or_else(|| launch_error("missing model selection"))?
-                    .instance;
+                    .ok_or_else(|| launch_error("missing model selection"))?;
                 let providers = config["providers"]
                     .as_array()
                     .ok_or_else(|| launch_error("missing providers"))?;
                 let provider = providers
                     .iter()
-                    .find(|p| p["instanceId"].as_str() == Some(instance.as_str()))
+                    .find(|p| p["instanceId"].as_str() == Some(selection.instance.as_str()))
                     .ok_or_else(|| launch_error("selected native provider instance missing"))?;
+                super::_t3_options::admit(provider, selection)?;
                 if let Some(value) = provider.get("supportedRuntimeModes") {
                     let supported: Vec<LaunchRuntimeMode> =
                         serde_json::from_value(value.clone())
@@ -1330,6 +1360,7 @@ pub(super) fn launch(
         &endpoint,
         &token.secret,
         "orchestration.launchThread",
+        "launch",
         payload,
         &mut || Ok(()),
     )

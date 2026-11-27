@@ -16,7 +16,6 @@ roles:
   - task-preparer
   - task-runner
   - builder
-  - fixer
   - build-reviewer
   - verifier
   - deferrer

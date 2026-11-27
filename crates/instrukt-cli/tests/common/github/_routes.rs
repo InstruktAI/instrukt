@@ -31,7 +31,11 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
     }
     if let Some(login) = path.strip_prefix("/users/") {
         return if method == "GET" {
-            Reply::ok(actor(login))
+            let mut account = actor(login);
+            if let Some(kind) = state.accounts.get(login) {
+                account["type"] = kind.as_str().into();
+            }
+            Reply::ok(account)
         } else {
             Reply::not_found()
         };
@@ -140,6 +144,16 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         );
         return Reply::created(view);
     }
+    if let ("GET", ["orgs", org, "installation"]) = (method, segs.as_slice()) {
+        return if state.org_installations.contains(*org) {
+            Reply::ok(json!({"id":1,"app_id":1,"permissions":state.installation_permissions(1)}))
+        } else {
+            Reply::not_found()
+        };
+    }
+    if let ("POST", ["orgs", org, "repos"]) = (method, segs.as_slice()) {
+        return create_repo(state, org, &input);
+    }
     let ["repos", owner, name, rest @ ..] = segs.as_slice() else {
         return Reply::not_found();
     };
@@ -160,6 +174,20 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             Reply::ok(json!({"id":id,"app_id":id,"permissions":state.installation_permissions(id)}))
         }
         ("GET", []) => Reply::ok(state.repo(&full).json()),
+        ("PATCH", []) => {
+            if let Some(branch) = input["default_branch"].as_str() {
+                state.repo(&full).default_branch = branch.to_owned();
+            }
+            Reply::ok(state.repo(&full).json())
+        }
+        ("PUT", ["collaborators", invited]) => {
+            let permission = input["permission"].as_str().unwrap_or("push").to_owned();
+            state
+                .repo(&full)
+                .collaborators
+                .insert((*invited).to_owned(), permission.clone());
+            Reply::created(json!({"invitee": actor(invited), "permissions": permission}))
+        }
         ("GET", ["collaborators", login, "permission"]) => {
             let allowed = state.repo(&full).comments.values().any(|c| {
                 c.login == *login
@@ -169,12 +197,27 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }
         ("GET", ["branches", branch @ ..]) => {
             let branch = branch.join("/");
-            match state.repo(&full).branches.get(&branch) {
+            match state.repo(&full).branch_head(&branch) {
                 Some(sha) => Reply::ok(json!({"name": branch, "commit": {"sha": sha}})),
                 None => Reply::not_found(),
             }
         }
         ("GET", ["commits", sha, "status"]) => Reply::ok(state.repo(&full).combined_status(sha)),
+        ("GET", ["commits", sha, "pulls"]) => {
+            // The pull requests whose head is the commit, open or closed.
+            let r = state.repo(&full);
+            let items = r
+                .issues
+                .values()
+                .filter(|i| {
+                    i.pull
+                        .as_ref()
+                        .is_some_and(|p| r.branch_head(&p.head).as_deref() == Some(*sha))
+                })
+                .filter_map(|i| r.pull_json(&base, &full, i.number))
+                .collect();
+            paginate(&base, path, query, items)
+        }
         ("GET", ["commits", sha, "check-runs"]) => {
             Reply::ok(state.repo(&full).check_runs_json(sha))
         }
@@ -353,7 +396,7 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
                 return Reply::invalid("title, head and base are required");
             };
             let head = head.split_once(':').map_or(head, |(_, b)| b).to_owned();
-            if !state.repo(&full).branches.contains_key(&head) {
+            if state.repo(&full).branch_head(&head).is_none() {
                 return Reply::invalid(&format!("head branch {head} does not exist"));
             }
             let body = input["body"].as_str().unwrap_or("").to_owned();
@@ -382,6 +425,39 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }
         _ => Reply::not_found(),
     }
+}
+
+/// `POST /orgs/{org}/repos`: a private repository, empty, its bare remote
+/// initialised where the test serves remotes; a name the organisation
+/// already holds is GitHub's 422.
+fn create_repo(state: &mut State, org: &str, input: &Value) -> Reply {
+    let Some(name) = input["name"].as_str() else {
+        return Reply::invalid("name is missing");
+    };
+    let full = format!("{org}/{name}");
+    if state.repos.contains_key(&full) {
+        return Reply::json(
+            422,
+            json!({"message":"Repository creation failed.","errors":[{"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account"}]}),
+        );
+    }
+    let id = state.next_id();
+    let mut repo = Repo::new(id, org, name);
+    // GitHub creates a public repository unless `private` is true.
+    repo.public = input["private"] != true;
+    let body = repo.json();
+    state.repos.insert(full, repo);
+    if let Some(remotes) = &state.remotes {
+        let remote = remotes.join(org).join(format!("{name}.git"));
+        std::fs::create_dir_all(&remote).unwrap();
+        let initialised = std::process::Command::new("git")
+            .args(["init", "--bare", "--quiet", "--initial-branch=main"])
+            .arg(&remote)
+            .status()
+            .unwrap();
+        assert!(initialised.success());
+    }
+    Reply::created(body)
 }
 
 fn string_list(value: &Value) -> Vec<String> {
@@ -484,11 +560,18 @@ fn issue_route(
             issue_reply(state)
         }
         ("GET", ["comments"]) => {
+            // `since`: only comments updated at or after it.
+            let since = query_param(query, "since").map(decode);
             let items = state
                 .repo(full)
                 .comments
                 .values()
                 .filter(|c| c.issue == n)
+                .filter(|c| {
+                    since
+                        .as_deref()
+                        .is_none_or(|since| c.updated_at.as_str() >= since)
+                })
                 .map(|c| c.json(base, full))
                 .collect();
             paginate(base, path, query, items)
@@ -509,7 +592,10 @@ fn issue_route(
                 None => Reply::not_found(),
             }
         }
-        ("GET", ["events"]) => Reply::ok(json!([])),
+        ("GET", ["events"]) => {
+            let items = state.repo(full).issues[&n].events.clone();
+            paginate(base, path, query, items)
+        }
         ("GET", ["labels"]) => {
             let r = state.repo(full);
             let items = r.issues[&n]
@@ -677,7 +763,7 @@ fn issue_route(
                 .artifacts
                 .values()
                 .filter(|a| kind.is_none_or(|k| a.kind == k))
-                .map(Artifact::json)
+                .map(|a| a.json(full, n))
                 .collect();
             paginate(base, path, query, items)
         }
@@ -711,7 +797,7 @@ fn issue_route(
                     login: login.to_owned(),
                 }],
             };
-            let value = artifact.json();
+            let value = artifact.json(full, n);
             issue.artifacts.insert(number, artifact);
             Reply::created(value)
         }
@@ -730,10 +816,31 @@ fn issue_route(
             };
             match method {
                 "GET" => {
+                    // Versions newest first, paged as GitHub pages them.
                     let artifact = &issue.artifacts[&a];
-                    Reply::ok(
-                        json!({"artifact": artifact.json(), "versions": artifact.versions_json()}),
-                    )
+                    let per_page = query_param(query, "per_page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(30)
+                        .clamp(1, 100);
+                    let page = query_param(query, "page")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .unwrap_or(1)
+                        .max(1);
+                    let Value::Array(all) = artifact.versions_json() else {
+                        return Reply::not_found();
+                    };
+                    let total = all.len();
+                    let versions: Vec<Value> = all
+                        .into_iter()
+                        .skip((page - 1) * per_page)
+                        .take(per_page)
+                        .collect();
+                    Reply::ok(json!({
+                        "artifact": artifact.json(full, n),
+                        "versions": versions,
+                        "has_next_page": page * per_page < total,
+                        "total_count": total,
+                    }))
                 }
                 "PATCH" => {
                     let Some(artifact) = issue.artifacts.get_mut(&a) else {
@@ -751,7 +858,7 @@ fn issue_route(
                     });
                     artifact.updated_at = now;
                     artifact.updated_by = login.to_owned();
-                    Reply::ok(artifact.json())
+                    Reply::ok(artifact.json(full, n))
                 }
                 "DELETE" => {
                     issue.artifacts.remove(&a);

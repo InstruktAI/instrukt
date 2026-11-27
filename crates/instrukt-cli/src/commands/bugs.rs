@@ -86,6 +86,14 @@ struct ReportArgs {
 pub const QUESTIONS: &str = "\
 Nothing was filed. Face each question before filing this defect:
 
+- Fix in context or file: is the repair documentation-only, or a bounded
+  code change of about five minutes: the approach known, the edit bounded,
+  needing neither a plan, a builder nor a handoff
+  (sdlc/policy/todo-creation-discipline, Fix bounded findings in context)?
+  Then make it yourself now in a short-lived one-off worktree and file
+  nothing; finding it supplies the authority. A change whose correctness is
+  contested belongs in the lifecycle. A company's agent never holds repair
+  authority: for it the answer is always to report.
 - Bug or change: which current contract does the behaviour break? A failure
   shows that something happened, not that it is wrong. Where no current
   contract states otherwise it is not a bug: file a change with
@@ -98,16 +106,6 @@ Nothing was filed. Face each question before filing this defect:
   change them? A todo enters the lifecycle valid
   (sdlc/policy/todo-creation-discipline); work that has not converged is not
   filed through this door yet.
-- Fix in context or file: is the repair settled work you already hold
-  authority for: the approach known, the edit bounded, needing neither a
-  plan, a builder nor a handoff, with authority from an explicit execution
-  request, a bounded brief, or a completed human conversation in which every
-  active participant agreed the outcome and the human released the edit
-  (sdlc/policy/todo-creation-discipline, Execute settled code work in
-  context)? Then make it in context and file nothing. Human presence alone
-  supplies no authority, and a change whose correctness is contested belongs
-  in the lifecycle. A company's agent never holds repair authority: for it
-  the answer is always to report.
 - Evidence: an occurrence or a dangerous path in hand
   (sdlc/concept/defect-evidence). Put the observations and their addresses
   first, and keep any causal account apart from them: each transition with

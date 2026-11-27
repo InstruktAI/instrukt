@@ -6,9 +6,14 @@ use support::{Project, REPOSITORY};
 
 // spec: project/instrukt/spec/feature/work/github-apps UC-GA1
 #[test]
-fn records_use_the_project_app_and_never_a_process_token() {
+fn issue_maintenance_uses_the_project_app_and_never_a_process_token() {
     let project = Project::new();
     project.create("app-record", "bug", "Verify bot attribution.");
+    assert!(
+        project.github.requests().is_empty(),
+        "bugs report must not contact GitHub"
+    );
+    project.tick();
     assert_eq!(project.github.issues(REPOSITORY).len(), 1);
     let config = project
         .env
@@ -25,45 +30,6 @@ fn records_use_the_project_app_and_never_a_process_token() {
     );
 }
 
-// spec: project/instrukt/spec/feature/work/github-apps UC-GA2
-#[test]
-fn configured_bots_with_none_association_restore_but_similarly_named_actors_do_not() {
-    let project = Project::new();
-    project.create("app-record", "bug", "Verify bot recovery.");
-    let comments = project.github.comments(REPOSITORY, 1);
-    let body = comments.last().unwrap()["body"].as_str().unwrap();
-    let marker = "<!-- instrukt:work-record:v2:";
-    let line = body.lines().find(|line| line.starts_with(marker)).unwrap();
-    let mut envelope: serde_json::Value =
-        serde_json::from_str(&line[marker.len()..line.len() - 4]).unwrap();
-    envelope["base"] = envelope["record"]["revision"].clone();
-    envelope["record"]["revision"] = 2.into();
-    envelope["record"]["schema"] = 1.into();
-    envelope["record"]["hold"] = serde_json::json!({"source":"manual","reason":"recovered from configured bot","by":{"person":{"name":"Test Developer"}},"at":"2026-11-03T10:00:00Z"});
-    // NONE carries no repository association: stable configured actor facts admit it.
-    project.github.seed_comment(
-        REPOSITORY,
-        1,
-        "instruktai[bot]",
-        "NONE",
-        &format!("{marker}{envelope} -->"),
-    );
-    let mut forged = envelope.clone();
-    forged["base"] = 2.into();
-    forged["record"]["revision"] = 3.into();
-    forged["record"]["schema"] = 999.into();
-    project.github.seed_comment(
-        REPOSITORY,
-        1,
-        "instruktai-impostor[bot]",
-        "NONE",
-        &format!("{marker}{forged} -->"),
-    );
-    let other = project.other_computer();
-    let shown = other.ok(["show", "app-record"]);
-    insta::assert_snapshot!("bot-recovered", support::redact(&shown));
-}
-
 fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) -> String {
     let project = Project::new();
     project.create(
@@ -71,8 +37,22 @@ fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) ->
         "bug",
         "Keep accepted work through credential failure.",
     );
+    project.tick();
     let comments = project.github.comments(REPOSITORY, 1);
     let artifacts = project.github.artifacts(REPOSITORY, 1);
+    let requests_before = project.github.requests().len();
+    let written = project.ok([
+        "artifacts",
+        "write",
+        "pending-app",
+        "log",
+        "accepted locally",
+    ]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before,
+        "artifacts write must not contact GitHub"
+    );
     project.github.respond_once(
         method,
         endpoint,
@@ -82,16 +62,17 @@ fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) ->
             body,
         },
     );
-    let written = project.ok([
-        "artifacts",
-        "write",
-        "pending-app",
-        "log",
-        "accepted locally",
-    ]);
+    project.tick();
+    let requests_after_tick = project.github.requests().len();
+    let shown = project.ok(["show", "pending-app"]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_after_tick,
+        "todo show must not contact GitHub"
+    );
     assert_eq!(project.github.comments(REPOSITORY, 1), comments);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
-    support::redact(&written)
+    support::redact(&format!("{written}---\n{shown}"))
 }
 // spec: project/instrukt/spec/feature/work/github-apps UC-GA1
 #[test]
@@ -169,16 +150,10 @@ fn a_configured_bot_role_commits_in_a_local_repository_without_installation_acce
     // Local attribution has no repository-installation credential dependency.
     std::fs::remove_file(env.instrukt_home().join("secrets.env")).unwrap();
     repo.write("change.md", "Local work.\n");
+    repo.git(["add", "change.md"]);
     env.instrukt(repo.path())
         .env("T3CODE_THREAD_ID", "local-author")
-        .args([
-            "repo",
-            "commit",
-            "--message",
-            "record local work",
-            "--only",
-            "change.md",
-        ])
+        .args(["repo", "commit", "--message", "record local work"])
         .assert()
         .success();
     insta::assert_snapshot!(
@@ -196,8 +171,18 @@ fn one_multi_item_reflection_reuses_authenticated_actor_facts_and_operation_cred
     for item in 0..8 {
         project.create(&format!("record-{item}"), "bug", "Reflect shared work.");
     }
+    assert!(
+        project.github.requests().is_empty(),
+        "bugs report must not contact GitHub"
+    );
+    project.tick();
     project.github.clear_requests();
     project.ok(["update", "record-0"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo update must not contact GitHub"
+    );
+    project.tick();
     assert_eq!(
         project
             .github

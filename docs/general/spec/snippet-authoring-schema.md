@@ -74,21 +74,22 @@ the position's rendering carries; depth below that comes from required reads.
 
 - `expanded` — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
-- `listed` — snippet ids rendered as one line each: id, description and the
-  command that gets it.
+- `listed` — snippet ids rendered as one line each: id and description,
+  leading to the command that gets it, on the line or once in the heading
+  over its run of lines.
 - `description` — the domain's one line in every global agent file, which
   names `instrukt docs get --domain <x>`.
 - `agents` — a map from the name of an agent runtime instrukt deploys to, to
   snippet ids. Those snippets are ordinary `policy` snippets, appended to that
   one runtime's global file only.
-- `general`'s `expanded` and `listed` may name ids from any domain, which is
-  how always-on content from several domains is chosen in one place. A
-  domain's index and the project's index name only snippets of their own
-  position.
+- Every position's index, `general`'s included, names only snippets of its
+  own position: always-on content is `general`'s own, and a domain is reached
+  through its `description` line (`general/policy/referencing-doc-snippets`).
 
 `instrukt docs validate`, and the sync that publishes the position, report as
 findings a key the position does not allow (`agents` outside
-`docs/general/index.yaml` among them), an id that names no delivered snippet,
+`docs/general/index.yaml` among them), an id that names no delivered snippet
+or a snippet of another position,
 an `agents` key that names no agent runtime instrukt deploys to, a `listed` id already in the
 closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
 refuses on them. A domain without `index.yaml` is a notice: it is
@@ -127,12 +128,13 @@ Frontmatter (optional, authored):
   `internal` when omitted. It is recorded in the index and filters nothing:
   every reader reads every snippet in full.
 
-- `eval` — optional boolean. `true` marks a snippet whose content enters the
-  eval fingerprint: publication computes a digest only of published
-  snippets (under `docs/general/` and `docs/domain/*/`) with `eval: true`, hashed as committed (raw) content,
-  and every stamp carries it.
+- `eval` — optional boolean. `true` marks a snippet as evaluated doctrine.
+  The eval fingerprint every stamp carries covers each published snippet
+  under `docs/general/` and `docs/domain/*/` with `eval: true`, hashed as
+  committed (raw) content, together with the always-on doctrine of the global
+  agent files and the compressed units that stand for it.
 
-- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description, trigger and the command `instrukt docs get <id> --closure`: a `general` procedure in `general`'s section of every global agent file, a domain's procedure in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
+- `activation_trigger` — procedures only. A non-empty string describing when to activate the procedure. The procedure is listed with its id, description and trigger, leading to the command `instrukt docs get <id> --closure` — on its line, or once in the heading over the triggered lines of a global agent file: a `general` procedure in `general`'s section of every global agent file, a domain's procedure in `instrukt docs get --domain <x>`, and a project's procedure in the project's root `AGENTS.md`. When a procedure earns a trigger is decided by `general/procedure/doc-snippet-authoring`. Validation rejects this field on non-procedure snippet types.
 
 - `subscriptions` — procedures only. A non-empty list of event type patterns whose arrival activates the procedure through the runner, which resolves subscribed procedures from frontmatter. A pattern is an exact event type name, a prefix of whole name segments followed by `.*` (`a.b.*` selects every event under `a.b`), or `*`; any other form is rejected. A procedure declares `subscriptions` or `activation_trigger`, never both, because each names who is responsible for starting the work; a procedure used only as supporting knowledge declares neither. A procedure declaring `subscriptions` is never listed among triggered procedures. Validation rejects this field on non-procedure snippet types and on a procedure declaring both activation fields.
 
@@ -142,7 +144,7 @@ Frontmatter (optional, authored):
 
 - `parameters` — procedures only, beside `role`. An ordered list of the arguments the procedure takes at its launch: each entry has `name`, optional `required` (bool, `false` when omitted: an entry is optional unless it says otherwise), and at most one final entry may carry `rest: true`, taking the whole remaining argument text verbatim. Position is implicit from list order. The launch tokenizes the raw argument text on whitespace, binding one token per positional entry in order and the untokenized remainder to the `rest` entry; a required entry with no token refuses the launch before a session exists; an omitted optional entry is absent; surplus tokens with no `rest` entry refuse the launch. A declaration supplies no value for an argument, so the bound arguments are exactly what the caller supplied and a missing input is never covered by an invented one (`sdlc/principle/design-fundamentals`, Fail Fast). A procedure declaring no `parameters` takes no arguments and refuses any. The loader that starts the session carries a preamble mapping each bound name to its value, and `$ARGUMENTS` names the raw argument text wherever a body refers to it. The entry context an entry type supplies is never a parameter. Validation rejects a duplicate name, a `rest` entry that is not last, an entry key other than `name`, `required` and `rest`, and the field on a snippet with neither an explicit `role` nor subscriptions supplying the effective `event-handler` role.
 
-- `delivered_by` — list of todo slugs that materialize a **brand-new** snippet's intended state. Optional and non-empty when present; absence means the snippet describes the current platform contract. A snippet carrying `delivered_by` is **pending** and `instrukt docs index` flags it inline with a `(delivered by: <slugs>)` suffix (never hidden; the slug name is coordination metadata, not content). `instrukt docs index --target <slug>` narrows the listing to the snippets that todo delivers or carries pending changes for. The pending **body** stays invisible until active, except in the `instrukt docs get <id> --target <slug>` view of a slug that delivers the snippet or carries its own companion or planned material for it. Lifecycle code owns roadmap relationship checks; the integrator clears `delivered_by` when folding pending docs at delivery (see `sdlc/principle/documentation-first-development`); source validation checks frontmatter shape and a todo slug's form (its existence only when the `todos` module is on), and publication records the source state it receives. `delivered_by` is the **only** pending-state frontmatter field. A change to an already-live snippet is **never** marked in frontmatter: its pending material lives in a companion filename (`<stem>.<slug>.md`), an in-body `&lt;!-- planned:slug --&gt;` block, or an in-body `&lt;!-- planned-change:slug --&gt;` block. The index derives the parallel `(superseded by: <slugs>)` suffix on the parent's line from companions, planned blocks, and planned-change blocks, not from any field.
+- `delivered_by` — list of todo slugs that materialize a **brand-new** snippet's intended state. Optional and non-empty when present; absence means the snippet describes the current platform contract. A snippet carrying `delivered_by` is **pending** and `instrukt docs index` flags it inline with a `(delivered by: <slugs>)` suffix (never hidden; the slug name is coordination metadata, not content). `instrukt docs index --target <slug>` narrows the listing to the snippets that todo delivers or carries pending changes for. The pending **body** stays invisible until active, except in the `instrukt docs get <id> --target <slug>` view of a slug that delivers the snippet or carries its own companion or planned material for it. Lifecycle code owns roadmap relationship checks; the integrator clears `delivered_by` when folding pending docs at delivery (`general/policy/commits`); source validation checks frontmatter shape and a todo slug's form (its existence only when the `todos` module is on), and publication records the source state it receives. `delivered_by` is the **only** pending-state frontmatter field. A change to an already-live snippet is **never** marked in frontmatter: its pending material lives in a companion filename (`<stem>.<slug>.md`), an in-body `&lt;!-- planned:slug --&gt;` block, or an in-body `&lt;!-- planned-change:slug --&gt;` block. The index derives the parallel `(superseded by: <slugs>)` suffix on the parent's line from companions, planned blocks, and planned-change blocks, not from any field.
 
 - `date` — `adr` snippets ONLY (required). ISO-8601 date the decision was recorded.
 - `number` — `adr` snippets ONLY (required). Integer matching the filename prefix (e.g., `0007` for `0007-provenance-via-mirror-id.md`).
@@ -264,6 +266,20 @@ It never decides who may read a snippet (`general/policy/artifact-scope`).
 
 - **In-body marker grammar.** The `planned`, `planned-change`, and `change` markers are **whole-line**: each occupies its own line, with only whitespace before its opening `<!--` and after its closing `-->`. Markers **never nest** — an in-body block holds only plain content between its own markers, never another `planned`/`planned-change` block, and two carriers never overlap. Marker validation rejects inline (mid-prose) and nested markers as malformed, so every accepted marker is one the delivery fold can resolve.
 
+`docs/_compressed/` is no position. It holds the repository's compressed
+units: one for each source an entrypoint rendering holds in full, at the
+source's path relative to `docs/` (`docs/_compressed/general/<taxonomy>/<rest>.md`,
+`docs/_compressed/domain/<x>/…`, `docs/_compressed/project/…`, and a company
+document's own path below it). A unit's frontmatter carries exactly two
+keys: `source_sha256`, the digest `instrukt docs units` names for its source,
+and `model`, the model that wrote it. Its body is written in the
+compressed-unit notation (`general/spec/agent-shorthand`). Validation skips
+the folder, as it skips every folder whose name begins with an underscore,
+and no index names a unit; a folder named `_compressed` inside a position is
+refused at sync. Units are written and renewed under
+`general/procedure/compressed-unit-authoring`; publication decides their
+currency and checks their structure.
+
 The default index view lists the published snippets and the project snippets of the project the caller stands in; a reader reaches another project's by naming that project or a snippet's `project/<slug>/` identity.
 
 ### Grouped snippets — folder convention
@@ -293,9 +309,9 @@ do not accumulate by default.
 - Domain names: any name except `general` and `project`, which are reserved,
   and `third-party`, which keeps its existing special case; a domain claiming
   one is refused, naming the rule.
-- `agents` keys in `docs/general/index.yaml`: open provider names with the
-  syntax owned by `project/instrukt/spec/feature/docs/position-index`,
-  independent of configured providers or established native loaders.
+- `agents` keys in `docs/general/index.yaml`: open provider names, in the
+  syntax validation enforces, independent of configured providers or
+  established native loaders.
 - `visibility`: public, internal. Default: `internal`.
 
 ## Known caveats

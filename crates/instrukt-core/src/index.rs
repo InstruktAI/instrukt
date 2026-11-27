@@ -7,6 +7,13 @@
 //! index"); docs lists and resolves from it (`docs index`, `docs get`).
 //! Every entry carries a path relative to the published docs store. The
 //! publication record retains source checkout provenance.
+//!
+//! The index is at the schema version `SCHEMA_VERSION` names: each
+//! delivered entry carries its source digest, and an entry whose snippet has
+//! a published compressed unit carries that unit's two lineage facts
+//! (`docs/project/spec/domain/publication.md`, Lineage facts). Both loaders
+//! bring an older index forward before anything reads its entries, and drop
+//! no entry doing so.
 
 use std::path::{Path, PathBuf};
 
@@ -98,6 +105,19 @@ pub struct IndexEntry {
     pub parameters: Vec<IndexParameter>,
     #[serde(default = "default_interruptible")]
     pub interruptible: bool,
+    /// The snippet's source digest, from the bytes its owner's sync
+    /// published; absent on a pending entry, and on an entry brought forward
+    /// whose published file could not be read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_sha256: Option<String>,
+    /// The source digest the snippet's published unit declares; absent when
+    /// no unit was published for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compressed_source_sha256: Option<String>,
+    /// The SHA-256 of the snippet's published unit's body; absent when no
+    /// unit was published for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compressed_content_sha256: Option<String>,
 }
 
 /// One declared procedure parameter.
@@ -155,7 +175,18 @@ impl GlobalIndex {
 
     /// The home's index; `None` when nothing has been published yet.
     pub fn load(home: &Home) -> Result<Option<Self>, IndexError> {
-        Self::load_from(&home.index_file())
+        Ok(Self::load_with_undigested(home)?.map(|(index, _)| index))
+    }
+
+    /// The home's index with the ids of the entries bringing it forward left
+    /// without a source digest, their published file unreadable; `None`
+    /// when nothing has been published yet.
+    pub fn load_with_undigested(home: &Home) -> Result<Option<(Self, Vec<SnippetId>)>, IndexError> {
+        let path = home.index_file();
+        let Some(text) = read_text(&path)? else {
+            return Ok(None);
+        };
+        Self::parse(&path, &text, &home.docs_dir()).map(Some)
     }
 
     /// The home's snippet entries, each decoded on its own: an entry this
@@ -167,7 +198,7 @@ impl GlobalIndex {
         let Some(text) = read_text(&path)? else {
             return Ok(None);
         };
-        Self::entries(&path, &text).map(Some)
+        Self::entries(&path, &text, &home.docs_dir()).map(Some)
     }
 
     /// Read available entries and log the ones this version cannot decode.
@@ -181,7 +212,7 @@ impl GlobalIndex {
         }))
     }
 
-    fn entries(path: &Path, text: &str) -> Result<IndexEntries, IndexError> {
+    fn entries(path: &Path, text: &str, published: &Path) -> Result<IndexEntries, IndexError> {
         #[derive(Deserialize)]
         #[serde(deny_unknown_fields)]
         struct Document {
@@ -204,14 +235,10 @@ impl GlobalIndex {
         if document.schema_version == 1 {
             upcast_paths(&mut out.entries);
         }
+        if document.schema_version <= 2 {
+            upcast_digests(&mut out.entries, published);
+        }
         Ok(out)
-    }
-
-    fn load_from(path: &Path) -> Result<Option<Self>, IndexError> {
-        let Some(text) = read_text(path)? else {
-            return Ok(None);
-        };
-        Self::parse(path, &text).map(Some)
     }
 
     /// The index document as this version reads it: an index without a
@@ -251,7 +278,7 @@ impl GlobalIndex {
         if let Some(found) = value
             .get("schema_version")
             .and_then(serde_yaml_ng::Value::as_u64)
-            && !matches!(found, 1 | 2)
+            && !matches!(found, 1..=SCHEMA_VERSION)
         {
             return Err(IndexError::Version {
                 path: path.into(),
@@ -261,7 +288,13 @@ impl GlobalIndex {
         Ok(value)
     }
 
-    fn parse(path: &Path, text: &str) -> Result<Self, IndexError> {
+    /// The index in `text`, brought forward to the current version, with
+    /// the ids of the entries the v2→v3 step left without a source digest.
+    fn parse(
+        path: &Path,
+        text: &str,
+        published: &Path,
+    ) -> Result<(Self, Vec<SnippetId>), IndexError> {
         let value = Self::prepared(path, text)?;
         let mut index: Self =
             serde_yaml_ng::from_value(value).map_err(|source| IndexError::Parse {
@@ -274,8 +307,42 @@ impl GlobalIndex {
             upcast_paths(&mut index.snippets);
             index.schema_version = 2;
         }
-        Ok(index)
+        let mut undigested = Vec::new();
+        if index.schema_version == 2 {
+            undigested = upcast_digests(&mut index.snippets, published);
+            index.schema_version = SCHEMA_VERSION;
+        }
+        Ok((index, undigested))
     }
+}
+
+/// The schema version this release writes.
+const SCHEMA_VERSION: u64 = 3;
+
+/// The v2→v3 step: each delivered entry gains its source digest from the
+/// file it names below `published`, read through no symbolic link, and no
+/// entry gains unit facts. An entry whose file cannot be read keeps every
+/// other field, gains no digest and is named, in a warning and in what this
+/// returns.
+fn upcast_digests(entries: &mut [IndexEntry], published: &Path) -> Vec<SnippetId> {
+    let mut undigested = Vec::new();
+    for entry in entries
+        .iter_mut()
+        .filter(|entry| entry.delivered_by.is_empty())
+    {
+        match crate::publication::published_digest(published, &entry.path) {
+            Ok(digest) => entry.content_sha256 = Some(digest),
+            Err(reason) => {
+                tracing::warn!(
+                    event = "published_index_entry_undigested",
+                    entry = entry.id.as_str(),
+                    reason = %reason
+                );
+                undigested.push(entry.id.clone());
+            }
+        }
+    }
+    undigested
 }
 
 fn upcast_paths(entries: &mut [IndexEntry]) {
@@ -336,7 +403,7 @@ pub struct IndexEntries {
 impl IndexEntries {
     pub fn into_index(self) -> GlobalIndex {
         GlobalIndex {
-            schema_version: 2,
+            schema_version: SCHEMA_VERSION,
             snippets: self.entries,
             third_party: self.third_party,
         }
@@ -363,7 +430,7 @@ fn default_interruptible() -> bool {
 impl Default for GlobalIndex {
     fn default() -> Self {
         Self {
-            schema_version: 2,
+            schema_version: SCHEMA_VERSION,
             snippets: Vec::new(),
             third_party: Vec::new(),
         }
@@ -373,17 +440,112 @@ impl Default for GlobalIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A published tree that does not exist: no entry brought forward
+    /// gains a digest from it.
+    const NO_TREE: &str = "/nonexistent/instrukt-published-tree";
+
+    /// A version-2 index of four entries: a delivered one whose published
+    /// file is readable, a pending one, one whose file is gone and one
+    /// whose file lies behind a symbolic link.
+    const VERSION_2: &str = "schema_version: 2
+snippets:
+- id: general/policy/kept
+  description: Kept.
+  type: policy
+  scope: global
+  domain: general
+  path: general/policy/kept.md
+  source_project: demo
+- id: general/policy/pending
+  description: Pending.
+  type: policy
+  scope: global
+  domain: general
+  path: general/policy/pending.md
+  source_project: demo
+  delivered_by: [a-todo]
+- id: general/policy/gone
+  description: Gone.
+  type: policy
+  scope: global
+  domain: general
+  path: general/policy/gone.md
+  source_project: other
+- id: linked/policy/behind
+  description: Behind a link.
+  type: policy
+  scope: global
+  domain: linked
+  path: linked/policy/behind.md
+  source_project: other
+";
+
+    #[test]
+    fn a_version_2_index_comes_forward_keeping_every_entry_and_digesting_what_it_can_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let published = dir.path().join("docs");
+        let kept = "---\ndescription: Kept.\n---\n\n# Kept\n\n<!-- planned:a-todo -->\nLater.\n<!-- /planned:a-todo -->\nNow.\n";
+        std::fs::create_dir_all(published.join("general/policy")).unwrap();
+        std::fs::write(published.join("general/policy/kept.md"), kept).unwrap();
+        std::fs::write(published.join("general/policy/pending.md"), kept).unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        std::fs::create_dir_all(elsewhere.join("policy")).unwrap();
+        std::fs::write(elsewhere.join("policy/behind.md"), kept).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, published.join("linked")).unwrap();
+
+        let (index, undigested) =
+            GlobalIndex::parse(Path::new("index.yaml"), VERSION_2, &published).unwrap();
+        let entries = GlobalIndex::entries(Path::new("index.yaml"), VERSION_2, &published)
+            .unwrap()
+            .into_index();
+        assert_eq!(index, entries);
+        assert_eq!(index.schema_version, 3);
+        let digests: Vec<(&str, Option<&str>)> = index
+            .snippets
+            .iter()
+            .map(|entry| (entry.id.as_str(), entry.content_sha256.as_deref()))
+            .collect();
+        // The current contract: the planned addition dropped, its markers gone.
+        let expected = {
+            use sha2::Digest as _;
+            hex::encode(sha2::Sha256::digest("\n# Kept\n\nNow.\n".as_bytes()))
+        };
+        assert_eq!(
+            digests,
+            [
+                ("general/policy/kept", Some(expected.as_str())),
+                ("general/policy/pending", None),
+                ("general/policy/gone", None),
+                ("linked/policy/behind", None),
+            ]
+        );
+        let named: Vec<&str> = undigested.iter().map(SnippetId::as_str).collect();
+        assert_eq!(named, ["general/policy/gone", "linked/policy/behind"]);
+        assert!(
+            index
+                .snippets
+                .iter()
+                .all(|entry| entry.compressed_source_sha256.is_none()
+                    && entry.compressed_content_sha256.is_none())
+        );
+        let written: GlobalIndex =
+            serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&index).unwrap()).unwrap();
+        assert_eq!(written, index);
+    }
     #[test]
     fn an_old_index_upcasts_project_locations_without_changing_other_entries() {
         let old = "schema_version: 1\nsnippets:\n- id: project/demo/spec/thing\n  description: A thing.\n  type: spec\n  scope: local\n  domain: project\n  path: /source/demo/docs/project/spec/thing.md\n  source_project: demo\n- id: acme/spec/thing\n  description: Published thing.\n  type: spec\n  scope: global\n  domain: acme\n  path: acme/spec/thing.md\n  source_project: demo\n";
         let expected = old
-            .replace("schema_version: 1", "schema_version: 2")
+            .replace("schema_version: 1", "schema_version: 3")
             .replace(
                 "/source/demo/docs/project/spec/thing.md",
                 "project/demo/spec/thing.md",
             );
         assert_eq!(
-            GlobalIndex::parse(Path::new("index.yaml"), old).unwrap(),
+            GlobalIndex::parse(Path::new("index.yaml"), old, Path::new(NO_TREE))
+                .unwrap()
+                .0,
             serde_yaml_ng::from_str::<GlobalIndex>(&expected).unwrap()
         );
     }
@@ -401,9 +563,11 @@ mod tests {
     fn index(entries: &[String]) -> GlobalIndex {
         GlobalIndex::parse(
             Path::new("index.yaml"),
-            &format!("schema_version: 2\nsnippets:\n{}", entries.concat()),
+            &format!("schema_version: 3\nsnippets:\n{}", entries.concat()),
+            Path::new(NO_TREE),
         )
         .unwrap()
+        .0
     }
 
     #[test]
@@ -449,10 +613,11 @@ mod tests {
     #[test]
     fn an_entry_this_version_cannot_decode_is_dropped_and_named_beside_the_others() {
         let text = format!(
-            "schema_version: 2\nsnippets:\n{}- id: acme/procedure/broken\n  type: procedure\n- 7\n",
+            "schema_version: 3\nsnippets:\n{}- id: acme/procedure/broken\n  type: procedure\n- 7\n",
             procedure("acme/procedure/kept", "global", "acme", "helper", None)
         );
-        let entries = GlobalIndex::entries(Path::new("index.yaml"), &text).unwrap();
+        let entries =
+            GlobalIndex::entries(Path::new("index.yaml"), &text, Path::new(NO_TREE)).unwrap();
         assert_eq!(
             entries
                 .entries
@@ -476,17 +641,21 @@ mod tests {
         ]
         "#);
         assert!(matches!(
-            GlobalIndex::entries(Path::new("index.yaml"), "schema_version: 2\nsnippets: 7\n"),
+            GlobalIndex::entries(
+                Path::new("index.yaml"),
+                "schema_version: 3\nsnippets: 7\n",
+                Path::new(NO_TREE)
+            ),
             Err(IndexError::Parse { .. })
         ));
     }
 
     #[test]
     fn a_newer_index_does_not_require_this_versions_body_shape() {
-        let newer = "schema_version: 3\nfuture_field: future_value\n";
+        let newer = "schema_version: 4\nfuture_field: future_value\n";
         assert!(matches!(
-            GlobalIndex::parse(Path::new("index.yaml"), newer),
-            Err(IndexError::Version { found: 3, .. })
+            GlobalIndex::parse(Path::new("index.yaml"), newer, Path::new(NO_TREE)),
+            Err(IndexError::Version { found: 4, .. })
         ));
     }
 }

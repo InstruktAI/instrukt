@@ -87,6 +87,9 @@ acquisition_events! {
     ReviewNeeded, "runner.review_needed", "A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate.", State, Any {
         project: ProjectSlug, pull_request: Option<u64>, head_branch: Option<String>, base_branch: Option<String>, head: CommitSha, base: CommitSha, request: u64
     };
+    ProposalApproved, "runner.proposal_approved", "An approved, admitted knowledge proposal of a company home is ready for its standing integrator: an open pull request's current head with a current approving verdict covering the canonical branch.", State, PullRequest {
+        project: ProjectSlug, pull_request: u64, head_branch: String, base_branch: String, head: CommitSha, base: CommitSha
+    };
     AttentionExecutionStalled, "runner.attention.execution_stalled", "The session holding a todo's execution claim stopped, failed or is gone and its recovery did not move the work, or no session could be started from the model order available.", Occurrence, Todo {
         project: ProjectSlug, todo: TodoSlug, session: Option<SessionRef>, workflow_state: String, cause: StalledCause, model_order: Vec<String>
     };
@@ -119,6 +122,7 @@ impl Event {
             | Self::DependencyFailing { project, .. }
             | Self::WorkflowFinalized { project, .. }
             | Self::ReviewNeeded { project, .. }
+            | Self::ProposalApproved { project, .. }
             | Self::AttentionExecutionStalled { project, .. }
             | Self::AttentionInputWaiting { project, .. }
             | Self::AttentionHoldPlaced { project, .. }
@@ -166,6 +170,7 @@ impl Event {
             Self::ReviewNeeded { head, request, .. } => {
                 return review_request_id(self.project(), head, *request);
             }
+            Self::ProposalApproved { head, .. } => key.push(head.as_str()),
             Self::AttentionExecutionStalled {
                 todo,
                 session,

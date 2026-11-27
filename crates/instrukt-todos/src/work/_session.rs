@@ -1,36 +1,28 @@
-//! One command's view of a project's work record: the loaded local items
-//! with the rows they were read from, the GitHub client and its reach, and
-//! the shared steps every operation composes — entering an item, pulling it
-//! through, committing a change and flushing pending reflection. It holds
-//! no lock: each local write takes the writer lock for its transaction,
-//! and reflection takes the reflection lock across its GitHub requests.
+//! One command's local view of a project's work record: the loaded local
+//! items with the rows they were read from, and the shared local steps
+//! every operation composes — entering an item and committing a change to
+//! SQLite. It holds no lock and never contacts GitHub or touches
+//! `reflection.lock`: each local write takes the writer lock for its
+//! transaction, and current-schema local reads take no lock at all.
 
-use instrukt_core::config::{BoardRef, Configuration};
+use instrukt_core::config::Configuration;
 use instrukt_core::git;
+use instrukt_core::github;
 use instrukt_core::ids::{SessionRef, TodoSlug};
 use instrukt_core::machine::{self, MachineId};
 use instrukt_core::state_db::rusqlite::Transaction;
+use instrukt_runner::events::{Event, EventLog};
 use instrukt_runner::interfaces::ProjectRef;
+use instrukt_runner::sessions::Sessions;
 use jiff::{SignedDuration, Timestamp};
 
 use super::_envelope::status_name as status_word;
 use super::_error::WorkError;
-use super::_github::{GitHub, GitHubError};
-use super::_inbound;
 use super::_model::{TodoAddress, TodoId, TodoRecord, TodoRef};
-use super::_reflect::{self, Judgment, Pulled};
-use super::_store::{
-    self, IssueRef, ListingCopy, LocalItem, ProviderState, ReflectionLock, Refusal, Store, Swapped,
-};
+use super::_reflect;
+use super::_store::{self, LocalItem, Refusal, Store};
 use super::Work;
-use crate::evidence::{
-    Actor, ApprovalGate, ApprovedBy, ModelIdentity, ModelProvenance, StampFact, StampRecord,
-    TodoStatus, artifact_names,
-};
-use instrukt_core::github;
-use instrukt_core::publication::EvalFingerprint;
-use instrukt_runner::events::{Event, EventLog};
-use instrukt_runner::sessions::Sessions;
+use crate::evidence::{Actor, ModelIdentity, ModelProvenance, TodoStatus};
 
 /// The fixed recovery window of withdrawn work.
 pub(crate) const RECOVERY_WINDOW: SignedDuration = SignedDuration::from_hours(7 * 24);
@@ -51,117 +43,31 @@ pub enum PendingReason {
     Failed(String),
 }
 
-/// Where an item's reflection stands after a command.
+/// Where an item's reflection stands, read from the local state database.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReflectionStatus {
     Reflected,
     Pending(PendingReason),
-    /// A newer remote revision met a local change; `instrukt todo refresh
-    /// <door>`, `door` the address the refresh takes ([`TodoAddress::door`]).
-    Conflicted {
-        door: TodoAddress,
-    },
-}
-
-/// Whether GitHub could be read during a command.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GitHubRead {
-    Read,
-    NotRead(PendingReason),
-    /// GitHub was read and holds a revision of the todo this computer has
-    /// not recorded, while a reflection on this computer was in progress:
-    /// what is shown is this computer's record, and that revision is judged
-    /// by the next refresh or reflection of the todo that holds the
-    /// reflection lock.
-    Unjudged,
-}
-
-/// Why an artifact version's content is still missing once restoring it
-/// from GitHub was attempted.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Unrestored {
-    /// GitHub answered for the artifact and does not serve the recorded
-    /// content, or serves content that fails its digest.
-    NotServed,
-    /// This computer records no GitHub coordinates for the version — its
-    /// todo's issue, the artifact's address or the version's number — so
-    /// GitHub was not asked for it.
-    NotReflected,
-    /// GitHub was not read for it, for the reason given: it could not be
-    /// read this command, or the request for the artifact failed.
-    Unread(PendingReason),
-}
-
-enum Remote {
-    Client {
-        gh: Box<GitHub>,
-        /// Set when GitHub stopped answering during this command.
-        down: Option<GitHubError>,
-    },
-    Unavailable(PendingReason),
-}
-
-/// Where [`Session::locate`] found an entry.
-pub(crate) enum Located {
-    Local(usize),
-    /// A todo that is not a local item: as GitHub holds it now when
-    /// `refreshed`, else its last known copy. Never a local item.
-    Remote {
-        item: Box<LocalItem>,
-        refreshed: bool,
-        copied_at: Timestamp,
-        /// The issue it is reflected on, also when only its last known copy
-        /// could be read.
-        issue_number: u64,
-    },
 }
 
 pub(crate) struct Session<'w> {
-    work: &'w Work,
+    pub(super) work: &'w Work,
     pub project: ProjectRef,
     pub config: Configuration,
-    store: Store,
+    pub(super) store: Store,
     pub items: Vec<LocalItem>,
     /// Each stored item's row as this session last read or wrote it: the
     /// base every commit of the item is judged against.
-    bases: std::collections::BTreeMap<TodoId, LocalItem>,
-    /// Why this command's reflection could not take the reflection lock:
-    /// another process reflected for longer than the wait.
-    reflection_busy: Option<String>,
-    remote: Remote,
-    /// The last known copies of the project's todos that are not local
-    /// items (`listing_copies`).
-    pub copies: Vec<ListingCopy>,
-    /// The pickup listing read this command: every open todo issue with
-    /// the head of its revision chain. `None` until read.
-    listed: Option<Vec<(TodoRecord, IssueRef)>>,
-    /// The todos refreshed for this command's relationship checks.
-    current: Vec<TodoId>,
-    /// The todos whose GitHub head this command read but could not judge:
-    /// a revision this computer has not recorded met a pending local change
-    /// while another process held the reflection lock
-    /// ([`_reflect::judgment`]).
-    unjudged: std::collections::BTreeSet<TodoId>,
-    /// The reflection lock a point refresh took to judge a todo's head,
-    /// passed on to the reply posting that refresh triggers and released
-    /// when the refresh ends.
-    judging: Option<ReflectionLock>,
+    pub(super) bases: std::collections::BTreeMap<TodoId, LocalItem>,
     /// The todo the command acts on: the first one it entered. A refusal
     /// of a change that also writes related todos sends the caller back to
     /// it.
     target: Option<TodoId>,
-    /// A listing of reflected work GitHub failed this command, short of
-    /// being unreachable: what is not local is then undetermined, never
-    /// absent.
-    lookup_failed: Option<GitHubError>,
-    pub incompatible: std::collections::BTreeSet<TodoId>,
     pub now: Timestamp,
     /// The project's default branch.
     pub base: String,
     /// Local items whose recovery window expired when the session opened.
     pub purged: Vec<TodoSlug>,
-    /// A cockpit setup failure retained independently of item reflection.
-    pub board_setup_failure: Option<String>,
     /// Documentation files this command rewrote in the working tree.
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
@@ -169,11 +75,28 @@ pub(crate) struct Session<'w> {
 }
 
 impl<'w> Session<'w> {
-    /// Loads the project's local record. It takes no lock, except that a
-    /// database behind this build's schema migrates once under the writer
-    /// lock, and withdrawn work whose recovery window has expired is purged,
-    /// each item in a writer transaction of its own.
+    /// Loads the project's local record for a writing command or retention
+    /// purge: checks the code host locally without contacting GitHub, migrates
+    /// an older database once under the writer lock, and purges withdrawn work
+    /// past its recovery window.
     pub fn open(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
+        Self::open_parts(work, project, true).map(|(session, _, _)| session)
+    }
+
+    /// Loads the project's local record for a read-only command or port:
+    /// checks the code host locally without contacting GitHub, skips purging
+    /// expired withdrawn records (filtering them out in memory instead), and
+    /// acquires no lock on a current-schema database (`state-database`,
+    /// "Writing").
+    pub fn open_read(work: &'w Work, project: &ProjectRef) -> Result<Self, WorkError> {
+        Self::open_parts(work, project, false).map(|(session, _, _)| session)
+    }
+
+    pub(super) fn open_parts(
+        work: &'w Work,
+        project: &ProjectRef,
+        purge: bool,
+    ) -> Result<(Self, String, String), WorkError> {
         let store = Store::new(work.home(), &project.slug);
         let config = Configuration::load(work.home(), Some(&project.root))?;
         // The address the token is sent to comes from the machine's own
@@ -185,31 +108,11 @@ impl<'w> Session<'w> {
                 return Err(WorkError::CodeNotOnGitHub { reason });
             }
         };
-        let (items, copies, provider) = store.existence()?;
         let now = work.now();
-        // Anchored here, before the capability lock is taken, so a wait for
-        // it is part of every GitHub answer's elapsed time.
-        let clock = super::_apps::Clock::starting(now);
-        let remote = match unavailable(work, &provider, now) {
-            Some(reason) => Remote::Unavailable(reason),
-            None => match GitHub::for_app(
-                {
-                    work.github.begin_pass().map_err(GitHubError::from)?;
-                    work.github.clone()
-                },
-                &api_url,
-                &repository,
-                None,
-                github::Operation::Record,
-                clock,
-            ) {
-                Ok(gh) => Remote::Client {
-                    gh: Box::new(gh),
-                    down: None,
-                },
-                Err(err) => Remote::Unavailable(reason_of(&err)),
-            },
-        };
+        let mut items = store.items()?;
+        if !purge {
+            items.retain(|it| !past_recovery(&it.record, now));
+        }
         let base = github::default_branch(&project.root)?;
         let bases = items
             .iter()
@@ -222,25 +125,35 @@ impl<'w> Session<'w> {
             store,
             items,
             bases,
-            reflection_busy: None,
-            remote,
-            copies,
-            listed: None,
-            current: Vec::new(),
-            unjudged: Default::default(),
-            judging: None,
             target: None,
-            lookup_failed: None,
-            incompatible: Default::default(),
             now,
             base,
             purged: Vec::new(),
             docs_changed: Vec::new(),
-            board_setup_failure: None,
             pending_transfer: None,
         };
-        session.purge()?;
-        Ok(session)
+        if purge {
+            session.purge()?;
+        }
+        Ok((session, api_url, repository))
+    }
+
+    /// Reloads current local items from SQLite without purging, refreshing
+    /// `items` and `bases` for a runner reflection phase.
+    pub(super) fn reload(&mut self) -> Result<(), WorkError> {
+        let now = self.now;
+        let items: Vec<LocalItem> = self
+            .store
+            .items()?
+            .into_iter()
+            .filter(|it| !past_recovery(&it.record, now))
+            .collect();
+        self.bases = items
+            .iter()
+            .map(|item| (item.record.id.clone(), item.clone()))
+            .collect();
+        self.items = items;
+        Ok(())
     }
 
     pub fn home(&self) -> &instrukt_core::home::Home {
@@ -300,260 +213,30 @@ impl<'w> Session<'w> {
         self.items.iter().position(|it| &it.record.id == id)
     }
 
-    /// The item `slug` addresses, refreshed from GitHub before the command
-    /// acts on it (`github-record`, "Interest-driven refresh"): a local item
-    /// is pulled through; a todo known only as a listing copy is read from
-    /// GitHub and becomes a local item. A conflicted item refuses.
+    /// The local item `slug` addresses. A todo this computer's record does
+    /// not hold is unknown. Reads nothing from GitHub.
     pub fn enter(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
-        let index = match self.find(slug, false) {
-            Some(index) => index,
-            None => self.localize_slug(slug)?,
+        let Some(index) = self.find(slug, false) else {
+            return Err(self.absent(slug));
         };
         if self.target.is_none() {
             self.target = Some(self.items[index].record.id.clone());
         }
-        self.pull_through(index)?;
         Ok(index)
     }
 
     /// Like [`Session::enter`] for a reference by identity.
     pub fn enter_ref(&mut self, target: &TodoRef) -> Result<usize, WorkError> {
         match self.find_id(&target.id) {
-            Some(index) => {
-                self.pull_through(index)?;
-                Ok(index)
-            }
+            Some(index) => Ok(index),
             None => self.enter(&target.slug),
         }
     }
 
-    /// Makes the live todo `slug`, known here only as a listing copy, a
-    /// local item as GitHub holds it now. Acting on it needs its committed
-    /// record and contents, so a GitHub that cannot be read refuses.
-    fn localize_slug(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
-        let Some(copy) = self.known_copy(slug) else {
-            return Err(self.absent(slug));
-        };
-        if !matches!(self.remote, Remote::Client { down: None, .. }) {
-            return Err(self.unreadable(slug));
-        }
-        match self.refresh_copy(copy.issue_number)? {
-            Some(item) if &item.record.slug == slug && item.record.is_live() => self.adopt(item),
-            _ => Err(self.absent(slug)),
-        }
-    }
-
-    /// The refusal for acting on `slug`, known here only as a listing copy,
-    /// while GitHub cannot be read.
-    fn unreadable(&self, slug: &TodoSlug) -> WorkError {
-        let cause = match self.github_read() {
-            GitHubRead::NotRead(reason) => describe(&reason),
-            GitHubRead::Read | GitHubRead::Unjudged => "GitHub's answer was not read".to_owned(),
-        };
-        WorkError::refused(format!(
-            "`{slug}` is not on this computer, and acting on it needs its record from GitHub, which cannot be read now: {cause}"
-        ))
-    }
-
-    /// Pulls item `index` from GitHub with a conditional request: a newer
-    /// remote revision enters the local record, so the command acts on the
-    /// todo's current state. A newer revision meeting a pending local
-    /// change marks it conflicted, and a conflicted item refuses. A GitHub
-    /// that cannot be read leaves the item as this computer holds it.
-    ///
-    /// No writer lock is held across the request. The row is re-read before
-    /// it and the result is committed only while the row is unchanged; a row
-    /// that changed meanwhile is pulled once more. GitHub is always read, so
-    /// a record schema this build does not understand refuses before the
-    /// command changes anything. What the read found is committed by
-    /// [`_reflect::judgment`]: for a row with a pending change the reflection
-    /// lock is taken first, without waiting, and the row re-read under it;
-    /// held, the judgment of a head this computer has not recorded is
-    /// committed before the lock is released, a conflict as the mark on the
-    /// live row. Busy, nothing about such a head is committed: it is left
-    /// unjudged ([`Session::unjudged`]), the command proceeds on the local
-    /// record, and the revision check of this todo's next reflection judges
-    /// it (`github-record`, "Interest-driven refresh"). An item carrying this
-    /// command's uncommitted change is judged as held here.
-    pub fn pull_through(&mut self, index: usize) -> Result<(), WorkError> {
-        let id = self.items[index].record.id.clone();
-        if !self.current.contains(&id) {
-            self.current.push(id.clone());
-        }
-        if self.uncommitted(index) {
-            return self.refuse_conflicted(index);
-        }
-        if let Some(live) = self.store.item(&id)? {
-            self.take_row(index, live);
-        }
-        self.unjudged.remove(&id);
-        let mut withdrawing = false;
-        for attempt in 0..2 {
-            let mut held = None;
-            if self.items[index].reflection.pending {
-                held = ReflectionLock::try_acquire(self.work.home())?;
-                if held.is_some()
-                    && let Some(live) = self.store.item(&id)?
-                {
-                    self.take_row(index, live);
-                }
-            }
-            let base = self.items[index].clone();
-            let mut pulled = base.clone();
-            let result = match &self.remote {
-                Remote::Client { gh, down: None } => Some(_reflect::pull(gh, &mut pulled)),
-                _ => None,
-            };
-            if matches!(&result, Some(Ok(_))) && pulled.reflection.issue.is_some() {
-                pulled.reflection.refreshed_at = Some(self.now);
-            }
-            let found = match &result {
-                Some(Err(err @ GitHubError::RecordSchema { .. })) => {
-                    self.incompatible.insert(id.clone());
-                    self.lookup_failure(err.clone());
-                    return Err(err.clone().into());
-                }
-                Some(Err(err)) => {
-                    self.note(err.clone());
-                    None
-                }
-                Some(Ok(found)) => Some(*found),
-                None => None,
-            };
-            let inbound = std::mem::take(&mut pulled.reflection.inbound);
-            let judged = found
-                .map(|found| _reflect::judgment(base.reflection.pending, held.is_some(), found));
-            if judged == Some(Judgment::Unjudged) {
-                tracing::info!(
-                    event = "work_head_unjudged",
-                    project = %self.project.slug,
-                    todo = %base.record.slug,
-                    "GitHub holds a revision this computer has not recorded and a reflection is in progress; the head is left for the next reflection of this todo to judge"
-                );
-                self.unjudged.insert(id.clone());
-                self.items[index].reflection.inbound = inbound;
-                break;
-            }
-            if found == Some(Pulled::Conflicted) {
-                // Judged under the reflection lock: the mark on the live
-                // row, whatever local change committed there meanwhile.
-                let row = self.store.amend_reflection(&id, |r| r.conflicted = true)?;
-                if let Some(row) = row {
-                    self.take_row(index, row);
-                }
-                self.items[index].reflection.inbound = inbound;
-                self.judging = held;
-                break;
-            }
-            if _store::stored(&pulled) == _store::stored(&base) {
-                self.items[index].reflection.inbound = inbound;
-                self.judging = held;
-                break;
-            }
-            match self
-                .store
-                .swap(&base, &pulled, found == Some(Pulled::Landed))?
-            {
-                Swapped::Applied(row) => {
-                    if found == Some(Pulled::Adopted) {
-                        tracing::info!(
-                            event = "work_pulled",
-                            project = %self.project.slug,
-                            todo = %row.record.slug,
-                            revision = row.record.revision,
-                            "a newer remote revision entered the local record"
-                        );
-                    }
-                    self.take_row(index, *row);
-                    self.items[index].reflection.inbound = inbound;
-                    self.judging = held;
-                    break;
-                }
-                Swapped::Changed(Some(live)) => {
-                    self.take_row(index, *live);
-                    if attempt > 0 {
-                        tracing::warn!(
-                            event = "work_pull_superseded",
-                            project = %self.project.slug,
-                            todo = %self.items[index].record.slug,
-                            "the todo kept changing; the command acts on the local record"
-                        );
-                    }
-                }
-                Swapped::Changed(None) => break,
-                Swapped::Withdrawing(live) => {
-                    // The withdrawal finishes on the record it was admitted
-                    // on; the command acts on that record. What the issue
-                    // asks of the todo is not decided on it: the withdrawal
-                    // may commit before an answer would be recorded.
-                    self.take_row(index, *live);
-                    self.judging = held;
-                    withdrawing = true;
-                    break;
-                }
-            }
-        }
-        // While the todo's withdrawal is open, what the issue asks of it
-        // waits: the first pull after the withdrawal commits answers it as
-        // the withdrawn todo (`state-database`, `withdrawal_intents`). An
-        // answer recorded later is recorded only on the record it was
-        // decided on, with no withdrawal open ([`Store::retain_reply`]).
-        let withdrawing = withdrawing || self.store.withdrawal_intent(&id)?.is_some();
-        if withdrawing {
-            self.items[index].reflection.inbound.clear();
-        }
-        let answered = if self.items[index].reflection.conflicted || withdrawing {
-            Ok(())
-        } else {
-            self.answer_label_actions(index)
-                .and_then(|()| self.answer_commands(index))
-                .and_then(|()| self.restore_output_labels(index))
-        };
-        self.judging = None;
-        answered?;
-        self.refuse_conflicted(index)
-    }
-
-    /// Whether this command left item `index`'s GitHub head unjudged: a
-    /// revision this computer has not recorded met its pending change while
-    /// a reflection held the reflection lock. A caller that starts,
-    /// follows up or deletes on the strength of a refreshed record refuses
-    /// it.
-    pub fn unjudged(&self, index: usize) -> bool {
-        self.unjudged.contains(&self.items[index].record.id)
-    }
-
-    /// Like [`Session::enter`], for a command that must not act on a head
-    /// this computer could not judge: an unjudged head refuses, with
-    /// nothing done.
-    pub fn enter_judged(&mut self, slug: &TodoSlug) -> Result<usize, WorkError> {
-        let index = self.enter(slug)?;
-        if self.unjudged(index) {
-            return Err(unjudged_refusal(&self.items[index].record.slug));
-        }
-        Ok(index)
-    }
-
-    /// Whether item `index` was refreshed from GitHub for this view.
-    pub fn refresh_of(&self, index: usize) -> GitHubRead {
-        if self.unjudged(index) {
-            return GitHubRead::Unjudged;
-        }
-        self.github_read()
-    }
-
-    /// Refuses a command on item `index` when it is conflicted.
-    fn refuse_conflicted(&self, index: usize) -> Result<(), WorkError> {
-        if self.items[index].reflection.conflicted {
-            return Err(WorkError::conflicted(&self.items[index].record));
-        }
-        Ok(())
-    }
-
-    /// Whether item `index` carries a change of this command not yet
+    /// Whether item `index` carries a change of this session not yet
     /// committed: its record differs from the row it was read from, or it
     /// has no row yet.
-    fn uncommitted(&self, index: usize) -> bool {
+    pub(super) fn uncommitted(&self, index: usize) -> bool {
         let item = &self.items[index];
         self.bases
             .get(&item.record.id)
@@ -561,171 +244,14 @@ impl<'w> Session<'w> {
     }
 
     /// Makes `row`, read or written just now, item `index` and its base.
-    fn take_row(&mut self, index: usize, row: LocalItem) {
+    pub(super) fn take_row(&mut self, index: usize, row: LocalItem) {
         self.bases.insert(row.record.id.clone(), row.clone());
         self.items[index] = row;
     }
 
-    /// Whether GitHub could be read for this command's refreshes so far.
-    pub fn refreshed(&self) -> bool {
-        matches!(self.remote, Remote::Client { down: None, .. })
-    }
-
-    /// Answers the approvers' `/instrukt` commands the last pull found on
-    /// item `index`'s issue (`github-record`, "Writer and convergence"). An
-    /// approval applies only when its digest prefix matches the gate's
-    /// current evidence, attributed to the approver's GitHub login; a
-    /// change request is recorded with its reason. A command from anyone not
-    /// in `github.approvers` with write access changes nothing. Every
-    /// command is answered on the issue, once.
-    fn answer_commands(&mut self, index: usize) -> Result<(), WorkError> {
-        let commands = std::mem::take(&mut self.items[index].reflection.inbound);
-        if self.items[index].reflection.issue.is_none() {
-            return Ok(());
-        }
-        let approvers = self
-            .config
-            .github_approvers()?
-            .into_iter()
-            .map(str::to_owned)
-            .collect::<Vec<_>>();
-        for comment in commands {
-            let Some(id) = comment["id"].as_u64() else {
-                continue;
-            };
-            let login = comment["user"]["login"]
-                .as_str()
-                .unwrap_or_default()
-                .to_owned();
-            if let Some(prior) = self.items[index]
-                .record
-                .stamps
-                .iter()
-                .find(|stamp| stamp.source_comment == Some(id))
-                .cloned()
-            {
-                let original_login = match &prior.actor {
-                    Actor::GitHub { login } => login.as_str(),
-                    _ => login.as_str(),
-                };
-                let (gate, target) = match &prior.fact {
-                    StampFact::Approval { gate, target, .. } => (*gate, Some(target)),
-                    StampFact::ChangesRequested { gate, .. } => (*gate, None),
-                    _ => {
-                        return Err(WorkError::refused(
-                            "a decision source identifies an incompatible stamp; inspect the work record",
-                        ));
-                    }
-                };
-                let gate = match gate {
-                    ApprovalGate::Prd => "prd",
-                    ApprovalGate::Task => "task",
-                };
-                let answer = match target {
-                    Some(target) => format!(
-                        "@{original_login}: recorded your approval of {gate} `{}`.",
-                        _inbound::shown(target)
-                    ),
-                    None => format!("@{original_login}: recorded your change request on {gate}."),
-                };
-                if !self.answered(index, id, &answer)? {
-                    break;
-                }
-                continue;
-            }
-            let write_access = if approvers.contains(&login) {
-                let result = match &self.remote {
-                    Remote::Client { gh, down: None } => gh.can_write(&login),
-                    _ => break,
-                };
-                match result {
-                    Ok(allowed) => allowed,
-                    Err(error) => {
-                        tracing::warn!(event="approval_actor_unverified",login,error=%error);
-                        self.amend(index, |reflection| reflection.etag = None)?;
-                        self.note(error);
-                        break;
-                    }
-                }
-            } else {
-                false
-            };
-            let answer = if !write_access {
-                format!(
-                    "@{login}: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed."
-                )
-            } else {
-                match _inbound::parse(comment["body"].as_str().unwrap_or_default()) {
-                    Err(why) => format!("@{login}: {why}; nothing changed."),
-                    Ok(command) => match self.apply_command(
-                        index,
-                        id,
-                        comment["created_at"].as_str(),
-                        &login,
-                        command,
-                    ) {
-                        Ok(answer) => answer,
-                        Err(err) => {
-                            // Not recorded: the command stays outstanding,
-                            // and the next pull reads it again.
-                            let todo = self.items[index].record.id.clone();
-                            self.store.forget_etag(&todo)?;
-                            return Err(err);
-                        }
-                    },
-                }
-            };
-            if !self.answered(index, id, &answer)? {
-                break;
-            }
-        }
-        // Replies are posted only by the holder of the reflection lock. A
-        // busy lock leaves them pending: a later flush of this project that
-        // takes the lock attempts the pending replies of each item whose
-        // remote record is compatible, and any it cannot post stay pending
-        // for the flush after it.
-        let todo = self.items[index].record.id.to_string();
-        let Some(issue) = self.items[index].reflection.issue else {
-            return Ok(());
-        };
-        if self.store.pending_replies(&todo)?.is_empty() {
-            return Ok(());
-        }
-        let lock = match self.judging.take() {
-            Some(lock) => Some(lock),
-            None => ReflectionLock::try_acquire(self.work.home())?,
-        };
-        let posted = match &lock {
-            Some(lock) => self.post_replies(issue, &todo, lock),
-            None => Ok(()),
-        };
-        self.judging = lock;
-        posted
-    }
-
-    /// Records command `comment` of item `index` as answered with `answer`;
-    /// `false`, with nothing recorded, when the todo's withdrawal opened
-    /// meanwhile: the command and those after it stay outstanding.
-    fn answered(&mut self, index: usize, comment: u64, answer: &str) -> Result<bool, WorkError> {
-        let id = self.items[index].record.id.clone();
-        if !self
-            .store
-            .retain_reply(&self.items[index].record, comment, answer)?
-        {
-            return Ok(false);
-        }
-        let rows = std::iter::once(&mut self.items[index]).chain(self.bases.get_mut(&id));
-        for item in rows {
-            if !item.reflection.commands_seen.contains(&comment) {
-                item.reflection.commands_seen.push(comment);
-            }
-        }
-        Ok(true)
-    }
-
     /// Applies `amend` to item `index`'s stored reflection state and takes
     /// the row it leaves.
-    fn amend(
+    pub(super) fn amend(
         &mut self,
         index: usize,
         amend: impl Fn(&mut _store::ReflectionState),
@@ -734,293 +260,6 @@ impl<'w> Session<'w> {
         let id = self.items[index].record.id.clone();
         let row = self.store.amend_reflection(&id, &amend)?;
         self.learned(row);
-        Ok(())
-    }
-
-    /// Posts the pending command replies of `todo` on `issue`; the
-    /// reflection lock is the proof that no other holder posts them.
-    fn post_replies(
-        &mut self,
-        issue: IssueRef,
-        todo: &str,
-        _proof: &ReflectionLock,
-    ) -> Result<(), WorkError> {
-        for (source, text) in self.store.pending_replies(todo)? {
-            let result = match &self.remote {
-                Remote::Client { gh, down: None } => _reflect::reply(gh, issue, source, &text),
-                _ => break,
-            };
-            match result {
-                Ok(()) => self.store.reply_sent(todo, source)?,
-                Err(error) => {
-                    tracing::warn!(event="github_command_reply_pending",source,error=%error);
-                    self.note(error);
-                    break;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn restore_output_labels(&mut self, index: usize) -> Result<(), WorkError> {
-        let Some(issue) = self.items[index].reflection.issue else {
-            return Ok(());
-        };
-        let snapshot = match &self.remote {
-            Remote::Client { gh, down: None } => gh.read(&format!("/issues/{}", issue.number)),
-            _ => return Ok(()),
-        };
-        let snapshot = match snapshot {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                self.note(error);
-                return Ok(());
-            }
-        };
-        let expected = super::_envelope::issue(&self.items[index].record).labels;
-        let actual = snapshot["labels"]
-            .as_array()
-            .map(|labels| {
-                labels
-                    .iter()
-                    .filter_map(|l| l["name"].as_str())
-                    .filter(|l| super::_reflect::output_label(l))
-                    .collect::<std::collections::BTreeSet<_>>()
-            })
-            .unwrap_or_default();
-        if actual != expected.iter().map(String::as_str).collect() {
-            self.amend(index, |reflection| reflection.pending = true)?;
-        }
-        Ok(())
-    }
-
-    /// Apply attributable label actions once, preserving their source ordering.
-    fn answer_label_actions(&mut self, index: usize) -> Result<(), WorkError> {
-        let Some(issue) = self.items[index].reflection.issue else {
-            return Ok(());
-        };
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => {
-                gh.list(&format!("/issues/{}/events", issue.number))
-            }
-            _ => return Ok(()),
-        };
-        let mut actions = match result {
-            Ok(actions) => actions,
-            Err(error) => {
-                tracing::warn!(event="github_label_actions_unreadable",issue=issue.number,error=%error);
-                return Ok(());
-            }
-        };
-        actions.sort_by_key(|a| a["id"].as_u64().unwrap_or(0));
-        for action in actions {
-            if action["label"]["name"].as_str() != Some("hold") {
-                continue;
-            }
-            let (Some(id), Some(login), Some(kind), Some(at)) = (
-                action["id"].as_u64(),
-                action["actor"]["login"].as_str(),
-                action["event"].as_str(),
-                action["created_at"].as_str(),
-            ) else {
-                tracing::warn!(event = "github_hold_unattributed", issue = issue.number);
-                continue;
-            };
-            if !matches!(kind, "labeled" | "unlabeled")
-                || self.items[index]
-                    .record
-                    .label_actions
-                    .iter()
-                    .any(|a| a.issue == issue.number && a.id == id)
-                || self.store.label_seen(issue.number, id)?
-            {
-                continue;
-            }
-            let source_at = match at.parse::<Timestamp>() {
-                Ok(at) => at,
-                Err(error) => {
-                    tracing::warn!(event="github_hold_invalid_time",error=%error);
-                    continue;
-                }
-            };
-            let permission = match &self.remote {
-                Remote::Client { gh, down: None } => gh.can_write(login),
-                _ => return Ok(()),
-            };
-            let allowed = match permission {
-                Ok(allowed) => allowed,
-                Err(error) => {
-                    tracing::warn!(event="github_hold_actor_unverified",login,error=%error);
-                    break;
-                }
-            };
-            let admitted =
-                allowed && self.items[index].record.status != TodoStatus::StructuralHolder;
-            if !admitted {
-                if !self.store.ignore_label(
-                    &self.items[index].record,
-                    issue.number,
-                    id,
-                    kind,
-                    login,
-                    at,
-                )? {
-                    return Ok(());
-                }
-                continue;
-            }
-            let actor = Actor::GitHub {
-                login: login.to_owned(),
-            };
-            self.commit("github hold label", |s| {
-                let record = &mut s.items[index].record;
-                if let Some(previous) = record.hold.take() {
-                    record.hold_history.push(super::_model::ReleasedHold {
-                        hold: previous,
-                        released: source_at,
-                        by: actor.clone(),
-                    });
-                }
-                if kind == "labeled" {
-                    record.hold = Some(crate::evidence::HoldRecord {
-                        source: crate::evidence::HoldSource::GitHub,
-                        reason: format!("held from GitHub by {login}"),
-                        by: actor,
-                        at: source_at,
-                    });
-                }
-                record.label_actions.push(super::_model::LabelAction {
-                    issue: issue.number,
-                    id,
-                    action: kind.into(),
-                    login: login.into(),
-                    at: at.into(),
-                    outcome: "accepted".into(),
-                });
-                Ok(())
-            })?;
-        }
-        Ok(())
-    }
-
-    /// Records an approver's command; returns the answer for the issue.
-    fn apply_command(
-        &mut self,
-        index: usize,
-        comment_id: u64,
-        source_at: Option<&str>,
-        login: &str,
-        command: _inbound::Command,
-    ) -> Result<String, WorkError> {
-        let record = &self.items[index].record;
-        if record.status != TodoStatus::Active {
-            return Ok(format!(
-                "@{login}: `{}` is not active work; nothing changed.",
-                record.slug
-            ));
-        }
-        let gate = match &command {
-            _inbound::Command::Approve { gate, .. }
-            | _inbound::Command::RequestChanges { gate, .. } => *gate,
-        };
-        let gate_name = match gate {
-            ApprovalGate::Prd => "prd",
-            ApprovalGate::Task => "task",
-        };
-        let evidence = match gate {
-            ApprovalGate::Prd => record.current_digest(artifact_names::PRD).cloned(),
-            ApprovalGate::Task => record.current_digest(artifact_names::TASK_PLAN).cloned(),
-        };
-        let (fact, answer) = match command {
-            _inbound::Command::Approve { prefix, .. } => {
-                let Some(current) = evidence else {
-                    return Ok(format!(
-                        "@{login}: there is no {gate_name} evidence to approve; nothing changed."
-                    ));
-                };
-                if !_inbound::digest_hex(&current).starts_with(&prefix) {
-                    return Ok(format!(
-                        "@{login}: the {gate_name} evidence changed since `{prefix}`; review it and approve the current one again: `/instrukt approve {gate_name} {}`. Nothing changed.",
-                        _inbound::shown(&current)
-                    ));
-                }
-                (
-                    StampFact::Approval {
-                        gate,
-                        by: ApprovedBy::Human,
-                        target: current.clone(),
-                        carried_from: None,
-                        reasoning: None,
-                    },
-                    format!(
-                        "@{login}: recorded your approval of {gate_name} `{}`.",
-                        _inbound::shown(&current)
-                    ),
-                )
-            }
-            _inbound::Command::RequestChanges { reason, .. } => (
-                StampFact::ChangesRequested {
-                    gate,
-                    target: evidence,
-                    reason,
-                },
-                format!("@{login}: recorded your change request on {gate_name}."),
-            ),
-        };
-        let now = self.now;
-        let actor = Actor::GitHub {
-            login: login.to_owned(),
-        };
-        let fingerprint = EvalFingerprint::current(self.work.home())?.map(|f| f.fingerprint);
-        let todo_id = record.id.to_string();
-        let sequence = record.sequence + 1;
-        let notice=serde_json::json!({"decision":fact,"gate":gate_name,"actor":actor,"evidence":fact,"at":now.to_string(),"source_at":source_at,"arrived_at":now.to_string(),"source_comment":comment_id}).to_string();
-        self.commit_with("inbound command", |s| {
-            s.items[index].reflection.commands_seen.push(comment_id);
-            let record = &mut s.items[index].record;
-            let sequence = record.next_sequence();
-            record.stamps.push(StampRecord {
-                source_comment:Some(comment_id),
-                fact,
-                at: now,
-                actor,
-                model: None,
-                eval_fingerprint: fingerprint,
-                role: None,
-                human_involved: None,
-                sequence,
-                model_provenance: ModelProvenance::OutsideSession,
-            });
-            Ok(())
-        },|tx| {
-            tx.execute("INSERT INTO approval_attention(todo_id,decision_sequence,content,state) VALUES (?1,?2,?3,'pending') ON CONFLICT(todo_id,decision_sequence) DO UPDATE SET content=excluded.content WHERE approval_attention.state='pending' AND approval_attention.input_id IS NULL",instrukt_core::state_db::rusqlite::params![todo_id,sequence,notice]).map_err(instrukt_core::state_db::StateDbError::sqlite(std::path::Path::new(tx.path().unwrap_or(""))))?;
-            _store::retain_reply(tx,std::path::Path::new(tx.path().unwrap_or("")),&todo_id,comment_id,&answer)?;
-            Ok(())
-        })?;
-        tracing::info!(
-            event = "work_inbound_command",
-            project = %self.project.slug,
-            todo = %self.items[index].record.slug,
-            login,
-            "an approver's command was recorded"
-        );
-        Ok(answer)
-    }
-
-    /// Pulls every local item, without refusing conflicted ones.
-    pub fn pull_all(&mut self) -> Result<(), WorkError> {
-        for index in 0..self.items.len() {
-            match self.pull_through(index) {
-                Ok(()) | Err(WorkError::Conflicted { .. }) => {}
-                Err(WorkError::GitHub(error @ GitHubError::RecordSchema { .. })) => {
-                    self.incompatible
-                        .insert(self.items[index].record.id.clone());
-                    self.current.retain(|id| id != &self.items[index].record.id);
-                    tracing::warn!(event="work_incompatible_record",error=%error);
-                }
-                Err(err) => return Err(err),
-            }
-        }
         Ok(())
     }
 
@@ -1063,24 +302,15 @@ impl<'w> Session<'w> {
         })
     }
 
-    fn schema_ready(&self) -> Result<(), WorkError> {
-        if self.current.iter().any(|id| self.incompatible.contains(id)) {
-            return Err(self.lookup_failed.clone().map(WorkError::GitHub).unwrap_or_else(||WorkError::refused("a record this operation depends on has an incompatible schema; upgrade instrukt")));
-        }
-        Ok(())
-    }
-
     /// Commits a work change and its related runner rows together. The
     /// runner owns the additional writes; work owns their transaction.
-    /// `change` runs before the transaction, holding no lock, so the GitHub
-    /// reads it makes wait on nothing local.
+    /// `change` runs before the transaction, holding no lock.
     pub fn commit_with<T>(
         &mut self,
         what: &'static str,
         change: impl FnOnce(&mut Self) -> Result<T, WorkError>,
         write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
     ) -> Result<T, WorkError> {
-        self.schema_ready()?;
         let before: Vec<LocalItem> = self.items.clone();
         let bases_before = self.bases.clone();
         let value = match change(self) {
@@ -1090,10 +320,6 @@ impl<'w> Session<'w> {
                 return Err(err);
             }
         };
-        if let Err(error) = self.schema_ready() {
-            self.restore(before, &bases_before);
-            return Err(error);
-        }
         let mut changed = Vec::new();
         for index in 0..self.items.len() {
             let differs = before
@@ -1110,13 +336,8 @@ impl<'w> Session<'w> {
         let written = self.write_change(&changed, write_related, transfer.as_ref());
         let docs = match written {
             Ok(docs) => docs,
-            Err((err, conflicted)) => {
+            Err(err) => {
                 self.restore(before, &bases_before);
-                if let Some(live) = conflicted
-                    && let Some(index) = self.find_id(&live.record.id)
-                {
-                    self.take_row(index, *live);
-                }
                 return Err(err);
             }
         };
@@ -1141,17 +362,15 @@ impl<'w> Session<'w> {
     /// rewrote. Each item commits against its live row, re-read inside the
     /// transaction (`_store::commit_local`). Nothing commits unless
     /// everything succeeded: documentation moves only once every row is
-    /// written, and a failing transfer writes nothing of its own. A todo a
-    /// reflection marked conflicted since this command read it refuses the
-    /// whole change, returning its live row. A change that moves waiting
-    /// edges is refused whole when the graph the transaction holds, local
-    /// rows and listing copies alike, would wait on itself through them.
+    /// written, and a failing transfer writes nothing of its own. A change
+    /// that moves waiting edges is refused whole when the graph the
+    /// transaction holds would wait on itself through them.
     fn write_change(
         &mut self,
         changed: &[usize],
         write_related: impl FnOnce(&Transaction<'_>) -> Result<(), WorkError>,
         transfer: Option<&(TodoSlug, TodoSlug)>,
-    ) -> Result<Vec<std::path::PathBuf>, (WorkError, Option<Box<LocalItem>>)> {
+    ) -> Result<Vec<std::path::PathBuf>, WorkError> {
         let others: Vec<TodoId> = changed
             .iter()
             .map(|&index| self.items[index].record.id.clone())
@@ -1214,7 +433,19 @@ impl<'w> Session<'w> {
                 (base.record.slug != mine.slug).then(|| (mine.id.clone(), base.record.slug.clone()))
             })
             .collect();
-        let mut conflicted = None;
+        // The sessions the change newly records on bindings, relative to
+        // each row as this command read it.
+        let recorded: Vec<(&SessionRef, &str)> = changed
+            .iter()
+            .flat_map(|&index| {
+                let mine = &self.items[index].record;
+                let base = self
+                    .bases
+                    .get(&mine.id)
+                    .map(|base| base.record.bindings.as_slice());
+                super::_assignment::newly_recorded(&mine.bindings, base)
+            })
+            .collect();
         let result = self.store.write(|tx, path, project| {
             let mut rows = Vec::new();
             for &index in changed {
@@ -1222,11 +453,6 @@ impl<'w> Session<'w> {
                 let base = self.bases.get(&mine.record.id);
                 match _store::commit_local(tx, path, project, base, mine, &others)? {
                     Ok(row) => rows.push((index, row)),
-                    Err(Refusal::Conflicted(live)) => {
-                        let error = WorkError::conflicted(&live.record);
-                        conflicted = Some(live);
-                        return Err(error);
-                    }
                     Err(Refusal::Changed(now)) => {
                         return Err(self.changed_refusal(mine, base, now));
                     }
@@ -1242,6 +468,10 @@ impl<'w> Session<'w> {
                     }
                 }
             }
+            // A session the change records on a binding must still resolve
+            // to one assignment, judged against every binding this
+            // transaction holds (`roles-and-capabilities`).
+            super::_assignment::admit_recorded(tx, path, &recorded)?;
             let ids: Vec<TodoId> = referenced.iter().map(|(id, _, _)| id.clone()).collect();
             let now = _store::referenced(tx, path, project, &ids)?;
             for (id, slug, status) in &referenced {
@@ -1306,7 +536,7 @@ impl<'w> Session<'w> {
             };
             Ok((rows, docs))
         });
-        let (rows, docs) = result.map_err(|err| (err, conflicted))?;
+        let (rows, docs) = result?;
         for (index, row) in rows {
             let inbound = std::mem::take(&mut self.items[index].reflection.inbound);
             self.take_row(index, row);
@@ -1316,10 +546,9 @@ impl<'w> Session<'w> {
     }
 
     /// Item `index`'s row as the state database holds it now, `None` when
-    /// it is gone from the project: what a flush confirmed, whatever another
-    /// command or reflection committed since this command last read it.
-    /// Read in the same snapshot, whether the todo's withdrawal intent is
-    /// open (`withdrawal_intents`).
+    /// it is gone from the project, whatever another command or reflection
+    /// committed since this command last read it. Read in the same snapshot,
+    /// whether the todo's withdrawal intent is open (`withdrawal_intents`).
     pub fn confirmed(&self, index: usize) -> Result<Option<(LocalItem, bool)>, WorkError> {
         self.store.item_withdrawing(&self.items[index].record.id)
     }
@@ -1341,17 +570,11 @@ impl<'w> Session<'w> {
     }
 
     /// The error for `refusal`, met by a change of item `index` that this
-    /// command committed outside [`Session::commit`]. A conflict mark found
-    /// on the live row becomes the item's.
+    /// command committed outside [`Session::commit`].
     pub fn refusal(&mut self, index: usize, refusal: Refusal) -> WorkError {
         let mine = self.items[index].clone();
         let base = self.bases.get(&mine.record.id).cloned();
         match refusal {
-            Refusal::Conflicted(live) => {
-                let error = WorkError::conflicted(&live.record);
-                self.take_row(index, *live);
-                error
-            }
             Refusal::Changed(now) => self.changed_refusal(&mine, base.as_ref(), now),
             Refusal::Taken => WorkError::refused(format!(
                 "a live todo is already named `{}`; nothing of this change was written",
@@ -1484,171 +707,11 @@ impl<'w> Session<'w> {
         }
     }
 
-    /// Flushes pending reflection of every stored item of the project under
-    /// the reflection lock (`work-dispatch`, `github-record`): each row is
-    /// re-read under the lock, reflected from a working copy with no writer
-    /// lock held, and what reflection learned is committed onto the live
-    /// row (`_store::merge_reflection`). A reflection another process holds
-    /// for longer than the wait reflects nothing for this command; the
-    /// session takes the reflection state the store records, so a revision
-    /// that reflection confirmed meanwhile reads as reflected, and work still
-    /// unconfirmed stays pending for a later flush.
-    pub fn flush(&mut self) -> Result<(), WorkError> {
-        let lock = match ReflectionLock::acquire(self.work.home()) {
-            Ok(lock) => lock,
-            Err(WorkError::Fs(busy @ instrukt_core::fsx::FsError::LockTimeout { .. })) => {
-                tracing::warn!(
-                    event = "work_reflection_busy",
-                    project = %self.project.slug,
-                    error = %busy,
-                    "another reflection holds the reflection lock; this command reflects nothing and leaves what is unconfirmed to a later flush"
-                );
-                self.reflection_busy = Some(busy.to_string());
-                for row in self.store.items()? {
-                    self.learned(Some(row));
-                }
-                return Ok(());
-            }
-            Err(error) => return Err(error),
-        };
-        let board_result = (|| {
-            // A board the developer names in the project layer leads; otherwise
-            // the one this computer recorded. Setup reconciles either with
-            // GitHub, finding an existing board before creating one.
-            let configured = self.config.board()?;
-            let recorded = self.store.recorded_board()?;
-            let known = configured
-                .clone()
-                .or_else(|| recorded.as_deref().and_then(BoardRef::parse));
-            let gh = match &self.remote {
-                Remote::Client { gh, down: None } => gh,
-                Remote::Client {
-                    down: Some(error), ..
-                } => return Err(error.clone().into()),
-                Remote::Unavailable(reason) => return Err(WorkError::refused(describe(reason))),
-            };
-            let account = gh.for_role(None, github::Operation::Board);
-            let board = super::_board::setup(&account, gh, known.as_ref())?;
-            // The reference is the machine's record: reflection never writes
-            // the committed project layer.
-            if configured.as_ref() != Some(&board)
-                && recorded.as_deref() != Some(&board.to_string())
-            {
-                self.store.record_board(&board.to_string())?;
-            }
-            super::_board::configure(&account, &board)?;
-            Ok(board)
-        })();
-        let (board, board_error) = match board_result {
-            Ok(board) => (Some(board), None),
-            Err(error) => {
-                if let WorkError::GitHub(
-                    gh_error @ (GitHubError::RateLimited { .. }
-                    | GitHubError::App(github::AppError::RateLimited { .. })),
-                ) = &error
-                {
-                    self.note(gh_error.clone());
-                }
-                tracing::warn!(event="work_board_setup_pending", error=%error);
-                (None, Some(error.to_string()))
-            }
-        };
-        self.board_setup_failure = board_error.clone();
-        for loaded in self.store.items()? {
-            let id = loaded.record.id.clone();
-            // A known incompatible remote must stop before acknowledgements.
-            if let Remote::Client { gh, down: None } = &self.remote
-                && loaded.reflection.issue.is_some()
-            {
-                match _reflect::check_compatible(gh, &loaded) {
-                    Err(error @ GitHubError::RecordSchema { .. }) => {
-                        let failure = error.to_string();
-                        let row = self
-                            .store
-                            .amend_reflection(&id, |r| r.failure = Some(failure))?;
-                        self.learned(row);
-                        continue;
-                    }
-                    Err(error) => self.note(error),
-                    Ok(_) => {}
-                }
-            }
-            let mut reflected = loaded.clone();
-            if !reflected.reflection.pending {
-                reflected.reflection.failure = None;
-            }
-            if let Some(error) = &board_error {
-                reflected.reflection.board_failure = Some(error.clone());
-            }
-            if let Some(issue) = reflected.reflection.issue {
-                self.post_replies(issue, id.as_str(), &lock)?;
-            }
-            let owed = reflected.reflection.pending
-                || _reflect::pull_request_owed(&reflected)
-                || (board.is_some() && reflected.reflection.issue.is_some());
-            if owed && !reflected.reflection.conflicted {
-                // A todo shown as held already needs you: its record is not
-                // projected and no approver is resolved for it.
-                let needs_you = super::_ports::waits_on_person(
-                    super::_envelope::record_status(&reflected.record),
-                    || {
-                        Ok::<_, instrukt_core::config::ConfigError>(
-                            crate::workflow::waiting_for_human_approval(
-                                &super::_ports::to_evidence(reflected.record.clone(), Vec::new()),
-                                self.config
-                                    .approver(instrukt_core::config::ApprovalGate::Prd)?,
-                                self.config
-                                    .approver(instrukt_core::config::ApprovalGate::Task)?,
-                            ),
-                        )
-                    },
-                )?;
-                let result = match &self.remote {
-                    Remote::Client { gh, down: None } => Some(_reflect::flush(
-                        gh,
-                        &mut reflected,
-                        &self.base,
-                        board.as_ref(),
-                        needs_you,
-                    )),
-                    _ => None,
-                };
-                if let Some(Err(err)) = result {
-                    if err.is_reach() {
-                        self.note(err);
-                    } else {
-                        tracing::warn!(
-                            event = "work_reflection_pending",
-                            project = %self.project.slug,
-                            todo = %reflected.record.slug,
-                            error = %err,
-                            "reflection failed; the local record keeps the change"
-                        );
-                        reflected.reflection.failure = Some(err.to_string());
-                    }
-                }
-                if let Some(error) = &board_error {
-                    reflected.reflection.board_failure = Some(error.clone());
-                }
-            }
-            // A row this flush left as it was may still be news to the
-            // session: another process can have reflected it already.
-            let row = if _store::stored(&reflected) != _store::stored(&loaded) {
-                self.store.commit_reflection(&loaded, &reflected)?
-            } else {
-                Some(loaded)
-            };
-            self.learned(row);
-        }
-        drop(lock);
-        Ok(())
-    }
-
     /// Gives the session's own item of `row`, a row reflection just
     /// committed, what reflection learned: its reflection state and learned
     /// artifact values, on the session's own record. A record another
     /// command wrote meanwhile is never taken.
-    fn learned(&mut self, row: Option<LocalItem>) {
+    pub(super) fn learned(&mut self, row: Option<LocalItem>) {
         let Some(row) = row else { return };
         let Some(index) = self.find_id(&row.record.id) else {
             return;
@@ -1662,650 +725,52 @@ impl<'w> Session<'w> {
         self.items[index].reflection.inbound = inbound;
     }
 
-    /// Where item `index`'s reflection stands.
+    /// Where item `index`'s reflection stands, read from the local state
+    /// database alone.
     pub fn status(&self, index: usize) -> ReflectionStatus {
-        let unread = match &self.remote {
-            Remote::Unavailable(reason) => Some(reason.clone()),
-            Remote::Client {
-                down: Some(err), ..
-            } => Some(reason_of(err)),
-            Remote::Client { down: None, .. } => {
-                self.reflection_busy.clone().map(PendingReason::Failed)
-            }
-        };
-        status_of(&self.items[index], unread)
+        status_of(&self.items[index])
     }
 
-    /// Whether GitHub answered this command so far.
-    pub fn github_read(&self) -> GitHubRead {
-        match &self.remote {
-            Remote::Unavailable(reason) => GitHubRead::NotRead(reason.clone()),
-            Remote::Client {
-                down: Some(err), ..
-            } => GitHubRead::NotRead(reason_of(err)),
-            Remote::Client { down: None, .. } => match &self.lookup_failed {
-                Some(err) => GitHubRead::NotRead(PendingReason::Failed(err.to_string())),
-                None => GitHubRead::Read,
-            },
-        }
-    }
-
-    /// The pickup listing: every open todo issue with the head of its
-    /// revision chain, read once per command. Its result replaces the
-    /// project's listing copies with the todos that are not local items.
-    /// Empty when GitHub cannot be read; the copies then stay as they were.
-    pub fn pickup_listing(&mut self) -> Vec<(TodoRecord, IssueRef)> {
-        if let Some(records) = &self.listed {
-            return records.clone();
-        }
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => Some(_reflect::remote_records(gh, true)),
-            _ => None,
-        };
-        let records = match result {
-            Some(Ok(remote)) => {
-                for (id, error) in remote.incompatible {
-                    self.incompatible.insert(id);
-                    self.lookup_failure(error);
-                }
-                remote.records
-            }
-            Some(Err(err)) => {
-                self.lookup_failure(err);
-                self.listed = Some(Vec::new());
-                return Vec::new();
-            }
-            None => {
-                self.listed = Some(Vec::new());
-                return Vec::new();
-            }
-        };
-        for (record, issue) in &records {
-            let Some(index) = self.find_id(&record.id) else {
-                continue;
-            };
-            let Some(base) = self.bases.get(&record.id).cloned() else {
-                continue;
-            };
-            if self.uncommitted(index) {
-                continue;
-            }
-            let mut accepted = base.clone();
-            if !_reflect::accept_listing(&mut accepted, record, *issue, self.now) {
-                continue;
-            }
-            match self.store.swap(&base, &accepted, false) {
-                Ok(
-                    Swapped::Applied(row) | Swapped::Changed(Some(row)) | Swapped::Withdrawing(row),
-                ) => {
-                    self.take_row(index, *row);
-                }
-                Ok(Swapped::Changed(None)) => {}
-                Err(error) => {
-                    tracing::warn!(event="local_pickup_copy_unsaved",todo=%record.slug,error=%error);
-                }
-            }
-        }
-        let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
-        let copies: Vec<ListingCopy> = records
-            .iter()
-            .filter(|(record, _)| !local.contains(&record.id))
-            .map(|(record, issue)| ListingCopy {
-                issue_number: issue.number,
-                record: record.without_contents(),
-                copied_at: self.now,
-            })
-            .collect();
-        match self.store.replace_copies(&copies) {
-            Ok(()) => self.copies = copies,
-            Err(err) => tracing::warn!(
-                event = "work_listing_copies_unsaved",
-                project = %self.project.slug,
-                error = %err,
-                "cannot keep the pickup listing's copies"
-            ),
-        }
-        self.listed = Some(records.clone());
-        records
-    }
-
-    /// The live listing copy of `slug`; when there is none, the pickup
-    /// listing is read once to find it (a todo this computer has never
-    /// seen).
-    pub fn known_copy(&mut self, slug: &TodoSlug) -> Option<ListingCopy> {
-        let find = |copies: &[ListingCopy]| {
-            copies
-                .iter()
-                .find(|c| &c.record.slug == slug && c.record.is_live())
-                .cloned()
-        };
-        if let Some(copy) = find(&self.copies) {
-            return Some(copy);
-        }
-        if self.listed.is_none() {
-            self.pickup_listing();
-            return find(&self.copies);
-        }
-        None
-    }
-
-    /// Reads the one todo on issue `number` from GitHub, with its verified
-    /// contents, and replaces its listing copy; the todo does not become a
-    /// local item. `None` when the issue holds no committed record.
-    pub fn refresh_copy(&mut self, number: u64) -> Result<Option<LocalItem>, WorkError> {
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::read_one(gh, number),
-            _ => return Ok(None),
-        };
-        let item = match result {
-            Ok(item) => item,
-            Err(err) => return Err(self.github_failure(err)),
-        };
-        match &item {
-            Some(item) => {
-                let copy = ListingCopy {
-                    issue_number: number,
-                    record: item.record.without_contents(),
-                    copied_at: self.now,
-                };
-                self.store.save_copy(&copy)?;
-                self.copies.retain(|c| c.issue_number != number);
-                self.copies.push(copy);
-            }
-            None => {
-                self.store.drop_copy(number)?;
-                self.copies.retain(|c| c.issue_number != number);
-            }
-        }
-        Ok(item)
-    }
-
-    /// Every record this computer holds for the project: its local items',
-    /// then the listing copies'. Reads nothing from GitHub.
+    /// Every record this computer holds for the project. Reads nothing
+    /// from GitHub.
     pub fn known_records(&self) -> Vec<TodoRecord> {
-        let mut records: Vec<TodoRecord> = self.items.iter().map(|it| it.record.clone()).collect();
-        for copy in &self.copies {
-            if !records.iter().any(|r| r.id == copy.record.id) {
-                records.push(copy.record.clone());
-            }
-        }
-        records
+        self.items.iter().map(|it| it.record.clone()).collect()
     }
 
-    /// All reflected work on GitHub, retained included; `None` when GitHub
-    /// cannot be read.
-    pub fn remote_all(&mut self) -> Option<Vec<(TodoRecord, IssueRef)>> {
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::remote_records(gh, false),
-            _ => return None,
-        };
-        match result {
-            // Withdrawn work past its recovery window is gone: GitHub keeps
-            // the closed issue as history, not as recoverable work.
-            Ok(remote) => {
-                for (id, error) in remote.incompatible {
-                    self.incompatible.insert(id);
-                    self.lookup_failure(error);
-                }
-                Some(
-                    remote
-                        .records
-                        .into_iter()
-                        .filter(|(record, _)| !past_recovery(record, self.now))
-                        .collect(),
-                )
-            }
-            Err(err) => {
-                self.lookup_failure(err);
-                None
-            }
-        }
-    }
-
-    /// Records a failed listing of reflected work: what is not local can
-    /// no longer be called absent this command.
-    fn lookup_failure(&mut self, err: GitHubError) {
-        if !err.is_reach() {
-            self.lookup_failed = Some(err.clone());
-        }
-        self.note(err);
-    }
-
-    /// A record of reflected work read directly from GitHub, with its
-    /// artifact contents, stored nowhere.
-    /// The entry `address` names: a plain slug means the live item (local,
-    /// else reflected); `<slug>@<prefix>` the exact entry, retained ones
-    /// included. A plain slug with only retained entries is refused naming
-    /// their addresses; a lookup GitHub could not answer is reported as
-    /// undetermined, never as "no todo".
-    pub fn locate(&mut self, address: &TodoAddress) -> Result<Located, WorkError> {
+    /// The local item `address` names: a plain slug means the live item;
+    /// `<slug>@<prefix>` the exact entry, retained ones included. A plain
+    /// slug with only retained entries is refused naming their addresses.
+    pub fn locate(&self, address: &TodoAddress) -> Result<usize, WorkError> {
         let slug = &address.slug;
         if address.identity.is_none() {
             if let Some(index) = self.find(slug, false) {
-                return Ok(Located::Local(index));
-            }
-            if let Some(copy) = self.known_copy(slug) {
-                return self.located_copy(copy);
+                return Ok(index);
             }
             return Err(retained_only(&self.items, slug).unwrap_or_else(|| self.absent(slug)));
         }
-        if let Some(index) = exact_local(&self.items, address)? {
-            return Ok(Located::Local(index));
-        }
-        let copied: Vec<ListingCopy> = self
-            .copies
-            .iter()
-            .filter(|c| address.names(&c.record))
-            .cloned()
-            .collect();
-        if let [copy] = copied.as_slice() {
-            return self.located_copy(copy.clone());
-        }
-        match self.remote_matching(&format!("`{address}`"), |r| address.names(r))? {
-            Some(item) => Ok(Located::Remote {
-                issue_number: item.reflection.issue.map_or(0, |issue| issue.number),
-                item: Box::new(item),
-                refreshed: true,
-                copied_at: self.now,
-            }),
-            None => Err(self.absent(slug)),
-        }
+        exact_local(&self.items, address)?.ok_or_else(|| self.absent(slug))
     }
 
-    /// The todo of listing copy `copy`, refreshed from GitHub when it can
-    /// be read, else as last known.
-    fn located_copy(&mut self, copy: ListingCopy) -> Result<Located, WorkError> {
-        let stale = |copy: ListingCopy| Located::Remote {
-            item: Box::new(LocalItem {
-                record: copy.record,
-                reflection: Default::default(),
-            }),
-            refreshed: false,
-            copied_at: copy.copied_at,
-            issue_number: copy.issue_number,
-        };
-        if !self.refreshed() {
-            return Ok(stale(copy));
-        }
-        match self.refresh_copy(copy.issue_number) {
-            Ok(Some(item)) => Ok(Located::Remote {
-                item: Box::new(item),
-                refreshed: true,
-                copied_at: self.now,
-                issue_number: copy.issue_number,
-            }),
-            Ok(None) => Err(self.absent(&copy.record.slug)),
-            Err(WorkError::GitHub(err)) if err.is_reach() => Ok(stale(copy)),
-            Err(err) => Err(err),
-        }
-    }
-
-    /// The error for a todo neither this computer nor GitHub has: unknown
-    /// when GitHub answered, undetermined (with the cause) when it could
-    /// not.
+    /// The error for a todo this computer's record does not hold.
     pub fn absent(&self, slug: &TodoSlug) -> WorkError {
-        match self.github_read() {
-            GitHubRead::Read | GitHubRead::Unjudged => WorkError::UnknownTodo {
-                project: self.project.slug.clone(),
-                todo: slug.clone(),
-            },
-            GitHubRead::NotRead(_) => self.undetermined(&format!("`{slug}`")),
+        WorkError::UnknownTodo {
+            project: self.project.slug.clone(),
+            todo: slug.clone(),
         }
     }
 
-    /// The refusal when GitHub could not be read to find `what`, which
-    /// this computer does not have: undetermined, with the cause.
-    pub fn undetermined(&self, what: &str) -> WorkError {
-        let cause = match self.github_read() {
-            GitHubRead::NotRead(reason) => describe(&reason),
-            GitHubRead::Read | GitHubRead::Unjudged => "GitHub's answer was not read".to_owned(),
-        };
-        WorkError::refused(format!(
-            "{what} is not on this computer, and whether it exists cannot be determined: {cause}"
-        ))
-    }
-
-    /// Every reflected record not on this computer that `wanted` accepts;
-    /// a GitHub that could not be read refuses as undetermined, naming
-    /// `what` was looked for.
-    pub fn remote_candidates(
-        &mut self,
-        what: &str,
-        wanted: impl Fn(&TodoRecord) -> bool,
-    ) -> Result<Vec<(TodoRecord, IssueRef)>, WorkError> {
-        let Some(records) = self.remote_all() else {
-            return Err(self.undetermined(what));
-        };
-        let local: Vec<TodoId> = self.items.iter().map(|it| it.record.id.clone()).collect();
-        Ok(records
-            .into_iter()
-            .filter(|(record, _)| wanted(record) && !local.contains(&record.id))
-            .collect())
-    }
-
-    /// The one reflected record `wanted` accepts, read with its verified
-    /// contents and stored nowhere; `None` when GitHub confirms it holds
-    /// none. Several are refused, naming each entry's exact address; a
-    /// GitHub that could not be read refuses as undetermined.
-    pub fn remote_matching(
-        &mut self,
-        what: &str,
-        wanted: impl Fn(&TodoRecord) -> bool,
-    ) -> Result<Option<LocalItem>, WorkError> {
-        let mut found = self.remote_candidates(what, wanted)?;
-        if found.len() > 1 {
-            return Err(several(what, found.iter().map(|(record, _)| record)));
-        }
-        match found.pop() {
-            Some((record, issue)) => self.localize_found(record, issue).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    /// Reads a reflected record found on GitHub with its verified contents.
-    pub fn localize_found(
-        &mut self,
-        record: TodoRecord,
-        issue: IssueRef,
-    ) -> Result<LocalItem, WorkError> {
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::localize(gh, record, issue),
-            _ => return Err(self.undetermined(&format!("`{}`", record.slug))),
-        };
-        result.map_err(|err| self.github_failure(err))
-    }
-
-    /// Restores from GitHub the content of each version of artifact `name`
-    /// in `record`, a todo on issue number `issue`, whose digest `digests` names and
-    /// whose content `record` lacks, verified against that digest. Returns
-    /// why each version still lacks it ([`Unrestored`]): a version with no
-    /// GitHub coordinates recorded here is not asked for; GitHub that cannot
-    /// be read, or a failed request for the artifact, leaves the rest
-    /// unread; and only GitHub's answer for the artifact establishes that it
-    /// does not serve a version.
-    pub fn restore_contents(
-        &mut self,
-        issue: Option<u64>,
-        record: &mut TodoRecord,
-        name: &str,
-        digests: &[String],
-    ) -> std::collections::BTreeMap<String, Unrestored> {
-        let mut missing = std::collections::BTreeMap::new();
-        let unread = match &self.remote {
-            Remote::Client { down: None, .. } => None,
-            Remote::Client {
-                down: Some(err), ..
-            } => Some(reason_of(err)),
-            Remote::Unavailable(reason) => Some(reason.clone()),
-        };
-        let slug = record.slug.clone();
-        let Some(artifact) = record
-            .artifacts
-            .iter_mut()
-            .find(|a| a.name.as_str() == name)
-        else {
-            return missing;
-        };
-        let address = artifact.address;
-        let mut served: Option<Result<std::collections::BTreeMap<u64, String>, Unrestored>> =
-            unread.map(|reason| Err(Unrestored::Unread(reason)));
-        let wanted = artifact
-            .versions
-            .iter_mut()
-            .filter(|v| v.content.is_none() && digests.iter().any(|d| d == v.digest.as_str()));
-        for version in wanted {
-            let digest = version.digest.as_str().to_owned();
-            let (Some(issue), Some(address), Some(number)) = (issue, address, version.remote)
-            else {
-                missing.insert(digest, Unrestored::NotReflected);
-                continue;
-            };
-            if served.is_none() {
-                let Remote::Client { gh, down: None } = &self.remote else {
-                    // Unreachable: a GitHub that cannot be read set `served`.
-                    continue;
-                };
-                let read = _reflect::served_versions(gh, issue, address);
-                served = Some(read.map_err(|err| {
-                    let reason = reason_of(&err);
-                    self.note(err);
-                    Unrestored::Unread(reason)
-                }));
-            }
-            let body = match &served {
-                Some(Ok(bodies)) => bodies.get(&number),
-                Some(Err(why)) => {
-                    missing.insert(digest, why.clone());
-                    continue;
-                }
-                None => None,
-            };
-            match body {
-                Some(body) if super::_model::digest_of(body) == version.digest => {
-                    version.content = Some(body.clone());
-                }
-                _ => {
-                    tracing::warn!(
-                        event = "work_artifact_unverifiable",
-                        todo = %slug,
-                        artifact = name,
-                        digest = %digest,
-                        "GitHub does not serve this artifact version's recorded content"
-                    );
-                    missing.insert(digest, Unrestored::NotServed);
-                }
-            }
-        }
-        missing
-    }
-
-    /// Commits content of artifact `name` restored from GitHub onto item
-    /// `index`'s row, with `restored` the item's record holding it: every
-    /// version the item holds without content takes the verified bytes
-    /// `restored` holds for it, on the live row whatever else another
-    /// command changed there, and on the session's item and base as the row
-    /// now holds them. A read consumes restored content only once it is
-    /// committed: a row gone meanwhile, or a failed write, fails the read.
-    pub fn keep_restored(
-        &mut self,
-        index: usize,
-        restored: &TodoRecord,
-        name: &str,
-    ) -> Result<(), WorkError> {
-        let item = &self.items[index].record;
-        let (Some(mine), Some(found)) = (item.artifact(name), restored.artifact(name)) else {
-            return Ok(());
-        };
-        let contents: Vec<(u64, crate::evidence::ContentDigest, String)> = mine
-            .versions
+    /// A record this computer holds by identity.
+    pub fn record_by_id(&self, id: &TodoId) -> Option<TodoRecord> {
+        self.items
             .iter()
-            .filter(|v| v.content.is_none())
-            .filter_map(|v| {
-                found
-                    .versions
-                    .iter()
-                    .find(|r| r.sequence == v.sequence && r.digest == v.digest)
-                    .and_then(|r| r.content.clone())
-                    .map(|content| (v.sequence, v.digest.clone(), content))
-            })
-            .collect();
-        if contents.is_empty() {
-            return Ok(());
-        }
-        let id = item.id.clone();
-        if !self.store.fill_contents(&id, name, &contents)? {
-            return Err(WorkError::refused(format!(
-                "`{}` left this computer's record while its artifact `{name}` was read; read it again",
-                item.slug
-            )));
-        }
-        let fill = |record: &mut TodoRecord| {
-            let Some(artifact) = record
-                .artifacts
-                .iter_mut()
-                .find(|a| a.name.as_str() == name)
-            else {
-                return;
-            };
-            for version in artifact.versions.iter_mut().filter(|v| v.content.is_none()) {
-                if let Some((_, _, content)) = contents.iter().find(|(sequence, digest, _)| {
-                    *sequence == version.sequence && *digest == version.digest
-                }) {
-                    version.content = Some(content.clone());
-                }
-            }
-        };
-        fill(&mut self.items[index].record);
-        if let Some(base) = self.bases.get_mut(&id) {
-            fill(&mut base.record);
-        }
-        Ok(())
+            .find(|it| &it.record.id == id)
+            .map(|it| it.record.clone())
     }
 
-    /// Makes a reflected record found by [`Session::locate`] a local item.
-    pub fn adopt(&mut self, item: LocalItem) -> Result<usize, WorkError> {
-        // Saving drops its listing copy (`listing_copies`). A todo another
-        // command made a local item meanwhile is taken as stored.
-        let row = self.store.adopt(&item)?;
-        if let Some(issue) = item.reflection.issue {
-            self.copies.retain(|c| c.issue_number != issue.number);
-        }
-        self.bases.insert(row.record.id.clone(), row.clone());
-        self.items.push(row);
-        Ok(self.items.len() - 1)
-    }
-
-    /// The reflected entry `slug` names, not on this computer: its live
-    /// entry, else its only retained one. Several retained entries are
-    /// refused naming each exact address; `None` only when GitHub confirms
-    /// it holds none.
-    pub fn remote_item(&mut self, slug: &TodoSlug) -> Result<Option<LocalItem>, WorkError> {
-        let what = format!("`{slug}`");
-        let found = self.remote_candidates(&what, |record| &record.slug == slug)?;
-        let live: Vec<_> = found.iter().filter(|(r, _)| r.is_live()).cloned().collect();
-        let mut chosen = if live.is_empty() { found } else { live };
-        if chosen.len() > 1 {
-            return Err(several(&what, chosen.iter().map(|(record, _)| record)));
-        }
-        match chosen.pop() {
-            Some((record, issue)) => self.localize_found(record, issue).map(Some),
-            None => Ok(None),
-        }
-    }
-
-    /// Replaces item `index` with GitHub's committed record, under the
-    /// reflection lock: the head it reads is settled, never one another
-    /// reflection posted and has not recorded. Only the record the command
-    /// resolved is replaced: under the lock the row is read again and its
-    /// record compared with the one resolved ([`TodoRecord::same_as`]);
-    /// another command's change meanwhile — a rename, a withdrawal, any
-    /// other — refuses with nothing replaced, while what reflection learned
-    /// meanwhile, a receipt or a conflict mark, does not. A todo whose
-    /// withdrawal is open (`withdrawal_intents`) refuses, naming
-    /// `instrukt todo remove <slug>`: the withdrawal finishes on the record
-    /// it was admitted on.
-    pub fn refresh(&mut self, index: usize) -> Result<(), WorkError> {
-        let resolved = self.items[index].record.clone();
-        let _reflecting = ReflectionLock::acquire(self.work.home())?;
-        self.refuse_withdrawing(index)?;
-        let id = resolved.id.clone();
-        match self.store.item(&id)? {
-            Some(live) if live.record.same_as(&resolved) => self.take_row(index, live),
-            _ => {
-                return Err(WorkError::refused(format!(
-                    "`{}` changed while it waited to be refreshed; nothing was replaced. Run the command again: it reads the todo's current record",
-                    resolved.slug
-                )));
-            }
-        }
-        let base = self.items[index].clone();
-        let mut refreshed = base.clone();
-        let result = match &self.remote {
-            Remote::Client { gh, down: None } => _reflect::refresh(gh, &mut refreshed),
-            Remote::Client {
-                down: Some(err), ..
-            } => Err(err.clone()),
-            Remote::Unavailable(reason) => {
-                return Err(WorkError::refused(format!(
-                    "refreshing reads GitHub, which cannot be read now: {}",
-                    describe(reason)
-                )));
-            }
-        };
-        result.map_err(|err| self.github_failure(err))?;
-        match self.store.swap(&base, &refreshed, false)? {
-            Swapped::Applied(row) => self.take_row(index, *row),
-            Swapped::Withdrawing(_) => return Err(withdrawing_refusal(&base.record.slug)),
-            Swapped::Changed(_) => {
-                return Err(WorkError::refused(format!(
-                    "`{}` changed while it was refreshed; nothing was replaced. Run the command again: it reads the todo's current record",
-                    base.record.slug
-                )));
-            }
-        }
-        tracing::info!(
-            event = "work_refreshed",
-            project = %self.project.slug,
-            todo = %self.items[index].record.slug,
-            revision = self.items[index].record.revision,
-            "local item replaced by GitHub's committed record"
-        );
-        Ok(())
-    }
-
-    /// A record this computer holds by identity: a local item's, else a
-    /// listing copy's (the pickup listing is read once when it has
-    /// neither).
-    pub fn record_by_id(&mut self, id: &TodoId) -> Option<TodoRecord> {
-        let find = |s: &Self| s.known_records().into_iter().find(|r| &r.id == id);
-        if let Some(record) = find(self) {
-            return Some(record);
-        }
-        if self.listed.is_none() {
-            self.pickup_listing();
-            return find(self);
-        }
-        None
-    }
-
-    /// The record of todo `id` as GitHub holds it now, for judging a
-    /// relationship the command records (a prerequisite edge or a group):
-    /// each todo the judgement consults is refreshed once per command, a
-    /// local item pulled through and a listing copy read again. What
-    /// GitHub cannot answer is judged as this computer holds it.
-    pub fn record_current(&mut self, id: &TodoId) -> Option<TodoRecord> {
-        if !self.current.contains(id) {
-            self.current.push(id.clone());
-            if let Some(index) = self.find_id(id) {
-                if let Err(err) = self.pull_through(index) {
-                    tracing::debug!(event = "work_relationship_unrefreshed", error = %err, "judged as held here");
-                }
-            } else if let Some(copy) = self.copies.iter().find(|c| &c.record.id == id).cloned()
-                && self.refreshed()
-                && let Err(err) = self.refresh_copy(copy.issue_number)
-            {
-                if let WorkError::GitHub(error @ GitHubError::RecordSchema { .. }) = &err {
-                    self.incompatible.insert(id.clone());
-                    self.lookup_failure(error.clone());
-                }
-                tracing::debug!(event = "work_relationship_unrefreshed", error = %err, "judged as last known");
-            }
-        }
-        self.record_by_id(id)
-    }
-
-    /// Whether this command already refreshed todo `id` for its
-    /// relationship checks ([`Session::record_current`]).
-    pub fn consulted(&self, id: &TodoId) -> bool {
-        self.current.contains(id)
-    }
-
-    /// The live todo `slug` names, a local item or a listing copy.
-    pub fn live_ref(&mut self, slug: &TodoSlug) -> Option<TodoRecord> {
-        if let Some(index) = self.find(slug, false) {
-            return Some(self.items[index].record.clone());
-        }
-        self.known_copy(slug).map(|copy| copy.record)
+    /// The live todo `slug` names among the local items.
+    pub fn live_ref(&self, slug: &TodoSlug) -> Option<TodoRecord> {
+        self.find(slug, false)
+            .map(|index| self.items[index].record.clone())
     }
 
     /// Deletes withdrawn work past its recovery window from the local record
@@ -2349,48 +814,6 @@ impl<'w> Session<'w> {
         }
         Ok(())
     }
-
-    /// Records that GitHub stopped answering; a rate limit is remembered
-    /// across commands until the provider permits requests again.
-    fn note(&mut self, err: GitHubError) {
-        if let GitHubError::RateLimited { until: Some(until) }
-        | GitHubError::App(github::AppError::RateLimited { until: Some(until) }) = &err
-        {
-            let saved = self.store.provider().and_then(|mut state| {
-                state.deferred_until = Some(*until);
-                self.store.save_provider(&state)
-            });
-            if let Err(save) = saved {
-                tracing::warn!(event = "work_rate_limit_unsaved", error = %save, "cannot remember GitHub's rate limit");
-            }
-        }
-        if err.is_reach() {
-            tracing::warn!(
-                event = "work_github_unavailable",
-                project = %self.project.slug,
-                error = %err,
-                "GitHub is not answering; the local record continues"
-            );
-            if let Remote::Client { down, .. } = &mut self.remote {
-                *down = Some(err);
-            }
-        } else {
-            tracing::warn!(
-                event = "work_github_read_failed",
-                project = %self.project.slug,
-                error = %err,
-                "a GitHub read failed"
-            );
-        }
-    }
-
-    /// A GitHub failure of a read that has no local answer.
-    fn github_failure(&mut self, err: GitHubError) -> WorkError {
-        if err.is_reach() {
-            self.note(err.clone());
-        }
-        WorkError::GitHub(err)
-    }
 }
 
 /// The refusal when `what` names several entries: each by its exact
@@ -2413,22 +836,29 @@ pub(crate) fn withdrawing_refusal(slug: &TodoSlug) -> WorkError {
     ))
 }
 
-/// The refusal of a command that must not act on `slug`'s unjudged head:
-/// nothing was done, and running it again acts once the head is judged.
-pub(crate) fn unjudged_refusal(slug: &TodoSlug) -> WorkError {
-    WorkError::refused(format!(
-        "GitHub holds a revision of `{slug}` that this computer has not recorded, and a reflection on this computer is in progress, so that revision cannot be judged yet; nothing was done. Run the command again: the next refresh or reflection of `{slug}` that holds the reflection lock judges it"
-    ))
-}
-
-/// Where `item`'s reflection stands; `unread` is why GitHub cannot be
-/// reflected to this command, `None` when it can.
-pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> ReflectionStatus {
+/// Where `item`'s reflection stands, read from the local state database alone.
+pub(crate) fn status_of(item: &LocalItem) -> ReflectionStatus {
     let reflection = &item.reflection;
-    if reflection.conflicted {
-        return ReflectionStatus::Conflicted {
-            door: TodoAddress::door(&item.record),
-        };
+    // Content GitHub refused stays outstanding, with GitHub's reason, until
+    // it changes: for an artifact version, until a later version of that
+    // artifact is on GitHub (`github-record`, Writer and convergence).
+    let outstanding: Vec<&_store::KeptRefusal> = reflection
+        .refusals
+        .iter()
+        .filter(|kept| !superseded(&item.record, &kept.target))
+        .collect();
+    if !outstanding.is_empty() {
+        let refused: Vec<String> = outstanding
+            .iter()
+            .map(|kept| {
+                format!(
+                    "GitHub refused {}: {}",
+                    refused_target(&kept.target),
+                    kept.detail
+                )
+            })
+            .collect();
+        return ReflectionStatus::Pending(PendingReason::Failed(refused.join("; ")));
     }
     if let Some(error) = &reflection.failure {
         return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
@@ -2439,41 +869,54 @@ pub(crate) fn status_of(item: &LocalItem, unread: Option<PendingReason>) -> Refl
     if let Some(error) = &reflection.board_failure {
         return ReflectionStatus::Pending(PendingReason::Failed(error.clone()));
     }
+    // A work branch that cannot be published stays the todo's outstanding
+    // reason, also once its pull request owes nothing more.
+    if let Some(why) = &reflection.publication_outstanding {
+        return ReflectionStatus::Pending(PendingReason::Failed(why.clone()));
+    }
     if !reflection.pending && !pull_owed {
         return ReflectionStatus::Reflected;
     }
-    ReflectionStatus::Pending(match unread {
-        Some(reason) => reason,
-        None if reflection.pending => PendingReason::Failed(
-            reflection
-                .failure
-                .clone()
-                .unwrap_or_else(|| "not yet reflected".to_owned()),
-        ),
-        None => PendingReason::Failed(
+    ReflectionStatus::Pending(if reflection.pending {
+        PendingReason::Failed("not yet reflected".to_owned())
+    } else {
+        PendingReason::Failed(
             reflection
                 .pull_outstanding
                 .clone()
                 .unwrap_or_else(|| "the pull request is not yet reflected".to_owned()),
-        ),
+        )
     })
 }
 
-/// Why GitHub cannot be reached for `work` at `now`, read from this
-/// computer alone: a rate limit GitHub set, or App credentials that cannot
-/// be used. `None` when a client can be built.
-pub(crate) fn unavailable(
-    work: &Work,
-    provider: &ProviderState,
-    now: Timestamp,
-) -> Option<PendingReason> {
-    match provider.deferred_until {
-        Some(until) if until > now => Some(PendingReason::RateLimited { until: Some(until) }),
-        _ => work
-            .github
-            .validate()
-            .err()
-            .map(|err| reason_of(&GitHubError::from(err))),
+/// Whether a refused `target` no longer holds the todo's reflection back:
+/// a refused artifact version is followed by the artifact's next version,
+/// so a later version of the same artifact that GitHub has confirmed
+/// supersedes it. The refusal itself stays kept, so the refused version is
+/// never sent again unchanged.
+pub(crate) fn superseded(record: &TodoRecord, target: &_store::RefusedTarget) -> bool {
+    let _store::RefusedTarget::Artifact { name, sequence } = target else {
+        return false;
+    };
+    record.artifact(name.as_str()).is_some_and(|artifact| {
+        artifact
+            .versions
+            .iter()
+            .any(|v| v.sequence > *sequence && v.remote.is_some())
+    })
+}
+
+/// A reflected target in words.
+fn refused_target(target: &_store::RefusedTarget) -> String {
+    match target {
+        _store::RefusedTarget::Issue => "the issue".to_owned(),
+        _store::RefusedTarget::PullCreation => "the pull request".to_owned(),
+        _store::RefusedTarget::Review { verdict } => {
+            format!("the review of build verdict {verdict}")
+        }
+        _store::RefusedTarget::Artifact { name, sequence } => {
+            format!("artifact `{name}` version {sequence}")
+        }
     }
 }
 
@@ -2532,27 +975,6 @@ pub(crate) fn exact_local(
     }
 }
 
-/// The local item `address` names in `items` for a command that replaces
-/// it: an exact address its one entry, retained ones included; a plain slug
-/// the live item only (`todos`, "Identity and creation"). A plain slug only
-/// retained entries carry is refused naming each exact address, and leaves
-/// them as they are. `None` when it names none.
-pub(crate) fn live_or_exact(
-    items: &[LocalItem],
-    address: &TodoAddress,
-) -> Result<Option<usize>, WorkError> {
-    if address.identity.is_some() {
-        return exact_local(items, address);
-    }
-    if let Some(index) = find_in(items, &address.slug, false) {
-        return Ok(Some(index));
-    }
-    match retained_only(items, &address.slug) {
-        Some(refusal) => Err(refusal),
-        None => Ok(None),
-    }
-}
-
 /// The local item addressed by `slug` in `items`: the live one, or with
 /// `retained`, else the latest delivered or removed one.
 pub(crate) fn find_in(items: &[LocalItem], slug: &TodoSlug, retained: bool) -> Option<usize> {
@@ -2571,19 +993,6 @@ pub(crate) fn find_in(items: &[LocalItem], slug: &TodoSlug, retained: bool) -> O
             })
             .flatten()
     })
-}
-
-pub(crate) fn reason_of(err: &GitHubError) -> PendingReason {
-    match err {
-        GitHubError::Unreachable(_) => PendingReason::Unreachable,
-        GitHubError::App(github::AppError::Unreachable) => PendingReason::Unreachable,
-        GitHubError::App(github::AppError::RateLimited { until }) => {
-            PendingReason::RateLimited { until: *until }
-        }
-        GitHubError::RateLimited { until } => PendingReason::RateLimited { until: *until },
-        GitHubError::Unauthorized { .. } => PendingReason::Unauthorized,
-        other => PendingReason::Failed(other.to_string()),
-    }
 }
 
 /// A pending reason in words.

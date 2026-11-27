@@ -1,0 +1,91 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 163
+expression: "redact(&format!(\"{recorded}---\\n{read}---\\n{shown}---\\n{next}---\\n{refused_again}---\\n{settled}\"))"
+---
+wrote prd of nested-lists: <digest 1>
+reflection: pending: not yet reflected
+---
+Lists keep their depth through parse and render.
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 3
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: GitHub refused artifact `prd` version 2: Validation Failed (IssueArtifact.body: too_long); see https://docs.github.com/rest/issues/artifacts
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 4
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (2 versions)
+    <digest 1> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+stamps:
+  none
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 5
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: pending: GitHub refused artifact `prd` version 4: Validation Failed (IssueArtifact.body: too_long)
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (3 versions)
+    <digest 1> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+    <digest 4> by Test Developer at <time>
+stamps:
+  none
+---
+nested-lists · feature · active
+identity: <id 1>
+record status: held
+created: <time> by Test Developer
+revision: 6
+intent:
+  Keep the depth of nested lists when parsing Markdown.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: waiting (manual, by Test Developer, <time>)
+artifacts:
+  input (1 version)
+    <digest 2> by Test Developer at <time>
+  prd (4 versions)
+    <digest 1> by Test Developer at <time>
+    <digest 3> by Test Developer at <time>
+    <digest 4> by Test Developer at <time>
+    <digest 5> by Test Developer at <time>
+stamps:
+  none

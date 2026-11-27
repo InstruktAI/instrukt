@@ -33,20 +33,6 @@ pub(crate) const SHOWN_PREFIX: usize = 8;
 
 impl TodoAddress {
     /// The address of `record`'s exact entry.
-    /// The address an action on `record` takes: its plain slug for a live
-    /// todo, since a plain slug always means the live item, else its exact
-    /// address.
-    pub fn door(record: &TodoRecord) -> Self {
-        if record.is_live() {
-            Self {
-                slug: record.slug.clone(),
-                identity: None,
-            }
-        } else {
-            Self::exact(record)
-        }
-    }
-
     pub fn exact(record: &TodoRecord) -> Self {
         Self {
             slug: record.slug.clone(),
@@ -233,8 +219,7 @@ impl TodoRecord {
         )
     }
 
-    /// Whether implementation has started (a build/review/verification/
-    /// finalize stamp or builder/fixer/finalizer binding exists).
+    /// Whether the record contains implementation evidence.
     pub fn implementation_started(&self) -> bool {
         self.stamps.iter().any(|s| {
             matches!(
@@ -245,10 +230,7 @@ impl TodoRecord {
                     | StampFact::VerificationDisposition { .. }
                     | StampFact::FinalizeReady { .. }
             )
-        }) || self
-            .bindings
-            .iter()
-            .any(|b| matches!(b.role.as_str(), "builder" | "fixer" | "finalizer"))
+        })
     }
 
     /// The next record-order number, for an artifact version or stamp

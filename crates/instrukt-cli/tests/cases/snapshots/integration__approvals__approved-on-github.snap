@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/approvals.rs
+assertion_line: 307
 expression: "redact(&format!(\"{shown}---\\n{}\",\nanswers.join(\"\\n\"))).replace(&earlier,\n\"<earlier prefix>\").replace(&current, \"<current prefix>\")"
 ---
 nested-lists · feature · active
@@ -9,7 +10,7 @@ created: <time> by Test Developer
 revision: 8
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: pending: not yet reflected
+reflection: reflected to GitHub
 issue: #1
 claim: not held
 hold: none
@@ -24,15 +25,15 @@ artifacts:
     <digest 4> by Test Developer at <time>
 stamps:
   #4 <time> prd_review verdict approve — target <digest 2>, report <digest 4> — by Test Developer
-  #7 <time> prd_review verdict approve — target <digest 3>, report <digest 4> — by Test Developer
-  #8 <time> prd approved by a human — <digest 3> — by @maintainer
+  #7 <time> prd_review verdict approve — target <digest 3>, report <digest 4> — by Test Developer, eval <digest 5>
+  #8 <time> prd approved by a human — <digest 3> — by @maintainer, eval <digest 5>
 ---
 @maintainer: the prd evidence changed since `<earlier prefix>`; review it and approve the current one again: `/instrukt approve prd <current prefix>`. Nothing changed.
 
-<!-- instrukt:command-reply:1036 -->
+<!-- instrukt:command-reply:1019 -->
 @passer-by: only an approver listed in `github.approvers` with write access to this repository can approve or request changes; nothing changed.
 
-<!-- instrukt:command-reply:1037 -->
+<!-- instrukt:command-reply:1020 -->
 @maintainer: recorded your approval of prd `<current prefix>`.
 
-<!-- instrukt:command-reply:1038 -->
+<!-- instrukt:command-reply:1021 -->

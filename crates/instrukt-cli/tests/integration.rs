@@ -24,10 +24,10 @@ mod blast_radius;
 mod company_homes;
 #[path = "cases/company-plugin.rs"]
 mod company_plugin;
+#[path = "cases/compressed-units.rs"]
+mod compressed_units;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
-#[path = "cases/conversation-links.rs"]
-mod conversation_links;
 #[path = "cases/conversations.rs"]
 mod conversations;
 #[path = "cases/delivery-cycle.rs"]
@@ -124,6 +124,8 @@ mod snippet_validation;
 mod state_database;
 #[path = "cases/task-timing.rs"]
 mod task_timing;
+#[path = "cases/thread-retention.rs"]
+mod thread_retention;
 #[path = "cases/todos.rs"]
 mod todos;
 #[path = "cases/use-case-coverage.rs"]

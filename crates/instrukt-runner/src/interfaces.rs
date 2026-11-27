@@ -16,13 +16,15 @@
 //! | [`TaskFirings`] | `task-timing` "Task and schedule" | work | runner task timing |
 //! | [`AutomaticHolds`] | `dependencies-and-holds` "Session bindings, claims and holds" | work | runner dispatch and anomalies |
 //! | [`RetentionPurge`] | `todos` "Parking, withdrawal and delivery" | work | runner tick |
+//! | [`OpenWorkSessions`] | `thread-retention` "Threads that are kept" | work | runner thread retention |
 //! | [`FleetRecord`] | `fleet-attention` "Attention episodes", "Raised conditions" | work | runner executions, dispatch and raise |
 //! | [`HeadVerdicts`] | `requested-review` "Kinds of ask", "Admission", "Requested review records" | work (`instrukt_todos::work::review`) | `instrukt review start` |
 //! | [`WorkflowAssignments`] | `workflow` "Published contracts", `work-dispatch` "Todo pickup" | workflow (`instrukt_todos::workflow`) | runner dispatch |
 //!
 //! The CLI wires them into [`RunnerWiring`] (`crates/instrukt-cli/src/
 //! wiring.rs`); the runner checks `modules.todos` per project before using
-//! them. The event-log
+//! them, except [`OpenWorkSessions`], which thread retention asks for every
+//! registered project whatever its switches. The event-log
 //! append work's finalize-ready stamp uses is the other direction: the
 //! runner implements [`crate::events::EventLog`] and the CLI hands it to
 //! work.
@@ -106,13 +108,6 @@ pub enum WorkInterfaceError {
         project: ProjectSlug,
         todo: TodoSlug,
     },
-    /// The item is conflicted with a newer remote revision; commands on it
-    /// refuse until it is refreshed (`github-record`, "Writer and
-    /// convergence").
-    #[error(
-        "todo `{todo}` is conflicted with GitHub; refresh it with `instrukt todo refresh {todo}`"
-    )]
-    Conflicted { todo: TodoSlug },
     /// Work refused the write for a reason its contract states (a hold,
     /// a delivered item, an invalid resulting record).
     #[error("{reason}")]
@@ -139,10 +134,9 @@ pub struct PickupCandidate {
     /// (`work-dispatch`, "Agent selection and intent checks").
     pub agent: Option<AgentPreference>,
     /// The runner's own claim on this computer already holds the todo and
-    /// no session is bound to it yet: either pending reflection (GitHub was
-    /// unreachable when it was recorded) or reflected since by another
-    /// command. Claiming it again answers `AlreadyHeld` once reflected,
-    /// `NotReflected` while GitHub still cannot be reached (ruling D).
+    /// no session is bound to it yet: a claim recorded by an earlier tick
+    /// whose dispatch did not start. Claiming it again answers
+    /// `AlreadyHeld`, and dispatch goes on.
     pub claimed_here: bool,
 }
 
@@ -163,10 +157,8 @@ pub trait Pickup: Send + Sync {
     /// dispatch hold, no execution claim held. Lane readiness (which flow
     /// is owed and whether prerequisites satisfy it) is workflow's, through
     /// [`WorkflowAssignments`]. Serves `work-dispatch`, "Todo pickup", and
-    /// `dependencies-and-holds`, "Prerequisites". Reads the tick's one
-    /// pickup listing of the project from GitHub, whose result replaces the
-    /// project's listing copies (`github-record`, "Interest-driven
-    /// refresh").
+    /// `dependencies-and-holds`, "Prerequisites". Reads only this
+    /// computer's record of the project; nothing is read from GitHub.
     fn pickup_candidates(
         &self,
         project: &ProjectRef,
@@ -188,19 +180,16 @@ pub enum Claimant {
     Session(SessionRef),
 }
 
-/// The outcome of recording an execution claim and reflecting it.
+/// The outcome of recording an execution claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaimOutcome {
-    /// The claim is recorded and reflected: this computer holds it.
+    /// The claim is recorded in this computer's record: this computer holds
+    /// it, whether or not GitHub answered its reflection.
     Claimed,
     /// The claimant already held it; nothing changed.
     AlreadyHeld,
-    /// Reflection met a newer remote revision: another computer claimed
-    /// it first. The local change is not reflected; leave the item.
+    /// Another holder on this computer holds the claim; leave the item.
     ClaimedElsewhere,
-    /// The claim is recorded locally but could not be reflected (GitHub
-    /// unreachable or rate limited); it is pending reflection.
-    NotReflected,
 }
 
 /// Recording the item-level execution claim (`work-dispatch`, "Execution
@@ -208,8 +197,8 @@ pub enum ClaimOutcome {
 /// holds"). Release is `instrukt todo update <slug> --unclaim`, the
 /// session's own command, not a runner write.
 pub trait Claims: Send + Sync {
-    /// Records the claim on `todo` for `claimant` and reflects it to
-    /// GitHub before returning.
+    /// Records the claim on `todo` for `claimant` in this computer's record,
+    /// marking reflection pending; the runner's reflection pass reflects it.
     fn record_claim(
         &self,
         project: &ProjectRef,
@@ -217,8 +206,8 @@ pub trait Claims: Send + Sync {
         claimant: &Claimant,
     ) -> Result<ClaimOutcome, WorkInterfaceError>;
 
-    /// Releases `claimant`'s claim on `todo` and reflects the release
-    /// (`work-dispatch`, "Agent selection": an exhausted agent order
+    /// Releases `claimant`'s claim on `todo` locally, marking reflection
+    /// pending (`work-dispatch`, "Agent selection": an exhausted agent order
     /// releases the runner's own claim). Only the holder on this computer
     /// may release; any other claimant is refused.
     fn release_claim(
@@ -337,13 +326,6 @@ pub trait SessionBindings: Send + Sync {
         ) -> Result<(), crate::state::StateError>,
     ) -> Result<(), WorkInterfaceError>;
 
-    /// Retry reflection after local replacement acceptance has committed.
-    fn reflect_dispatch_replacement(
-        &self,
-        project: &ProjectRef,
-        key: &str,
-    ) -> Result<(), WorkInterfaceError>;
-
     /// Commit the accepted assignment and optional occurrence stamp together.
     fn record_dispatch(
         &self,
@@ -374,22 +356,23 @@ pub struct ReflectionReport {
     pub reach: GitHubReach,
     /// Local items whose writes still await reflection.
     pub pending: Vec<TodoSlug>,
-    /// Local items marked conflicted by this or an earlier pass.
-    pub conflicted: Vec<TodoSlug>,
 }
 
-/// The tick's reflection pass (`work-dispatch`, "Execution contract";
-/// `github-record`, "Local-leading pull-through" and "Writer and
-/// convergence").
+/// One tick's reflection pass (`work-dispatch`, `github-record`, `github-apps`):
+/// inbound reads before pickup and outbound reflection after, preserving pass
+/// credentials and command-wide failure state without holding `reflection.lock`
+/// across pickup.
+pub trait ReflectionPass {
+    fn pull_inbound(&mut self) -> Result<(), WorkInterfaceError>;
+    fn sync_reflection(self: Box<Self>) -> Result<ReflectionReport, WorkInterfaceError>;
+}
+
+/// The tick's reflection pass factory (`work-dispatch`, `github-record`).
 pub trait Reflection: Send + Sync {
-    /// Polls GitHub, with conditional requests, for the todos this
-    /// computer holds claims on and the prerequisites that claimed work is
-    /// blocked on (`github-record`, "Interest-driven refresh"), then flushes
-    /// pending reflection, under the per-computer writer lock. The tick's
-    /// pickup listing is [`Pickup::pickup_candidates`]. An unreachable
-    /// GitHub is a report, not an error.
-    fn sync_reflection(&self, project: &ProjectRef)
-    -> Result<ReflectionReport, WorkInterfaceError>;
+    fn begin_pass<'a>(
+        &'a self,
+        project: &ProjectRef,
+    ) -> Result<Box<dyn ReflectionPass + 'a>, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -611,6 +594,25 @@ pub trait RetentionPurge: Send + Sync {
     /// Purges the project's retained local records whose seven-day window
     /// has expired; returns the purged slugs.
     fn purge_expired(&self, project: &ProjectRef) -> Result<Vec<TodoSlug>, WorkInterfaceError>;
+}
+
+// ---------------------------------------------------------------------
+// Thread retention
+// ---------------------------------------------------------------------
+
+/// Work's answer for thread retention (`work` domain, "Work → runner (thread
+/// retention)"). Work owns which outcomes are terminal; the runner keeps the
+/// threads of the sessions it names.
+pub trait OpenWorkSessions: Send + Sync {
+    /// The native sessions work associates with `project`'s todos that have
+    /// not reached a terminal outcome, delivered or withdrawn: every session
+    /// their bindings hold, whatever the state of each role attempt, and
+    /// each one's execution-claim session. Answered from the local record,
+    /// with no provider call and no write; none when there is no record.
+    fn open_work_sessions(
+        &self,
+        project: &ProjectRef,
+    ) -> Result<Vec<SessionRef>, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------
@@ -887,6 +889,7 @@ pub struct WorkPorts {
     pub holds: Arc<dyn AutomaticHolds>,
     pub retention: Arc<dyn RetentionPurge>,
     pub reclamation: Arc<dyn WorktreeReclamation>,
+    pub open_sessions: Arc<dyn OpenWorkSessions>,
     pub fleet: Arc<dyn FleetRecord>,
 }
 
@@ -972,6 +975,58 @@ pub trait CompanyPorts: Send + Sync {
         home: &instrukt_core::home::Home,
         now: jiff::Timestamp,
     ) -> Result<serde_json::Value, CompanyError>;
+    /// Whether `head` is an admitted knowledge proposal of the company
+    /// repository checked out at `root`, against its remote-tracking
+    /// canonical branch (`project/instrukt/spec/domain/company`, Knowledge
+    /// proposal). Reads a snapshot of the proposal store and never migrates
+    /// or writes it.
+    fn admitted_proposal(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, CompanyError>;
+    /// The unestablished entries of the company repository checked out at
+    /// `root` whose commit a remote-tracking branch holds, with their
+    /// causes.
+    fn unestablished_proposals(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<Vec<UnestablishedProposal>, CompanyError>;
+    /// The condition of the proposal store of the company repository
+    /// checked out at `root`, derived each time it is asked.
+    fn proposal_store(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<ProposalStoreCondition, CompanyError>;
+}
+
+/// A recorded commit whose speaker could not be established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnestablishedProposal {
+    /// The company's key.
+    pub company: instrukt_core::ids::ProjectSlug,
+    pub commit: instrukt_core::ids::CommitSha,
+    /// Why its speaker could not be established.
+    pub cause: String,
+}
+
+/// The condition of a company's proposal store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalStoreCondition {
+    /// Readable at the current shape and writable, or not created yet with a
+    /// folder it can be created in.
+    Usable,
+    /// Its schema version cannot be read: why.
+    Unreadable(String),
+    /// Of an older shape, which the next recording migrates.
+    Older,
+    /// Of a shape newer than this instrukt knows.
+    UnknownShape,
+    /// Its file or folder refuses a writer.
+    Unwritable,
 }
 
 /// What [`CompanyPorts::start`] opens the connections with.
@@ -981,8 +1036,8 @@ pub struct CompanyStart<'a> {
     pub env: &'a instrukt_core::config::Env,
     /// The operator's clock, as the connectors read it.
     pub clock: std::sync::Arc<dyn Fn() -> jiff::Timestamp + Send + Sync>,
-    pub wake: std::sync::mpsc::SyncSender<()>,
-    pub supervise: std::sync::mpsc::SyncSender<()>,
+    pub wake: tokio::sync::mpsc::Sender<()>,
+    pub supervise: tokio::sync::mpsc::Sender<()>,
 }
 
 /// The hosted connections, supervised by the run loop; dropping them ends
@@ -1145,12 +1200,68 @@ pub trait AutomaticReview: Send + Sync {
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<(), String>;
+    /// The proposal pull-request credential's readiness on `repository`.
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness;
+    /// Whether any pull request of `repository`, open or closed, has `head`
+    /// as its head commit.
+    fn heads_pull(
+        &self,
+        repository: &str,
+        head: &instrukt_core::ids::CommitSha,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<bool, String>;
+    /// Opens the pull request of the knowledge proposal `proposal` under the
+    /// proposal credential, unless one is open with its branch as head.
+    fn open_proposal(
+        &self,
+        proposal: &ProposalPull<'_>,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<ProposalOpening, String>;
+    /// The pinned base of `head`'s current approving head verdict, when it
+    /// has one that covers the canonical branch.
+    fn approved_head(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<Option<instrukt_core::ids::CommitSha>, String>;
+}
+
+/// A knowledge proposal's pull request to open.
+pub struct ProposalPull<'a> {
+    /// The repository's checkout, whose commits the body names.
+    pub root: &'a std::path::Path,
+    /// `owner/name` on GitHub.
+    pub repository: &'a str,
+    /// The proposal's branch, the pull request's head.
+    pub branch: &'a str,
+    /// The canonical branch, the pull request's base.
+    pub base: &'a str,
+    /// The remote-tracking canonical branch the head's commits are read
+    /// from.
+    pub canonical: &'a str,
+    pub head: &'a instrukt_core::ids::CommitSha,
+}
+
+/// What opening a proposal's pull request did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalOpening {
+    /// The pull request was opened, with this number.
+    Opened(u64),
+    /// A pull request with the branch as its head is already open.
+    AlreadyOpen,
 }
 
 /// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,
 /// and of automatic review's.
 pub trait GitHubReadiness:
-    Send + Sync + instrukt_core::interfaces::AutomaticReviewReadiness
+    Send
+    + Sync
+    + instrukt_core::interfaces::AutomaticReviewReadiness
+    + instrukt_core::interfaces::ProposalReadiness
 {
     fn reflection_ready(
         &self,

@@ -121,6 +121,16 @@ the connector retries the check before connecting. Scope findings appear
 in operator status and send no message to members
 (`project/instrukt/spec/feature/configuration/company-homes`). A token Slack
 refuses later is retried and reported like a lost connection.
+Slack's answers are judged by the outside gate
+(`project/instrukt/design/architecture/outside-gate`). Beyond HTTP's own rules,
+the body code `ratelimited` limits the method that received it;
+`service_unavailable` makes Slack unavailable for every method the connector
+calls with the same token; `request_timeout`, `internal_error` and
+`fatal_error`, which say Slack could not complete that request, are waited out
+by that call alone; and a token Slack refuses is waited out for every method
+called with it. At admission a scope list Slack cannot provide and a missing scope are
+waited out as the scope check: the connector stays withheld with its finding
+and is checked again when the wait ends.
 
 The Slack app is subscribed to exactly two kinds of message: mentions of the
 agent and direct messages to it. Slack sends instrukt nothing else from the
@@ -159,7 +169,7 @@ user (`user_not_found`, `user_not_visible`), the sender is not one of the
 company's own. When Slack gives no answer about the sender, because the
 request fails, is limited or Slack refuses the app's own token, nothing is
 decided and the message waits; Slack is asked again until it answers
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried).
+(`project/instrukt/design/architecture/outside-gate`).
 
 | Slack's record | Required |
 | --- | --- |
@@ -185,7 +195,7 @@ alike.
 ### While the agent works
 
 From the admission of an addressed message until it is complete — its answer
-posted, or its turn completed with a bare `NOOP` or a successful blank reply —
+posted, or its turn completed with a successful blank reply —
 the connector shows Slack's status line for it, with the text the message's state gives
 (`project/instrukt/spec/feature/company/conversations`):
 
@@ -207,7 +217,7 @@ one.
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-A posted answer, a bare `NOOP`, or a successful blank reply completes the message.
+A posted answer or a successful blank reply completes the message.
 A failed turn awaiting redelivery or an answer awaiting posting leaves it
 unfinished.
 
@@ -218,13 +228,14 @@ basis; no timing of it is promised. Slack drops a status after two minutes and
 when the app posts, so
 while a status stays the connector sets it again about every half minute, and
 after a post of the app's own it can be missing until the next setting. When a
-status no longer stays the connector clears it once; where that does not
-happen, Slack drops it within two minutes. After a restart the connector sets
-the status again for every message still unfinished and clears nothing it set
-before. A status call falls under Slack's named wait like any other call and
-is skipped while the wait lasts; nothing skipped is made up for. Setting a
-status never delays a message, and a status Slack refuses or the connector
-skips does not fail the conversation.
+status no longer stays the connector clears it; where that does not happen,
+Slack drops it within two minutes. After a restart the connector sets the
+status again for every message still unfinished and clears nothing it set
+before. A status call the outside gate answers with a wait, a clear among
+them, is made at a later status pass once the wait is over; a status call
+that fails otherwise is not made up for. Setting a status never delays a
+message, and a status Slack refuses or the connector skips does not fail the
+conversation.
 
 ### What accompanies an addressed message
 
@@ -325,8 +336,10 @@ while it was not connected:
   read-back horizon as possibly missed. Other errors retain the current
   position for retry.
 - A broadcast reply uses its own timestamp and its parent thread, wherever
-  Slack lists it. A limited request waits for Slack's retry time and resumes
-  at the same page after a restart. Operator status shows the wait.
+  Slack lists it. A request the outside gate answers with a wait — Slack's
+  retry time, or the pause after Slack could not be reached — waits until the
+  wait's moment and resumes at the same page after a restart. Operator status
+  shows the wait.
   If Slack has expired the cursor, only that listing starts over within the
   saved scan window.
 - The window starts where the last completed read-back started, less a margin;
@@ -349,10 +362,11 @@ When instrukt has something for one person alone, such as a sign-in link
 with `chat.postMessage` and the bot token to that person's Slack id, which
 Slack delivers in the person's direct messages with the agent. It is never
 posted in a channel or a thread, whichever conversation the person was in.
-Slack's `ratelimited`, a server error and a failed connection are retried;
-every other error Slack answers for that call fails the delivery, and the
-connector never posts the message anywhere else. Such a message is no answer:
-it starts no turn and is not delivered to the agent.
+A call the outside gate answers with a wait is retried: Slack's
+`ratelimited`, Slack unavailable, a failed request or connection, and a token
+Slack refuses. Every other error Slack answers for that call fails the
+delivery, and the connector never posts the message anywhere else. Such a
+message is no answer: it starts no turn and is not delivered to the agent.
 
 Each such message is posted with Slack message metadata whose `event_type` is
 `instrukt_private`, and the connector reads conversation history with that
@@ -474,6 +488,7 @@ remain opaque to runner. No new required scope is introduced.
 
 ## See Also
 
+- [project/instrukt/adr/0001-slack-socket-mode-transport](../../../adr/0001-slack-socket-mode-transport.md)
 - [project/instrukt/spec/feature/company/conversations](conversations.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.

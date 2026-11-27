@@ -19,7 +19,7 @@ use serde_yaml_ng::Value;
 
 use super::_connectors::DeclaredConnector;
 use super::_error::{ConfigError, Finding, FindingKind};
-use super::_layer::{Layer, inspected, read};
+use super::_layer::{Layer, inspected, read, read_layer};
 use super::_module::Module;
 use super::_secrets::SecretSnapshot;
 use super::_validate::{Given, findings_given};
@@ -49,6 +49,8 @@ pub struct Admitted {
     projects: Vec<AdmittedProject>,
     /// Some project is published here, admitted or not.
     published: bool,
+    /// The retention window admitted: `None` while it is off or withheld.
+    thread_retention: Option<jiff::SignedDuration>,
 }
 
 /// A company home admitted with its generation.
@@ -57,8 +59,9 @@ pub struct AdmittedCompany {
     pub name: ProjectSlug,
     pub config: Configuration,
     /// The configuration of a caller in the company's home directory: the
-    /// machine layer with the company's document as that directory's layer,
-    /// as admitted.
+    /// machine layer with the home's own project layer, if it has one, as
+    /// admitted. The company's settings are never part of it: they are
+    /// read as [`AdmittedCompany::config`].
     pub home_config: Configuration,
     /// The company's home directory.
     pub dir: PathBuf,
@@ -132,7 +135,9 @@ pub struct Candidate {
 
 impl Admitted {
     /// Builds a generation from the files, reading each once. An invalid
-    /// machine layer or `agents.yaml` refuses it: nothing can run on them. A
+    /// machine layer or `agents.yaml` refuses it: nothing can run on them;
+    /// a machine layer whose only findings withhold thread retention is
+    /// admitted with the window off and its findings reported. A
     /// company home that does not validate, or a project whose layer cannot
     /// be read, is left out with its findings and makes the candidate
     /// incomplete; a finding against a project's module withholds that module.
@@ -195,14 +200,22 @@ impl Admitted {
             projects: Some(&read_layers),
             secrets: None,
         };
+        let mut findings = Vec::new();
+        let mut thread_retention = super::_thread_retention::admitted(global_layer.as_ref());
         if let Some(value) = &global_layer {
             let found = findings_given(home, &Layer::Global, &global_path, value, given)?;
-            if !found.is_empty() {
-                return Err(ConfigError::Invalid(super::Findings(found)).into());
+            match admit_machine_layer(found) {
+                MachineLayer::Admitted => {}
+                MachineLayer::RetentionWithheld(found) => {
+                    thread_retention = None;
+                    findings.extend(found);
+                }
+                MachineLayer::Refused(found) => {
+                    return Err(ConfigError::Invalid(super::Findings(found)).into());
+                }
             }
         }
         let global = Configuration::from_layers(home, global_layer.clone(), None)?.pinned(&agents);
-        let mut findings = Vec::new();
         let mut complete = true;
         let mut companies = Vec::new();
         for (name, unreadable_folder) in super::company_folders(home)? {
@@ -257,10 +270,18 @@ impl Admitted {
                 companies,
                 projects,
                 published,
+                thread_retention,
             },
             findings,
             complete,
         })
+    }
+
+    /// The computer's retention window as admitted: `None` while it is off,
+    /// or withheld because the selected runtime cannot archive threads. The
+    /// one read of the window for consumers.
+    pub fn thread_retention(&self) -> Option<jiff::SignedDuration> {
+        self.thread_retention
     }
 
     /// The machine layer as admitted, before any project layer combines
@@ -347,9 +368,37 @@ impl Admitted {
     }
 }
 
+/// What the machine layer's findings admit.
+#[derive(Debug, PartialEq)]
+enum MachineLayer {
+    /// No finding: the layer is admitted whole.
+    Admitted,
+    /// Only findings that withhold thread retention: the layer is admitted
+    /// with the window off, and these are reported.
+    RetentionWithheld(Vec<Finding>),
+    /// Any other finding: nothing can run on the layer.
+    Refused(Vec<Finding>),
+}
+
+/// The admission of a machine layer with findings `found`
+/// (`project/instrukt/spec/feature/configuration/layered-configuration`).
+fn admit_machine_layer(found: Vec<Finding>) -> MachineLayer {
+    if found.is_empty() {
+        MachineLayer::Admitted
+    } else if found.iter().all(super::withholds_thread_retention) {
+        MachineLayer::RetentionWithheld(found)
+    } else {
+        MachineLayer::Refused(found)
+    }
+}
+
 /// The company home `name` as admitted, `None` when its folder holds no
-/// document, or its findings. Its document and its secrets file are each
-/// read once: what is judged is what is admitted.
+/// document, or its findings. Its document is read where it stands, a
+/// legacy one unconverted, and both present is a finding naming both.
+/// Deciding which file holds the settings reads a legacy document before
+/// it is taken; the settings judged are those of one read of the chosen
+/// file, and they are what is admitted. The secrets file is read once, and
+/// that read is what validation and the admitted connectors resolve from.
 fn admit_company(
     home: &Home,
     name: &ProjectSlug,
@@ -357,10 +406,11 @@ fn admit_company(
     given: Given<'_>,
 ) -> Result<Option<AdmittedCompany>, Vec<Finding>> {
     let layer = Layer::Company(name.clone());
-    let document = layer.path(home);
-    let value = read(&document)
-        .and_then(|doc| {
-            doc.map(|doc| inspected(home, &layer, &document, doc.value))
+    let document = layer.located(home);
+    let value = read_layer(home, &layer)
+        .and_then(|found| {
+            found
+                .map(|(path, doc)| inspected(home, &layer, &path, doc.value))
                 .transpose()
         })
         .map_err(|error| vec![unreadable(document.clone(), &error)])?;
@@ -383,12 +433,20 @@ fn admit_company(
         .map_err(|error| vec![unreadable(document.clone(), &error)])?
         .pinned(agents);
     let dir = home.company_dir(name);
+    let project_layer = Layer::Project(dir.clone());
+    let project = read_layer(home, &project_layer)
+        .and_then(|found| {
+            found
+                .map(|(path, doc)| inspected(home, &project_layer, &path, doc.value))
+                .transpose()
+        })
+        .map_err(|error| vec![unreadable(project_layer.path(home), &error)])?;
     let home_config = Configuration::from_layers(
         home,
         given.global.flatten().cloned(),
-        Some((dir.clone(), value.clone())),
+        project.map(|value| (dir.clone(), value)),
     )
-    .map_err(|error| vec![unreadable(document.clone(), &error)])?
+    .map_err(|error| vec![unreadable(project_layer.path(home), &error)])?
     .pinned(agents);
     // Each connector as declared, and each secret reference its entry
     // makes, resolved from the same read of the secrets file validation used.
@@ -676,6 +734,78 @@ mod tests {
     }
 
     #[test]
+    fn an_old_shape_company_layer_loads_with_its_event_responses_withheld() {
+        // A company layer of the shape written before the company identity:
+        // schema 6, a company repository, no `company_name`.
+        let old: Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nproject: company-acme\ncompany_repository: true\nmodules: {{todos: false, events: true}}\nreview: {{automatic: true}}\n",
+            super::super::PROJECT_SCHEMA_VERSION
+        ))
+        .unwrap();
+        let findings: Vec<Finding> =
+            super::super::_validate::judge(&old, super::super::LayerKind::Project, None, None)
+                .into_iter()
+                .filter(|f| f.kind != FindingKind::EventsNeedTransport)
+                .map(|f| Finding {
+                    document: PathBuf::from("instrukt.yaml"),
+                    key: f.key,
+                    kind: f.kind,
+                    message: f.message,
+                })
+                .collect();
+        assert_eq!(
+            findings
+                .iter()
+                .map(|f| (f.key.as_str(), f.kind))
+                .collect::<Vec<_>>(),
+            vec![("modules.events", FindingKind::NoCompanyIdentity)]
+        );
+        let switched = Modules {
+            todos: false,
+            events: true,
+            history: true,
+        };
+        assert_eq!(
+            switched.admitted(&findings),
+            Modules {
+                todos: false,
+                events: false,
+                history: true,
+            }
+        );
+    }
+
+    /// A finding that the selected runtime cannot carry the retention window.
+    fn retention_capability() -> Finding {
+        Finding {
+            kind: FindingKind::RuntimeCapabilityMissing,
+            ..finding("runner.archive_finished_after")
+        }
+    }
+
+    #[test]
+    fn a_machine_layer_without_findings_is_admitted() {
+        assert_eq!(admit_machine_layer(Vec::new()), MachineLayer::Admitted);
+    }
+
+    #[test]
+    fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_with_it_withheld() {
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability()]),
+            MachineLayer::RetentionWithheld(vec![retention_capability()])
+        );
+    }
+
+    #[test]
+    fn a_machine_layer_with_any_other_finding_beside_it_is_refused() {
+        let shape = finding("runner.archive_finished_after");
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability(), shape.clone()]),
+            MachineLayer::Refused(vec![retention_capability(), shape])
+        );
+    }
+
+    #[test]
     fn a_finding_at_the_regenerable_declaration_withholds_no_module() {
         let switched = Modules {
             todos: true,
@@ -699,6 +829,7 @@ mod tests {
             companies: Vec::new(),
             projects: Vec::new(),
             published,
+            thread_retention: None,
         }
     }
 
@@ -796,6 +927,73 @@ mod tests {
         assert_eq!(
             candidate.generation.global().runner_runtime().unwrap(),
             super::super::Runtime::COMPILED
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_home_made_before_company_yaml_is_admitted_with_its_settings_unconverted() {
+        let dir = scratch("legacy-company");
+        let home = Home::at_user_home(dir.clone());
+        let company = ProjectSlug::parse("acme").unwrap();
+        let company_dir = home.company_dir(&company);
+        std::fs::create_dir_all(&company_dir).unwrap();
+        let legacy = format!(
+            "schema_version: {}\ncompany: acme\nprofiles: [antigravity]\n",
+            super::super::COMPANY_SCHEMA_VERSION
+        );
+        std::fs::write(company_dir.join(super::super::CONFIG_FILE_NAME), &legacy).unwrap();
+        let candidate = Admitted::load(&home).unwrap();
+        assert!(candidate.complete, "{:?}", candidate.findings);
+        let admitted = candidate.generation.company(&company).unwrap();
+        assert_eq!(
+            admitted
+                .config
+                .get(Some("profiles"), &super::super::Env::default())
+                .unwrap(),
+            serde_yaml_ng::from_str::<Value>("[antigravity]").unwrap()
+        );
+        // The company's settings are no layer of a caller in its home.
+        assert!(
+            admitted
+                .home_config
+                .get(Some("profiles"), &super::super::Env::default())
+                .is_err()
+        );
+        assert_eq!(
+            std::fs::read_to_string(company_dir.join(super::super::CONFIG_FILE_NAME)).unwrap(),
+            legacy
+        );
+        assert!(!company_dir.join(super::super::COMPANY_DOCUMENT).exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_home_holding_both_settings_documents_is_a_finding_naming_both() {
+        let dir = scratch("both-company");
+        let home = Home::at_user_home(dir.clone());
+        let company = ProjectSlug::parse("acme").unwrap();
+        let company_dir = home.company_dir(&company);
+        std::fs::create_dir_all(&company_dir).unwrap();
+        let document = format!(
+            "schema_version: {}\ncompany: acme\n",
+            super::super::COMPANY_SCHEMA_VERSION
+        );
+        std::fs::write(company_dir.join(super::super::CONFIG_FILE_NAME), &document).unwrap();
+        std::fs::write(company_dir.join(super::super::COMPANY_DOCUMENT), &document).unwrap();
+        let candidate = Admitted::load(&home).unwrap();
+        assert!(!candidate.complete);
+        assert!(candidate.generation.company(&company).is_none());
+        let finding = candidate
+            .findings
+            .iter()
+            .find(|finding| finding.document == company_dir.join(super::super::COMPANY_DOCUMENT))
+            .unwrap_or_else(|| panic!("{:?}", candidate.findings));
+        insta::assert_snapshot!(
+            "both_settings_documents",
+            finding
+                .message
+                .replace(&company_dir.display().to_string(), "[HOME]")
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

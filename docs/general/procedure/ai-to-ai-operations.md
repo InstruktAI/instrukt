@@ -62,10 +62,6 @@ lifecycle contract.
 
    <!-- @config: runtime.message_peer -->
 
-   For joint discussion, preserve each participant's evidence and human attribution:
-
-   <!-- @config: runtime.discuss -->
-
    Apply steering through the runtime's supported safe boundary:
 
    <!-- @config: runtime.steer -->
@@ -123,11 +119,27 @@ lifecycle contract.
    configured capabilities. A completed turn neither closes another session
    nor implicitly releases a claim. Retain workers needed for further rounds
    and retain a thread that holds a human question. Release the claim with
-   `instrukt todo update <slug> --unclaim`. Conclude a completed discussion through the configured runtime discussion
-   instruction and record the contribution's handoff. Apart from finishing completed todo orchestrator threads, the runtime owns session ending and cleanup.
+   `instrukt todo update <slug> --unclaim` and record the contribution's handoff. Apart from finishing completed todo orchestrator threads, the runtime owns session ending and cleanup.
+
+**Scheduled reply check** (`general/principle/parallel-work`). While a reply
+you expect is still outstanding when your turn yields — from a child or helper
+you dispatched, or to a message you sent that awaits an answer — keep one
+scheduled reply check, at an interval you choose from how long the awaited
+work should take, and update it as what you await changes:
+
+<!-- @config: runtime.schedule_check -->
+
+Each time it fires, inspect every outstanding item (step 5) and route what it
+shows as attention arriving (step 4). It is a reason to look, never evidence,
+and it sends nothing that only asks for status. Clear it once nothing you
+await is outstanding, and before you release a claim or finish your thread.
+An awaited item that is itself an execution the runner started is the
+runner's to recover, not this check's. Where the runtime has no scheduler,
+its value says so: report that gap with your outcome and rely on native
+delivery.
 
 A focused worker's outputs belong in its assigned artifacts and its own turn.
-It messages or links other sessions only where its brief authorizes that
+It messages other sessions only where its brief authorizes that
 collaboration. A role that may read a named conversation does so through the
 configured runtime read for its assignment, such as a reviewer checking the recorded intent.
 It does not administer the session that dispatched it.

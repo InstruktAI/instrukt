@@ -57,10 +57,11 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                     root,
                     shown["thread"]["projectId"].as_str().unwrap(),
                 )?;
+                let retention = release::retention(&root.join("project"))?;
                 let projects = release::project_boundary(root, &root.join("project"))?;
                 fs::write(
                     root.join("fake.json"),
-                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"projects":projects}).to_string(),
+                    json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects}).to_string(),
                 )?;
                 Ok(())
             })()
@@ -69,7 +70,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         return;
     }
     let version = release::VERSION.trim();
-    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"readiness translation":"not verified","version":"not verified","auth session issue/revoke":"not verified","thread list/show":"not verified","thread send":"not verified","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior"}});
+    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"readiness translation":"not verified","version":"not verified","auth session issue/revoke":"not verified","thread list/show":"not verified","thread send":"not verified","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior","worktree preparation":"fixture control: a new-worktree launch answers preparing and T3 finishes only at the test's explicit step, never on reads; completed preparation is not live verified"}});
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut env = TestEnv::new();
         manifest["operation"] = json!("release acquisition/checksum");
@@ -145,6 +146,14 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
             "messages",
             real["fixture"]["messages"].clone(),
         );
+        // The retention fixture thread: settled long enough ago and opened
+        // since, through the fake's controls for what the release reaches
+        // with management commands.
+        fake.migrate_projection();
+        fake.next_thread_id(release::RETENTION_THREAD);
+        let retained = fake.developer_starts_in(project.path());
+        fake.settle_at(&retained, "2026-11-10T12:00:00Z");
+        fake.opened_at(&retained, "2026-11-10T12:30:00Z");
         manifest["operation"] =
             json!("fake readiness, queued input, transcript and steering boundaries");
         release::worker(&fake_env, "fake", &fake_env.path("")).unwrap();
@@ -164,7 +173,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         assert_eq!(real["projects"], emulated["projects"]);
         manifest["projects"] = real["projects"].clone();
         manifest["fake_operations"]["project add/snapshot"] = json!(
-            "compared check, ensure, duplicate refusal, reuse and ancestor-only pending launch"
+            "compared check, ensure with the title T3 gives a root and a company home's repository-name title, duplicate refusal, reuse and ancestor-only pending launch"
         );
         manifest["operation"] = json!("WebSocket queued dispatch, replay, and required fields");
         assert_eq!(real["native_launch"], emulated["native_launch"]);
@@ -173,6 +182,15 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         manifest["websocket_dispatch"] = real["websocket_dispatch"].clone();
         manifest["fake_operations"]["WebSocket dispatch"] = json!(
             "compared queued acceptance, duplicate suppression and rejection of omitted provenance"
+        );
+        manifest["operation"] = json!("thread archiving through finished threads and archive");
+        assert_eq!(real["retention"], emulated["retention"]);
+        manifest["retention"] = real["retention"].clone();
+        manifest["fake_operations"]["thread archiving"] = json!(
+            "compared the finished, quiet, pinned and opening facts the listing and projection decode to, the archive with its table re-read, the listing afterwards, and the refused second archive with the archived row"
+        );
+        manifest["fake_operations"]["settle/pin/open"] = json!(
+            "fixture controls for what the release reaches with thread.settle, thread.pin and thread.visit; their projection is compared through the archiving check"
         );
         let mut observed = real["adapter"].clone();
         let mut fake_observed = emulated["adapter"].clone();

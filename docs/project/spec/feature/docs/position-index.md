@@ -30,8 +30,8 @@ states what an index may say and what validation reports about it.
 
 - **`expanded`** — snippet ids rendered in full, each with its closure: its
   transitive required reads, each once.
-- **`listed`** — snippet ids rendered as one listing line each: id,
-  description and the command that reads it.
+- **`listed`** — snippet ids rendered as one listing line each: id and
+  description, leading to the command that reads it.
 - **`description`** — one line saying what the domain is about; the line that
   stands for the domain in every agent's global file.
 - **`agents`** — a map from a provider name to snippet ids. A name has 1–64 ASCII
@@ -41,9 +41,10 @@ states what an index may say and what validation reports about it.
   installed or configured providers and native instruction-loading support. Those snippets are rendered into that
   runtime's global file only, after everything else.
 
-`general`'s `expanded` and `listed` may name ids from any domain: always-on
-content from several domains is chosen in this one place. A domain's index and
-the project's index name only snippets of their own position.
+Every index names only snippets of its own position, `general`'s `expanded`,
+`listed` and `agents` included: references between positions run upward only
+(`general/policy/referencing-doc-snippets`), and a domain reaches the global
+agent files through its `description` line, never through `general`'s index.
 
 An index is the only one in its position. Depth comes from required reads — a
 listed overview's closure — never from nested indexes.
@@ -73,7 +74,7 @@ names the `index.yaml`, the key and the offending value.
 | a value has the wrong shape: `expanded`, `listed` or an `agents` entry that is not a list of ids, a `description` that is not one non-empty line |
 | a domain's `index.yaml` has no `description` (the line the global agent files show for the domain) |
 | an id names no snippet, or names a pending snippet |
-| a domain's or the project's index names an id of another position |
+| an index names an id of another position, `general`'s among them |
 | an `agents` key has invalid provider-name syntax; `index-agent-invalid` explains the syntax |
 | a `listed` id is already in the closure of `expanded`; the finding names the `expanded` id whose closure carries it |
 | an `index.yaml` sits anywhere but a position's root |
@@ -95,6 +96,7 @@ A notice is reported with its file and code and never fails the run.
 Given a developer has written the index of a position they publish
 When they validate the project's documentation
 Then every key the position does not allow, every id that names no delivered snippet, and every malformed provider name is reported with the index and the offending value
+And an id of another position is reported, whichever position's index names it, `general`'s included
 And a domain's index without a description is reported
 And a listed snippet that the expanded snippets already bring in is reported, naming the expanded snippet that brings it
 And the run reports failure while any of these remains

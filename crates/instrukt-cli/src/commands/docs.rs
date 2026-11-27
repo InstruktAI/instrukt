@@ -1,4 +1,4 @@
-//! Docs commands: `instrukt docs validate|schema|fold|index|get|render|plugin`.
+//! Docs commands: `instrukt docs validate|schema|fold|index|get|render|plugin|units`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -9,7 +9,9 @@ use instrukt_core::docs::{
 };
 use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
-use instrukt_core::publication::{self, CompanyName, PlannedFile, RepositoryView};
+use instrukt_core::publication::{
+    self, PlannedFile, RepositoryView, UnitWork, UnitsOutcome, UnitsReport,
+};
 
 use crate::context::Ctx;
 use crate::wiring::core_wiring;
@@ -77,21 +79,29 @@ enum DocsCommand {
     /// With `--check`, writes nothing: prints the root file when it differs
     /// from its rendering or is missing, each rendering no longer rendered
     /// and each finding, and exits non-zero when it prints any.
+    ///
+    /// With `--plugin`, renders the repository's whole agent material as one
+    /// operation: the entrypoints and, in a company's repository, the
+    /// company's plugin as `instrukt docs plugin` renders it; with `--check`
+    /// too, it writes nothing and names each differing or missing file of
+    /// either, each file a rendering would remove and each finding.
     Render(RenderArgs),
     /// Render the company's Claude plugin from the repository's working tree.
     ///
-    /// The plugin `plugins/<key>/` is rendered from the company index
-    /// `docs/index.yaml`, the documents it selects, the key and the name
-    /// given here and what the working tree holds, nothing else: no home,
-    /// publication or configuration is read, so a fresh clone and the
-    /// binary are enough. Writes each file of the plugin whose content
-    /// differs, removes each file under `plugins/<key>/` that the rendering
-    /// does not hold, sets the plugin's entry in
-    /// `.claude-plugin/marketplace.json`, then prints the plugin's version
-    /// and one line per file changed. The version is kept when the
-    /// rendering equals what the folder holds and its last number is raised
-    /// otherwise. A finding leaves every file as it is and fails the run.
-    /// Stages nothing.
+    /// The company's skill `skills/<key>/` is rendered from the company
+    /// index `docs/index.yaml`, the documents it selects, the company
+    /// identity the repository's committed `instrukt.yaml` declares (its
+    /// `project: company-<key>` and `company_name`) and what the working
+    /// tree holds, nothing else: no home, publication or configuration of
+    /// the computer is read, so a fresh clone and the binary are enough. A
+    /// repository without a company identity is refused with that finding. Writes each file of the skill whose content
+    /// differs, removes each file under `skills/<key>/` that the rendering
+    /// does not hold, sets the plugin's entry, which is its manifest, in
+    /// `.claude-plugin/marketplace.json`, creating the catalog where there
+    /// is none, then prints the plugin's version and one line per file
+    /// changed. The version is kept when the rendering equals what the
+    /// folder holds and its last number is raised otherwise. A finding
+    /// leaves every file as it is and fails the run. Stages nothing.
     ///
     /// With `--check`, writes nothing: prints each file that differs from
     /// the rendering or is missing, each file a rendering would remove and
@@ -101,18 +111,44 @@ enum DocsCommand {
     /// finding and exits non-zero only when there is one, so a branch whose
     /// plugin is behind its documents passes.
     Plugin(PluginArgs),
+    /// Report which compressed units of the repository need writing.
+    ///
+    /// Reads the working tree alone — no home, publication, configuration,
+    /// database or network, so a fresh clone and the binary are enough — and
+    /// writes nothing. Names each source an entrypoint index inlines whose
+    /// unit under `docs/_compressed/` is stale or missing, with the source's
+    /// canonical id or company document path, its file, where its unit
+    /// belongs and the `source_sha256` a renewed unit declares; each
+    /// orphaned unit; and each finding that keeps a unit from standing in
+    /// for its source.
+    ///
+    /// Exits 0 when there is nothing to compress, 3 when it names only
+    /// stale, missing or orphaned units, and 1 when it names a finding.
+    ///
+    /// With `--target <slug>`, each source is read as that todo will deliver
+    /// it, its pending documentation in the checkout applied.
+    ///
+    /// With `--json`, prints one object: `outcome` (`nothing-to-compress`,
+    /// `work` or `findings`); `stale` and `missing`, each a list of
+    /// `{source, file, unit, source_sha256}`; `orphaned`, a list of
+    /// `{unit}`; and `findings`, a list of `{finding, path, detail}`, where
+    /// `finding` is one of `unreadable`, `link`, `reserved-folder`,
+    /// `forbidden-directive`, `configured-values` and `references`.
+    Units(UnitsArgs),
+}
+
+#[derive(Debug, clap::Args)]
+struct UnitsArgs {
+    /// Print the report as one JSON object.
+    #[arg(long)]
+    json: bool,
+    /// Read each source as this todo will deliver it.
+    #[arg(long, value_name = "SLUG")]
+    target: Option<TodoSlug>,
 }
 
 #[derive(Debug, clap::Args)]
 struct PluginArgs {
-    /// The company's key: the name of the plugin and of its skill, and the
-    /// plugin's folder under `plugins/`.
-    #[arg(long, value_name = "KEY")]
-    key: ProjectSlug,
-    /// The name people write the company by, as one line: the skill's title
-    /// and the plugin's author.
-    #[arg(long, value_name = "NAME")]
-    name: CompanyName,
     /// Write nothing; report each file a rendering would change and each
     /// finding.
     #[arg(long, conflicts_with = "validate")]
@@ -127,6 +163,10 @@ struct RenderArgs {
     /// Write nothing; report what a render would change and what it finds.
     #[arg(long)]
     check: bool,
+    /// Render the whole agent material: the entrypoints and, in a company's
+    /// repository, the company's plugin.
+    #[arg(long)]
+    plugin: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -212,13 +252,118 @@ pub fn run(args: DocsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         DocsCommand::Get(args) => get(args, ctx),
         DocsCommand::Render(args) => render(&args, ctx),
         DocsCommand::Plugin(args) => plugin(&args, ctx),
+        DocsCommand::Units(args) => units(&args, ctx),
     }
+}
+
+/// The exit status of an inspection that names work and no finding.
+const UNITS_WORK: u8 = 3;
+
+/// Reports the state of the repository's compressed units from its working
+/// tree.
+fn units(args: &UnitsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    let report = publication::inspect_units(&root, args.target.as_ref())?;
+    if args.json {
+        ctx.out.json(&units_json(&report))?;
+    } else {
+        for line in units_lines(&report) {
+            ctx.out.line(&line)?;
+        }
+    }
+    Ok(units_exit(report.outcome()))
+}
+
+/// The exit status an inspection's outcome comes to.
+fn units_exit(outcome: UnitsOutcome) -> ExitCode {
+    match outcome {
+        UnitsOutcome::NothingToCompress => ExitCode::SUCCESS,
+        UnitsOutcome::Work => ExitCode::from(UNITS_WORK),
+        UnitsOutcome::Findings => ExitCode::FAILURE,
+    }
+}
+
+/// The inspection's text report: one line per stale, missing and orphaned
+/// unit and per finding, or the one line saying there is nothing to
+/// compress.
+fn units_lines(report: &UnitsReport) -> Vec<String> {
+    let work = |state: &str, verb: &str, work: &UnitWork| {
+        format!(
+            "{state}: {} ({}): {verb} {} declaring source_sha256 {}",
+            work.source, work.file, work.unit, work.source_sha256
+        )
+    };
+    let mut lines: Vec<String> = report
+        .stale
+        .iter()
+        .map(|item| work("stale", "renew", item))
+        .chain(report.missing.iter().map(|item| work("missing", "write", item)))
+        .chain(report.orphaned.iter().map(|unit| {
+            format!(
+                "orphaned: {unit}: its source no longer exists or no entrypoint index inlines it; remove it"
+            )
+        }))
+        .chain(
+            report
+                .findings
+                .iter()
+                .map(|finding| format!("finding: {finding}")),
+        )
+        .collect();
+    if lines.is_empty() {
+        lines.push("nothing to compress: every inlined source has a current unit".to_owned());
+    }
+    lines
+}
+
+/// The inspection's report as `--json` prints it.
+fn units_json(report: &UnitsReport) -> serde_json::Value {
+    let outcome = match report.outcome() {
+        UnitsOutcome::NothingToCompress => "nothing-to-compress",
+        UnitsOutcome::Work => "work",
+        UnitsOutcome::Findings => "findings",
+    };
+    let work = |items: &[UnitWork]| -> Vec<serde_json::Value> {
+        items
+            .iter()
+            .map(|item| {
+                serde_json::json!({
+                    "source": item.source,
+                    "file": item.file,
+                    "unit": item.unit,
+                    "source_sha256": item.source_sha256,
+                })
+            })
+            .collect()
+    };
+    serde_json::json!({
+        "outcome": outcome,
+        "stale": work(&report.stale),
+        "missing": work(&report.missing),
+        "orphaned": report
+            .orphaned
+            .iter()
+            .map(|unit| serde_json::json!({ "unit": unit }))
+            .collect::<Vec<_>>(),
+        "findings": report
+            .findings
+            .iter()
+            .map(|finding| serde_json::json!({
+                "finding": finding.kind.code(),
+                "path": finding.path,
+                "detail": finding.kind.detail(),
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// Renders the repository's committed entrypoints from its working tree,
 /// or with `--check` reports what that would change.
 fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
+    if args.plugin {
+        return render_agent_material(&root, args.check, ctx);
+    }
     let plan = publication::render_repository(RepositoryView::WorkingTree(&root))?;
     let mut failed = !plan.findings.is_empty();
     if args.check {
@@ -256,13 +401,84 @@ fn render(args: &RenderArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     })
 }
 
+/// Renders the repository's whole agent material from the working tree
+/// (`instrukt docs render --plugin`), or with `check` reports what that
+/// would change: the entrypoints' lines, then the plugin's, then every
+/// finding.
+fn render_agent_material(root: &Path, check: bool, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let material = publication::plan_agent_material(root)?;
+    let failed = material.has_findings();
+    let mut differs = false;
+    if check {
+        let mut lines = check_lines(
+            &material.entrypoints.writes,
+            &material.entrypoints.removals,
+            "instrukt docs render --plugin",
+        );
+        if let Some(plugin) = &material.plugin {
+            let (writes, removals) = plugin.drift.as_ref().map_or((&[][..], &[][..]), |drift| {
+                (drift.writes.as_slice(), drift.removals.as_slice())
+            });
+            lines.extend(check_lines(
+                writes.iter().chain(&plugin.catalog),
+                removals,
+                "instrukt docs render --plugin",
+            ));
+        }
+        for line in lines {
+            ctx.out.line(&line)?;
+            differs = true;
+        }
+    } else {
+        let mut removed: Vec<&Path> = material
+            .entrypoints
+            .removals
+            .iter()
+            .map(PathBuf::as_path)
+            .collect();
+        if let Some(drift) = material.plugin.as_ref().and_then(|p| p.drift.as_ref()) {
+            removed.extend(drift.removals.iter().map(PathBuf::as_path));
+        }
+        for path in publication::write_agent_material(root, &material)? {
+            let what = if removed.contains(&path.as_path()) {
+                "removed"
+            } else {
+                "written"
+            };
+            ctx.out.line(&format!("{}: {what}", path.display()))?;
+        }
+    }
+    for finding in &material.entrypoints.findings {
+        ctx.out.line(&finding.to_string())?;
+    }
+    if let Some(plugin) = &material.plugin {
+        for finding in &plugin.findings {
+            ctx.out.line(&finding.to_string())?;
+        }
+    }
+    if !check {
+        for notice in &material.entrypoints.notices {
+            ctx.out.line(&format!("notice: {notice}"))?;
+        }
+    }
+    Ok(if !failed && !differs {
+        ExitCode::SUCCESS
+    } else if check {
+        ExitCode::FAILURE
+    } else {
+        crate::output::could_not(
+            "the findings above leave their files as they were; fix them and run `instrukt docs render --plugin` again",
+        )
+    })
+}
+
 /// Renders the company's plugin from the working tree, or with `--check`
 /// reports what that would change, or with `--validate` reports only what
 /// it finds.
 fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = git::worktree_root(&ctx.cwd)?.unwrap_or_else(|| ctx.cwd.clone());
     if args.validate {
-        let findings = publication::validate_plugin(&root, &args.key, &args.name)?;
+        let findings = publication::validate_plugin(&root)?;
         for finding in &findings {
             ctx.out.line(&finding.to_string())?;
         }
@@ -272,7 +488,7 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             ExitCode::FAILURE
         });
     }
-    let plan = publication::plan_plugin(&root, &args.key, &args.name)?;
+    let plan = publication::plan_plugin(&root)?;
     let mut failed = !plan.findings.is_empty();
     if args.check {
         // What differs is named wherever it is known, findings or not: the
@@ -286,11 +502,10 @@ fn plugin(args: &PluginArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             failed = true;
         }
     } else if let Some(drift) = plan.drift.as_ref().filter(|_| !failed) {
-        ctx.out.line(&format!(
-            "{}: version {}",
-            plan.folder.display(),
-            drift.version
-        ))?;
+        if let Some(folder) = &plan.folder {
+            ctx.out
+                .line(&format!("{}: version {}", folder.display(), drift.version))?;
+        }
         let removed: Vec<&Path> = drift.removals.iter().map(PathBuf::as_path).collect();
         for path in publication::write_plugin(&root, &plan)? {
             let what = if removed.contains(&path.as_path()) {
@@ -480,4 +695,31 @@ fn fold(args: FoldArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let root = repo_root(&ctx.cwd)?;
     docs::fold(&root, &args.slug)?;
     Ok(ExitCode::SUCCESS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use instrukt_core::publication::{UnitFinding, UnitFindingKind};
+
+    #[test]
+    fn an_inspection_naming_a_finding_fails_whatever_work_it_also_names() {
+        let report = UnitsReport {
+            stale: vec![UnitWork {
+                source: "general/policy/alpha".to_owned(),
+                file: "docs/general/policy/alpha.md".to_owned(),
+                unit: "docs/_compressed/general/policy/alpha.md".to_owned(),
+                source_sha256: "0".repeat(64),
+            }],
+            findings: vec![UnitFinding {
+                path: "docs/_compressed/general/policy/beta.md".to_owned(),
+                kind: UnitFindingKind::ForbiddenDirective {
+                    directive: "@exec: true".to_owned(),
+                },
+            }],
+            ..UnitsReport::default()
+        };
+        assert_eq!(units_exit(report.outcome()), ExitCode::FAILURE);
+        insta::assert_snapshot!(units_lines(&report).join("\n"));
+    }
 }

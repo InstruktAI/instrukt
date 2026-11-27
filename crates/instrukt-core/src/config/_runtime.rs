@@ -93,6 +93,13 @@ impl Runtime {
         env.caller_identity(self.name())
             .map(|caller| caller.session)
     }
+    /// Whether the runtime's adapter archives threads, which thread
+    /// retention needs (`project/instrukt/spec/feature/runner/session-continuity`).
+    pub fn archives_threads(self) -> bool {
+        match self {
+            Self::T3 => true,
+        }
+    }
 }
 
 /// Optional runtime capabilities declared by a workflow, never inferred from prose.
@@ -171,7 +178,11 @@ pub(crate) const ACTIONS: [(&str, &str); 14] = [
     ),
     (
         "inspect_thread",
-        "Inspect an identified thread or own child's state or result.",
+        "Inspect an identified thread or own child's state or result; a scheduled reply check permits inspecting a running child.",
+    ),
+    (
+        "schedule_check",
+        "Set, update or clear this agent's one scheduled reply check through the runtime's scheduler, at the interval the agent supplies.",
     ),
     (
         "look_around",
@@ -180,10 +191,6 @@ pub(crate) const ACTIONS: [(&str, &str); 14] = [
     (
         "steer",
         "Deliver current direction at the target's supported safe input boundary.",
-    ),
-    (
-        "discuss",
-        "Open, take part in and close a runner-owned conversation link between two peer threads.",
     ),
     (
         "start_thread",

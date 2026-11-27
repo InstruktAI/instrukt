@@ -204,14 +204,15 @@ artifact quality policy. Do not add an intent-formation lane to the delivery
 review catalogue; build and commit review validate delivery against already
 approved intent and must not re-litigate it.
 
-`input` is the basis this comparison rests on. Inspect its current version
-and intent-checked stamp. A current check is taken as given, regardless of
-which role performed it; rewriting the plan does not invalidate that check.
-If you are the first recipient other than the current input's author and no
-current check exists, read its originating conversation through
-the configured runtime conversation read instruction before weighing the plan against
-it. Confirm fidelity and record `instrukt todo stamp {slug} --intent-checked`
-against the checked input version and conversation. If expression needs
+`input` is the basis for this comparison. Check whether the current digest has
+an intent-checked stamp that names the human's actual originating conversation
+(`sdlc/policy/todo-creation-discipline`). The current check survives a plan
+rewrite. If you are the first non-author recipient and the input has no valid
+check, read the human's originating conversation through the configured runtime
+instruction, tracing past any relaying or splitting session
+(`general/policy/human-contract`). Confirm fidelity and record
+`instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
+If expression needs
 clarifying, return it to its author for a new input version; reviewer
 separation still applies. A mistaken interpretation returns to the human in the
 responsible session's thread as one intent question. A conversation required
@@ -251,11 +252,17 @@ policy:
 
 ### 5. Grounding
 
-Apply the grounding rule from the preparation artifact quality policy. Verify
+Apply the grounding rule from the preparation artifact quality policy and
+outward solution anchoring (`sdlc/policy/substrate-anchoring`). Verify
 plan tasks against the domain specs loaded in step 1. Plans that reference
 non-existent APIs, wrong schema fields, or incorrect directory structures are
 defective — the builder will discover the error at build time, wasting a
-session.
+session. Where the plan introduces or modifies an external protocol, API
+client, auth/OAuth flow, or retry/backoff mechanism — including on a `change`
+or `bug` plan where `architecture` was skipped — verify the outward assessment
+of established SDKs/libraries and any grounded ADR declining one; hand-rolling
+or wrapping hand-rolled protocol code without that grounding is **Critical**
+(`sdlc/policy/substrate-anchoring`).
 
 Independently re-derive ownership from domain meaning and reason to change.
 Do not accept the plan's chosen module, caller, adapter, runner, scheduler,

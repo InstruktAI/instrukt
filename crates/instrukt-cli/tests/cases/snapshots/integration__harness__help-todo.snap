@@ -11,17 +11,16 @@ Commands:
   list        The project's work: active by default, or iceboxed, removed or delivered
   show        A todo's record, evidence, holds, claim and session bindings
   update      Change a todo's metadata, relationships, hold or claim
-  refresh     Refresh a conflicted todo from GitHub
   freeze      Park a todo in the icebox
   unfreeze    Return a parked todo to active consideration
   remove      Withdraw a todo, retained for recovery
   reactivate  Restore withdrawn work
   deliver     Record the confirmed delivered commit
   attempt     Reserve a native role assignment, or record no-start/failure evidence
-  bind        Bind a reserved assignment to its native shared child
+  bind        Bind a reserved assignment to a native session
   stamp       Record an attributed fact bound to evidence
   artifacts   List, read, write and diff a todo's artifacts
-  work        Pick up an active todo and print its factual ledger
+  work        Record an execution claim and show the todo's ledger
   help        Print this message or the help of the given subcommand(s)
 
 Options:

@@ -1,0 +1,704 @@
+//! Company home adoption (`project/instrukt/spec/domain/repository`,
+//! Company home adoption): `instrukt init --company <key>` gives a company
+//! its home on this computer as the checkout of the company's repository,
+//! creating the repository first when configuration's decision says so
+//! (`project/instrukt/spec/feature/configuration/company-homes`,
+//! Generation).
+//!
+//! Adoptions take turns under one lock. A creation checks its
+//! prerequisites, then records its intent before the root commit is
+//! composed and before anything on GitHub is changed; an adoption that
+//! finds the intent resumes that creation. The root commit is composed in a
+//! staging checkout, and the home's clone is made ready beside it, moved
+//! into place whole and then synced, unless its repository holds no project
+//! layer.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use crate::config::CompanyName;
+use crate::config::{self, Configuration, Env, Generation, GenerationFacts, GenerationRequest};
+use crate::fsx::{LockGuard, atomic_write};
+use crate::git;
+use crate::home::Home;
+use crate::ids::{CommitSha, GitHubLogin, GitHubOrganisation, ProjectSlug};
+use crate::interfaces::{AccountKind, CompanyRepositories, CoreWiring, Creation, GitHubAccounts};
+use crate::publication::{self, RepositoryView};
+
+use super::_error::RepositoryError;
+use super::_hooks::{self, HooksReport};
+
+/// How long an adoption waits for another adoption on this computer, which
+/// holds the lock across a few GitHub calls, a push and a clone.
+const GENERATION_LOCK_TIMEOUT: Duration = Duration::from_secs(600);
+
+/// The default branch of a company's repository.
+const MAIN: &str = "main";
+
+/// What a company's home that is in place but unpublished needs: its
+/// recovery, as adoption's diagnostics state it.
+const NOT_PUBLISHED: &str =
+    "the company's home is in place and not published; `instrukt sync` in it publishes it";
+
+/// What the caller asks of `instrukt init --company`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanyRequest {
+    /// The company's key.
+    pub key: ProjectSlug,
+    /// The name people write the company by; needed only to create.
+    pub name: Option<CompanyName>,
+    /// The company's GitHub administrator; needed only to create.
+    pub admin: Option<GitHubLogin>,
+    /// The caller's declaration of human involvement for a created
+    /// repository's root commit; `None` when it declared nothing.
+    pub human_involved: Option<bool>,
+}
+
+/// What an adoption reaches outside the repository context: work's GitHub
+/// boundary, the caller's environment and the optional-module wiring the
+/// root commit and the sync read.
+pub struct CompanyPorts<'a> {
+    pub accounts: &'a dyn GitHubAccounts,
+    pub repositories: &'a dyn CompanyRepositories,
+    pub env: &'a Env,
+    pub wiring: &'a CoreWiring,
+    pub now: jiff::Timestamp,
+}
+
+/// How the company's repository came to be the home's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompanyOrigin {
+    /// This adoption created it with the skeleton.
+    Created,
+    /// It existed: the company's by contract, nothing on GitHub changed.
+    ByContract,
+}
+
+/// What the home's sync did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CompanySync {
+    Published,
+    Unchanged,
+    /// The sync refused or failed: why. The home stays.
+    NotPublished(String),
+    /// The repository holds no project layer, so the home is no project to
+    /// publish and nothing was synced. The home stays.
+    NoProjectLayer,
+}
+
+/// What `instrukt init --company` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompanyReport {
+    pub origin: CompanyOrigin,
+    pub organisation: GitHubOrganisation,
+    pub repository: ProjectSlug,
+    pub home: PathBuf,
+    /// A creation cut short earlier was completed from its intent.
+    pub resumed: bool,
+    /// The flags given that this adoption did not use.
+    pub unused: Vec<&'static str>,
+    /// Whether the settings document was written; `false` when the
+    /// repository already held one.
+    pub settings_written: bool,
+    pub hooks: HooksReport,
+    pub sync: CompanySync,
+}
+
+/// The creation intent: what a creation under way needs to complete,
+/// recorded once its prerequisites are checked, before the root commit is
+/// composed and before anything on GitHub is changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Intent {
+    organisation: GitHubOrganisation,
+    repository: ProjectSlug,
+    name: CompanyName,
+    admin: GitHubLogin,
+    /// The caller's declaration for the root commit.
+    human_involved: bool,
+}
+
+/// What pushing the root commit found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Pushed {
+    /// The repository took the root commit.
+    Accepted,
+    /// The repository already holds the root commit as its `main`.
+    AlreadyThere,
+    /// The repository holds other history: it is someone's by contract.
+    OtherHistory,
+}
+
+/// What a creation does next, from whether it resumes an intent, what
+/// GitHub answered to creating the repository and, once pushed, what the
+/// push found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Push,
+    /// Set the default branch and make the administrator.
+    Finish,
+    /// Check the repository out by contract, nothing more on GitHub.
+    ByContract,
+}
+
+fn next_step(resuming: bool, created: Creation, pushed: Option<Pushed>) -> Step {
+    match (created, pushed) {
+        // Without an intent, an existing repository is someone's: nothing
+        // is pushed to it.
+        (Creation::AlreadyExists, None) if !resuming => Step::ByContract,
+        // With one, it may be this computer's own earlier creation: the push
+        // decides.
+        (_, None) => Step::Push,
+        (_, Some(Pushed::Accepted | Pushed::AlreadyThere)) => Step::Finish,
+        (_, Some(Pushed::OtherHistory)) => Step::ByContract,
+    }
+}
+
+/// Adopts the home of the company `request.key`.
+pub fn adopt_company(
+    home: &Home,
+    request: &CompanyRequest,
+    ports: &CompanyPorts<'_>,
+) -> Result<CompanyReport, RepositoryError> {
+    let key = &request.key;
+    let generation = home.state_dir().join("company-generation");
+    crate::fsx::create_dir_all(&generation).map_err(|source| RepositoryError::Create {
+        path: generation.clone(),
+        source,
+    })?;
+    let _lock = LockGuard::acquire(
+        &home.state_dir().join("company-generation.lock"),
+        GENERATION_LOCK_TIMEOUT,
+    )?;
+    let home_dir = home.company_dir(key);
+    let home_exists = present(&home_dir)?;
+    config::admit_home(&home_dir, home_exists)?;
+    let staging = generation.join(key.as_str());
+    let intent_path = staging.join("intent.yaml");
+    // Read at entry: the run writes the intent itself.
+    let resuming = present(&intent_path)?;
+    // Configuration names the repository; adoption consumes that name.
+    let named = config::company_repository(key)?;
+    let global = Configuration::load_global(home)?;
+    let host = crate::github::api_host(global.github_api_url()?);
+    let mut unused = Vec::new();
+    let (organisation, repository, intent) = if resuming {
+        let intent = read_intent(&intent_path)?;
+        unused.extend(given_flags(request));
+        (
+            intent.organisation.clone(),
+            intent.repository.clone(),
+            Some(intent),
+        )
+    } else {
+        let facts = AdoptionFacts {
+            accounts: ports.accounts,
+            dir: staging_parent(&staging),
+            host: &host,
+        };
+        let asked = GenerationRequest {
+            repository: &named,
+            home: &home_dir,
+            home_exists,
+            declared_org: global.github_org()?,
+            name: request.name.as_ref(),
+            admin: request.admin.as_ref(),
+        };
+        match config::decide_generation(&asked, &facts)? {
+            Generation::CheckOut {
+                organisation,
+                repository,
+            } => {
+                unused.extend(given_flags(request));
+                (organisation, repository, None)
+            }
+            Generation::Create {
+                organisation,
+                repository,
+                name,
+                admin,
+            } => {
+                ports.repositories.ready(&organisation, ports.now)?;
+                let intent = Intent {
+                    organisation: organisation.clone(),
+                    repository: repository.clone(),
+                    name,
+                    admin,
+                    human_involved: request.human_involved.unwrap_or(false),
+                };
+                write_intent(&intent_path, &intent)?;
+                (organisation, repository, Some(intent))
+            }
+        }
+    };
+    let remote = url(&host, &organisation, &repository);
+    let origin = match &intent {
+        Some(intent) => create(home, key, &staging, &remote, intent, resuming, ports)?,
+        None => CompanyOrigin::ByContract,
+    };
+    let (settings_written, hooks) = check_out(home, key, &staging, &remote, &home_dir)?;
+    let sync = publish_home(home, key, &home_dir, ports.wiring, ports.now)?;
+    tracing::info!(
+        event = "company_home_adopted",
+        company = %key,
+        organisation = %organisation,
+        repository = %repository,
+        created = origin == CompanyOrigin::Created,
+        resumed = resuming,
+    );
+    Ok(CompanyReport {
+        origin,
+        organisation,
+        repository,
+        home: home_dir,
+        resumed: resuming,
+        unused,
+        settings_written,
+        hooks,
+        sync,
+    })
+}
+
+/// Publishes the home at `home_dir`, company `key`'s, by syncing it: what
+/// the sync did, or why it did not publish. The home stays either way.
+fn publish_home(
+    home: &Home,
+    key: &ProjectSlug,
+    home_dir: &Path,
+    wiring: &CoreWiring,
+    now: jiff::Timestamp,
+) -> Result<CompanySync, RepositoryError> {
+    // A repository checked out by contract may hold no project layer: the
+    // home stays, and there is nothing to publish.
+    if !present(&home_dir.join(config::CONFIG_FILE_NAME))? {
+        return Ok(CompanySync::NoProjectLayer);
+    }
+    let synced = publication::sync(&publication::SyncRequest {
+        home,
+        cwd: home_dir,
+        wiring,
+        now,
+    });
+    Ok(match synced {
+        Ok(report) => match report.outcome {
+            publication::SyncOutcome::Published { .. } => CompanySync::Published,
+            publication::SyncOutcome::Unchanged { .. } => CompanySync::Unchanged,
+            publication::SyncOutcome::Refused { refusal, .. } => {
+                tracing::warn!(
+                    event = "company_home_publication_refused",
+                    company = %key,
+                    reason = %refusal,
+                    "{}", NOT_PUBLISHED
+                );
+                CompanySync::NotPublished(refusal.to_string())
+            }
+        },
+        Err(error) => {
+            tracing::warn!(
+                event = "company_home_publication_failed",
+                company = %key,
+                error = %error,
+                "{}", NOT_PUBLISHED
+            );
+            CompanySync::NotPublished(error.to_string())
+        }
+    })
+}
+
+/// The folder git is run from to read a remote before the staging checkout
+/// exists: the folder that holds it.
+fn staging_parent(staging: &Path) -> PathBuf {
+    staging
+        .parent()
+        .map_or_else(|| staging.to_path_buf(), Path::to_path_buf)
+}
+
+/// The facts configuration's generation decision asks adoption for: work's
+/// account lookup, and whether git reaches the company's repository with the
+/// computer's own credentials.
+struct AdoptionFacts<'a> {
+    accounts: &'a dyn GitHubAccounts,
+    /// The folder git is run from to read the remote.
+    dir: PathBuf,
+    host: &'a str,
+}
+
+impl GenerationFacts for AdoptionFacts<'_> {
+    type Error = RepositoryError;
+
+    fn account_kind(&self, login: &str) -> Result<AccountKind, RepositoryError> {
+        Ok(self.accounts.account_kind(login)?)
+    }
+
+    fn reachable(
+        &self,
+        organisation: &GitHubOrganisation,
+        repository: &ProjectSlug,
+    ) -> Result<bool, RepositoryError> {
+        reachable(&self.dir, &url(self.host, organisation, repository))
+    }
+}
+
+/// The flags of `request` an adoption that creates nothing leaves unused.
+fn given_flags(request: &CompanyRequest) -> Vec<&'static str> {
+    [
+        (request.name.is_some(), "--name"),
+        (request.admin.is_some(), "--admin"),
+        (request.human_involved.is_some(), "--human-involved"),
+    ]
+    .into_iter()
+    .filter_map(|(given, flag)| given.then_some(flag))
+    .collect()
+}
+
+/// The company repository's address for git, on the GitHub host the API
+/// address names; git reaches it with the computer's own credentials.
+fn url(host: &str, organisation: &GitHubOrganisation, repository: &ProjectSlug) -> String {
+    format!("https://{host}/{organisation}/{repository}.git")
+}
+
+/// Completes the creation `intent` names: composes the root commit (or
+/// reuses the one staging holds), has GitHub create the repository, pushes
+/// the root commit without force, then sets the default branch and makes
+/// the administrator; or finds the repository someone's by contract and
+/// removes the staging checkout.
+fn create(
+    home: &Home,
+    key: &ProjectSlug,
+    staging: &Path,
+    remote: &str,
+    intent: &Intent,
+    resuming: bool,
+    ports: &CompanyPorts<'_>,
+) -> Result<CompanyOrigin, RepositoryError> {
+    let skeleton = staging.join("skeleton");
+    let root = compose_root(home, key, &skeleton, intent, ports)?;
+    let (org, repo) = (&intent.organisation, &intent.repository);
+    let created = ports.repositories.create(org, repo, ports.now)?;
+    let mut step = next_step(resuming, created, None);
+    if step == Step::Push {
+        step = next_step(
+            resuming,
+            created,
+            Some(push_root(&skeleton, remote, &root)?),
+        );
+    }
+    match step {
+        Step::Finish => {
+            ports
+                .repositories
+                .set_default_branch(org, repo, MAIN, ports.now)?;
+            ports
+                .repositories
+                .grant_admin(org, repo, &intent.admin, ports.now)?;
+            Ok(CompanyOrigin::Created)
+        }
+        Step::ByContract | Step::Push => {
+            remove(staging)?;
+            Ok(CompanyOrigin::ByContract)
+        }
+    }
+}
+
+/// The root commit of the company skeleton in `skeleton`: the one already
+/// there, or one composed from the skeleton configuration and publication
+/// supply and committed attributed.
+fn compose_root(
+    home: &Home,
+    key: &ProjectSlug,
+    skeleton: &Path,
+    intent: &Intent,
+    ports: &CompanyPorts<'_>,
+) -> Result<CommitSha, RepositoryError> {
+    if let Some(head) = head(skeleton)? {
+        return Ok(head);
+    }
+    remove(skeleton)?;
+    crate::fsx::create_dir_all(skeleton).map_err(|source| RepositoryError::Create {
+        path: skeleton.to_path_buf(),
+        source,
+    })?;
+    git::run(skeleton, ["init", "--quiet", "--initial-branch", MAIN])?;
+    config::write_skeleton(skeleton, key, &intent.name)?;
+    publication::refresh_editor_schemas(home.root(), skeleton)?;
+    // The skeleton's knowledge index selects nothing yet.
+    atomic_write(
+        &skeleton.join("docs/index.yaml"),
+        b"expanded: []\nlisted: []\n",
+    )?;
+    let rendering = publication::render_repository(RepositoryView::WorkingTree(skeleton))?;
+    if !rendering.findings.is_empty() {
+        return Err(RepositoryError::Skeleton {
+            findings: rendering
+                .findings
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        });
+    }
+    publication::write_rendering(skeleton, &rendering)?;
+    let plugin = publication::plan_plugin(skeleton)?;
+    if !plugin.findings.is_empty() {
+        return Err(RepositoryError::Skeleton {
+            findings: plugin
+                .findings
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        });
+    }
+    publication::write_plugin(skeleton, &plugin)?;
+    let sha = super::_commit::root_commit(
+        home,
+        skeleton,
+        ports.env,
+        ports.wiring,
+        "feat: start the company's repository\n\nThe company skeleton every company receives: the project layer, the ignore\nfile, the knowledge index, the AGENTS.md rendered from it, and the\ncompany's skill with the catalog that lists it.",
+        intent.human_involved,
+    )?;
+    Ok(sha)
+}
+
+/// Pushes `root` as `main` of `remote` without force, and what the remote
+/// then holds decides: the root commit, or other history.
+fn push_root(skeleton: &Path, remote: &str, root: &CommitSha) -> Result<Pushed, RepositoryError> {
+    let judged = |main: Option<CommitSha>| match main {
+        Some(main) if &main == root => Some(Pushed::AlreadyThere),
+        Some(_) => Some(Pushed::OtherHistory),
+        None => None,
+    };
+    if let Some(found) = judged(remote_main(skeleton, remote)?) {
+        return Ok(found);
+    }
+    match git::run_remote(
+        skeleton,
+        ["push", "--quiet", remote, "main:refs/heads/main"],
+    ) {
+        Ok(_) => Ok(Pushed::Accepted),
+        // A push another writer raced: what the remote holds now decides.
+        Err(error) => judged(remote_main(skeleton, remote)?).ok_or(error.into()),
+    }
+}
+
+/// The commit `main` of `remote` names; `None` when it has no `main`.
+fn remote_main(dir: &Path, remote: &str) -> Result<Option<CommitSha>, RepositoryError> {
+    let listing = git::run_remote(dir, ["ls-remote", remote, "refs/heads/main"])?;
+    Ok(listing
+        .split_whitespace()
+        .next()
+        .map(CommitSha::parse)
+        .transpose()?)
+}
+
+/// Whether git reaches `remote` with the computer's own credentials.
+fn reachable(dir: &Path, remote: &str) -> Result<bool, RepositoryError> {
+    let output = git::run_output_remote(dir, ["ls-remote", "--exit-code", remote, "HEAD"])?;
+    // `--exit-code` answers 2 for a repository holding no matching ref: an
+    // empty repository is reached.
+    Ok(matches!(output.status.code(), Some(0 | 2)))
+}
+
+/// Clones `remote` into the staging checkout (completing a clone already
+/// there), gives it its settings document and hook sections, moves it into
+/// place as `home_dir` and removes the staging checkout.
+fn check_out(
+    home: &Home,
+    key: &ProjectSlug,
+    staging: &Path,
+    remote: &str,
+    home_dir: &Path,
+) -> Result<(bool, HooksReport), RepositoryError> {
+    let clone = staging.join("home");
+    if head(&clone)?.is_none() {
+        remove(&clone)?;
+        crate::fsx::create_dir_all(staging).map_err(|source| RepositoryError::Create {
+            path: staging.to_path_buf(),
+            source,
+        })?;
+        git::run_remote(staging, ["clone", "--quiet", remote, "home"])?;
+    }
+    let settings_written = config::write_company_settings(&clone, key)?;
+    let mut hooks = _hooks::install_at(home, &clone)?;
+    if let Some(companies) = home_dir.parent() {
+        crate::fsx::create_dir_all(companies).map_err(|source| RepositoryError::Create {
+            path: companies.to_path_buf(),
+            source,
+        })?;
+    }
+    crate::fsx::rename(&clone, home_dir).map_err(|source| RepositoryError::Create {
+        path: home_dir.to_path_buf(),
+        source,
+    })?;
+    remove(staging)?;
+    // The sections were installed before the move: they are reported where
+    // they now stand.
+    let moved = |path: &Path| match path.strip_prefix(&clone) {
+        Ok(rest) => home_dir.join(rest),
+        Err(_) => path.to_path_buf(),
+    };
+    hooks.dir.path = moved(&hooks.dir.path);
+    for hook in &mut hooks.hooks {
+        hook.file = moved(&hook.file);
+    }
+    Ok((settings_written, hooks))
+}
+
+/// The commit `HEAD` names in the repository at `dir`; `None` when `dir`
+/// holds no repository with a commit.
+fn head(dir: &Path) -> Result<Option<CommitSha>, RepositoryError> {
+    if !present(&dir.join(".git"))? {
+        return Ok(None);
+    }
+    let output = git::run_output(dir, ["rev-parse", "--verify", "--quiet", "HEAD"])?;
+    Ok(output
+        .status
+        .success()
+        .then(|| CommitSha::parse(String::from_utf8_lossy(&output.stdout).trim()))
+        .transpose()?)
+}
+
+fn present(path: &Path) -> Result<bool, RepositoryError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(source) => Err(RepositoryError::Read {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn remove(dir: &Path) -> Result<(), RepositoryError> {
+    match crate::fsx::remove_dir_all(dir) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(RepositoryError::Create {
+            path: dir.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+fn read_intent(path: &Path) -> Result<Intent, RepositoryError> {
+    let text = std::fs::read_to_string(path).map_err(|source| RepositoryError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_yaml_ng::from_str(&text).map_err(|error| RepositoryError::CompanyIntent {
+        path: path.to_path_buf(),
+        reason: error.to_string(),
+    })
+}
+
+/// Writes `intent` at `path` whole and atomically.
+fn write_intent(path: &Path, intent: &Intent) -> Result<(), RepositoryError> {
+    let text =
+        serde_yaml_ng::to_string(intent).map_err(|error| RepositoryError::CompanyIntent {
+            path: path.to_path_buf(),
+            reason: error.to_string(),
+        })?;
+    atomic_write(path, text.as_bytes())?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CompanyName, CompanySync, CoreWiring, Creation, GitHubLogin, GitHubOrganisation, Home,
+        Intent, ProjectSlug, Pushed, RepositoryError, Step, next_step, publish_home, read_intent,
+        write_intent,
+    };
+
+    #[test]
+    fn a_home_whose_repository_holds_no_project_layer_is_not_synced() {
+        let root = tempfile::tempdir().unwrap();
+        let home = Home::at_user_home(root.path().to_path_buf()).for_writing();
+        let key = ProjectSlug::parse("globex").unwrap();
+        // A repository made before generation: a README and nothing else.
+        let home_dir = home.company_dir(&key);
+        std::fs::create_dir_all(&home_dir).unwrap();
+        std::fs::write(home_dir.join("README.md"), "# Globex\n").unwrap();
+        assert!(matches!(
+            publish_home(
+                &home,
+                &key,
+                &home_dir,
+                &CoreWiring::default(),
+                jiff::Timestamp::UNIX_EPOCH
+            ),
+            Ok(CompanySync::NoProjectLayer)
+        ));
+    }
+
+    #[test]
+    fn a_fresh_creation_that_finds_the_repository_takes_it_by_contract_and_pushes_nothing() {
+        assert_eq!(
+            next_step(false, Creation::AlreadyExists, None),
+            Step::ByContract
+        );
+    }
+
+    #[test]
+    fn a_fresh_creation_pushes_to_the_repository_it_created() {
+        assert_eq!(next_step(false, Creation::Created, None), Step::Push);
+    }
+
+    #[test]
+    fn a_resumed_creation_that_finds_the_repository_still_pushes() {
+        assert_eq!(next_step(true, Creation::AlreadyExists, None), Step::Push);
+    }
+
+    #[test]
+    fn a_resumed_creation_whose_root_commit_is_already_there_finishes() {
+        assert_eq!(
+            next_step(true, Creation::AlreadyExists, Some(Pushed::AlreadyThere)),
+            Step::Finish
+        );
+    }
+
+    #[test]
+    fn a_resumed_creation_meeting_other_history_takes_it_by_contract() {
+        assert_eq!(
+            next_step(true, Creation::AlreadyExists, Some(Pushed::OtherHistory)),
+            Step::ByContract
+        );
+    }
+
+    #[test]
+    fn a_push_the_repository_takes_finishes_a_fresh_creation() {
+        assert_eq!(
+            next_step(false, Creation::Created, Some(Pushed::Accepted)),
+            Step::Finish
+        );
+    }
+
+    #[test]
+    fn an_intent_is_read_back_as_it_was_written() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("intent.yaml");
+        let intent = Intent {
+            organisation: GitHubOrganisation::parse("homes").unwrap(),
+            repository: ProjectSlug::parse("company-acme").unwrap(),
+            name: CompanyName::parse("Acme").unwrap(),
+            admin: GitHubLogin::parse("acme-admin").unwrap(),
+            human_involved: true,
+        };
+        write_intent(&path, &intent).unwrap();
+        assert_eq!(read_intent(&path).unwrap(), intent);
+    }
+
+    #[test]
+    fn a_record_missing_what_an_intent_holds_is_no_intent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("intent.yaml");
+        std::fs::write(&path, "organisation: homes\n").unwrap();
+        assert!(matches!(
+            read_intent(&path),
+            Err(RepositoryError::CompanyIntent { .. })
+        ));
+    }
+}

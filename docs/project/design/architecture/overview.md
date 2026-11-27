@@ -50,14 +50,17 @@ One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 shared by `todos`, `events` and `history`), `instrukt-todos`,
 `instrukt-company` (the company context's conversation core and connector
 host), `instrukt-connector` (the connector interface and each kind's
-declaration data) and one crate per connector, `instrukt-connector-slack`
-first. Dependencies point one way:
-`instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
+declaration data), one crate per connector, `instrukt-connector-slack`
+first, and `instrukt-outside`, the outside gate
+(`project/instrukt/design/architecture/outside-gate`). Dependencies point one
+way: `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
 `instrukt-core` and `instrukt-blueprint`; `instrukt-company` →
-`instrukt-runner`, `instrukt-core` and `instrukt-connector`; a connector crate →
-`instrukt-connector` only; `instrukt-blueprint` → `instrukt-core`;
+`instrukt-runner`, `instrukt-core`, `instrukt-connector` and
+`instrukt-outside`; a connector crate → `instrukt-connector` and
+`instrukt-outside` only; `instrukt-blueprint` → `instrukt-core`;
 `instrukt-core` → `instrukt-connector`, for the declarations configuration
-validates against; `instrukt-connector` → nothing of instrukt. Only
+validates against; `instrukt-connector` → `instrukt-outside` only;
+`instrukt-outside` → nothing of instrukt. Only
 `instrukt-cli` depends on `instrukt-company` or a connector crate. Where core needs an answer only an optional module has
 (whether a todo slug named by a pending doc exists), core declares the
 interface and the CLI wires the module's implementation in only when that
@@ -67,9 +70,10 @@ record, together with the flavor's activatable report procedure that tells an
 agent when and how to run it and what to say about it.
 
 The runner declares interfaces for reading and mutating work items through
-work’s command contract: recording and reflecting claims, flushing pending
-reflection, recording last-fired stamps, setting automatic holds, purging expired
-retained records, and reading and writing per-role session bindings. It also
+work’s command contract: recording claims, flushing pending reflection and
+reading people's controls on ticks, recording last-fired stamps, setting
+automatic holds, purging expired retained records, and reading and writing
+per-role session bindings. It also
 declares an interface for reading workflow state. The todos crate implements
 these contracts; the CLI wires them into the runner. Todo dispatch is realized
 in the runner against those interfaces, preserving todos → runner → core.
@@ -106,9 +110,8 @@ The shared GitHub boundary uses configured project/author/reviewer Apps and
 issues installation credentials from protected key references under
 `project/instrukt/spec/feature/work/github-apps`. CLI wiring supplies its
 credential and verified-actor interfaces to consumers without reversing crate
-dependencies. Work checks record schema versions before dependent mutation and
-converts supported older envelopes; repository composes the selected bot's
-noreply author. Neither introduces person/company identity bands.
+dependencies. Repository composes the selected bot's noreply author. Neither
+introduces person/company identity bands.
 
 ### The home
 
@@ -117,28 +120,35 @@ development wrapper for instrukt itself uses an isolated home per development
 worktree; installed instrukt keeps shared machine state in ordinary project
 worktrees under `project/instrukt/spec/feature/configuration/owned-files`.
 Committed sources recreate publication. User-owned configuration and secrets, local
-history and work-record writes not yet reflected to GitHub need preservation;
-deleting the home is not a lossless reset.
+history and the work record need preservation: the state database holds the
+work record's only copy, and GitHub shows it to people without holding it.
+Deleting the home is not a lossless reset.
+
 
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
 | `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
 | `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
-| `companies/<name>/instrukt.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets (`project/instrukt/spec/feature/configuration/company-homes`) | the user |
-| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, and a domain's `workflow/` flavor files | the owning project's committed main, by `sync` |
-| `state/index.yaml` | the global index, every entry carrying its owning project, published-file location and source checkout provenance; project entries resolve to the committed project store | each project's `sync` |
+| `companies/<name>/company.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets, beside the checkout of the company's repository whose committed `instrukt.yaml` is that repository's project layer (`project/instrukt/spec/feature/configuration/company-homes`) | the user; the checkout from the company's repository |
+| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, a domain's `workflow/` flavor files, and under `_compressed/` the compressed units the position's sources have, at each source's path relative to the position | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index at schema version 3, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts (`project/instrukt/spec/domain/publication`); project entries resolve to the committed project store; every loader brings a version 2 index forward without dropping an entry, each delivered entry's source digest computed from its published file, an entry whose file cannot be read kept without one and named; the next sync persists version 3 | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
 | `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | nothing for the work record (no other copy exists; must be preserved); operational runner state, authoritative object bindings and generation history must be preserved |
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
-| `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
-| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
+| `state/reflection.lock` | the per-computer lock serializing the runner's GitHub reflection passes; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; todo commands and current-schema local readers never acquire it; older-state readers first take the locked migration path | taken again by the next reflection |
+| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released when the withdrawal finishes | taken again by the next withdrawal |
+| `state/delivered-release.lock` | the per-computer lock work holds while it releases a delivered todo's worktree and work branch; taken without waiting and by no command (`project/instrukt/spec/feature/work/todos`) | taken again by the next release |
+| `state/company-generation/<key>/` | a company home adoption under way: the creation intent naming the owning organisation, the repository, the company's name and its GitHub administrator, written once its prerequisites are checked and before anything on GitHub is changed; the staging checkouts holding the new repository's root commit and the home's clone before it moves into place (`project/instrukt/spec/domain/repository`) | must be preserved while it exists: the next `instrukt init --company <key>` resumes it, and removes it once the home is in place |
+| `state/company-generation.lock` | the lock under which company home adoptions take turns, held for one run of `instrukt init --company` across its GitHub calls and git transfers | taken again by the next adoption |
 | `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
 | `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
-| `state/eval-fingerprint/` | per published commit, the digest of all published `eval: true` snippets | `sync` |
+| `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
+| `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
+| `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
 | `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
@@ -150,7 +160,6 @@ write-isolation unit, taken only by that command
 (`project/instrukt/spec/feature/runner/requested-review`, Requested review
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
-
 
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
@@ -169,6 +178,7 @@ three positions:
 docs/general/       always on: rendered into every agent CLI's user-scope instruction file   ids general/<type>/…
 docs/domain/<x>/    on demand: one line in the global file; rendered by `instrukt docs get --domain <x>`   ids <x>/<type>/…
 docs/project/       the project: rendered into its root AGENTS.md   ids project/<slug>/<type>/…
+docs/_compressed/   no position: one compressed unit per source an entrypoint holds in full, at the source's path relative to docs/
 ```
 
 Holding `docs/general/` or a `docs/domain/<x>/` is what makes a project
@@ -204,8 +214,10 @@ in the mode it was asked for, text or JSON.
 A command whose job is to report findings keeps its report as its output
 and adds no line: its exit status says there are findings. `config
 validate`, `docs validate`, `docs render --check`, `docs plugin --check`,
-`docs plugin --validate`, `install --check` and `specs coverage --check`
-exit 1 with findings; `status` exits 0 whatever its
+`docs plugin --validate`, `docs units`, `install --check` and `specs
+coverage --check` exit 1 with findings; `docs units` exits 3 when it names
+only stale, missing or orphaned compressed units, and 0 when there is
+nothing to compress; `status` exits 0 whatever its
 report says once every part was read, and 1 when a part could not be read
 (`project/instrukt/spec/feature/publication/instrukt-status`); `specs reserve`
 exits 3, 4 or 5 for a reserved, unknown or ambiguous use case; `todo work`
@@ -219,8 +231,8 @@ the command-line parser's own text and exit status 2.
 
 | Surface | Used by | How |
 | --- | --- | --- |
-| git | publication, repository, blueprint, workflow, runner | the `git` CLI; hooks |
-| GitHub | work, workflow, runner | its API (address configurable, `github.api_url`) through one writer per computer |
+| git | publication, repository, blueprint, work, workflow, runner, company | the `git` CLI; hooks; work publishes a todo's work branch to the remote the default branch tracks |
+| GitHub | work, workflow, runner; configuration and repository through work's GitHub boundary | its API (address configurable, `github.api_url`) through one writer per computer; for adding a company, whether a login names an organisation, and the company repository's creation, administrator and default branch under the project identity; for a company's knowledge proposals, the readiness of the proposal pull-request credential, whether any pull request has a commit as its head and opening the proposal's pull request as the identity the `company-agent` role selects (`project/instrukt/spec/feature/work/github-apps`) |
 | Configured agent runtimes | publication | rendered global files in each configured runtime's home, written whole on every sync and never removed, and the entrypoint-loading settings each requires; the configured runtimes are read through the selected runtime's adapter |
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
@@ -230,7 +242,8 @@ the command-line parser's own text and exit status 2.
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
 | Agent Skills and the `skills` command (`skills.sh`) | distribution | the cockpit skill `skills/instrukt/SKILL.md`, installed into every agent CLI on the computer |
-| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository on request: the company plugin under `plugins/<key>/` and its one entry in `.claude-plugin/marketplace.json` (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
+| Claude's plugin, skill and plugin catalog formats | publication | files written in those formats into a company's repository: the company's skill under `skills/<key>/` and its plugin's entry, which is the plugin's manifest, in `.claude-plugin/marketplace.json`, created where the repository holds none (`project/instrukt/spec/feature/publication/company-plugin`); no Claude program is run |
+
 
 ## Invariants
 
@@ -292,17 +305,45 @@ configuration layers, never into the skill
 flowchart LR
   A[commit / merge / rebase on main] --> B[hook section]
   B --> C[instrukt sync, detached, under lock]
-  R[commit] --> S[pre-commit section: render AGENTS.md from the commit's content, stage]
+  R[commit] --> S[pre-commit section: render AGENTS.md from the commit's content and units, stage]
   K[checkout] --> Q{primary checkout?}
   Q -- yes --> C
   Q -- no --> P[return to git]
   C --> M[configuration migration before any refusal]
-  M --> F[validate and render main; claim and compare general, domain and project positions]
-  F --> G[patch global index by owner]
-  G --> H[global agent files for configured runtimes if owner of general]
+  M --> F[validate and render main, units checked; claim and compare general, domain and project positions with their units]
+  F --> G[patch global index by owner, with lineage facts]
+  G --> H[global agent files, each source as its current unit or its prose, and their uncompressed copies, if owner of general]
   H --> J[refresh editor schemas and modelines]
-  J --> I[write only what is missing or different; record published commit]
+  J --> I[fingerprint: prose and units digests; write only what is missing or different; record published commit]
 ```
+
+### Compress
+
+```mermaid
+flowchart LR
+  A[prose change merged to main] --> B[renderings hold that source in prose]
+  A --> C[post-merge automation of the repository]
+  C --> D[instrukt docs units --json in a fresh clone]
+  D -- exit 0 --> Z[nothing to compress]
+  D -- exit 3 or 1 --> E[agent writes or renews each named unit, removes orphans]
+  E --> F[instrukt docs units, then instrukt docs render]
+  F --> G[commit units and AGENTS.md to main]
+  G --> H[sync publishes the units; renderings hold the source compressed again]
+```
+
+instrukt is the mechanical half of this loop and the repository's automation
+the intelligent half. instrukt decides each unit's state and structural
+admissibility from the checkout alone, renders with current units and falls
+back to prose per source, and tells the automation, with a distinct no-op
+outcome, exactly which units to write. It never starts the automation, calls
+a model or holds a model credential; the automation is composed from the
+repository's shared workflows (`project/instrukt/policy/shared-workflows`),
+and an authoring agent may renew a unit in its own change the same way
+(`project/instrukt/spec/feature/publication/compressed-units`). Units live
+with their sources in each repository, so every view a rendering reads — the
+commit sync publishes, the staged index of the `pre-commit` section, the
+working tree of `instrukt docs render` — decides currency from the same
+committed bytes on every computer.
 
 ### Read
 
@@ -389,6 +430,12 @@ record carries its artifact and stamp, never when a session's reply says so.
 Whatever needs the human is a session asking in its thread; only anomalies are
 sent through `runner.notify`.
 
+While the computer's retention window is set, each runner invocation also has
+the runtime archive the finished threads of its registered projects that have
+been quiet past it, after dispatch and event work. No pickup, event reaction or
+other command waits on it; the `instrukt tick` that runs it returns once it is
+done (`project/instrukt/spec/feature/runner/thread-retention`).
+
 Procedure activation is durably accepted before runtime execution. The adapter
 supplies procedure-first assignment and untrusted event data through bounded
 logs with one session-wide waiting slot. T3 realizes ASAP through queued input;
@@ -407,29 +454,6 @@ conditions it observes in executions and an agent's raise through
 `instrukt events raise`. The project's subscribed coordinator answers them, and
 the end of an attention episode wakes it once so it can rest
 (`project/instrukt/spec/feature/runner/fleet-attention`).
-
-### Conversation links
-
-The runner's conversation aggregate and identity-envelope vocabulary live in
-`project/instrukt/spec/feature/runner/conversation-links`, indexed by its domain
-spec. General reading discipline is `general/policy/message-identity-headers`.
-The runtime adapter supplies read-only native conversation changes and target input; work owns
-only the existing state database's file, migrations and writer boundary. No
-additional bounded context or process is introduced.
-
-An independent reader in long-lived `instrukt run` follows each linked T3
-thread through the adapter's read-only conversation source, with per-conversation
-fingerprints and native database change notifications. The reader uses no T3
-session token and owns per-link positions independently of history. Runner
-admission and delivery use
-recorded assignments and native identities. Native turn completion releases
-recorded conversational content to the peer in identity envelopes. Link and
-per-direction progress commit in the existing database, outside native network
-waits; ordinary startup resumes retained positions. Relay failure is visible in
-`instrukt events status` and logs. This reader has no scheduled tick path. Besides
-native notifications it reads again when the source asks its readers to
-(`project/instrukt/spec/feature/runner/history`).
-Redis remains transport only.
 
 ### Event platform
 
@@ -642,22 +666,33 @@ the gate adds no webhook, queue or process.
   while keeping slug-form, pending-marker, workflow-role and all other
   structural checks (`project/instrukt/spec/feature/docs/snippet-validation`).
 - **Concurrent reflection is slow or busy:** `state/reflection.lock` serializes
-  GitHub reflection across commands and ticks without holding `state/writer.lock`;
-  local state-database reads and writes proceed immediately, and a command whose
-  reflection wait times out keeps its committed local write as pending reflection
-  for the next flush.
-- **A reflection is interrupted after GitHub accepted its revision:** this
-  computer recognises the landed revision afterwards only while its local
-  record still equals it. Otherwise the todo is marked conflicted, and
-  `instrukt todo refresh <slug>` is its door
+  the runner's GitHub reflection without holding `state/writer.lock`; todo
+  commands never touch GitHub or acquire that lock, so local state-database
+  reads and writes proceed immediately and return with reflection pending for
+  the next runner tick. The runner tick's reflection pass waits for the lock
+  for a bounded time and reflects what is pending, and a tick whose wait runs
+  out leaves it to the next tick
   (`project/instrukt/spec/feature/work/github-record`).
+- **A reflection is interrupted after GitHub accepted a write:** the retry
+  reconciles against what GitHub shows — the issue, an artifact version, the
+  pull request, a review — before writing again, and nothing GitHub shows
+  changes the record (`project/instrukt/spec/feature/work/github-record`).
+- **GitHub refuses reflected content as invalid:** the refusal is kept with
+  GitHub's validation detail and reported with the todo; the same content is
+  not sent again, and the todo's other reflection and every other todo
+  continue.
+- **The work branch cannot be published:** an unreachable remote leaves the
+  publication pending for the next flush; a remote branch that moved where
+  the local one cannot fast-forward it is reported with the todo and never
+  forced. The work continues either way.
+- **The state database is lost:** the work record is lost with it. GitHub
+  still shows the todos' issues, artifacts and pull requests to people, but
+  no command rebuilds the record from them
+  (`project/instrukt/spec/feature/work/state-database`).
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
 - **A turn's commit becomes readable after the read its notification triggered:**
-  that read finds nothing new and ends successfully, no native notification
-  follows, and the link shows neither a failure nor a pending handover for the
-  turn. Each reader then reaches the turn on its own trigger. Link relay reads
-  again when the source asks its readers to
-  (`project/instrukt/spec/feature/runner/conversation-links`). History
+  that read finds nothing new and ends successfully, and no native notification
+  follows. Each reader then reaches the turn on its own trigger. History
   extraction reads again on the requests it follows
   (`project/instrukt/spec/feature/runner/history`). A company conversation
   with outstanding work reads again on the company relay's own retry

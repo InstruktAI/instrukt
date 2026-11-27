@@ -17,7 +17,7 @@ use crate::wiring::{work_evidence, work_ports};
 
 #[derive(Debug, clap::Args)]
 pub struct FlowArgs {
-    /// The todo to pick up and inspect current facts for.
+    /// The todo's slug.
     slug: TodoSlug,
     /// Native recorded-workspace evidence as JSON, from a file or - for stdin.
     #[arg(long)]
@@ -29,7 +29,7 @@ pub struct FlowArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum FlowCommand {
-    /// Pick up an active todo and print its factual ledger.
+    /// Record an execution claim and show the todo's ledger.
     Work(FlowArgs),
 }
 
@@ -98,9 +98,6 @@ fn pickup(pickup: &Pickup) -> String {
     match pickup {
         Pickup::Claimed => "claimed by this session".to_owned(),
         Pickup::AlreadyHeld => "held by this session".to_owned(),
-        Pickup::NotReflected => {
-            "claimed by this session; reflection to GitHub is pending".to_owned()
-        }
         Pickup::ReadOnly(status) => {
             format!("none; the todo is {} (read-only)", status_name(*status))
         }

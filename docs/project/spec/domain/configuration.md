@@ -33,6 +33,21 @@ company's repository, which holds the company's knowledge; its settings
 document, secrets file and local state are kept out of that repository. Its document is read on its
 own and is no layer.
 
+**Company repository**
+: A repository whose project layer declares `company_repository`: the
+company's repository, `company-<name>` in the owning organisation, whose
+documentation is the company's knowledge. It is a project like any other in
+every other respect.
+
+**Company identity**
+: The company a company repository belongs to, declared in its committed
+project layer: the key its `project` carries after `company-`, and the name
+people write the company by, `company_name`.
+
+**Owning organisation**
+: The GitHub organisation the global key `github.org` names, which owns every
+company repository the computer adds.
+
 **Member**
 : A person's entry in a company home: a key, a display name, their email
 address and references to their own stored tool logins. An entry gives a
@@ -122,6 +137,41 @@ be absent outside that runtime and does not change runtime selection.
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
 
+Adding a company extends this boundary
+(`project/instrukt/spec/feature/configuration/company-homes`, Generation):
+
+- **Owns** — the generation decision for a company's key: the owning
+  organisation `github.org` and its rule that it names a GitHub organisation,
+  checked where it is written and again where a company is added; the
+  repository name `company-<name>`; whether the home is created with its
+  repository, checked out by contract or refused; the identity generation
+  takes; the content of the skeleton's project layer and ignore lines; the
+  project layer's `company_repository` declaration; and the conversion of a
+  home's settings document to `company.yaml`.
+- **Owns** (company identity) — the company identity a company repository's
+  project layer declares, its keys' grammar, its finding against the events
+  module, and the operation that reads it from a project-layer document,
+  which publication takes.
+- **Does not own** — creating the repository, composing its first commit,
+  checking it out and installing its hook sections (repository,
+  `project/instrukt/spec/domain/repository`); the rendered `AGENTS.md`, the
+  company's skill and catalog and the sync of the home (publication,
+  `project/instrukt/spec/domain/publication`); every call to GitHub (work's
+  GitHub boundary, `project/instrukt/spec/domain/work`).
+- **Published contracts** — the generation decision, a function of the
+  company's key, whether its home folder exists, the owning organisation,
+  whether the company's repository is reachable and, for a creation, the
+  name and GitHub administrator given and whether that administrator is a
+  person's own account, which repository's company home adoption gathers and
+  carries out; `instrukt config
+  get|patch|validate|schema --company <name>` addressing the home's
+  `company.yaml`.
+- **Allowed dependencies** — the GitHub account lookup: whether a login
+  names an organisation, a personal account or nothing. Configuration
+  declares the interface and the CLI wires work's GitHub boundary into it, as
+  it wires the caller-identity lookup; configuration still depends on no
+  other context's behavior.
+
 ## Canonical fields
 
 Role-keyed model selection lives in `~/.instrukt/agents.yaml`, with `default`,
@@ -136,19 +186,40 @@ JSON.
 #### Company home (aggregate)
 
 - **Root:** The company home folder.
-- **Contains:** Its settings document (`schema_version`, `company`, the keys
-  permitted in a company home, its members among them) and its secrets file.
+- **Contains:** Its settings document `company.yaml` (`schema_version`,
+  `company`, the keys permitted in a company home, its members among them)
+  and its secrets file. The committed project layer at the root of the
+  home's repository is that repository's layer document, not part of this
+  aggregate.
 - **Invariants:**
   - `company` equals the folder's name.
   - References in its settings resolve only from its own secrets file.
   - An email address is listed by at most one of its members.
   - It combines with no layer and names no project.
+  - It holds one settings document. A root `instrukt.yaml` that declares
+    `company` is that document under its earlier name and is converted to
+    `company.yaml` with every setting it holds; a home holding both is a
+    finding naming both, and neither is changed.
+  - The conversion first makes sure the home's ignore file ignores
+    `company.yaml`, then moves the document in one atomic step under its
+    write lock, so an interrupted conversion leaves the earlier document or
+    the converted one, never both.
+  - Each document has its own write lock: the settings document and the
+    project layer beside it in the same folder never wait on each other.
   - Its settings document, secrets file, `projects/` and local state are
-    ignored by the home's repository; validation reports one that is tracked or not ignored.
+    ignored by the home's repository; validation reports one that is tracked
+    or not ignored.
 - **Identifier:** the company name, unique among the machine's company homes.
-- **Lifecycle:** created by `instrukt config init --company <name>`; changed by
-  `patch` and the secrets commands; migrated like a layer document; never
-  deleted by instrukt.
+- **Lifecycle:** generated when the company is added: configuration decides,
+  from the company's key, the computer's `github.org` and whether the
+  company's repository exists, whether the home is created with its
+  repository, checked out by contract or refused
+  (`project/instrukt/spec/feature/configuration/company-homes`, Generation),
+  and repository's company home adoption carries that decision out
+  (`project/instrukt/spec/domain/repository`). `instrukt config init
+  --company <name>` writes the settings document alone. Changed by `patch` and
+  the secrets commands; converted and migrated like a layer document on every
+  writing path; never deleted by instrukt.
 
 #### Layer document (aggregate)
 
@@ -164,9 +235,33 @@ JSON.
 - **Identifier:** its layer — the machine for the global layer, the
   repository root for a project layer.
 - **Lifecycle:** created by `instrukt config init` (or `instrukt init`, which
-  writes the project layer with the same defaults); changed by `patch`;
-  migrated before refusal or skip on every entry path when an older schema is found; never
-  deleted by instrukt.
+  writes the project layer with the same defaults); a company repository's
+  project layer is created with the company skeleton, holding `project:
+  company-<name>`, `company_repository: true`, `company_name` with the name
+  generation was given, `modules.todos: false` and `review.automatic: true`;
+  changed by `patch`; migrated before refusal or skip on every entry path when
+  an older schema is found; never deleted by instrukt.
+- **The `company_repository` declaration:** `true` makes the repository a
+  company's; `false`, `null` or no key leaves it an ordinary project; any other
+  value is a finding naming the key.
+- **The company identity:** a company repository's project layer declares
+  which company it is. The key is its `project` without the `company-`
+  prefix, the inverse of the repository name generation gives
+  (`company-<name>`); the name people write the company by is `company_name`,
+  one line of text that is not blank. `company_name` is project-only and valid
+  only beside `company_repository: true`. A company repository whose
+  `project` does not have the form `company-<key>` with a key of a company
+  key's grammar, or whose layer holds no valid `company_name`, has no company
+  identity. That is a finding naming the key and its repair, an `instrukt
+  config patch` of the project layer. It is a finding against the project's
+  `modules.events`: `instrukt config validate` reports it, a patch that would
+  leave it is refused, and a layer that arrives with it withholds the home's
+  event responses, as a project layer's finding against a module withholds
+  that module's work (`project/instrukt/spec/feature/runner/work-dispatch`,
+  Admitted configuration). The identity is read from the committed document,
+  so a clone and a candidate read what the home reads, and it is the only
+  source of the key and the name a company plugin rendering takes
+  (`project/instrukt/spec/domain/publication`).
 
 ### Domain events emitted
 
@@ -223,6 +318,11 @@ This context emits no events.
 - **Runner (worktree reclamation)** — customer / supplier: configuration
   supplies a project's admitted declaration of regenerable output and decides
   that it stays inside the project's checkout
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
+- **Runner (thread retention)** — customer / supplier: configuration supplies
+  the computer's admitted retention window and refuses, where configuration
+  enters, a window the selected runtime cannot carry
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
 
 These are context relationships; module switches determine enablement, not

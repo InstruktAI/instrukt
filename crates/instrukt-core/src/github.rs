@@ -91,7 +91,7 @@ pub fn resolve_code_host(
     }
     let host = api_host(api_url);
     let branch = default_branch(root)?;
-    let Some(remote) = git_value(root, &["config", &format!("branch.{branch}.remote")])? else {
+    let Some(remote) = tracked_remote(root, &branch)? else {
         return elsewhere(format!(
             "the default branch `{branch}` tracks no remote and `github.repository` is not set"
         ));
@@ -115,6 +115,12 @@ pub fn todos_need_github(reason: &str) -> String {
     format!(
         "todos need the project's code on GitHub: {reason}; when the remote reaches a GitHub repository through an address that does not read as one, name it with `github.repository: <owner>/<repo>` in the project's instrukt.yaml"
     )
+}
+
+/// The name of the remote `branch` tracks in the repository at `root`
+/// (`branch.<branch>.remote`); none when it tracks none.
+pub fn tracked_remote(root: &Path, branch: &str) -> Result<Option<String>, GitError> {
+    git_value(root, &["config", &format!("branch.{branch}.remote")])
 }
 
 /// The project's default branch: the remote's `HEAD`, then

@@ -23,6 +23,7 @@
 //!   need attention from outside one todo, and its attention episode.
 //! - [`reclamation`] — worktree reclamation: declared regenerable output
 //!   from idle todo worktrees, and delivered todos' worktrees.
+//! - [`thread_retention`] — archiving long-quiet finished runtime threads.
 #![cfg_attr(
     test,
     allow(
@@ -35,6 +36,7 @@ pub mod agents;
 pub mod anomaly;
 pub mod ci;
 pub mod consumers;
+pub mod control;
 pub mod dispatch;
 pub mod event_log;
 pub mod events;
@@ -55,6 +57,7 @@ pub mod sessions;
 pub mod sources;
 pub mod standing;
 pub mod state;
+pub mod thread_retention;
 pub mod ticks;
 pub mod timing;
 pub mod transport;
@@ -68,8 +71,7 @@ pub use _attention::deliver_approval_attention;
 
 pub mod assignments;
 
-pub mod envelopes;
-pub mod links;
 pub mod mcp;
+pub(crate) mod relay;
 
 pub mod installation;

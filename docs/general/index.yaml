@@ -12,7 +12,6 @@ expanded:
   - general/policy/context-retrieval
   - general/policy/conflict-resolution
   - general/policy/message-identity-headers
-  - general/policy/no-output-turn
   - general/policy/shared-machine-resources
 listed:
   - general/principle/evolution
@@ -25,7 +24,7 @@ listed:
   - general/spec/snippet-authoring-schema
   - general/spec/third-party-docs
   - general/concept/failure-modes
-  - general/design/peer-discussion
+  - general/concept/application-placement
   - general/policy/grounding
   - general/policy/orchestrator-jurisdiction
   - general/policy/agent-artifact-governance
@@ -41,7 +40,6 @@ listed:
   - general/procedure/knowledge-authoring
   - general/procedure/mcp-server-tools
   - general/procedure/technical-coordinator
-  - general/procedure/upstream-watch
 agents:
   claude:
     - general/policy/agents/claude

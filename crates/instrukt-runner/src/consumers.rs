@@ -408,7 +408,7 @@ pub(crate) fn prepare_installation(
     let config = instrukt_core::config::Configuration::load_global(home)?;
     let transport = ScopedTransport::from_config(&config, env, &state)?;
     let computer = instrukt_core::machine::machine_id(home)?;
-    let (wakeup, _) = std::sync::mpsc::sync_channel(1);
+    let (wakeup, _) = tokio::sync::mpsc::channel(1);
     let runtime = ConsumerRuntime::new(
         state.clone(),
         transport,

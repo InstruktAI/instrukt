@@ -1,22 +1,20 @@
 ---
-description: Evidence-bound human or peer approval and a position-based check of recorded intent.
+description: Evidence-bound human or peer approval and intent checks bound to a version and observed conversation.
 visibility: public
 ---
 # Approvals — Spec
 
 ## What it is
 
-A developer retains control of approval moments while allowing a trusted peer
-to judge eligible work on their behalf. Recorded intent is independently
-checked at its first handoff and then travels unchanged until the intent
-itself changes.
+The work record stores approval decisions and intent checks with their
+attribution and target digests.
 
 ## Canonical fields
 
 ### Approval records
 
-Work records approval stamps and their evidence; gate requirements, escalation,
-task-authorization checks and preparation routing belong to
+Work records approval stamps and their evidence. Configured approval checks
+are specified in
 `project/instrukt/spec/feature/workflow/preparation`.
 
 | Approval source | Attribution retained |
@@ -40,37 +38,13 @@ the new digest; the new stamp records `carried_from`, so the original approver
 stays attributed. Without that verdict the carry is refused, naming the missing
 verdict.
 
-### Intent check by position
+### Intent check
 
-The intent record of every kind is its `input` artifact: the outcome the
-agent in the conversation recorded. It identifies its current version, author
-and the conversation in which that version was authored. The first recipient who is not that
-author reads that conversation and checks the record against it. They confirm
-it, clarify its expression without changing its meaning, or return a mistaken
-interpretation to the person for the missing intent. The check binds to the
-`input` version it checked; a new `input` version invalidates it, and
-rewriting a derived artifact (requirements, plans) does not.
-
-The confirming recipient leaves an intent-checked stamp naming who checked,
-which conversation and which intent version. Later recipients accept a current
-stamp and carry that intent unchanged. A rewrite invalidates the prior check;
-the next non-author checks the replacement version. The checker's position,
-rather than a fixed workflow role, determines who performs the check. For work
-committed directly from a conversation, commit review is the first recipient.
-
-The check runs on the computer where the originating conversation is readable.
-The responsible orchestrator there dispatches the checker through an
-configured native delegation instruction, reserving its role attempt and
-binding the native child id through work commands. Its runtime delivers the
-result to that parent. GitHub carries the checked record and
-stamp; the conversation remains in its runtime.
-
-An intent check establishes fidelity of the record. An approval authorizes a
-particular reviewed outcome. One never substitutes for the other.
-
-If the originating conversation is permanently unavailable, the checker
-returns the intent to the human. A new `input` version recorded from that
-conversation becomes the checkable basis.
+`instrukt todo stamp <slug> --intent-checked [--conversation <runtime:id>]`
+binds the current `input` digest to the checking actor and the supplied
+conversation, if any. The command stores the supplied session reference
+without reading the conversation. An omitted conversation stays absent.
+Changing `input` changes the digest that a current check must identify.
 
 ### Command boundary
 
@@ -86,7 +60,8 @@ Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
 --by human|peer [--session <runtime:id>]`. A peer approval states its reason
 with `--reason <text>`, the CLI's one justification flag; it requires the peer
 session and is refused without either. Session statements retain the
-observed source session; GitHub approvals arrive by pull with GitHub attribution.
+observed source session; GitHub approvals arrive through the runner's
+reflection pass with GitHub attribution.
 Carry retains the earlier attribution and evidence under the current independent
 reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
 
@@ -102,13 +77,12 @@ reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
   And binds the approval to the evidence they approved
 ```
 
-### UC-AP2: Hand off intent without repeating the request
+### UC-AP2: Inspect the evidence of an intent check
 
 ```gherkin
-  Given a developer's request has been recorded by its author
-  When another agent first receives that version and checks it against the originating conversation
-  Then the record identifies that version as independently checked
-  And subsequent recipients can accept it without asking the developer to repeat it
+Given a todo has a current input version
+When a caller records an intent check with an explicit originating conversation
+Then the record identifies the checked digest, the checking actor and the supplied conversation
 ```
 
 ### UC-AP3: An earlier approval carries to a revised outcome only under a current review

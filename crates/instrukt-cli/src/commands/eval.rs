@@ -10,7 +10,7 @@ use instrukt_core::git;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::publication::{EvalFingerprint, PublishedRecord};
 use instrukt_todos::eval;
-use instrukt_todos::work::{GitHubRead, TodoRecord, Work, describe};
+use instrukt_todos::work::{TodoRecord, Work};
 use jiff::Timestamp;
 
 use crate::context::Ctx;
@@ -197,28 +197,7 @@ fn project_record(
         .project_at(checkout)
         .and_then(|project| work.recorded_work(&project));
     Some(match recorded {
-        Ok(recorded) => {
-            let mut limitations = Vec::new();
-            if let GitHubRead::NotRead(reason) = recorded.github {
-                limitations.push(format!(
-                    "Reflected work on GitHub could not be read ({}); work recorded only on other computers is missing.",
-                    describe(&reason)
-                ));
-            }
-            if !recorded.conflicted.is_empty() {
-                let slugs: Vec<String> = recorded
-                    .conflicted
-                    .iter()
-                    .map(|slug| format!("`{slug}`"))
-                    .collect();
-                limitations.push(format!(
-                    "{} conflict{} with a newer GitHub revision, so evidence recorded elsewhere may be missing; refresh with `instrukt todo refresh <slug>`.",
-                    slugs.join(", "),
-                    if slugs.len() == 1 { "s" } else { "" }
-                ));
-            }
-            (recorded.records, limitations)
-        }
+        Ok(recorded) => (recorded.records, Vec::new()),
         Err(err) => stored(format!("Its work record cannot be read: {err}.")),
     })
 }

@@ -138,74 +138,13 @@ fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity()
         "Keep the depth of nested lists when parsing Markdown.",
     );
     let shown = project.ok(["show", "nested-lists"]);
+    let _listed = project.ok(["list"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create, show, and list must not contact GitHub"
+    );
 
     insta::assert_snapshot!("recorded", redact(&format!("{filed}---\n{shown}")));
-}
-
-// spec: project/instrukt/spec/feature/work/todos UC-TD2
-#[test]
-fn work_withdrawn_on_another_computer_is_restored_there_under_its_identity() {
-    let project = Project::new();
-    project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    );
-    project.ok([
-        "artifacts",
-        "write",
-        "nested-lists",
-        "prd",
-        "Lists keep their depth through parse and render.",
-    ]);
-    project.ok(["remove", "nested-lists"]);
-
-    let elsewhere = project.other_computer();
-    let restored = elsewhere.ok(["reactivate", "nested-lists"]);
-    let shown = elsewhere.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "restored-elsewhere",
-        redact(&format!("{restored}---\n{shown}"))
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/todos UC-TD2
-#[test]
-fn a_name_two_withdrawn_todos_carried_restores_neither_until_one_is_addressed() {
-    let project = Project::new();
-    let here = identity(&project.create(
-        "nested-lists",
-        "feature",
-        "Keep the depth of nested lists when parsing Markdown.",
-    ));
-    project.ok(["remove", "nested-lists"]);
-    // Another computer files and withdraws different work under the name.
-    let elsewhere = project.other_computer();
-    let there = identity(&elsewhere.ok([
-        "create",
-        "nested-lists",
-        "Keep the depth of nested tables.",
-        "--kind",
-        "feature",
-        "--approved",
-    ]));
-    elsewhere.ok(["remove", "nested-lists"]);
-
-    let ambiguous = project.todo(["reactivate", "nested-lists"]).failure();
-    let address = format!("nested-lists@{}", &there[..8]);
-    let restored = project.ok(["reactivate", &address]);
-    let shown = project.ok(["show", "nested-lists"]);
-
-    insta::assert_snapshot!(
-        "restore-names-each-candidate",
-        redact(&format!(
-            "{}---\n{restored}---\n{shown}",
-            String::from_utf8_lossy(&ambiguous.get_output().stderr)
-        ))
-        .replace(&here[..8], "<here>")
-        .replace(&there[..8], "<there>")
-    );
 }
 
 // spec: project/instrukt/spec/feature/work/todos UC-TD2
@@ -228,6 +167,10 @@ fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() 
 
     let restored = project.ok(["reactivate", "nested-lists"]);
     let shown = project.ok(["show", "nested-lists"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo remove, reactivate, and show must not contact GitHub"
+    );
 
     insta::assert_snapshot!(
         "restored",
@@ -420,7 +363,7 @@ fn a_faced_report_is_filed_as_a_bug_in_the_project_it_names() {
     insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: this computer records no project `elsewhere`; name the owning project with `--project <slug>`: this computer records demo");
     insta::assert_snapshot!(
         redact(&project.ok(["list"])),
-        @"fix-sync-drops-the-ops-domain · bug · active · unclaimed · last known <time> (less than a minute old)"
+        @"fix-sync-drops-the-ops-domain · bug · active · reflection pending"
     );
 }
 
@@ -507,9 +450,9 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
     instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
     ");
     insta::assert_snapshot!(filtered.join(""), @r"
-    --iceboxed: fix-index-skips-a-domain · bug · iceboxed · unclaimed · last known <time> (less than a minute old)
-    --removed: fix-hook-waits-forever · bug · withdrawn · unclaimed · last known <time> (less than a minute old)
-    --delivered: fix-status-hides-a-section · bug · delivered · unclaimed · last known <time> (less than a minute old)
+    --iceboxed: fix-index-skips-a-domain · bug · iceboxed · reflection pending
+    --removed: fix-hook-waits-forever · bug · withdrawn · reflection pending
+    --delivered: fix-status-hides-a-section · bug · delivered · reflection pending
     ");
     assert_eq!(std::fs::read_to_string(&layer).unwrap(), older);
 }
@@ -531,7 +474,7 @@ fn a_bug_filed_as_ordinary_work_is_sent_to_the_front_door() {
         }
         let refused = project.todo(args).failure().code(1);
         insta::allow_duplicates! {
-            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: a bug is not created as ordinary work: report it through the bug front door, `instrukt bugs report '<description>'`, which puts the questions to face before anything is filed");
+            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: bug records are created by `instrukt bugs report '<description>'`");
         }
     }
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");
@@ -690,4 +633,115 @@ fn a_further_round_keeps_the_worker_that_did_the_earlier_one() {
     let shown = crew.todo(["show", slug]);
     assert_eq!(attempt_record(&shown, "planner/1"), earlier);
     insta::assert_snapshot!("continued-worker-record", redact(&shown));
+}
+
+// spec: project/instrukt/spec/feature/work/todos UC-TD14
+#[test]
+fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
+    let crew = Crew::new();
+    let slug = "single-role-worker";
+    crew.project
+        .create(slug, "change", "Keep list depth inside block quotes.");
+    crew.next("prepare", slug);
+
+    // The planner is bound, writes its plan and completes its attempt.
+    let planner = crew.worker(slug, "planner", Some("crew/procedure/plan"));
+    let session = planner["session"].as_str().unwrap().to_owned();
+    let tree = std::path::PathBuf::from(planner["worktree"].as_str().unwrap());
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &[
+            "todo",
+            "artifacts",
+            "write",
+            slug,
+            artifact_names::IMPLEMENTATION_PLAN,
+            "1. Parse quotes first.",
+        ],
+    );
+    as_worker(
+        &crew,
+        &tree,
+        &session,
+        &["todo", "stamp", slug, "--role-complete"],
+    );
+
+    // The plan's review is reserved, and the orchestrator binds it to the
+    // planner's session.
+    crew.next("prepare", slug);
+    let reserved = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "plan-reviewer",
+            "--procedure",
+            "crew/procedure/review-plan",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Review the plan.")
+        .assert()
+        .success();
+    let review: serde_json::Value = serde_json::from_slice(&reserved.get_output().stdout).unwrap();
+    let refused = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "bind",
+            slug,
+            "--role",
+            "plan-reviewer",
+            "--attempt",
+            &review["attempt"].to_string(),
+            "--session",
+            &session,
+            "--worktree",
+            review["worktree"].as_str().unwrap(),
+            "--branch",
+            review["branch"].as_str().unwrap(),
+            "--base",
+            review["base"].as_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // The reserved review stays outstanding and unbound, and the planner's
+    // session still runs its commands in the role it holds.
+    let shown = crew.todo(["show", slug]);
+    let outstanding = attempt_record(&shown, "plan-reviewer/1");
+    assert!(!outstanding.is_empty(), "{shown}");
+    let help = crew
+        .project
+        .env
+        .instrukt(&tree)
+        .env("T3CODE_THREAD_ID", session.strip_prefix("t3:").unwrap())
+        .arg("--help")
+        .assert()
+        .success();
+    let role = stdout(&help)
+        .lines()
+        .skip_while(|line| !line.starts_with("Role: "))
+        .take_while(|line| !line.is_empty() && !line.starts_with("Usual capabilities"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    as_worker(&crew, &tree, &session, &["todo", "show", slug]);
+    insta::assert_snapshot!(
+        "second-role-binding-refused",
+        redact(&format!(
+            "{}---\n{outstanding}\n---\n{role}",
+            String::from_utf8_lossy(&refused.get_output().stderr)
+        ))
+    );
 }

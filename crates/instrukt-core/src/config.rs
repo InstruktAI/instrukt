@@ -12,11 +12,15 @@ mod _admitted;
 mod _agents;
 mod _agents_migrate;
 mod _company;
+mod _company_document;
 mod _connectors;
 mod _edit;
 mod _effective;
 mod _error;
 mod _features;
+mod _generation;
+mod _github_org;
+mod _identity;
 mod _interpolate;
 mod _layer;
 mod _mcp;
@@ -31,6 +35,7 @@ mod _root;
 mod _runtime;
 mod _schema;
 mod _secrets;
+mod _thread_retention;
 mod _validate;
 mod _webhooks;
 
@@ -47,6 +52,7 @@ pub use _admitted::{
     Current, Offer, serve,
 };
 pub use _company::{Member, Members};
+pub use _company_document::{COMPANY_DOCUMENT, write_company_settings};
 pub use _connectors::{
     ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
     install_connector_declarations,
@@ -54,6 +60,15 @@ pub use _connectors::{
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
 pub use _error::{ConfigError, Finding, FindingKind, Findings};
 pub use _features::{Feature, Unavailable, availability as feature_availability};
+pub use _generation::{
+    CreationFlag, Generation, GenerationFacts, GenerationRefusal, GenerationRequest, admit_home,
+    company_repository, decide as decide_generation, skeleton_layer, write_skeleton,
+};
+pub use _github_org::{GITHUB_ORG_KEY, admit_github_org};
+pub use _identity::{
+    COMPANY_NAME_KEY, CompanyIdentity, CompanyName, CompanyNameError, IdentityFinding,
+    company_identity,
+};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,
@@ -76,6 +91,7 @@ pub use _schema::{
     COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION,
     SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema, layer_json_schema,
 };
+pub use _thread_retention::withholds_thread_retention;
 pub use _validate::{
     connector_procedure_finding, connector_role_procedure_finding, validate, validate_local,
 };

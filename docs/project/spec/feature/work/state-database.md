@@ -7,8 +7,8 @@ visibility: public
 ## What it is
 
 A computer keeps instrukt's operational state in one SQLite database: the
-local work record that stands in front of its GitHub reflection, the
-runner's state and the company context's conversations. instrukt is its only
+work record, of which it holds the only copy and which reflection shows one way
+on GitHub, the runner's state and the company context's conversations. instrukt is its only
 writer and its only interface: agents work with the record through instrukt's commands. A write interrupted
 part-way leaves the state as the last completed change left it.
 
@@ -73,11 +73,14 @@ meaning and the writes of the conversation tables.
   (`general/principle/trust-and-guardrails`: interference is a harm restoring state
   cannot repair).
 - A separate per-computer reflection lock
-  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
-  across GitHub requests and takes the writer lock only briefly for each local
-  transaction that records what reflection learned. Lock order is always
-  reflection → writer; a local writer releases the writer lock before acquiring
-  the reflection lock. Current-schema local readers take neither lock. Readers
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. Only the
+  runner's reflection pass acquires it, waiting for a bounded time and holding
+  it across GitHub requests while taking the writer lock only briefly for each
+  local transaction that records what reflection learned; a tick whose wait
+  runs out reflects nothing that run, and the next tick tries again. Commands
+  that write the record take only the writer lock, mark reflection pending and
+  return without touching GitHub or the reflection lock. Lock order is always
+  reflection → writer. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except status inspection and documentation reads.
 - A withdrawal holds the per-computer withdrawal lock
@@ -85,9 +88,10 @@ meaning and the writes of the conversation tables.
   (`withdrawal_intents`) until it has committed or abandoned it, or returned
   with the intent kept by a refusal. The lock tells a withdrawal in progress
   from a recorded intent no command is acting on; it is never requested
-  while the writer lock is held, and it is released before the withdrawal's
-  reflection acquires the reflection lock. A withdrawal's git and filesystem
-  work runs under it and outside the writer lock.
+  while the writer lock is held, and it is released once the withdrawal ends;
+  the runner's next reflection pass reflects the withdrawal to GitHub. A
+  withdrawal's git and filesystem work runs under it and outside the writer
+  lock.
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -109,11 +113,26 @@ meaning and the writes of the conversation tables.
   the runtime and use an OS lock per exact runtime key for ownership.
   The machine locks own no stored data.
 
+### Keeping the work record
+
+The work tables are authoritative: they are the work record's only copy, work
+is their one writer, and losing them loses intent — the todos, their evidence
+and the decisions recorded on them. GitHub shows each todo to people and holds
+no copy of it; nothing read from GitHub rebuilds or replaces a row. A
+committed change therefore survives a process crash, a power loss, a restart
+and an install, as every write here does, and every migration carries each
+work-record row forward: none is discarded, expired or rebuilt from another
+source. Reflection bookkeeping is external bookkeeping about GitHub: losing it
+costs reflecting the todos again and one complete read of their issues, and
+the retained inbound identities keep that read from applying a person's
+control twice. A copy of the database kept elsewhere is taken with SQLite's
+online backup, never by copying the file while instrukt writes it.
+
+
 ### Scope of what is stored
 
-The database holds this computer's local items, and the last known copy of
-each other todo of its projects as the runner's pickup listing last read it
-(`project/instrukt/spec/feature/work/github-record`). A workflow phase
+The database holds this computer's todos and nothing of todos held on
+other computers. A workflow phase
 is derived, never stored: `instrukt todo list` and `instrukt todo show` give
 it.
 
@@ -206,8 +225,7 @@ starts, bound requests, current and retired standing assignments, and manual
 reservations. Native driver placement evidence likewise retains its captured
 title; earlier placements recover it from retained title evidence, including
 verified runtime bindings, or from their recorded role and original phase branch.
-An omitted placement title does not establish a key-only native title. Remote
-conversion is owned by `project/instrukt/spec/feature/work/github-record`.
+An omitted placement title does not establish a key-only native title.
 
 Version 34 evolves the conversation tables for named company connectors:
 `connected_conversations` adds `role` (default `'company-agent'`),
@@ -223,6 +241,20 @@ holds `thinking_level` to carry it as T3's `thought_level`.
 Version 37 adds `withdrawal_intents` (Work tables), the durable intent of a
 withdrawal whose working resources are being released. It starts empty.
 
+Version 40 ends the shared remote record. It drops `listing_copies` and the
+reflection columns that tracked a record copy on GitHub (`record_comment`,
+`conflicted`), and adds the issue read positions, the published work-branch
+head with why its publication is outstanding, and the kept refusals to
+`reflections`. It replaces the count of
+reflected build reviews with the reviewed verdicts themselves: the first
+`reviews_reflected` build-verdict stamps, in record order, are recorded as
+reviewed. It gives `inbound_commands` the command's time; a command recorded
+before it has none, and its reply, while still pending, is reconciled once
+against the whole conversation. A todo marked conflicted keeps its local
+record and its pending reflection, which reflects it as recorded. Copies of
+other computers' todos are dropped; every local item and all its rows are
+kept.
+
 Version 38 adds lookups of `session_bindings` by `worktree` and by `branch`,
 of `todos` by `branch`, and of `holds` and `github_label_actions` by todo, so
 the todos a computer's worktrees and work branches name, and their records,
@@ -234,12 +266,13 @@ table, column or row.
 
 Owned and written by work through its command contract. Reflection to
 GitHub reads from these tables; the runner writes the rows it is entitled to
-(claims, reflection flushes, pickup-listing copies, last-fired stamps,
+(claims, reflection flushes, inbound controls, last-fired stamps,
 automatic holds, the purge of expired retained records and per-role session
 bindings) only through work's command contract.
 
 **`todos`** — one row per local item. Key: `id`. Unique while live:
 `(project, slug)` among `active`, `iceboxed` and `structural_holder` rows.
+
 
 | Column | Meaning |
 | --- | --- |
@@ -250,7 +283,7 @@ bindings) only through work's command contract.
 | `status` | Record status: `active`, `iceboxed`, `structural_holder`, `delivered` or `removed`. Never a workflow phase. |
 | `created_at`, `created_by` | Creation time and actor. |
 | `human_involved` | The audit-only creation declaration, or `NULL`. |
-| `refreshed_at` | Latest successful read of this local item from GitHub (including a not-modified response); `NULL` before a read. Listing age uses this local observation time, never its revision or creation time. |
+| `refreshed_at` | Latest successful read of this todo's issue on GitHub (including a not-modified response); `NULL` before a read. |
 | `revision` | Incremented by every accepted change; the revision reflection writes. |
 | `group_id` | The structural holder this todo is grouped under (`todos.id`), or `NULL`. |
 | `group_slug` | The holder's last-known slug, for a holder not stored on this computer, or `NULL`. |
@@ -263,6 +296,7 @@ bindings) only through work's command contract.
 | `removed_at`, `removed_from` | Withdrawal time, starting the recovery window, and the status restoration returns to. |
 | `removal` | Released working resources kept as recovery evidence (branch and head, worktrees). |
 | `sequence` | The last record-order number given to a version or stamp. |
+
 
 **`prerequisites`** — the dependency edges. Key: `(todo_id, prerequisite_id)`,
 both `todos.id`; `prerequisite_id` may name a retained delivered todo.
@@ -291,17 +325,19 @@ reflected; the artifact's identity on GitHub).
 Approvals and intent checks are stamps: `fact = 'approval'` and
 `fact = 'intent_checked'`.
 
+
 | Column | Meaning |
 | --- | --- |
 | `todo_id`, `sequence` | The todo and record order. |
 | `fact` | The fact kind, in snake case (`preparation_verdict`, `build_verdict`, `approval`, `intent_checked`, `kickback`, `build_started`, `build_complete`, `role_complete`, `verification_disposition`, `finalize_ready`, `task_firing_started`, `task_outcome`, …). |
 | `at`, `actor` | Time and acting session, GitHub account or person. |
-| `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; retained in reflected stamps so reconstruction does not reapply the same decision. |
+| `source_comment` | GitHub decision occurrence, or `NULL` for other stamp forms. Unique per todo when present; so reading the issue again never reapplies the same decision. |
 | `role` | The role the acting session played, or `NULL`. |
 | `model`, `model_version`, `model_provenance` | Model identity, or `NULL` with `outside_session` or `unknown`. |
 | `eval_fingerprint` | The published fingerprint copied at write time. |
 | `human_involved` | The audit-only declaration, or `NULL`. |
 | `evidence` | The fact's bound evidence (digests, commit, phase, round, reason, occurrence, carried-from stamp, disposition and follow-up todo). |
+
 
 **`holds`** — the current dispatch hold and the ordered hold audit. Row order
 retains distinct actions even when source timestamps tie. Columns: `todo_id`, `source` (`manual`, `automatic` or `github`),
@@ -317,58 +353,54 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `runtime`, `semantic_key`, `display_title` | Selected runtime, stable assignment identity and independently mutable display title. Native child keys are assignment facts, not adapter lookup entries. |
 | `session` | Scoped native identity from `todo bind`, or `NULL` while unresolved. |
 | `worktree`, `branch`, `base_head` | The todo's single shared `<slug>/work` worktree, branch, and captured starting head (`NULL` for worktree-less `kind: task` assignments; legacy prepare rows remain readable for history). Retained after release. |
-| `completion_sequence`, `completed_head` | Releasing stamp and its exact shared head; read-only roles retain their captured head. `NULL` until completion. |
+| `completion_sequence`, `completed_head` | Releasing stamp and its exact workspace head, where applicable. `NULL` until completion. |
 | `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Failure evidence and current shared head, not a recovery source branch. |
 | `released_at` | Completion, verdict, disposition or confirmed failure release time; `NULL` while outstanding. |
 | `evidence` | Rendered assignment, native task identity, matching placement and any no-start proof; deliberate driver entry retains its supplied native placement/source evidence; runner-owned task acceptance retains its own claim and task-start stamp transaction. |
 
-One todo has one work-phase workspace binding owned by its orchestrator and
-at most one outstanding workspace-role attempt. All its children inherit that
-workspace and commit directly on its todo branch. Reserving the next role
-captures the current shared head. An unresolved native start blocks admission.
-The orchestrator coordinates work and keeps the workspace clean between roles.
+A repository todo has one recorded work-phase workspace and at most one open
+workspace or child attempt. The claim holder reserves and binds the attempt.
+Reservation captures the workspace's current head. An unresolved reservation
+occupies the same slot as a bound attempt.
 
-| Role | Evidence and release in the same record transaction |
-| --- | --- |
-| Setup | `--role-complete` at the clean shared todo head after setup. |
-| Builder/fixer, including plan reconciliation | `--build-complete` at the clean shared todo head. |
-| Build reviewer | Verdict bound to the complete findings and current captured shared head. |
-| Verifier | `--verification` disposition bound to the complete `verification-findings` and current captured shared head. |
-| Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
-| Finalizer | `--role-complete` at the clean, published shared candidate; readiness is a later record-only write against the retained binding. |
-| Failed attempt | Record-only `todo attempt --failed --reason` after native stop evidence and a clean shared tree; no completion stamp. |
-
-The stamp or failure, release, new revision and reflection obligation commit
-together. A retry reads that retained outcome. Git refs have no per-role advance
-intent: every commit is already on the checked-out todo branch. Missing or stale
-evidence leaves the attempt outstanding; native idleness supplies no release.
-Dirty or conflicted work remains in the same workspace for recovery within that
-attempt. A released failure permits a successor at the current shared head.
-Failure creates neither a different starting base nor setup/build completion.
-The original build base remains fixed. Native child lifetime remains runtime-owned. Preparation doc writers release
-with `--role-complete` bound to required artifacts and exact authored local-main
-commits; preparation reviewers release with their verdict stamps. Direct commit
-review is still owed before preparation release.
+An attempt's completion stamp, release, new todo revision and reflection
+obligation commit in one transaction. The stamp resolves to the caller's own
+bound attempt. A workspace attempt requires a clean worktree on its recorded
+branch. A matching retry returns the retained outcome. Failure stores its own
+release evidence from the matching stopped session. Both paths retain the
+attempt's starting coordinates and the original build base. Git refs already
+point to the commits recorded by the attempt.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
+
 
 | Column | Meaning |
 | --- | --- |
 | `todo_id` | The item. |
 | `issue_number` | The reflected issue. |
-| `remote_revision` | The confirmed remote revision: the record revision GitHub holds. |
+| `remote_revision` | The confirmed reflected revision: the latest record revision whose reflection GitHub accepted. |
 | `pending` | Local changes not yet reflected: the pending revision is `todos.revision`. |
-| `conflicted` | A newer remote revision met a pending local change; commands refuse until `instrukt todo refresh`. |
 | `failure` | The last failure that left reflection pending. |
+| `refusals` | Requests GitHub refused as invalid, as JSON, at most one per reflected target: the issue, the pull request's creation, one build verdict's review (by its stamp's record order) or one artifact version (by its record order). Each holds the identity of the request sent — what it sent and the branch head it concerned — and GitHub's validation detail. A request to that target with the same identity is not sent again; one with another identity is sent, and the target's refusal is dropped once GitHub accepts it. A refused artifact version or verdict review never changes, so its refusal stays while the todo is kept. |
 | `pull_number` | The linked pull request. |
-| `issue_id`, `record_comment`, `etag`, `pull_outstanding`, `reviews_reflected`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
+| `published_head` | The work-branch commit the last publication left on the remote; `NULL` before the first. |
+| `publication_outstanding` | Why the work branch's local head is not on the remote — the remote branch moved where the local one cannot fast-forward it, or no remote is tracked — as the last publication found it; `NULL` once a publication leaves the local head there or none is owed. |
+| `etag` | The issue's `ETag` at its last read, for conditional reads. |
+| `comments_since` | The latest update time among the issue's comments read before the first control still outstanding — an approval or change request not yet applied or answered — or among all of them when none is: the next read asks only for comments updated after it. `NULL` reads the conversation once in full. |
+| `events_page`, `events_last` | The page of the issue's events holding the last event read before the first hold-label action still outstanding (the last event read when none is), and that event's identity: the next read starts at that page. When that page no longer holds that event the events are read once in full. |
+| `reviews` | The build verdicts whose review is on the pull request, by their stamps' record order, as JSON. Each verdict is reflected on its own: one not yet reflected, or refused, holds back no other. |
+| `issue_id`, `pull_outstanding`, `pull_closed`, `board`, `board_item`, `board_status`, `board_failure` | Reflection bookkeeping. |
+
 
 **`inbound_commands`** — processed `/instrukt` comment identities and their
 confirmation replies. Key: `(todo_id, comment_id)`. `reply` retains the fixed
 response and `reply_pending` distinguishes a committed decision from its remote
-confirmation. Their acceptance commits with any stamp and pending attention.
-Retries reconcile the source-comment reply marker before posting again.
+confirmation; `commanded_at` is the command comment's creation time as GitHub
+gave it. Their acceptance commits with any stamp and pending attention.
+Retries reconcile the source-comment reply marker among the issue's comments
+updated since `commanded_at` before posting again; a row without it is
+reconciled against the whole conversation.
 
 **`github_label_actions`** — applied inbound hold-label actions. Key:
 `(project, issue_number, action_id)`. Retains todo ID, add/remove, acting GitHub
@@ -384,21 +416,6 @@ requests (rate limiting). Key: `project`.
 (`<owner>/<number>`) reflection set up or found when the project layer names
 none (`project/instrukt/spec/feature/work/github-record`). Key: `project`.
 
-**`listing_copies`** — the last known copy of each todo of a project that is
-not a local item here, as the latest pickup listing read it. Key:
-`(project, issue_number)`.
-
-| Column | Meaning |
-| --- | --- |
-| `project`, `issue_number` | The project and the todo's reflected issue. |
-| `slug`, `kind`, `status` | The todo's address, kind and record status, as reflected. |
-| `remote_revision` | The record revision the copy was read at. |
-| `claim_machine` | The computer its reflected claim names, or `NULL` when unclaimed. |
-| `record` | The reflected record as read, as JSON. |
-| `copied_at` | When the pickup listing read it: the copy's age. |
-
-A copy is replaced by each later pickup listing and removed when its todo
-becomes a local item or no longer appears in the listing.
 
 **`withdrawal_intents`** — a withdrawal of a local item whose working
 resources are being released (`project/instrukt/spec/feature/work/todos`,
@@ -421,28 +438,27 @@ checked, before any resource is released. While it exists the todo stays live,
 with its claim as it was, or unclaimed when it had none. A change of the todo's
 record committed while the row exists is refused, naming its doors:
 `instrukt todo remove <slug>`, which completes the withdrawal, or the command
-run again once it has ended. Nothing read from GitHub replaces the record while
-the row exists: a pull or pickup listing keeps the local record, and
-`instrukt todo refresh` refuses naming `instrukt todo remove <slug>`. What
-reflection learns of its own receipts is still kept: a pull that finds this
-computer's own revision on GitHub records it as confirmed, setting the revision
-comment and remote revision to the ones GitHub holds. A conflict mark is kept
-too, and confirms nothing: it marks the todo conflicted and leaves the revision
-comment and remote revision as they were. A pull while the row exists answers
-no `/instrukt` command and applies no label action it finds on the issue: each
-stays outstanding, and the first pull after the withdrawal commits gives it the
-outcome a withdrawn todo gives. An answer to a command, or a label action
-recorded as ignored, is recorded only while the todo's live record is still the
-one it was decided on and no row exists, in the transaction that records it; one
-decided on a record that changed before it was recorded, such as an active
-record the withdrawal committed over meanwhile, is not recorded and stays
-outstanding. Whenever a command or label action is left outstanding this way,
-and when the row is removed, the issue's stored `ETag` is dropped, so the next
-pull reads the issue in full rather than being told nothing changed, even when
-the issue has not changed again since.
-Dispatch admission, read back after a reservation's reflection, refuses while
-the row exists, in the same read that confirms the reservation, claim and
-status. The row is updated as each step whose outcome must be recognized
+run again once it has ended. What reflection learns of its own receipts is
+still kept while the row exists. A runner reflection read of the issue while
+the row exists answers no `/instrukt` command and applies no label action it
+finds there: each stays outstanding. An answer to a command, or a label
+action recorded as ignored, is recorded only while the todo's live record is
+still the one it was decided on and no row exists, in the transaction that
+records it; one decided on a record that changed before it was recorded, such
+as an active record the withdrawal committed over meanwhile, is not recorded
+and stays outstanding. A read position never moves past a command or label
+action left outstanding. Whenever one is left outstanding this way, and when
+the row is removed, the issue's stored `ETag` is dropped. Once the withdrawal
+commits, the todo is withdrawn and the runner stops reading its issue
+(`project/instrukt/spec/feature/work/github-record`, Reading GitHub), so
+actions that arrived meanwhile do not change the withdrawn record; if a refusal
+removes the row and leaves the todo live, or if the todo is later reactivated,
+the dropped `ETag` ensures the runner's next reflection read finds anything
+still outstanding rather than being told nothing changed, even when the issue
+has not changed again since.
+Dispatch admission refuses while the row exists, in the same read that
+confirms the reservation, claim and status. The row is updated as each step
+whose outcome must be recognized
 afterwards happens: the branch's commit before the branch is deleted, a
 worktree's stage before each move of it, and each worktree, the
 workspace and the branch once released; recording a partial marker is
@@ -497,9 +513,12 @@ an ineffective attempt following another release — the row keeps what it
 records, for the withdrawal run again to recognize what happened.
 
 A withdrawal interrupted while the row exists is completed by running
-`instrukt todo remove <slug>` again, which continues from the row before reading
-GitHub: an action that arrived there meanwhile, such as a hold label, stays
-outstanding until the first pull after the withdrawal commits. It first records
+`instrukt todo remove <slug>` again, which continues from the row without
+touching GitHub: any action that arrived on the issue meanwhile, such as a hold
+label, does not block or change the withdrawal; once the withdrawal commits the
+runner stops reading the withdrawn todo's issue, and if a refusal leaves the
+todo live or the todo is later reactivated, the runner's next reflection read
+picks up what stayed outstanding. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name
@@ -762,29 +781,6 @@ retry revalidates the claim and never revives or starts an orchestrator. A known
 absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
-
-**`conversation_links`** — runner-owned links between two runtime-scoped native
-threads, with active/closed state, member references and the opening positions.
-An active member belongs to at most one link. Closure updates the whole link;
-it preserves delivery evidence rather than deleting progress.
-
-**`conversation_relay_positions`** — one record per link and source direction,
-retaining the source stream position, completed-turn delivery position, fixed
-native target, pending range/content identity, native acceptance receipts (or
-explicit empty-content dispositions) and
-last stream/handover failure. The source observation position is distinct from
-accepted delivery progress. Link creation initializes both directions; target
-acceptance or a recorded empty disposition advances delivery. Source occurrence
-times are attribution, never cursors. Pending evidence survives runner restart.
-Pending handovers distinguish native turns, opening contributions and final
-contributions. Existing native handovers migrate to the native origin before
-consumption. A final contribution's acceptance receipt commits with whole-link
-closure; management receipts do not advance the native completed-turn position.
-
-These tables realize the runner's contract in
-`project/instrukt/spec/feature/runner/conversation-links`; work owns their file,
-migration and writer boundary, not the relay decision. Native stream and send
-operations run outside local writer transactions.
 
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
@@ -1105,8 +1101,8 @@ canonical state directory. Status reads existing records without creating
 the store or touching its sidecars.
 
 Each connector keeps one active window with its start and lower bound, the
-provider position, the current fetched page until processed, and any
-provider retry time. Restarts resume those records. Only completion advances
+provider position, the current fetched page until processed, and the moment
+of any wait the outside gate gave its last read. Restarts resume those records. Only completion advances
 coverage to the window's start less the overlap. Page identities are kept by
 provider channel and message ID. A page with new addressed messages writes
 them in one live-intake transaction. This transaction reconciles previously
@@ -1186,8 +1182,9 @@ work. Responsibility generation evidence remains while needed by pending work,
 start recovery or retained delivery identities. Runtime record retention is
 separate and may limit resumption. A task failure's row is kept after its hold is
 released, so the same failed run never sets the hold again, and is replaced by
-the task's next failed run. Validators, deferrals, watched-ref observations
-and listing copies are replaced in place. Key-lock rows are reused with
+the task's next failed run. Validators, deferrals and watched-ref
+observations are replaced in place. A kept refusal goes when GitHub accepts
+another request to its target, and otherwise with its todo's rows. Key-lock rows are reused with
 ownership cleared on release; they are not event history. Runtime bindings
 remain as identity caches, including completed occurrences and standalone runs.
 Local events and settled cursors are retained as operational accounting. Redis
@@ -1204,7 +1201,7 @@ connector's private message is kept as long as its conversation.
 
 ### Agent capacity
 
-The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases travel in the reflected todo record. The internal `agent_availability` table holds profile/model subjects, typed
+The internal `todo_aliases` table retains prior slugs by immutable todo id for renamed pending-document lenses; aliases are kept with the todo in this computer's record. The internal `agent_availability` table holds profile/model subjects, typed
 available/unavailable/degraded status, optional absolute expiry and reason.
 Migration moves the prior todo preference column and its fast/med/slow values
 to tier light/standard/strong. Absence of capacity marks means available;
@@ -1276,11 +1273,11 @@ And the database passes its integrity check
 - Conversation text is kept without a limit: addressed messages, what
   accompanied them, their framed input and the answers stay in the database,
   with the names and email addresses of the people who addressed an agent.
-- Work recorded only in an earlier build's file store is not read. Reflect
-  it to GitHub with that build before upgrading; after the upgrade it enters
-  the database again by pull-through.
-- Deleting the database loses work-record writes not yet reflected to
-  GitHub. Reflected work returns by pull-through; the runner's state starts
+- Work recorded only in an earlier build's file store is not read, and
+  nothing brings it into the database.
+- Deleting or losing the database loses the work record: GitHub still shows
+  the todos' issues, artifacts and pull requests, and nothing rebuilds the
+  record from them. The runner's state starts
   empty, so watched refs are observed afresh. Before any new
   start, the adapter discovers its semantic key through the adapter selected by `runner.runtime`; existing keyed
   threads are rebound rather than duplicated. A lost ambiguous start marker

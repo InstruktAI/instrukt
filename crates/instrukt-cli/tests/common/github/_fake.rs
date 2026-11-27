@@ -383,6 +383,53 @@ impl FakeGitHub {
         issue.updated_at = now;
     }
 
+    /// Makes `login` show on GitHub as an account of `kind`
+    /// (`Organization` or `User`).
+    pub fn set_account(&self, login: &str, kind: &str) -> &Self {
+        self.lock()
+            .accounts
+            .insert(login.to_owned(), kind.to_owned());
+        self
+    }
+
+    /// Installs the project App on the organisation `org`, with the
+    /// permissions its installation holds
+    /// ([`Self::set_installation_permissions`]).
+    pub fn install_on_org(&self, org: &str) -> &Self {
+        self.lock().org_installations.insert(org.to_owned());
+        self
+    }
+
+    /// Initialises the bare remote of each repository created from now on
+    /// as `<remotes>/<owner>/<name>.git`.
+    pub fn serve_remotes(&self, remotes: &std::path::Path) -> &Self {
+        self.lock().remotes = Some(remotes.to_path_buf());
+        self
+    }
+
+    /// The collaborators added to `repo`, each with the permission given.
+    pub fn collaborators(&self, repo: &str) -> Vec<(String, String)> {
+        self.lock()
+            .repos
+            .get(repo)
+            .map(|repo| repo.collaborators.clone().into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether `repo` is private; `None` for a repository the fake does not
+    /// hold.
+    pub fn is_private(&self, repo: &str) -> Option<bool> {
+        self.lock().repos.get(repo).map(|repo| !repo.public)
+    }
+
+    /// The default branch of `repo`.
+    pub fn default_branch(&self, repo: &str) -> Option<String> {
+        self.lock()
+            .repos
+            .get(repo)
+            .map(|repo| repo.default_branch.clone())
+    }
+
     /// What App `app_id`'s installation may do, as GitHub answers it for
     /// the installation and for every credential requested from it.
     pub fn set_installation_permissions(&self, app_id: u64, permissions: Value) -> &Self {
@@ -438,6 +485,22 @@ impl FakeGitHub {
             .unwrap()
     }
 
+    /// Adds an event to issue `number`, after its existing ones; returns
+    /// its id. `event` is GitHub's issue event without its `id`.
+    pub fn seed_event(&self, repo: &str, number: u64, mut event: Value) -> u64 {
+        let mut state = self.lock();
+        let id = state.next_id();
+        event["id"] = id.into();
+        state
+            .repo(repo)
+            .issues
+            .get_mut(&number)
+            .unwrap()
+            .events
+            .push(event);
+        id
+    }
+
     /// Changes a comment's body out of band.
     pub fn edit_comment(&self, repo: &str, id: u64, body: &str) {
         let mut state = self.lock();
@@ -445,6 +508,13 @@ impl FakeGitHub {
         let comment = state.repo(repo).comments.get_mut(&id).unwrap();
         comment.body = body.to_owned();
         comment.updated_at = now;
+    }
+
+    /// Serves the branches of `repo` from the bare repository at `source`:
+    /// what is pushed there is on GitHub.
+    pub fn serve_branches_from(&self, repo: &str, source: &std::path::Path) -> &Self {
+        self.lock().repo(repo).branch_source = Some(source.to_owned());
+        self
     }
 
     /// Puts branch `name` at `sha` on the fake.
@@ -598,6 +668,19 @@ impl FakeGitHub {
             .collect()
     }
 
+    /// Every pull request of `repo` as `GET /pulls/{n}` shows it, oldest
+    /// first.
+    pub fn pulls(&self, repo: &str) -> Vec<Value> {
+        let mut state = self.lock();
+        let base = state.base.clone();
+        let r = state.repo(repo);
+        let numbers: Vec<u64> = r.issues.keys().copied().collect();
+        numbers
+            .into_iter()
+            .filter_map(|n| r.pull_json(&base, repo, n))
+            .collect()
+    }
+
     /// An issue's comments, oldest first.
     pub fn comments(&self, repo: &str, number: u64) -> Vec<Value> {
         let mut state = self.lock();
@@ -621,7 +704,7 @@ impl FakeGitHub {
                 issue
                     .artifacts
                     .values()
-                    .map(|a| json!({"artifact": a.json(), "versions": a.versions_json()}))
+                    .map(|a| json!({"artifact": a.json(repo, number), "versions": a.versions_json()}))
                     .collect()
             })
             .unwrap_or_default()

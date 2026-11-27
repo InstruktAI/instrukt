@@ -413,6 +413,27 @@ impl TestEnv {
         self.base().join(relative)
     }
 
+    /// Routes git's `https://<host of api_url>/` to the test's own
+    /// `remotes/` folder, in the test's own git configuration, so a
+    /// repository the fake GitHub creates there is reached as GitHub's.
+    /// Returns that folder.
+    pub fn route_github_remotes(&self, api_url: &str) -> PathBuf {
+        let remotes = self.path("remotes");
+        std::fs::create_dir_all(&remotes).unwrap();
+        let host = instrukt_core::github::api_host(api_url);
+        let routed = std::process::Command::new("git")
+            .arg("config")
+            .arg("--file")
+            .arg(self.home.join(".gitconfig"))
+            .arg("--add")
+            .arg(format!("url.file://{}/.insteadOf", remotes.display()))
+            .arg(format!("https://{host}/"))
+            .status()
+            .unwrap();
+        assert!(routed.success());
+        remotes
+    }
+
     /// Adds `location` to the write fence every later instrukt process
     /// carries.
     pub fn fence(&mut self, location: &Path) -> &mut Self {
@@ -989,4 +1010,25 @@ pub fn tool_executable(program: &str) -> PathBuf {
         .map(|dir| dir.join(program))
         .find(|candidate| candidate.is_file())
         .unwrap_or_else(|| panic!("required test tool {program} is not installed"))
+}
+
+/// Brings back the empty `listing_copies` table Version 40 dropped, on a
+/// current state database a test rewinds below Version 15: the shipped
+/// Version 15, replayed on the next open, reads it.
+pub fn recreate_pre_v40_listing_copies(db: &instrukt_core::state_db::rusqlite::Connection) {
+    db.execute_batch(
+        "CREATE TABLE IF NOT EXISTS listing_copies (
+            project         TEXT NOT NULL,
+            issue_number    INTEGER NOT NULL,
+            slug            TEXT NOT NULL,
+            kind            TEXT NOT NULL,
+            status          TEXT NOT NULL,
+            remote_revision INTEGER NOT NULL,
+            claim_machine   TEXT,
+            record          TEXT NOT NULL,
+            copied_at       TEXT NOT NULL,
+            PRIMARY KEY (project, issue_number)
+        );",
+    )
+    .unwrap();
 }

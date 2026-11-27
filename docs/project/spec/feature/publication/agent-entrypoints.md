@@ -60,30 +60,44 @@ section, in order:
    closure: its transitive required reads, each before the snippet that
    requires it. The traversal order is kept: each snippet sits under the
    `# <Domain>` heading of the domain it belongs to, so an `sdlc` snippet
-   that `general`'s `expanded` selects sits under `# Sdlc`, not `# General`,
+   that a project snippet requires sits under `# Sdlc`, not `# Project`,
    and when the traversal moves to a snippet of another domain a heading for
    that domain opens there — a domain's heading appears again when the
-   traversal returns to it (`general/A`, then `sdlc/B`, then `general/C`
-   renders `# General`, `# Sdlc`, `# General`). Order is never changed to
+   traversal returns to it (`project/A`, then `sdlc/B`, then `project/C`
+   renders `# Project`, `# Sdlc`, `# Project`). `general`'s index names only
+   `general` snippets, so a global file's always-on section stays under
+   `# General`. Order is never changed to
    group a domain's snippets together. Every heading of a rendered
    snippet is demoted one level, except inside fenced code; an H6 stays H6.
-3. **Listed.** One listing line per id in `listed`, naming
+3. **Listed.** One listing line per id in `listed`, leading to
    `instrukt docs get <id>`.
 4. **Triggered procedures.** One listing line per procedure of the position
-   carrying an `activation_trigger`, naming its trigger and
+   carrying an `activation_trigger`, naming its trigger and leading to
    `instrukt docs get <id> --closure`.
 
+A global agent file gives its listed snippets and its triggered procedures
+each a heading of their own that carries the read command once, in the
+headed listing-line form, and their lines carry no command; the root
+`AGENTS.md` uses the inline form, each line carrying its command
+(`project/instrukt/spec/feature/docs/progressive-retrieval`).
+
 Within one rendered file, a snippet appears in full at most once. A
-triggered procedure keeps its trigger and its `instrukt docs get <id>
---closure` command wherever it appears: rendered in full, its trigger line
-stands directly under its heading; listed, its listing line is the triggered
-form (trigger and `--closure`) rather than the plain `get <id>` form; it is
-not listed a second time.
+triggered procedure keeps its trigger wherever it appears and leads to its
+`instrukt docs get <id> --closure` command: rendered in full, its trigger
+line stands directly under its heading; listed, its listing line is the
+triggered form (trigger, and `--closure` on the line or in its heading)
+rather than the plain `get <id>` form; it is not listed a second time.
 A rendering never inlines a pending snippet and drops planned material
 (`project/instrukt/spec/feature/publication/project-publication`).
 Only references outside code are resolved; a reference inside a code span or
 fenced code block is left exactly as written and is never reported as
 unresolved.
+
+Wherever this spec says a global agent file, a root `AGENTS.md` or a company
+home's `AGENTS.md` holds a snippet or a company document in full, that
+rendering holds the source's current compressed unit in its place, and the
+source's prose where its unit is stale or missing
+(`project/instrukt/spec/feature/publication/compressed-units`).
 
 ### Committed entrypoints
 
@@ -181,6 +195,10 @@ same content with the same instrukt release write the same bytes.
   entrypoint whose file differs from its rendering, each missing one, and
   each finding. Neither needs a home, a publication or a configuration: a
   fresh clone and the binary are enough.
+  `instrukt docs render --plugin`, with or without `--check`, does the same
+  for the repository's whole agent material as one operation: in a company's
+  repository, its entrypoints and the company's plugin
+  (`project/instrukt/spec/feature/publication/company-plugin`).
 - **Never by sync or checkout.** A sync writes no entrypoint, and no hook
   renders one after a checkout
   (`project/instrukt/spec/feature/repository/hook-sections`).
@@ -191,12 +209,16 @@ A commit made in GitHub's web editor, by a cloud agent or anywhere the hook
 section is not installed leaves its entrypoints as they were. The
 repository's own CI runs `instrukt docs render --check`, which fails such a
 commit naming each stale entrypoint; the repair is `instrukt docs render` and
-a commit, or a commit through the hook. In a company's repository, the
-workflow that publishes the company's skill on main also writes the
-repository's `AGENTS.md`, with the shared workflows repository's own renderer,
-and commits to main only when what it rendered differs from what main holds;
-that workflow and its renderer belong to the shared workflows repository
-(`project/instrukt/policy/shared-workflows`).
+a commit, or a commit through the hook. In a company's repository that
+carries the shared workflows repository's publishing workflow, that workflow
+also writes the repository's `AGENTS.md` on main, with the shared workflows
+repository's own renderer, and commits to main only when what it rendered
+differs from what main holds; that workflow and its renderer belong to the
+shared workflows repository (`project/instrukt/policy/shared-workflows`).
+Where the company's standing integrator renders each candidate
+(`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+candidate), that workflow is a second writer of the default branch beside the
+integrator (`general/policy/commits`).
 
 ### Company home entrypoint
 
@@ -219,23 +241,29 @@ the home and leaves any other there as it is.
 
 - **What makes a repository a company home.** The rendering mode comes from
   what the working tree's root holds, tracked or not:
+  - a root `instrukt.yaml` that is a project layer declaring
+    `company_repository`: company rendering — the company's home, a clone of
+    the company's repository, or its CI
+    (`project/instrukt/spec/feature/configuration/company-homes`, The home);
   - a root `instrukt.yaml` that declares `company` is a company's settings
-    document: company rendering — the company's home, where that file is
-    present and ignored;
+    document not yet converted to `company.yaml`: company rendering — the
+    company's home, where that file is present and ignored;
   - any other root `instrukt.yaml` is the project layer: project rendering,
     from the moment `instrukt init` writes it
-    (`project/instrukt/spec/feature/repository/project-initialization`);
+    (`project/instrukt/spec/feature/repository/project-initialization`),
+    whatever the repository's `docs/` folder holds;
   - no root `instrukt.yaml` and a `docs/index.yaml`: company rendering — a
-    clone of the company's repository, or its CI.
+    clone of a company's repository that commits no project layer, its CI, or
+    a home whose settings are in `company.yaml`.
 
-  A project never stands without its layer: initialization writes the layer
-  and the project's index together, and the layer is committed with the
-  project. A company's home and a clone of its repository therefore render
-  the same bytes. A root `instrukt.yaml` that cannot be read is a finding
-  naming it, handled as every finding is: the mode is never guessed from a
-  file that cannot be read (`sdlc/principle/design-fundamentals`). A company's
-  settings document tracked by mistake changes no rendering; configuration
-  validation reports the tracked file
+  The declaration and the index are committed with the company's
+  repository, so a company's home and a clone of its repository render the
+  same bytes, and a project's `docs/index.yaml` never makes it a company's. A
+  root `instrukt.yaml` that cannot be read is a finding naming it,
+  handled as every finding is: the mode is never guessed from a file that
+  cannot be read (`sdlc/principle/design-fundamentals`). A company's settings
+  document tracked by mistake changes no rendering; configuration validation
+  reports the tracked file
   (`project/instrukt/spec/feature/configuration/company-homes`).
 - **The company index.** `docs/index.yaml` holds `expanded` and `listed` and
   no other key; each is a list. Each entry names a company document by its
@@ -328,15 +356,20 @@ the home and leaves any other there as it is.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report every finding of the index and of the documents, and a
   home with a finding is not rendered.
-- **Who renders it.** instrukt renders it in two places: the `pre-commit`
-  section where it is installed in the home, and `instrukt docs render` run
-  in the home or in a clone of the repository. The block order above and the
+- **Who renders it.** instrukt renders it in three places: the `pre-commit`
+  section where it is installed in the home; `instrukt docs render` run in the
+  home or in a clone of the repository; and `instrukt docs render --plugin`,
+  which renders it with the company's plugin as one operation and which the
+  company's integrator runs on each candidate
+  (`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+  candidate). The block order above and the
   same bytes in a home and in a clone hold for instrukt's rendering, and
   `instrukt docs render --check` compares the working file with that
-  rendering. The company repository's workflow on main commits an `AGENTS.md`
-  as well, rendered by the shared workflows repository's publisher with its
-  own renderer; what that file holds, and what that publisher reads, is that
-  repository's contract (`project/instrukt/policy/shared-workflows`). It
+  rendering. A company repository that carries the shared workflows
+  repository's publishing workflow has an `AGENTS.md` committed on main by it
+  as well, rendered by that publisher with its own renderer; what that file
+  holds, and what that publisher reads, is that repository's contract
+  (`project/instrukt/policy/shared-workflows`). It
   opens with that publisher's own first line and holds its blocks in that
   publisher's own order, so it is not instrukt's rendering: the generated
   line, the block order, the company passage and the removal of a rendering
@@ -348,6 +381,12 @@ the home and leaves any other there as it is.
   any other line, the publisher's included, stays as it is: the hook section
   and `instrukt docs render` leave it in place, and `instrukt docs render
   --check` does not name it.
+
+The compressed units a company's repository keeps
+(`project/instrukt/spec/feature/publication/compressed-units`) are no company
+documents: no index entry, required read or reference names one, the
+company's knowledge rules do not read one as a document, and their presence
+is no finding.
 
 ### Global agent files
 
@@ -380,13 +419,13 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   resolve. `@config` directives resolve against the publishing project's
   effective configuration. A global file that keeps a reference left for an
   agent program to resolve is written as rendered, and the sync reports a
-  finding naming the file and the reference and goes on: `general`'s
-  `expanded` can bring in a snippet another project published, which this
-  sync does not validate again, and one such snippet stops no other file
+  finding naming the file and the reference and goes on: a domain's
+  `description` line comes from what another project published, which this
+  sync does not validate again, and one such line stops no other file
   (`general/policy/agent-artifact-governance`: a global file with such a
   reference is written as rendered and named, and the sync goes on;
   `general/principle/trust-and-guardrails`: the next sync rebuilds the file
-  once the snippet is corrected, so a refusal would guard nothing).
+  once the source is corrected, so a refusal would guard nothing).
 - **A domain without `index.yaml`** is absent from every global file; the
   sync reports a notice naming it, and it is found through
   `instrukt docs index --domain <x>`.
@@ -518,6 +557,21 @@ frontmatter of Cursor's rule file does, the generated line follows it.
   the company's repository and on request, which no sync renders
   (`project/instrukt/spec/feature/publication/company-plugin`).
 
+A compressed unit that keeps a reference left for an agent program never
+enters a global file: the file holds that source's prose in the unit's place,
+and the sync reports the finding naming the unit
+(`project/instrukt/spec/feature/publication/compressed-units`).
+
+#### The uncompressed copy
+
+Every sync that writes global files also writes, for each runtime, the same
+rendering with every source in its prose, into the home, at a place no agent
+runtime loads or reads as an instruction file, on a case-insensitive file
+system as well. It is written whole every time, as the global file is. A
+global file that holds a compressed unit names, near its top and in text
+every runtime loads, where that uncompressed copy stands and how to read any
+snippet it names in full.
+
 ## Use cases
 
 ### UC-AE1: An agent that checks out a developer's project starts with what the project selected
@@ -547,7 +601,6 @@ Then each configured agent runtime with an established native loader receives th
 And each of those files carries the line that names it as generated
 And every configured instance without an established loader or home is named with its non-delivery reason
 And the text the other tool wrote is gone
-And always-on doctrine taken from another domain sits under that domain's heading, in the order the doctrine requires it, even where the domains interleave
 And it reads one line naming the on-demand domain, its description and the command that loads it
 And the always-on doctrine's own triggered procedure and subscribed procedure appear in the global file
 And the on-demand domain's triggered procedures and subscribed procedures are absent from the global file
@@ -632,6 +685,16 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 
 ### UC-AE15: A developer whose repository still carries a master keeps its instructions until they move them (retired)
 
+### UC-AE16: A developer reads in full what their agents were given
+
+```gherkin
+Given a developer's computer publishes always-on doctrine whose sources have current compressed units
+When publication runs for the project that owns the always-on doctrine
+Then each configured runtime's global instruction file names where its uncompressed text stands
+And that text holds the same selection with every source in its full prose
+And no agent runtime loads it
+```
+
 ## Known caveats
 
 - Global files are never removed. The file of a runtime that is no longer
@@ -646,9 +709,9 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - The rendering depends on the instrukt release that renders it. A CI check
   running another release than the developer's hook may report a difference
   the developer's commit did not cause; CI pins the release it installs.
-- instrukt and the shared workflows repository's publisher each write a
-  company repository's `AGENTS.md` whole, and no contract makes the two
-  renderings the same bytes. The publisher
+- In a company repository that carries the shared workflows repository's
+  publisher, instrukt and that publisher each write its `AGENTS.md` whole,
+  and no contract makes the two renderings the same bytes. The publisher
   commits its rendering to main; the hook section stages instrukt's into the
   commit being made; `instrukt docs render` writes instrukt's to the working
   file, and `instrukt docs render --check` compares the working file with
@@ -657,7 +720,9 @@ Then the rendering reports the snippet and says to list it instead, and the inst
   differ, although no document changed. After `instrukt docs render` writes
   the file there, the check reports no difference for `AGENTS.md` while the
   commit still holds the publisher's file; it exits zero only where it also
-  names no other entrypoint and no finding.
+  names no other entrypoint and no finding. Where the company's integrator
+  renders each candidate, the publisher's commits are a second writer's
+  beside it (`general/policy/commits`).
 - What the shared workflows repository's publisher reads is that
   repository's contract. A release of it that renders a company's knowledge
   from an `AGENTS.master.md` renders nothing from a repository that holds
@@ -692,11 +757,11 @@ Then the rendering reports the snippet and says to list it instead, and the inst
 - A company home's knowledge is the documents its `docs/index.yaml` selects
   and the documents their required reads reach. Documentation positions
   inside the home are not rendered or published.
-- The company index's editor schema is generated with the others, but
-  nothing writes `.instrukt/schemas/` in a company home and its
-  `docs/index.yaml` carries no modeline
+- The company index's editor schema is generated with the others and written
+  wherever they are, a company repository's `.instrukt/schemas/` among them,
+  but a company's `docs/index.yaml` carries no modeline
   (`project/instrukt/spec/feature/publication/editor-schemas`): an editor
-  there is pointed at the schema by hand.
+  there is pointed at that schema by hand.
 - No entrypoint is rendered from an `AGENTS.master.md`. A project whose
   purpose is still in a master commits a root `AGENTS.md` without it at its
   next commit through the hook, until the purpose is a snippet its index

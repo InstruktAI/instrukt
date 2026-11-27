@@ -157,6 +157,23 @@ impl Home {
         self.companies_dir().join(company.as_str())
     }
 
+    /// The database of the company's knowledge proposals, in the home's local
+    /// state folder that its ignore lines keep out of its repository
+    /// (`project/instrukt/spec/domain/company`).
+    pub fn knowledge_proposals_db_file(&self, company: &ProjectSlug) -> PathBuf {
+        self.company_dir(company)
+            .join(".instrukt")
+            .join("knowledge-proposals.db")
+    }
+
+    /// The lock the recordings of the company's proposal store take turns
+    /// on, beside its database.
+    pub fn knowledge_proposals_lock_file(&self, company: &ProjectSlug) -> PathBuf {
+        self.company_dir(company)
+            .join(".instrukt")
+            .join("knowledge-proposals.lock")
+    }
+
     /// `~/.instrukt/companies/<name>/secrets.env` — the company's own
     /// protected secrets.
     pub fn company_secrets_file(&self, company: &ProjectSlug) -> PathBuf {
@@ -191,6 +208,12 @@ impl Home {
     /// its confinement check can inspect the original path components.
     pub fn index_file(&self) -> PathBuf {
         self.root.join("state").join("index.yaml")
+    }
+
+    /// `~/.instrukt/rendered/` — the uncompressed copies of the global agent
+    /// files, which no agent runtime loads.
+    pub fn rendered_dir(&self) -> PathBuf {
+        self.root.join("rendered")
     }
 
     /// `~/.instrukt/state/`.
