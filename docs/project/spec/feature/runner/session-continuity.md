@@ -540,9 +540,7 @@ the runtime's standing agent lifecycle, which T3 owns.
 On SIGINT or SIGTERM, instrukt first passes the signal it received to each
 group, as a terminal passes it to the job in its foreground, so a command such
 as git releases what it holds before it ends. Whatever has not ended 5 seconds
-after the signal is then stopped. From the signal on, only this stop starts
-commands: the undo an operation registered for its own effects runs, no other
-command begins, and instrukt then ends with the signal.
+after the signal is then stopped, and instrukt ends with the signal.
 <!-- /planned:fix-interrupted-commit-git-locks -->
 
 ### T3 command translation

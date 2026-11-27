@@ -66,9 +66,14 @@ All Committizen types are allowed.
   conversation into a finished change. Where the human has not released the
   tracked change for commit, report what remains uncommitted and offer to
   commit; do not commit it, revert it, or suppress the automation.
+<!-- planned-change:fix-interrupted-commit-git-locks -->
 - Commit through `instrukt repo commit`. It stages nothing: stage the change
   with git first, or name its paths with `--only <path>...` to commit just
   those.
+<!-- change:fix-interrupted-commit-git-locks -->
+- Commit through `instrukt repo commit`. It stages nothing: stage the change
+  with `git add` first.
+<!-- /planned-change:fix-interrupted-commit-git-locks -->
 - When the human intends a full commit, first inspect the entire change set,
   then commit the full working tree as-is, with no selective scoping, under a
   clear, meaningful, intent-based commit message.
