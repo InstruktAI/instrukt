@@ -115,10 +115,9 @@ or promote whatever commit now occupies the integration branch.
 <!-- change:project-working-dirs-under-dot-instrukt -->
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
-   If `git worktree list` shows an existing integration worktree at a prior path
-   (such as `trees/_integration/`), relocate it to
-   `.instrukt/trees/_integration/` with `git worktree move` rather than creating
-   a second worktree.
+   If `git worktree list` already lists a worktree on the `integrate` branch at
+   another path, relocate it to `.instrukt/trees/_integration/` with
+   `git worktree move` rather than creating a second worktree.
 <!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 2. Compose from accepted upstream main in the integration worktree. Merge the
    finalized `<slug>/work` branch or ready one-off branch.
