@@ -148,7 +148,7 @@ impl Admitted {
         let raw_global = read(&global_path)?.map(|doc| doc.value);
         let global_layer = raw_global
             .clone()
-            .map(|raw| inspected(home, &Layer::Global, &global_path, raw))
+            .map(|raw| inspected(&Layer::Global, &global_path, raw))
             .transpose()?;
         let agents_path = home.agents_file();
         let agents_bytes = match std::fs::read(&agents_path) {
@@ -162,11 +162,7 @@ impl Admitted {
                 .into());
             }
         };
-        let agents = Arc::new(Agents::from_documents(
-            home,
-            agents_bytes,
-            raw_global.as_ref(),
-        )?);
+        let agents = Arc::new(Agents::from_documents(agents_bytes, raw_global.as_ref())?);
         let records: Vec<PublishedRecord> = PublishedRecord::load_all(home)?;
         let published = !records.is_empty();
         let mut layers = Vec::new();
@@ -179,7 +175,7 @@ impl Admitted {
             let document = record.checkout.join(super::CONFIG_FILE_NAME);
             let value = read(&document)
                 .and_then(|doc| {
-                    doc.map(|doc| inspected(home, &layer, &document, doc.value))
+                    doc.map(|doc| inspected(&layer, &document, doc.value))
                         .transpose()
                 })
                 .map_err(|error| unreadable(document.clone(), &error));
@@ -410,7 +406,7 @@ fn admit_company(
     let value = read_layer(home, &layer)
         .and_then(|found| {
             found
-                .map(|(path, doc)| inspected(home, &layer, &path, doc.value))
+                .map(|(path, doc)| inspected(&layer, &path, doc.value))
                 .transpose()
         })
         .map_err(|error| vec![unreadable(document.clone(), &error)])?;
@@ -437,7 +433,7 @@ fn admit_company(
     let project = read_layer(home, &project_layer)
         .and_then(|found| {
             found
-                .map(|(path, doc)| inspected(home, &project_layer, &path, doc.value))
+                .map(|(path, doc)| inspected(&project_layer, &path, doc.value))
                 .transpose()
         })
         .map_err(|error| vec![unreadable(project_layer.path(home), &error)])?;
@@ -821,7 +817,7 @@ mod tests {
     /// A generation with nothing in it but whether a project is published.
     fn generation(published: bool) -> Admitted {
         let home = Home::at_user_home(PathBuf::from("/nonexistent"));
-        let agents = Arc::new(Agents::from_documents(&home, None, None).unwrap());
+        let agents = Arc::new(Agents::from_documents(None, None).unwrap());
         Admitted {
             global: Configuration::from_layers(&home, None, None).unwrap(),
             global_layer: None,

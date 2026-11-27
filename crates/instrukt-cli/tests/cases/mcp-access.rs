@@ -1556,6 +1556,36 @@ fn company_admin_in_dm_can_manage_mcp_config_while_non_admin_channel_and_other_k
 
     cfg(&admin_dm_session, &["get", "--company", COMPANY, "members"]).failure();
     cfg(&admin_dm_session, &["get", "--global"]).failure();
+    let agents_get_refused = cfg(&admin_dm_session, &["get", "--agents"]).failure();
+    insta::assert_snapshot!(
+        stderr(&agents_get_refused),
+        @"instrukt: config access refused: a company-agent session cannot access `--agents`; ask in a direct message as a workspace administrator, or have the local operator run the command outside any session"
+    );
+    let absent_agents_rev = stdout(
+        &c.env
+            .run(&c.env.path(""), ["config", "get", "--agents", "--revision"])
+            .success(),
+    );
+    let agents_patch_refused = cfg(
+        &admin_dm_session,
+        &[
+            "patch",
+            "--agents",
+            "--revision",
+            absent_agents_rev.trim(),
+            "--yaml",
+            "roles: {builder: {tier: light}}\n",
+        ],
+    )
+    .failure();
+    insta::assert_snapshot!(
+        stderr(&agents_patch_refused),
+        @"instrukt: config access refused: a company-agent session cannot access `--agents`; ask in a direct message as a workspace administrator, or have the local operator run the command outside any session"
+    );
+    assert!(
+        !c.env.instrukt_home().join("agents.yaml").exists(),
+        "refused company-agent patch writes no agents.yaml"
+    );
     cfg(&admin_dm_session, &["get", "--company", "beta", "mcp"]).failure();
     cfg(&admin_dm_session, &["init", "--company", COMPANY]).failure();
 

@@ -363,12 +363,8 @@ impl Configuration {
                 ),
             });
         };
-        let value = super::_layer::inspected(
-            home,
-            &Layer::Project(checkout.into()),
-            &path,
-            document.value,
-        )?;
+        let value =
+            super::_layer::inspected(&Layer::Project(checkout.into()), &path, document.value)?;
         let global = read_usable(home, &Layer::Global)?;
         let mut config = Self::from_value(
             effective_value(global.as_ref(), Some(&value))?,
