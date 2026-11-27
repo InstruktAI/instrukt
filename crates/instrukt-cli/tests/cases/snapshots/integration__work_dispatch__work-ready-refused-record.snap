@@ -1,0 +1,33 @@
+---
+source: crates/instrukt-cli/tests/cases/work-dispatch.rs
+expression: "work::redact(&crew.todo([\"show\", \"guarded-stamp\"]))"
+---
+guarded-stamp · change · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 5
+intent:
+  Guard --work-ready to the claim-holding orchestrator.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: guarded-stamp/work; base: <commit 1>
+    worktree: [TMP]/team-guarded-stamp-work
+  planner/1: t3:planner-1
+    key: instrukt:todo:demo/<id 1>:planner:1
+    branch: guarded-stamp/work; base: <commit 1>
+    worktree: [TMP]/team-guarded-stamp-work
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+stamps:
+  none
+workspace:
+  branch: guarded-stamp/work
+  worktree: [TMP]/team-guarded-stamp-work (clean)
+  head: <commit 1>

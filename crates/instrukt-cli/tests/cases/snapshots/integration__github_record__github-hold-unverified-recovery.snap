@@ -1,0 +1,90 @@
+---
+source: crates/instrukt-cli/tests/cases/github-record.rs
+expression: "redact(&format!(\"{while_unverified}---\\n{after_labeled_recovery}---\\n{after_unlabeled_recovery}\"))"
+---
+sync-hold · change · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 4
+intent:
+  Preserve unverified hold label edits across sync_reflection.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: sync-hold/work; base: <commit 1>
+    worktree: [TMP]/team-sync-hold-work
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  log (1 version)
+    <digest 2> by session t3:lead-1 at <time>
+stamps:
+  none
+workspace:
+  branch: sync-hold/work
+  worktree: [TMP]/team-sync-hold-work (clean)
+  head: <commit 1>
+---
+sync-hold · change · active
+identity: <id 1>
+record status: held
+created: <time> by session t3:lead-1
+revision: 5
+intent:
+  Preserve unverified hold label edits across sync_reflection.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: held from GitHub by maintainer (github, by @maintainer, <time>)
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: sync-hold/work; base: <commit 1>
+    worktree: [TMP]/team-sync-hold-work
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  log (1 version)
+    <digest 2> by session t3:lead-1 at <time>
+stamps:
+  none
+workspace:
+  branch: sync-hold/work
+  worktree: [TMP]/team-sync-hold-work (clean)
+  head: <commit 1>
+---
+sync-hold · change · active
+identity: <id 1>
+record status: active
+created: <time> by session t3:lead-1
+revision: 7
+intent:
+  Preserve unverified hold label edits across sync_reflection.
+reflection: reflected to GitHub
+issue: #1
+claim: held since <time> by session t3:lead-1
+hold: none
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: sync-hold/work; base: <commit 1>
+    worktree: [TMP]/team-sync-hold-work
+released holds:
+  held from GitHub by maintainer (released <time> by @maintainer)
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+  log (2 versions)
+    <digest 2> by session t3:lead-1 at <time>
+    <digest 3> by session t3:lead-1 at <time>
+stamps:
+  none
+workspace:
+  branch: sync-hold/work
+  worktree: [TMP]/team-sync-hold-work (clean)
+  head: <commit 1>
