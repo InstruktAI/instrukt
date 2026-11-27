@@ -198,8 +198,7 @@ pub enum ClaimOutcome {
 /// session's own command, not a runner write.
 pub trait Claims: Send + Sync {
     /// Records the claim on `todo` for `claimant` in this computer's record,
-    /// then flushes its reflection; the outcome never waits on GitHub's
-    /// answer.
+    /// marking reflection pending; the runner's reflection pass reflects it.
     fn record_claim(
         &self,
         project: &ProjectRef,
@@ -207,8 +206,8 @@ pub trait Claims: Send + Sync {
         claimant: &Claimant,
     ) -> Result<ClaimOutcome, WorkInterfaceError>;
 
-    /// Releases `claimant`'s claim on `todo` and reflects the release
-    /// (`work-dispatch`, "Agent selection": an exhausted agent order
+    /// Releases `claimant`'s claim on `todo` locally, marking reflection
+    /// pending (`work-dispatch`, "Agent selection": an exhausted agent order
     /// releases the runner's own claim). Only the holder on this computer
     /// may release; any other claimant is refused.
     fn release_claim(
@@ -327,13 +326,6 @@ pub trait SessionBindings: Send + Sync {
         ) -> Result<(), crate::state::StateError>,
     ) -> Result<(), WorkInterfaceError>;
 
-    /// Retry reflection after local replacement acceptance has committed.
-    fn reflect_dispatch_replacement(
-        &self,
-        project: &ProjectRef,
-        key: &str,
-    ) -> Result<(), WorkInterfaceError>;
-
     /// Commit the accepted assignment and optional occurrence stamp together.
     fn record_dispatch(
         &self,
@@ -366,15 +358,21 @@ pub struct ReflectionReport {
     pub pending: Vec<TodoSlug>,
 }
 
-/// The tick's reflection pass (`work-dispatch`, "Execution contract";
-/// `github-record`, "Reading GitHub" and "Writer and convergence").
+/// One tick's reflection pass (`work-dispatch`, `github-record`, `github-apps`):
+/// inbound reads before pickup and outbound reflection after, preserving pass
+/// credentials and command-wide failure state without holding `reflection.lock`
+/// across pickup.
+pub trait ReflectionPass {
+    fn pull_inbound(&mut self) -> Result<(), WorkInterfaceError>;
+    fn sync_reflection(self: Box<Self>) -> Result<ReflectionReport, WorkInterfaceError>;
+}
+
+/// The tick's reflection pass factory (`work-dispatch`, `github-record`).
 pub trait Reflection: Send + Sync {
-    /// Reads people's controls on the issues of this computer's live todos,
-    /// with conditional requests, then flushes pending reflection. What a
-    /// tick's reflection publishes is work's. An unreachable GitHub is a
-    /// report, not an error.
-    fn sync_reflection(&self, project: &ProjectRef)
-    -> Result<ReflectionReport, WorkInterfaceError>;
+    fn begin_pass<'a>(
+        &'a self,
+        project: &ProjectRef,
+    ) -> Result<Box<dyn ReflectionPass + 'a>, WorkInterfaceError>;
 }
 
 // ---------------------------------------------------------------------

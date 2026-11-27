@@ -12,7 +12,7 @@ use instrukt_runner::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::_session::{LockWait, Session};
+use super::_session::Session;
 use super::{Attempt, Binding, Outcome, TodoRecord, Work, WorkError};
 use crate::evidence::{PreparationReview, TodoStatus, artifact_names};
 
@@ -115,7 +115,7 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
     }
     Ok(())
 }
-/// Whether `assignment`, just reserved on item `index` and flushed, may be
+/// Whether `assignment`, just reserved on item `index`, may be
 /// returned with `dispatch_allowed`: the row the state database holds now,
 /// never the session's copy, must still stand on the calling
 /// orchestrator's claim, active and unheld, with the reservation unbound,
@@ -436,7 +436,6 @@ impl Work {
                     }
                     Ok(())
                 })?;
-                s.flush(LockWait::No)?;
                 dispatch_admitted(&s, index, &result)?;
             }
             return Ok(ReservedAttempt {
@@ -562,7 +561,6 @@ impl Work {
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         dispatch_admitted(&s, index, &assignment)?;
         Ok(ReservedAttempt {
             assignment,
@@ -666,7 +664,6 @@ impl Work {
             b.session = Some(session.clone());
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
     pub fn resolve_native_attempt(
@@ -771,7 +768,6 @@ impl Work {
             s.items[index].record.bindings[pos] = next.clone();
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: next,
             reflection: s.status(index),
@@ -1652,10 +1648,7 @@ impl Work {
         } = *request;
         let mut s = Session::open(self, project)?;
         let index = match s.find(todo, true) {
-            Some(index) => {
-                s.pull_through(index)?;
-                index
-            }
+            Some(index) => index,
             None => s.enter(todo)?,
         };
         let machine = s.machine()?;
@@ -1731,7 +1724,6 @@ impl Work {
                 binding.attempt.released_at = None;
                 Ok(())
             })?;
-            s.flush(LockWait::No)?;
         }
         if admission == Admission::Place {
             let now = s.now;
@@ -1767,7 +1759,6 @@ impl Work {
                 });
                 Ok(())
             })?;
-            s.flush(LockWait::No)?;
         }
         let selection = if admitted {
             None

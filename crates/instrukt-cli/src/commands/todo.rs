@@ -505,11 +505,10 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 impl TodoCommand {
     /// Whether the command can change the work record, and so be followed
     /// by approval attention: every command but the reads of the local
-    /// record alone. `show` refreshes from GitHub, where an approver's
-    /// command can be recorded.
+    /// record alone (`list`, `show`, and `artifacts list|read|diff`).
     fn can_change_the_record(&self) -> bool {
         match self {
-            TodoCommand::List(_) => false,
+            TodoCommand::List(_) | TodoCommand::Show(_) => false,
             TodoCommand::Artifacts(args) => match &args.command {
                 ArtifactsCommand::List { .. }
                 | ArtifactsCommand::Read { .. }
@@ -517,7 +516,6 @@ impl TodoCommand {
                 ArtifactsCommand::Write { .. } => true,
             },
             TodoCommand::Create(_)
-            | TodoCommand::Show(_)
             | TodoCommand::Update(_)
             | TodoCommand::Freeze(_)
             | TodoCommand::Unfreeze(_)
@@ -1173,12 +1171,6 @@ fn render_view(
         }
     }
     out.push(format!("reflection: {}", reflection_word(&view.reflection)));
-    if let instrukt_todos::work::GitHubRead::NotRead(reason) = &view.github {
-        out.push(format!(
-            "GitHub not read ({}): shown as this computer records it; what people did on the issue since its last read is applied by the next read",
-            describe(reason)
-        ));
-    }
     if let Some(issue) = view.issue {
         out.push(format!("issue: #{issue}"));
     }
