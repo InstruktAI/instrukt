@@ -897,37 +897,16 @@ impl Work {
         s.commit_with("stamped", |s| {
             let record = &mut s.items[index].record;
             if let StampFact::DiagnosisUnresolved { reason, .. } = &stamp.fact {
-                if let Some(previous) = record.hold.take() {
-                    record.hold_history.push(ReleasedHold {
-                        hold: previous,
-                        released: now,
-                        by: actor.clone(),
-                    });
-                }
-                record.hold = Some(HoldRecord {
-                    source: HoldSource::Automatic,
-                    reason: format!("diagnosis unresolved: {reason}"),
-                    by: actor.clone(),
-                    at: now,
-                });
+                replace_automatic_hold(record, format!("diagnosis unresolved: {reason}"), &actor, now);
             }
             if matches!(stamp.fact, StampFact::WorkReady {}) {
-                if let Some(previous) = record.hold.take() {
-                    record.hold_history.push(ReleasedHold {
-                        hold: previous,
-                        released: now,
-                        by: actor.clone(),
-                    });
-                }
-                record.hold = Some(HoldRecord {
-                    source: HoldSource::Automatic,
-                    reason: format!(
-                        "work waits for its deliberate start (runner.autostart is off for {})",
-                        record.kind
-                    ),
-                    by: actor.clone(),
-                    at: now,
-                });
+                let kind = record.kind;
+                replace_automatic_hold(
+                    record,
+                    format!("work waits for its deliberate start (runner.autostart is off for {kind})"),
+                    &actor,
+                    now,
+                );
             }
             if resolved.branch.is_some() {
                 record.branch = resolved.branch;
@@ -1936,6 +1915,29 @@ fn order(entries: Vec<ListEntry>) -> Vec<ListEntry> {
         .collect()
 }
 
+/// Replaces any standing hold on `record` with an automatic hold, recording
+/// the prior hold in `hold_history` with `actor` and `now`.
+fn replace_automatic_hold(
+    record: &mut TodoRecord,
+    reason: String,
+    actor: &Actor,
+    now: jiff::Timestamp,
+) {
+    if let Some(previous) = record.hold.take() {
+        record.hold_history.push(ReleasedHold {
+            hold: previous,
+            released: now,
+            by: actor.clone(),
+        });
+    }
+    record.hold = Some(HoldRecord {
+        source: HoldSource::Automatic,
+        reason,
+        by: actor.clone(),
+        at: now,
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2254,6 +2256,62 @@ mod tests {
                 &ArtifactName::new(artifact_names::IMPLEMENTATION_PLAN)
             ),
             vec![cur_owned]
+        );
+    }
+
+    #[test]
+    fn replace_automatic_hold_sets_automatic_hold_and_records_prior_release() {
+        let mut rec = record("demo", 1, &[]);
+        let first_actor = Actor::Person {
+            name: "alice".into(),
+        };
+        let first_time = jiff::Timestamp::from_second(100).unwrap();
+        replace_automatic_hold(
+            &mut rec,
+            "first automatic hold".into(),
+            &first_actor,
+            first_time,
+        );
+        assert_eq!(
+            rec.hold,
+            Some(HoldRecord {
+                source: HoldSource::Automatic,
+                reason: "first automatic hold".into(),
+                by: first_actor.clone(),
+                at: first_time,
+            })
+        );
+        assert!(rec.hold_history.is_empty());
+
+        let second_actor = Actor::Person { name: "bob".into() };
+        let second_time = jiff::Timestamp::from_second(200).unwrap();
+        replace_automatic_hold(
+            &mut rec,
+            "second automatic hold".into(),
+            &second_actor,
+            second_time,
+        );
+        assert_eq!(
+            rec.hold,
+            Some(HoldRecord {
+                source: HoldSource::Automatic,
+                reason: "second automatic hold".into(),
+                by: second_actor.clone(),
+                at: second_time,
+            })
+        );
+        assert_eq!(
+            rec.hold_history,
+            vec![ReleasedHold {
+                hold: HoldRecord {
+                    source: HoldSource::Automatic,
+                    reason: "first automatic hold".into(),
+                    by: first_actor,
+                    at: first_time,
+                },
+                released: second_time,
+                by: second_actor,
+            }]
         );
     }
 }
