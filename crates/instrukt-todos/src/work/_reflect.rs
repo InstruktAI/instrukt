@@ -179,7 +179,10 @@ pub(crate) fn read_events(
 /// Writes the item's pending changes to GitHub: its issue, any artifact
 /// versions not yet uploaded and the issue's visible fields; then the
 /// linked pull request and the board. No comment is read or written: the
-/// record lives on this computer only.
+/// record lives on this computer only. When `preserve_remote_hold` is true,
+/// the `"hold"` label on GitHub is preserved as-is rather than overwritten
+/// from the local record (so unread or unverified collaborator label events
+/// are never reverted).
 pub(crate) fn flush(
     gh: &GitHub,
     item: &mut LocalItem,
@@ -187,6 +190,7 @@ pub(crate) fn flush(
     base: &str,
     board: Option<&BoardRef>,
     needs_you: bool,
+    preserve_remote_hold: bool,
 ) -> Result<(), GitHubError> {
     if item.reflection.pending {
         let Some(issue) = ensure_issue(gh, item)? else {
@@ -197,13 +201,16 @@ pub(crate) fn flush(
         };
         upload_artifacts(gh, item, issue)?;
         let mut fields = _envelope::issue(&item.record);
+        if preserve_remote_hold {
+            fields.labels.retain(|l| l != "hold");
+        }
         let snapshot = gh.read(&format!("/issues/{}", issue.number))?;
         if let Some(labels) = snapshot["labels"].as_array() {
             fields.labels.extend(
                 labels
                     .iter()
                     .filter_map(|l| l["name"].as_str())
-                    .filter(|l| !output_label(l))
+                    .filter(|l| !output_label(l) || (preserve_remote_hold && *l == "hold"))
                     .map(str::to_owned),
             );
         }
@@ -917,6 +924,9 @@ fn encode(text: &str) -> String {
     out
 }
 
+/// Labels written from the work record on reflection. `"hold"` reflects any
+/// active dispatch hold; `"on-hold"` stays in the set so the next flush
+/// strips the retired label from existing issues.
 pub(crate) fn output_label(label: &str) -> bool {
     matches!(
         label,
@@ -930,6 +940,7 @@ pub(crate) fn output_label(label: &str) -> bool {
             | "status:structural_holder"
             | "status:delivered"
             | "status:removed"
+            | "hold"
             | "on-hold"
     ) || label == TODO_LABEL
 }

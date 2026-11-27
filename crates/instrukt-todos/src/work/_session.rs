@@ -113,6 +113,10 @@ pub(crate) struct Session<'w> {
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
     pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
+    /// Todos whose label events stayed unread or outstanding during this
+    /// session's pull-through; `flush` preserves GitHub's `"hold"` label for
+    /// them rather than overwriting unverified collaborator actions.
+    hold_events_outstanding: std::collections::BTreeSet<TodoId>,
 }
 
 impl<'w> Session<'w> {
@@ -178,6 +182,7 @@ impl<'w> Session<'w> {
             docs_changed: Vec::new(),
             board_setup_failure: None,
             pending_transfer: None,
+            hold_events_outstanding: std::collections::BTreeSet::new(),
         };
         session.purge()?;
         Ok(session)
@@ -331,8 +336,32 @@ impl<'w> Session<'w> {
             return Ok(());
         }
         let events = self.answer_label_actions(index)?;
+        let (events_page, events_last, events_outstanding) = match &events {
+            Some(events) => {
+                let reflection = &self.items[index].reflection;
+                let (page, last) = super::_positions::next_events_position(
+                    (reflection.events_page, reflection.events_last),
+                    events,
+                );
+                (
+                    page,
+                    last,
+                    events.iter().any(|(_, _, outstanding)| *outstanding),
+                )
+            }
+            None => (
+                self.items[index].reflection.events_page,
+                self.items[index].reflection.events_last,
+                true,
+            ),
+        };
+        if events_outstanding {
+            self.hold_events_outstanding.insert(id.clone());
+        } else {
+            self.hold_events_outstanding.remove(&id);
+        }
         self.answer_commands(index)?;
-        self.restore_output_labels(index, &fresh.issue)?;
+        self.restore_output_labels(index, &fresh.issue, events_outstanding)?;
         let seen = &self.items[index].reflection.commands_seen;
         let comments: Vec<(Timestamp, bool)> = fresh
             .comments
@@ -347,20 +376,6 @@ impl<'w> Session<'w> {
             &comments,
         )
         .map(|at| at.to_string());
-        let (events_page, events_last, events_outstanding) = match &events {
-            Some(events) => {
-                let (page, last) = super::_positions::next_events_position(
-                    (held.events_page, held.events_last),
-                    events,
-                );
-                (
-                    page,
-                    last,
-                    events.iter().any(|(_, _, outstanding)| *outstanding),
-                )
-            }
-            None => (held.events_page, held.events_last, true),
-        };
         let outstanding =
             events_outstanding || comments.iter().any(|(_, outstanding)| *outstanding);
         let etag = (!outstanding).then_some(fresh_etag).flatten();
@@ -597,13 +612,22 @@ impl<'w> Session<'w> {
     }
 
     /// Marks item `index` pending when `snapshot`, its issue as just read,
-    /// carries other output labels than the record shows.
+    /// carries other output labels than the record shows. While label events
+    /// are unread or awaiting actor verification (`events_outstanding`),
+    /// `"hold"` is excluded from both sides so an unverified collaborator edit
+    /// is never queued for overwrite.
     fn restore_output_labels(
         &mut self,
         index: usize,
         snapshot: &serde_json::Value,
+        events_outstanding: bool,
     ) -> Result<(), WorkError> {
         let expected = super::_envelope::issue(&self.items[index].record).labels;
+        let expected_set: std::collections::BTreeSet<&str> = expected
+            .iter()
+            .map(String::as_str)
+            .filter(|l| !(events_outstanding && *l == "hold"))
+            .collect();
         let actual = snapshot["labels"]
             .as_array()
             .map(|labels| {
@@ -611,10 +635,11 @@ impl<'w> Session<'w> {
                     .iter()
                     .filter_map(|l| l["name"].as_str())
                     .filter(|l| super::_reflect::output_label(l))
+                    .filter(|l| !(events_outstanding && *l == "hold"))
                     .collect::<std::collections::BTreeSet<_>>()
             })
             .unwrap_or_default();
-        if actual != expected.iter().map(String::as_str).collect() {
+        if actual != expected_set {
             self.amend(index, |reflection| reflection.pending = true)?;
         }
         Ok(())
@@ -667,7 +692,9 @@ impl<'w> Session<'w> {
     /// `issue`; `false` while it stays outstanding: its actor's access
     /// could not be verified, GitHub stopped answering, or the todo's
     /// record changed or its withdrawal opened before the outcome was
-    /// recorded.
+    /// recorded. Actions attributed to a configured instrukt App bot
+    /// (verified via `Bot::matches`) are recorded as ignored output without
+    /// changing `record.hold` or checking write access.
     fn answer_label_action(
         &mut self,
         index: usize,
@@ -703,6 +730,21 @@ impl<'w> Session<'w> {
                 return Ok(true);
             }
         };
+        if self
+            .config
+            .github_apps()?
+            .values()
+            .any(|app| app.bot.matches(&action["actor"]))
+        {
+            return self.store.ignore_label(
+                &self.items[index].record,
+                issue.number,
+                id,
+                kind,
+                login,
+                at,
+            );
+        }
         let permission = match &self.remote {
             Remote::Client { gh, down: None } => gh.can_write(login),
             _ => return Ok(false),
@@ -1429,6 +1471,7 @@ impl<'w> Session<'w> {
                         )
                     },
                 )?;
+                let preserve_remote_hold = self.hold_events_outstanding.contains(&id);
                 let result = match &self.remote {
                     Remote::Client { gh, down: None } => Some(_reflect::flush(
                         gh,
@@ -1437,6 +1480,7 @@ impl<'w> Session<'w> {
                         &self.base,
                         board.as_ref(),
                         needs_you,
+                        preserve_remote_hold,
                     )),
                     _ => None,
                 };

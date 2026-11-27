@@ -125,7 +125,7 @@ pub(crate) fn issue(record: &TodoRecord) -> IssueFields {
         format!("status:{}", status_name(record.status)),
     ];
     if record.hold.is_some() {
-        labels.push("on-hold".to_owned());
+        labels.push("hold".to_owned());
     }
     let (closed, state_reason) = match record.status {
         TodoStatus::Delivered => (true, "completed"),
