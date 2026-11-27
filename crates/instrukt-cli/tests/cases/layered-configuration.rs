@@ -356,7 +356,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     env.run(repo.path(), ["config", "validate", "--company", "acme"])
         .success();
     let converted: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&std::fs::read_to_string(company.join("instrukt.yaml")).unwrap())
+        serde_yaml_ng::from_str(&std::fs::read_to_string(company.join("company.yaml")).unwrap())
             .unwrap();
     assert!(converted["members"]["alex"].get("slack").is_none());
     assert_eq!(

@@ -724,7 +724,7 @@ pub(super) fn repository_sources(
         });
     }
     let project = match root {
-        RootDocument::ProjectLayer(project) => project,
+        RootDocument::ProjectLayer { slug, .. } => slug,
         _ => None,
     };
     let corpus = Corpus::from_sources(project.clone(), None, view.doc_sources());

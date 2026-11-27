@@ -40,20 +40,23 @@ what its caller does with the outcome.
   at most 4096.
 
 **Unavailable**
-: The endpoint cannot be reached, gives no complete answer within
-  `screening.timeout`, or answers with an unsuccessful status other than 400,
-  413 and 422. A 401, 403, 404, 429 or 5xx is unavailability: a rejected key,
-  an unknown model, a rate, quota or spend limit, an overload.
+: The outside gate (`project/instrukt/design/architecture/outside-gate`) judges
+  the try temporarily unavailable: HTTP's standard transport and status rules
+  (`408`, `425`, `429`, `5xx`, unreachable, timed out) plus screening's service
+  rules for endpoint refusals and missing models (`401`, `402`, `403` at
+  endpoint scope; `404` at model key).
 
 **Rejected**
-: The endpoint answers 400, 413 or 422, as for a request too large for the
-  model. A rejected request has no answer of its shape: a call is refused and
-  a screening holds the text.
+: The endpoint answers `400`, `413` or `422`, as for a request too large for
+  the model — not temporary unavailability under the outside gate. A rejected
+  request has no answer of its shape: a call is refused and a screening holds
+  the text. Any other non-temporary `4xx` or client/protocol failure returns
+  from the outside gate as a defect without retrying and releases nothing.
 
 **Waiting**
-: The state of a call or screening whose endpoint is unavailable: its command
-  tries again until the endpoint answers, and neither refuses, releases nor
-  holds anything because of the unavailability.
+: The state of a call or screening while the outside gate waits out an
+  unavailable endpoint and tries again until it answers; nothing is refused,
+  released or held because of the unavailability.
 
 **Fragment**
 : Between three and eight consecutive words of a text, words being the runs
@@ -98,31 +101,39 @@ what its caller does with the outcome.
 ## Ownership boundary
 
 - **Owns:** the request a capability-free call sends and what makes an answer
-  acceptable; which endpoint answers are unavailability and which are
-  rejection; waiting and trying again; fragments, the shuffle, the
-  classification instruction and count, the verdict vocabulary and the
-  release-or-hold decision; held texts, their store and lifecycle; that a held
-  text reaches only a caller outside any session, and that only such a caller
-  discards one.
+  acceptable; screening's service rules for what endpoint answers count as
+  temporary unavailability beyond HTTP's standard rules, and which answers are
+  request rejection; fragments, the shuffle, the classification instruction and
+  count, the verdict vocabulary and the release-or-hold decision; held texts,
+  their store and lifecycle; that a held text reaches only a caller outside any
+  session, and that only such a caller discards one.
 - **Does not own:** the `screening` settings' layer, validation and secret
-  resolution (`project/instrukt/spec/domain/configuration`); recognising the
-  caller, which the CLI does through core's caller-identity lookup and passes
-  to screening as a session or a caller outside any session; which text is
-  untrusted, who is outside and bringing a held text before a responsible
-  person, which belong to each consumer; command admission and its action
-  catalog (`project/instrukt/spec/feature/configuration/roles-and-capabilities`).
+  resolution (`project/instrukt/spec/domain/configuration`); standard HTTP
+  status semantics, `Retry-After` reading, backoff schedules, per-key wait
+  state and operator wait reporting, which belong to the outside gate
+  (`project/instrukt/design/architecture/outside-gate`), constructed by the
+  host and handed down; recognising the caller, which the CLI does through
+  core's caller-identity lookup and passes to screening as a session or a
+  caller outside any session; which text is untrusted, who is outside and
+  bringing a held text before a responsible person, which belong to each
+  consumer; command admission and its action catalog
+  (`project/instrukt/spec/feature/configuration/roles-and-capabilities`).
 - **Published contracts:** `instrukt screening call --shape <file>
   [--max-tokens <n>] <prompt-file|->`, `instrukt screening screen
   <file|->`, `instrukt screening show <reference>`, `instrukt screening list`
   and `instrukt screening discard <reference>`, each with `--json`; the call
   and the screening as functions of `instrukt-screening`, each taking the
-  caller and returning its outcome when the endpoint has answered.
+  caller and the host's outside gate (with a stop check) and returning its
+  outcome once the endpoint has answered.
 - **Allowed dependencies:** configuration supplies the effective `screening`
   settings and resolves the key reference; core supplies the caller-identity
-  lookup the CLI reads. The relationships are in the context map position
+  lookup the CLI reads; the outside gate (`instrukt-outside`) supplies outage
+  judgment, wait pacing and operator wait reporting, constructed by the host
+  and handed down. The context relationships are in the context map position
   below.
 - **Implementation roots:** `crates/instrukt-screening/`, which depends on
-  `instrukt-core`; `instrukt-cli` wires it.
+  `instrukt-core` and `instrukt-outside`; `instrukt-cli` wires it and
+  constructs the outside gate.
 
 ## Canonical fields
 
@@ -149,13 +160,17 @@ what its caller does with the outcome.
 
 ### What a caller waits for
 
-A call or screening returns its outcome once the endpoint has answered. While
-the endpoint is unavailable the command waits: it tries again after 5 seconds,
-doubling the pause up to 60 seconds, for as long as it runs. Each try waits at
-most `screening.timeout`. Standard error shows that it waits, why and since
-when, and the log records when it starts waiting and when the endpoint answers
-again. A caller that stops the command while it waits receives nothing, and
-nothing of its text is kept.
+A call or screening returns its outcome once the endpoint has answered. Every
+try to the endpoint runs with the HTTP client's own retries disabled, bounded
+by `screening.timeout`, and brings its outcome through the host's outside gate
+(`project/instrukt/design/architecture/outside-gate`,
+`project/instrukt/policy/checks-and-guards`), using the gate's waiting call
+until the endpoint returns, screening's service rules, and the gate's default
+backoff. Standard HTTP status semantics, `Retry-After`, pause pacing, and one
+report per wait to the command's log and foreground standard error are the
+outside gate's; screening keeps no backoff schedule, `Retry-After` reading or
+wait reporting of its own. A caller that stops the command while it waits
+receives nothing, and nothing of its text is kept.
 
 | Operation | Returns |
 | --- | --- |
@@ -223,6 +238,11 @@ This context emits no events.
 
 - `project/instrukt/design/architecture/overview` — the crate, the held-text
   store in the home and the model endpoint as an external surface.
+- `project/instrukt/design/architecture/outside-gate` — the outside gate
+  through which screening judges endpoint unavailability, paces retries and
+  reports waits to the operator.
+- `project/instrukt/policy/checks-and-guards` — entry-check gating, single
+  retry layer through the outside gate, and held-text migration.
 
 ## Context map position
 
@@ -234,6 +254,10 @@ This context emits no events.
   caller outside any session.
 - **screening → CLI admission — Published language:** the action `screening`
   in the code-owned catalog.
+- **Configured model endpoint — Anti-corruption layer:** translates the
+  configured OpenAI-compatible chat-completions endpoint into capability-free
+  calls, bringing every try through the outside gate
+  (`project/instrukt/design/architecture/outside-gate`).
 
 ## Known caveats
 

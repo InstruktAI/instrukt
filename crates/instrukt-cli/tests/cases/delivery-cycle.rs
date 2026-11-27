@@ -717,10 +717,9 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
     crew.write(slug, "prd-review-findings", "PRD reviewed and approved.");
     crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
 
-    // Invariant 3: without human PRD approval, builder, fixer, finalizer, and --finalize-ready are refused.
+    // Invariant 3: without human PRD approval, builder, finalizer, and --finalize-ready are refused.
     for (role, proc_id) in [
         ("builder", "crew/procedure/build"),
-        ("fixer", "crew/procedure/fix"),
         ("finalizer", "crew/procedure/finalize"),
     ] {
         let refused = crew

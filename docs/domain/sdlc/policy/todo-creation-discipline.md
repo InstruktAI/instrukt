@@ -228,7 +228,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **A worker's observation is decided by the session that governs it.** A
   worker is a session executing one job for a governing session it reports back to: a
-  builder, reviewer, verifier, diagnosis peer, fixer, or finalizer. What it notices
+  builder, reviewer, verifier, diagnosis peer, or finalizer. What it notices
   outside that job reaches the governing session as an observation — what it
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides

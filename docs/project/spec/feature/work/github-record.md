@@ -142,7 +142,7 @@ moved where the local one cannot fast-forward it is reported with the todo
 as the reason its publication is outstanding, and is left as it is. An
 unreachable remote leaves the publication pending for the next flush; it
 delays the publication and never the work. Commits land on the branch as
-before: the builder, the fixer and the lifecycle's own pushes are unchanged,
+before: the builder's and the lifecycle's own pushes are unchanged,
 and a push of a head the remote already holds changes nothing.
 
 Repository implementation has a linked pull request during its build and
@@ -460,7 +460,7 @@ And it links the todo's review findings artifact
 
 ```gherkin
 Given a developer's repository todo is being built and reviewed on their computer
-When a builder or a fixer lands a commit on the todo's branch
+When a builder lands a commit on the todo's branch
 Then the commit is on the todo's branch on GitHub
 And the todo's pull request is open and shows it
 But when GitHub cannot be reached

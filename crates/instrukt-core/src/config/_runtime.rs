@@ -159,7 +159,7 @@ impl std::fmt::Display for WorkflowCapability {
 /// Agent actions as `(name, contract)`: the contract is the one line the
 /// configuration schema prints for the action; its execution wording lives
 /// only in configuration data.
-pub(crate) const ACTIONS: [(&str, &str); 14] = [
+pub(crate) const ACTIONS: [(&str, &str); 15] = [
     (
         "dispatch",
         "Delegate this agent's worker with shared isolation in the parent's recorded workspace.",
@@ -178,7 +178,11 @@ pub(crate) const ACTIONS: [(&str, &str); 14] = [
     ),
     (
         "inspect_thread",
-        "Inspect an identified thread or own child's state or result.",
+        "Inspect an identified thread or own child's state or result; a scheduled reply check permits inspecting a running child.",
+    ),
+    (
+        "schedule_check",
+        "Set, update or clear this agent's one scheduled reply check through the runtime's scheduler, at the interval the agent supplies.",
     ),
     (
         "look_around",

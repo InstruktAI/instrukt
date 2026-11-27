@@ -186,7 +186,7 @@ orchestrator's native evidence, not a recorded fact.
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
-`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
+`approvals.prd` checks apply (`builder` and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
 current shared `<slug>/work` head. Whether the reserved round starts a fresh
 worker or continues the role's prior session, and the order of the
@@ -219,7 +219,7 @@ listings supply no such evidence. A workspace mismatch stays a visible binding
 gap; resolve that assignment before admitting work.
 
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
-`planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
+`planner`, reviewers) and delivery roles (`builder`, `build-reviewer`,
 `verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
 outstanding workspace-role attempt at a time (`task-preparer` runs without a
 worktree on `kind: task`). Completion stamps release writing
@@ -451,6 +451,16 @@ When that role's further round is assigned to the same worker
 Then the further round is recorded on that worker's conversation, where its earlier context lives
 And each round's evidence is attributed to its own round
 And the earlier round's record stays as it was
+```
+
+### UC-TD14: A worker bound in one role is not bound to another
+
+```gherkin
+Given a developer's todo whose worker is bound to an attempt of one role
+When the orchestrator binds that worker's session to a reserved attempt of another role
+Then the binding is refused, naming the attempt that session holds and that the reserved attempt binds a new session
+And the reserved attempt stays outstanding and unbound
+And that worker's instrukt commands still run in the role it holds
 ```
 
 ## Known caveats

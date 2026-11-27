@@ -19,12 +19,17 @@ visibility: 'public'
 - A required read names only what the snippet needs beyond the closure of its
   other required reads. A read another read already implies is a validation
   finding that names the read implying it.
+- References run upward only, from a specific body toward the generic one. In
+  Required reads, a bare domain read included, and in See Also, a `general`
+  snippet names only `general`; a domain snippet names only its own domain
+  and `general`, never another domain; a project snippet names its own
+  project, `general` and any domain, never another project. An `index.yaml`
+  names only its own position's snippets
+  (`general/spec/snippet-authoring-schema`).
 - A published snippet never references project material, neither as a Required
   read nor as a citation. It states the general contract. How one project realizes
   that contract lives in the project's own snippets, which agents working
   there load themselves.
-- A project snippet references its own project's snippets or published ones,
-  never another project's snippets.
 - A placeholder pattern that names the reader's own project — `project/<slug>/…`
   where `<slug>` is the reader's project — is a pattern, not a reference, and may
   appear in any snippet.
@@ -69,6 +74,12 @@ visibility: 'public'
   own. A citation into project material is a dead end for every other reader, and
   it ties the general contract to one project's implementation. The dependency runs
   from the specific toward the general, never the reverse.
+- Each body stands on its own. `general` is read on every computer, and a
+  domain is published as one unit by one owner and adopted independently of
+  its siblings: a reference from `general` into a domain, or from one domain
+  into another, either pulls that domain's doctrine into readers that never
+  chose it or dead-ends where it is not adopted. Copying `general` into a
+  domain instead would be duplication, so a domain points up at `general`.
 - Soft references prevent third-party docs from being auto-included in agent context.
 - A rule stated in two snippets is two rules to a reader: each wording is read
   as possibly distinct, and the copies drift until they contradict. The gist
@@ -85,13 +96,14 @@ visibility: 'public'
 ## Enforcement
 
 - Static Required reads must appear in a `Required reads` section immediately after the H1 title.
-- Validation reports a Required read that is not a known id or domain, and a read another read's closure already implies.
+- Validation reports a Required read that is not a known id or domain, a read another read's closure already implies, and a Required read or See Also entry against the reference direction.
 - Soft references must appear in a `See also` section at the bottom.
 - Reviewers treat a restated rule whose owner is another snippet as a finding and
   replace it with a citation.
 - A change to a snippet extends reference review to the whole of that snippet:
-  the reviewer checks every citation in it, touched or not, and fixes are
-  limited to the citations themselves — never the snippet's own content.
+  its author checks every citation in it before committing, and the reviewer
+  checks them again, touched or not. Fixes are limited to the citations
+  themselves — never the snippet's own content.
 - A change to what a snippet establishes extends reference review to the
   snippets that cite it: its author finds them by its id, and the reviewer
   checks that each citation still holds against the changed owner.

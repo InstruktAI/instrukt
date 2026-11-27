@@ -93,6 +93,16 @@ pub enum DocDomain {
     Project,
 }
 
+impl DocDomain {
+    /// The position a snippet of this domain stands in.
+    pub fn position(&self) -> Position {
+        match self {
+            DocDomain::Published(domain) => Position::of_domain(domain),
+            DocDomain::Project => Position::Project,
+        }
+    }
+}
+
 impl fmt::Display for DocDomain {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -125,6 +135,16 @@ pub enum BaselineOwner {
     Domain(DomainName),
     /// `docs/project/baseline.md`.
     Project,
+}
+
+impl BaselineOwner {
+    /// The position the manifest stands in.
+    pub fn position(&self) -> Position {
+        match self {
+            BaselineOwner::Domain(domain) => Position::of_domain(domain),
+            BaselineOwner::Project => Position::Project,
+        }
+    }
 }
 
 /// Why a Markdown file under `docs/` yields no identity.

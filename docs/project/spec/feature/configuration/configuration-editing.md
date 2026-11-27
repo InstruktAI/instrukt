@@ -1,5 +1,5 @@
 ---
-description: Creating, reading and changing `instrukt.yaml` through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
+description: Creating, reading and changing instrukt's configuration documents through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
 ---
 
 # Configuration Editing — Spec
@@ -169,6 +169,12 @@ requires an authenticated administrator speaking in a direct message:
   `instrukt secrets` or `instrukt config`.
 - The local operator outside any session retains full access to every layer
   and key.
+- The recorded assignment alone confines a session, for `instrukt config` and
+  `instrukt secrets` alike. A session whose assignment names no company is
+  served as any other caller wherever it works, a company's home included,
+  and a company conversation's session is recognised from its first command
+  (`project/instrukt/spec/domain/company`, the conversation assignment
+  lookup).
 
 ## Use cases
 

@@ -1216,7 +1216,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .unwrap();
     // The home's document was written by an older instrukt, and it orders
     // its sessions' profiles.
-    let document = company.join("instrukt.yaml");
+    let document = company.join("company.yaml");
     let older = instrukt_core::config::COMPANY_SCHEMA_VERSION - 1;
     let profile = instrukt_core::ids::ProfileName::parse("antigravity").unwrap();
     std::fs::write(

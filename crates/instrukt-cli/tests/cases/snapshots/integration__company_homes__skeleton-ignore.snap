@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "on_main(&env, &remote, path)"
+---
+/company.yaml
+/secrets.env
+/projects/
+/.instrukt/

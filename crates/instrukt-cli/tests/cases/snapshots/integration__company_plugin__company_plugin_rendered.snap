@@ -2,10 +2,9 @@
 source: crates/instrukt-cli/tests/cases/company-plugin.rs
 expression: printed(&rendered)
 ---
-plugins/acme: version 0.1.0
-plugins/acme/skills/acme/SKILL.md: written
-plugins/acme/skills/acme/references/systems.md: written
-plugins/acme/skills/acme/references/teams/contracts.md: written
-plugins/acme/skills/acme/references/teams/suppliers.md: written
-plugins/acme/.claude-plugin/plugin.json: written
+skills/acme: version 0.1.0
+skills/acme/SKILL.md: written
+skills/acme/references/systems.md: written
+skills/acme/references/teams/contracts.md: written
+skills/acme/references/teams/suppliers.md: written
 .claude-plugin/marketplace.json: written

@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "scrubbed(&env, &stderr(&refused))"
+---
+instrukt: the company's home [TMP]/home/.instrukt/companies/acme exists, so nothing was changed in it or on GitHub; a home is never adopted or overwritten. If an earlier `instrukt init --company` was cut short after moving it into place, run `instrukt sync` in it

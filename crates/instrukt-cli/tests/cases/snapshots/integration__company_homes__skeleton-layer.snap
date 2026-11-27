@@ -1,0 +1,12 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "on_main(&env, &remote, \"instrukt.yaml\")"
+---
+# yaml-language-server: $schema=.instrukt/schemas/instrukt.schema.json
+schema_version: 6
+project: company-acme
+company_repository: true
+modules:
+  todos: false
+review:
+  automatic: true

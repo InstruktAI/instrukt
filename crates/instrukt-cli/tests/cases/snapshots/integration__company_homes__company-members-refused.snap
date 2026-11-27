@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/company-homes.rs
 expression: "String::from_utf8_lossy(&refused.get_output().stderr).replace(&home,\n\"[INSTRUKT_HOME]\")"
 ---
-instrukt: refused; nothing was written: [INSTRUKT_HOME]/companies/acme/instrukt.yaml: members.bram.email: this email address is also listed by member `steven`; an address is listed by at most one member; [INSTRUKT_HOME]/companies/acme/instrukt.yaml: members.bram.credentials.erpnext: expected an exact ${NAME} reference into the home's secrets file; a literal credential is not stored
+instrukt: refused; nothing was written: [INSTRUKT_HOME]/companies/acme/company.yaml: members.bram.email: this email address is also listed by member `steven`; an address is listed by at most one member; [INSTRUKT_HOME]/companies/acme/company.yaml: members.bram.credentials.erpnext: expected an exact ${NAME} reference into the home's secrets file; a literal credential is not stored

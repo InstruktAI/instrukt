@@ -210,15 +210,25 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
         assert_eq!(started.len(), 1);
         started[0].clone()
     };
+    // A thread starts on its profile's whole tier entry: shipped effort is
+    // `high`, sent as the harness's native option.
     let own = answer("example.overridden", &[]);
     assert_eq!(
         (runtime.provider(&own).to_string(), runtime.model(&own)),
         selected("planner", Some("antigravity"))
     );
+    assert_eq!(
+        runtime.options(&own),
+        serde_json::json!([{"id":"thought_level","value":"high"}])
+    );
     let kept = answer("example.shipped", std::slice::from_ref(&own));
     assert_eq!(
         (runtime.provider(&kept).to_string(), runtime.model(&kept)),
         selected("plan-reviewer", None)
+    );
+    assert_eq!(
+        runtime.options(&kept),
+        serde_json::json!([{"id":"reasoningEffort","value":"high"}])
     );
 }
 

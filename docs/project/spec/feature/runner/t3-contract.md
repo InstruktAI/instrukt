@@ -39,21 +39,26 @@ an installed executable never substitutes for it.
 
 The consumed native boundary includes `GET /api/projects`, `server.getConfig`,
 `orchestration.getThreadProjection` and `orchestration.launchThread`. Verify fixed
-command/thread identity and opening-message replay, captured native project and
-resolved modes, and existing-worktree capability where provider-free evidence
-permits. Native launch accepts `createdBy:"user"` on the pinned WebSocket path;
-caller payload provenance does not override it. Grammar or projection shape alone
-proves neither completed workspace preparation nor successful provider execution.
+command/thread identity and opening-message replay, captured native project,
+model-selection options and resolved modes, and existing-worktree capability
+where provider-free evidence permits. Native launch accepts `createdBy:"user"`
+on the pinned WebSocket path; caller payload provenance does not override it.
+Grammar or projection shape alone proves neither completed workspace preparation nor successful provider execution.
 
 Project resolution and registration belong to the same boundary. `t3 project
 add <root>` creates a live project at exactly that root and refuses a root that
 already has an active one; the project snapshot then lists it. A launch for a
 checkout whose only containing project is rooted at an ancestor adds a project
-at the checkout and starts its thread there, never in the ancestor. The fake
-holds its project table as state: a project exists only where the fixture or
-an emulated `t3 project add` placed it, never by deriving it from the folders
-under test, and the agreement check covers its project snapshot and its
-`project add`.
+at the checkout and starts its thread there, never in the ancestor. A project
+instrukt adds at a company home, the folder `~/.instrukt/companies/<name>/`
+(`project/instrukt/spec/feature/configuration/company-homes`), is created with
+`--title company-<name>`, the company's repository name; a project added at any
+other root keeps the title T3 gives it, its folder name. The title is given only
+at creation: a project already present is reused as it is, never retitled. The
+fake holds its project table as state: a project exists only where the fixture or an emulated
+`t3 project add` placed it, never by deriving it from the folders under test,
+and the agreement check covers its project snapshot, its `project add` and the
+titles an added root and an added company home receive.
 
 ### Consumed upstream surfaces
 

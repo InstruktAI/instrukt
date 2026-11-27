@@ -5,6 +5,8 @@ expression: run.out
 docs/domain/acme/baseline-progressive.md: baseline-line-invalid: not a reference
 docs/domain/acme/baseline-progressive.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/shape.md
 docs/domain/acme/baseline-progressive.md: baseline-already-carried: ~/.instrukt/docs/acme/policy/rules.md
+docs/domain/acme/concept/across.md: reference-local-from-published: project/demo/design/shape: acme references only acme and general
+docs/domain/acme/concept/across.md: reference-direction-invalid: ops/principle/far: acme references only acme and general
 docs/domain/acme/concept/fields.md: frontmatter-visibility-invalid: secret
 docs/domain/acme/concept/fields.md: frontmatter-eval-invalid: often
 docs/domain/acme/concept/fields.md: frontmatter-procedure-field-misplaced: role
@@ -14,7 +16,6 @@ docs/domain/acme/policy/authored.md: identity-classification-authored: id, type
 docs/domain/acme/policy/refs.md: structure-required-reads-not-first
 docs/domain/acme/policy/refs.md: reference-by-path: ~/.instrukt/docs/acme/principle/care.md
 docs/domain/acme/policy/refs.md: reference-unresolved: acme/principle/missing
-docs/domain/acme/policy/refs.md: reference-local-from-published: project/demo/design/shape
 docs/domain/acme/principle/shape.md: structure-h1-not-first
 docs/domain/acme/principle/shape.md: structure-section-missing: Tensions, required by instrukt root rules
 docs/domain/acme/principle/shape.md: structure-section-unknown: Extra, outside the schema of docs/domain/acme/principle; see `instrukt docs schema docs/domain/acme/principle`
@@ -25,6 +26,8 @@ docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: orchestrator: 
 docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: requires: required key `requires` is missing
 docs/domain/acme/workflow/workflow.yaml: workflow-schema-invalid: roles: expected a sequence of role names
 docs/domain/loose.md: identity-missing-domain: loose
+docs/general/concept/down.md: reference-direction-invalid: acme: general references only general
+docs/general/concept/down.md: reference-direction-invalid: ops/principle/far: general references only general
 docs/project/adr/0001-choice.md: frontmatter-adr-date-invalid
 docs/project/adr/0001-choice.md: frontmatter-adr-number-invalid
 docs/project/adr/0002-pending.later.md: pending-carrier-on-adr: companion
@@ -32,6 +35,7 @@ docs/project/adr/0002-pending.md: pending-carrier-on-adr: delivered_by
 docs/project/adr/0002-pending.md: pending-carrier-on-adr: planned
 docs/project/baseline.md: baseline-out-of-order: ~/.instrukt/docs/acme/principle/care.md
 docs/project/baseline.md: baseline-already-carried: ~/.instrukt/docs/acme/principle/care.md
+docs/project/concept/elsewhere.md: reference-direction-invalid: project/other/design/shape: project references only its own project, general and domains
 docs/project/spec/pending.Not_A_Slug.md: pending-slug-invalid: Not_A_Slug
 docs/project/spec/pending.md: pending-delivered-by-invalid: []
 docs/project/spec/pending.md: pending-slug-invalid: Bad_Slug
@@ -44,7 +48,9 @@ docs/third-party/tool/broken.md: third-party-source-invalid: somewhere on the we
 docs/third-party/tool/broken.md: third-party-field-not-allowed: true
 docs/third-party/tool/broken.md: third-party-field-not-allowed: type
 docs/third-party/tool/broken.md: third-party-field-not-allowed: visibility
+notice: docs/domain/acme/concept/across.md: unreferenced-snippet: acme/concept/across
 notice: docs/domain/acme/concept/fields.md: unreferenced-snippet: acme/concept/fields
+notice: docs/domain/acme/concept/fine.md: unreferenced-snippet: acme/concept/fine
 notice: docs/domain/acme/concept/runs.md: unreferenced-snippet: acme/concept/runs
 notice: docs/domain/acme/policy/authored.md: unreferenced-snippet: acme/policy/authored
 notice: docs/domain/acme/policy/refs.md: unreferenced-snippet: acme/policy/refs
@@ -53,4 +59,6 @@ notice: docs/domain/acme/principle/shape.md: unreferenced-snippet: acme/principl
 notice: docs/domain/acme/procedure/both.md: unreferenced-snippet: acme/procedure/both
 notice: docs/domain/acme/procedure/ghostly.md: unreferenced-snippet: acme/procedure/ghostly
 notice: docs/project/adr/0001-choice.md: unreferenced-snippet: project/demo/adr/0001-choice
+notice: docs/project/concept/elsewhere.md: unreferenced-snippet: project/demo/concept/elsewhere
+notice: docs/project/concept/home.md: unreferenced-snippet: project/demo/concept/home
 notice: docs/project/spec/pending.md: unreferenced-snippet: project/demo/spec/pending

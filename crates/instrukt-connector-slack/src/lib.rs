@@ -11,14 +11,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use instrukt_connector::{
-    Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Clock, Connector,
-    ConnectorError, Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier,
-    Field, Inbox, Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
+    Accompanying, Admission, AnswerError, AnswerReceipt, Captured, Connector, ConnectorError,
+    Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier, Field, Inbox,
+    Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
 };
+use instrukt_outside::{Attempted, Gate, Settings, Tried, Wait};
 use jiff::Timestamp;
 use serde_json::Value;
 
 use crate::_manifest::{MANIFEST, manifest_bot_scopes};
+use crate::_outside::{Answered, Finding, answer_view, scope_finding, token_key, transport_view};
 
 /// The target every log statement of the connector carries: the module the
 /// host and Slack shared before the cut, so the same settings select it.
@@ -138,69 +140,20 @@ pub const API_URL_SETTING: &str = "INSTRUKT_SLACK_API_URL";
 /// Slack's Web API.
 const SLACK_API: &str = "https://slack.com/api";
 
-/// Until when Slack limited each method for each `(company, connector)`, as
-/// its `Retry-After` said, on the runner's clock. The runner owns one and
-/// every client of its connectors shares it, so no call of a limited method
-/// for that connector is made before its wait is over while the runner runs,
-/// while separate Slack apps in one company home never collide.
-/// A wait that has passed is retired.
-type LimitKey = (String, String, String);
-type LimitWaits = Arc<std::sync::Mutex<HashMap<LimitKey, Timestamp>>>;
-
-#[derive(Clone)]
-pub struct Limits {
-    clock: Clock,
-    waits: LimitWaits,
-}
-
-impl std::fmt::Debug for Limits {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Limits").finish_non_exhaustive()
-    }
-}
-
-impl Limits {
-    fn new(clock: Clock) -> Self {
-        Self {
-            clock,
-            waits: Arc::default(),
-        }
-    }
-
-    /// How many whole seconds, rounded up, `method` stays limited for
-    /// `(company, connector)`, if it is.
-    fn remaining(&self, company: &str, connector: &str, method: &str) -> Option<u64> {
-        let mut waits = self.waits.lock().ok()?;
-        let now = (self.clock)();
-        waits.retain(|_, until| *until > now);
-        let until = waits.get(&(company.to_owned(), connector.to_owned(), method.to_owned()))?;
-        let left = until.duration_since(now);
-        let seconds = u64::try_from(left.as_secs()).unwrap_or(0);
-        Some(seconds + u64::from(left.subsec_nanos() > 0))
-    }
-
-    /// Keeps the wait of `seconds` Slack named for `method` on `(company, connector)`.
-    fn limit(&self, company: &str, connector: &str, method: &str, seconds: u64) {
-        let wait = jiff::SignedDuration::from_secs(i64::try_from(seconds).unwrap_or(i64::MAX));
-        let until = (self.clock)().checked_add(wait).unwrap_or(Timestamp::MAX);
-        if let Ok(mut waits) = self.waits.lock() {
-            waits.insert(
-                (company.to_owned(), connector.to_owned(), method.to_owned()),
-                until,
-            );
-        }
-    }
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum SlackError {
     /// A Web API failure, naming the method and Slack's error code; never a
     /// token.
     #[error("Slack {method}: {cause}")]
     Api { method: String, cause: String },
-    /// A transport failure or HTTP 5xx response from Slack (retryable).
-    #[error("Slack {method}: {cause}")]
-    Transient { method: String, cause: String },
+    /// The outside gate answered with a wait: Slack is unavailable for this
+    /// method, with what Slack answered when a request ran.
+    #[error("{}; {wait}", unavailable_cause(method, cause.as_deref()))]
+    Unavailable {
+        method: String,
+        cause: Option<String>,
+        wait: Wait,
+    },
     /// A Slack response confirms the post was rejected.
     #[error("Slack {method}: {cause}")]
     RejectedPost { method: String, cause: String },
@@ -210,9 +163,14 @@ pub enum SlackError {
     Endpoint,
     #[error("Slack offered a Socket Mode address outside its own TLS hosts; nothing was connected")]
     Socket,
-    /// Slack limited the method for this workspace and named a wait.
-    #[error("Slack {method}: limited by Slack; called again in {seconds} s")]
-    Limited { method: String, seconds: u64 },
+}
+
+/// The cause of an unavailable call, without the wait's rendering.
+fn unavailable_cause(method: &str, cause: Option<&str>) -> String {
+    match cause {
+        Some(cause) => format!("Slack {method}: {cause}"),
+        None => format!("Slack {method}"),
+    }
 }
 
 fn uri(text: &str) -> Option<tungstenite::http::Uri> {
@@ -230,27 +188,26 @@ fn loopback(uri: &tungstenite::http::Uri) -> bool {
 /// stand-in on a loopback address. Read once when the runner starts.
 #[derive(Debug, Clone)]
 pub struct SlackEndpoint {
-    /// The waits Slack named, shared by every client this endpoint makes.
-    limits: Limits,
+    /// The outside gate every client this endpoint makes judges through.
+    gate: Gate,
     api: String,
     local: bool,
 }
 
 impl SlackEndpoint {
     /// Slack's own hosts unless [`API_URL_SETTING`], as `lookup` reads the
-    /// environment, names a loopback address; any other value refuses. The
-    /// endpoint starts knowing no wait and keeps those Slack names for as
-    /// long as it lives, timed by `clock`.
+    /// environment, names a loopback address; any other value refuses. Every
+    /// call it makes is judged by `gate`, which keeps Slack's waits.
     pub fn from_lookup(
         lookup: &dyn Fn(&str) -> Option<String>,
-        clock: Clock,
+        gate: Gate,
     ) -> Result<Self, SlackError> {
         match lookup(API_URL_SETTING)
             .as_deref()
             .filter(|url| !url.trim().is_empty())
         {
             None => Ok(Self {
-                limits: Limits::new(clock),
+                gate,
                 api: SLACK_API.into(),
                 local: false,
             }),
@@ -260,7 +217,7 @@ impl SlackEndpoint {
                     return Err(SlackError::Endpoint);
                 }
                 Ok(Self {
-                    limits: Limits::new(clock),
+                    gate,
                     api: url.trim_end_matches('/').to_owned(),
                     local: true,
                 })
@@ -338,9 +295,7 @@ impl SlackApi {
         self.call_within(method, app, form, None)
     }
 
-    /// One Web API call, taking at most `timeout` when given. A method Slack
-    /// limited for this workspace is not called before its wait is over; a
-    /// limit Slack answers with is kept with the wait it names.
+    /// One Web API call, taking at most `timeout` when given.
     fn call_within(
         &self,
         method: &str,
@@ -348,33 +303,53 @@ impl SlackApi {
         form: &[(&str, &str)],
         timeout: Option<Duration>,
     ) -> Result<Value, SlackError> {
-        self.call_with_headers(method, app, form, timeout)
+        self.call_with_headers(method, app, form, timeout, None)
             .map(|(body, _)| body)
     }
 
+    /// One Web API call through the outside gate: inside a wait it answers
+    /// without a request; otherwise Slack's answer is judged once, by
+    /// Slack's rules and admission's `finding` before HTTP's own.
     fn call_with_headers(
         &self,
         method: &str,
         app: bool,
         form: &[(&str, &str)],
         timeout: Option<Duration>,
-    ) -> Result<(Value, Option<String>), SlackError> {
-        let company = self.company.clone();
-        let connector = self.connector.clone();
-        if let Some(seconds) = self.endpoint.limits.remaining(&company, &connector, method) {
-            return Err(SlackError::Limited {
+        finding: Option<Finding<'_>>,
+    ) -> Result<Answered, SlackError> {
+        let key = token_key(&self.company, &self.connector, app).item(method);
+        let gate = &self.endpoint.gate;
+        let answered = gate.attempt(&key, &Settings::default(), || {
+            self.request(method, app, form, timeout, finding)
+        });
+        match answered {
+            Attempted::Done(answered) => Ok(answered),
+            Attempted::Defect(error) => Err(error),
+            Attempted::Wait { wait, error } => Err(SlackError::Unavailable {
                 method: method.into(),
-                seconds,
-            });
+                cause: error.map(|error| match error {
+                    SlackError::Api { cause, .. } => cause,
+                    other => other.to_string(),
+                }),
+                wait,
+            }),
         }
+    }
+
+    /// One request through the connector's own client, judged.
+    fn request(
+        &self,
+        method: &str,
+        app: bool,
+        form: &[(&str, &str)],
+        timeout: Option<Duration>,
+        finding: Option<Finding<'_>>,
+    ) -> Tried<Answered, SlackError> {
         let token = if app {
             &self.app_token
         } else {
             &self.bot_token
-        };
-        let fail = |cause: String| SlackError::Api {
-            method: method.into(),
-            cause,
         };
         let mut request = self
             .agent
@@ -383,80 +358,28 @@ impl SlackApi {
         if let Some(timeout) = timeout {
             request = request.config().timeout_global(Some(timeout)).build();
         }
-        let mut response =
-            request
-                .send_form(form.iter().copied())
-                .map_err(|e| SlackError::Transient {
-                    method: method.into(),
-                    cause: e.to_string(),
-                })?;
-        let status = response.status();
-        if status.as_u16() == 429 {
-            let seconds = response
-                .headers()
-                .get("retry-after")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| value.trim().parse::<u64>().ok())
-                .unwrap_or(1);
-            self.endpoint
-                .limits
-                .limit(&company, &connector, method, seconds);
-            tracing::warn!(target: LOG_TARGET, event = "connector_rate_limited", company = %self.company, connector = %self.connector, method, seconds);
-            return Err(SlackError::Limited {
-                method: method.into(),
-                seconds,
-            });
-        }
-        if status.as_u16() >= 500 {
-            return Err(SlackError::Transient {
-                method: method.into(),
-                cause: format!("HTTP {status}"),
-            });
-        }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|_| SlackError::Transient {
-                method: method.into(),
-                cause: format!("HTTP {status} without an answer"),
-            })?;
-        let body: Value = serde_json::from_str(&text)
-            .map_err(|_| fail(format!("HTTP {status} without a JSON answer")))?;
-        if body.get("ok").and_then(Value::as_bool) == Some(true) {
-            let scopes = response
-                .headers()
-                .get("x-oauth-scopes")
-                .and_then(|header| header.to_str().ok())
-                .map(str::to_owned);
-            Ok((body, scopes))
-        } else {
-            let cause = body
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("not ok");
-            if method == "chat.postMessage"
-                && body.get("ok").and_then(Value::as_bool) == Some(false)
-                && matches!(
-                    cause,
-                    "invalid_auth"
-                        | "not_authed"
-                        | "missing_scope"
-                        | "channel_not_found"
-                        | "not_in_channel"
-                        | "is_archived"
-                        | "restricted_action"
-                        | "restricted_action_read_only_channel"
-                        | "restricted_action_thread_locked"
-                        | "msg_too_long"
-                        | "no_text"
-                )
-            {
-                return Err(SlackError::RejectedPost {
-                    method: method.into(),
-                    cause: cause.into(),
-                });
-            }
-            Err(fail(cause.into()))
+        let sent = request.send_form(form.iter().copied());
+        let received_at = self.endpoint.gate.now();
+        let mut response = match sent {
+            Ok(response) => response,
+            Err(error) => return transport_view(method, None, received_at, &error),
+        };
+        let status = response.status().as_u16();
+        match response.body_mut().read_to_string() {
+            Ok(text) => answer_view(
+                method,
+                status,
+                response.headers(),
+                received_at,
+                &text,
+                finding,
+            ),
+            Err(error) => transport_view(
+                method,
+                Some((status, response.headers())),
+                received_at,
+                &error,
+            ),
         }
     }
 
@@ -761,18 +684,16 @@ impl SlackKind {
         }
     }
 
-    /// The Slack kind of a process whose environment `lookup` answers, with
-    /// this clock: its endpoint refuses a Slack API address that is neither
-    /// Slack's own nor a loopback stand-in.
+    /// The Slack kind of a process whose environment `lookup` answers,
+    /// judging through the host's `gate`: its endpoint refuses a Slack API
+    /// address that is neither Slack's own nor a loopback stand-in.
     pub fn build(
         lookup: &dyn Fn(&str) -> Option<String>,
-        clock: Clock,
+        gate: Gate,
     ) -> Result<Box<dyn Kind>, ConnectorError> {
-        SlackEndpoint::from_lookup(lookup, clock)
+        SlackEndpoint::from_lookup(lookup, gate)
             .map(|endpoint| Box::new(Self::new(endpoint)) as Box<dyn Kind>)
-            .map_err(|error| ConnectorError {
-                cause: error.to_string(),
-            })
+            .map_err(|error| ConnectorError::new(error.to_string()))
     }
 }
 
@@ -789,8 +710,10 @@ impl Kind for SlackKind {
         secrets: &dyn SecretResolver,
     ) -> Result<Box<dyn Connector>, ConnectorError> {
         let token = |field: &str| -> Result<String, ConnectorError> {
-            let reference = declared.text(field).ok_or_else(|| ConnectorError {
-                cause: format!("the slack connector `{connector}` declares no {field}"),
+            let reference = declared.text(field).ok_or_else(|| {
+                ConnectorError::new(format!(
+                    "the slack connector `{connector}` declares no {field}"
+                ))
             })?;
             secrets.resolve(reference)
         };
@@ -869,8 +792,38 @@ fn cached_names<T>(
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
-    ConnectorError {
-        cause: error.to_string(),
+    ConnectorError::new(error.to_string())
+}
+
+/// A Slack failure as the interface carries it: an unavailable call with the
+/// outside gate's wait, anything else as its cause.
+fn slack_failed(error: SlackError) -> ConnectorError {
+    match error {
+        SlackError::Unavailable {
+            method,
+            cause,
+            wait,
+        } => ConnectorError::waiting(unavailable_cause(&method, cause.as_deref()), wait),
+        other => failed(other),
+    }
+}
+
+/// An undecided sender, its cause after `prefix`, with the outside gate's
+/// wait when Slack was unavailable.
+fn undecided(error: SlackError, prefix: &str) -> Admission {
+    match error {
+        SlackError::Unavailable {
+            method,
+            cause,
+            wait,
+        } => Admission::Undecided {
+            cause: format!("{prefix}{}", unavailable_cause(&method, cause.as_deref())),
+            wait: Some(wait),
+        },
+        other => Admission::Undecided {
+            cause: format!("{prefix}{other}"),
+            wait: None,
+        },
     }
 }
 
@@ -882,6 +835,8 @@ fn own_message(message: &Value, me: &Me) -> bool {
 }
 
 mod _manifest;
+mod _outside;
+mod _socket_mode;
 mod read_back;
 
 impl Connector for Slack {
@@ -891,24 +846,11 @@ impl Connector for Slack {
                 "the Slack app manifest names no bot scopes: {error}"
             ))
         })?;
-        let (_, scopes) = self
-            .api
-            .call_with_headers("auth.test", false, &[], None)
-            .map_err(failed)?;
-        let scopes = scopes.ok_or_else(|| failed("Slack did not report the bot token's scopes"))?;
-        let granted: std::collections::HashSet<_> = scopes.split(',').map(str::trim).collect();
-        let missing: Vec<&str> = required
-            .iter()
-            .map(String::as_str)
-            .filter(|scope| !granted.contains(scope))
-            .collect();
-        if !missing.is_empty() {
-            return Err(failed(format!(
-                "Slack bot token missing scopes: {}",
-                missing.join(", ")
-            )));
-        }
-        Ok(())
+        let finding = |reported: Option<&str>| scope_finding(&required, reported);
+        self.api
+            .call_with_headers("auth.test", false, &[], None, Some(&finding))
+            .map(drop)
+            .map_err(slack_failed)
     }
 
     fn read_back_page(
@@ -928,7 +870,7 @@ impl Connector for Slack {
     }
 
     fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError> {
-        session(&self.api, inbox, quit).map_err(|cause| ConnectorError { cause })
+        _socket_mode::session(&self.api, inbox, quit)
     }
 
     /// Slack's record of the sender read now decides: one of the company's
@@ -937,7 +879,7 @@ impl Connector for Slack {
     fn admit(&self, sender: &str) -> Admission {
         let me = match self.me() {
             Ok(me) => me,
-            Err(error) => return Admission::Undecided(error.to_string()),
+            Err(error) => return undecided(error, ""),
         };
         match self.api.user(sender) {
             Ok(record) => match admission(&record, &me) {
@@ -952,9 +894,7 @@ impl Connector for Slack {
             {
                 Admission::NotOwn
             }
-            Err(error) => {
-                Admission::Undecided(format!("who sent it cannot be looked up yet: {error}"))
-            }
+            Err(error) => undecided(error, "who sent it cannot be looked up yet: "),
         }
     }
 
@@ -968,7 +908,7 @@ impl Connector for Slack {
     ) -> Result<Captured, ConnectorError> {
         let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
         let (messages, stopped_early, complete_from) =
-            read_context(self, conversation, message, excluded, limit).map_err(failed)?;
+            read_context(self, conversation, message, excluded, limit).map_err(slack_failed)?;
         let messages = Arc::new(messages);
         let cached_messages = Arc::clone(&messages);
         let names = Arc::clone(&self.names);
@@ -1032,13 +972,13 @@ impl Connector for Slack {
             RefusalReason::NotOwn => TURN_AWAY,
             RefusalReason::NotAdmin => TURN_AWAY_NOT_ADMIN,
         };
-        self.api.post(conversation, text).map_err(failed)
+        self.api.post(conversation, text).map_err(slack_failed)
     }
 
     fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError> {
         self.api
             .post(conversation, &format!("<@{member}> {NOTICE}"))
-            .map_err(failed)
+            .map_err(slack_failed)
     }
 
     fn direct_message(
@@ -1049,21 +989,7 @@ impl Connector for Slack {
         self.api
             .post_private_dm(recipient, text)
             .map_err(|error| match error {
-                SlackError::Limited { .. } | SlackError::Transient { .. } => {
-                    DirectMessageError::Retryable(error.to_string())
-                }
-                SlackError::Api { ref cause, .. }
-                    if matches!(
-                        cause.as_str(),
-                        "ratelimited"
-                            | "request_timeout"
-                            | "internal_error"
-                            | "service_unavailable"
-                            | "fatal_error"
-                    ) =>
-                {
-                    DirectMessageError::Retryable(error.to_string())
-                }
+                SlackError::Unavailable { .. } => DirectMessageError::Retryable(error.to_string()),
                 other => DirectMessageError::Final(other.to_string()),
             })
     }
@@ -1083,139 +1009,10 @@ impl Connector for Slack {
             Some(Status::Update(text)) => text.as_str(),
             None => "",
         };
-        self.api.status(&place.0, &place.1, text).map_err(failed)
+        self.api
+            .status(&place.0, &place.1, text)
+            .map_err(slack_failed)
     }
-}
-
-/// One Socket Mode connection, from opening to its drop or a disconnect.
-fn session(api: &SlackApi, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), String> {
-    let company = &api.company;
-    let url = api.connection_url().map_err(|e| e.to_string())?;
-    let me = api.identity().map_err(|e| e.to_string())?;
-    let (mut socket, _) =
-        tungstenite::connect(url.as_str()).map_err(|e| format!("Socket Mode connection: {e}"))?;
-    match socket.get_mut() {
-        tungstenite::stream::MaybeTlsStream::Plain(stream) => {
-            stream.set_read_timeout(Some(Duration::from_millis(200)))
-        }
-        tungstenite::stream::MaybeTlsStream::Rustls(stream) => stream
-            .get_mut()
-            .set_read_timeout(Some(Duration::from_millis(200))),
-        _ => Ok(()),
-    }
-    .map_err(|e| format!("Socket Mode connection: {e}"))?;
-    inbox.connected();
-    tracing::info!(target: LOG_TARGET, event = "connector_connected", company = %company, connector = %api.connector);
-    let mut unretained = false;
-    while !quit() {
-        let message = match socket.read() {
-            Ok(message) => message,
-            Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                continue;
-            }
-            Err(tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed) => {
-                return Ok(());
-            }
-            Err(error) => return Err(format!("Socket Mode connection dropped: {error}")),
-        };
-        let text = match message {
-            tungstenite::Message::Text(text) => text,
-            tungstenite::Message::Close(_) => return Ok(()),
-            _ => continue,
-        };
-        let Ok(envelope) = serde_json::from_str::<Value>(&text) else {
-            continue;
-        };
-        match envelope.get("type").and_then(Value::as_str) {
-            Some("hello") => continue,
-            Some("disconnect") => return Ok(()),
-            _ => {}
-        }
-        let Some(id) = envelope.get("envelope_id").and_then(Value::as_str) else {
-            continue;
-        };
-        // Acknowledge only once what the envelope carries is retained, so
-        // Slack retries what instrukt could not keep; reading the
-        // accompanying messages and posting refusals come after.
-        let retained =
-            receive(&api.connector, &me, &envelope).and_then(|incoming| match incoming {
-                Some(incoming) => inbox.retain(incoming).map_err(|error| error.cause),
-                None => Ok(()),
-            });
-        match retained {
-            Ok(()) => {
-                socket
-                    .send(tungstenite::Message::text(
-                        serde_json::json!({ "envelope_id": id }).to_string(),
-                    ))
-                    .map_err(|e| format!("Socket Mode acknowledgement: {e}"))?;
-                if unretained {
-                    inbox.connected();
-                    unretained = false;
-                }
-            }
-            Err(error) => {
-                tracing::warn!(target: LOG_TARGET, event = "connector_message_unretained", company = %company, connector = %api.connector, error = %error);
-                inbox.unretained(&format!(
-                    "a message could not be retained and awaits Slack's retry: {error}"
-                ));
-                unretained = true;
-            }
-        }
-    }
-    let _ = socket.close(None);
-    Ok(())
-}
-
-/// The addressed message one Events API envelope carries: a mention in a
-/// channel or a direct message; none for anything else. Nothing here waits
-/// on the network.
-fn receive(connector: &str, me: &Me, envelope: &Value) -> Result<Option<Incoming>, String> {
-    if envelope.get("type").and_then(Value::as_str) != Some("events_api") {
-        return Ok(None);
-    }
-    let Some(event) = envelope.get("payload").and_then(|p| p.get("event")) else {
-        return Ok(None);
-    };
-    let text = |field: &str| event.get(field).and_then(Value::as_str);
-    let (Some(channel), Some(ts), Some(sender)) = (text("channel"), text("ts"), text("user"))
-    else {
-        return Ok(None);
-    };
-    if !newly_written(event) {
-        return Ok(None);
-    }
-    let thread = match text("type") {
-        Some("app_mention") => Some(text("thread_ts").unwrap_or(ts)),
-        Some("message")
-            if text("channel_type") == Some("im")
-                && event.get("bot_id").is_none()
-                && sender != me.user =>
-        {
-            None
-        }
-        _ => return Ok(None),
-    };
-    let is_direct = thread.is_none();
-    let incoming = Incoming {
-        connector: connector.to_owned(),
-        conversation: match thread {
-            Some(thread) => format!("{channel}/{thread}"),
-            None => channel.to_owned(),
-        },
-        message: ts.to_owned(),
-        sender: sender.to_owned(),
-        written_at: ts_time(ts).ok_or("message without a valid time")?,
-        text: text("text").unwrap_or_default().to_owned(),
-        is_direct,
-        thread: thread.map(str::to_owned),
-    };
-    Ok(Some(incoming))
 }
 
 /// History is newest first. Replies are oldest first within a time range,
@@ -1411,8 +1208,12 @@ mod tests {
     use serde_json::{Value, json};
     use std::collections::HashMap;
 
-    fn system() -> super::Clock {
-        std::sync::Arc::new(jiff::Timestamp::now)
+    fn system() -> instrukt_outside::Gate {
+        instrukt_outside::Gate::new(
+            std::sync::Arc::new(jiff::Timestamp::now),
+            std::sync::Arc::new(std::time::Instant::now),
+            instrukt_outside::Report::to(|_| {}),
+        )
     }
 
     fn me() -> Me {
@@ -1535,36 +1336,8 @@ mod tests {
     }
 
     #[test]
-    fn rate_limits_are_isolated_per_company_and_connector() {
-        use super::Limits;
-        let now = std::sync::Arc::new(std::sync::Mutex::new(
-            "2026-11-20T10:00:00Z".parse::<jiff::Timestamp>().unwrap(),
-        ));
-        let clock_ref = std::sync::Arc::clone(&now);
-        let limits = Limits::new(std::sync::Arc::new(move || *clock_ref.lock().unwrap()));
-
-        limits.limit("acme", "alpha", "chat.postMessage", 60);
-
-        // Same company, different named connector: unaffected.
-        assert_eq!(limits.remaining("acme", "beta", "chat.postMessage"), None);
-        // Different company, same connector name: unaffected.
-        assert_eq!(limits.remaining("other", "alpha", "chat.postMessage"), None);
-        // Same company & connector, different method: unaffected.
-        assert_eq!(limits.remaining("acme", "alpha", "users.info"), None);
-        // Same (company, connector, method): rate-limited.
-        assert_eq!(
-            limits.remaining("acme", "alpha", "chat.postMessage"),
-            Some(60)
-        );
-
-        // Once the clock advances past the Retry-After window, the limit clears.
-        *now.lock().unwrap() = "2026-11-20T10:01:01Z".parse::<jiff::Timestamp>().unwrap();
-        assert_eq!(limits.remaining("acme", "alpha", "chat.postMessage"), None);
-    }
-
-    #[test]
     fn receive_carries_the_declared_connector_name() {
-        use super::receive;
+        use crate::_socket_mode::receive;
         let envelope = json!({
             "type": "events_api",
             "payload": {

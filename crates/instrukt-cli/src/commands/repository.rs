@@ -25,11 +25,33 @@ use crate::wiring::core_wiring;
 pub struct InitArgs {
     /// The project slug, instead of the one derived from the primary
     /// worktree's folder name.
-    #[arg(long)]
+    #[arg(long, conflicts_with = "company")]
     slug: Option<String>,
+    /// Add the company of this key to the computer instead: its repository
+    /// `company-<key>` in the organisation `github.org` names, created with
+    /// the company skeleton when it does not exist, checked out as
+    /// ~/.instrukt/companies/<key>/ and made ready. The working directory is
+    /// not read.
+    #[arg(long, value_name = "KEY")]
+    company: Option<ProjectSlug>,
+    /// The name people write the company by; needed only when its
+    /// repository is created.
+    #[arg(long, value_name = "NAME", requires = "company")]
+    name: Option<instrukt_core::publication::CompanyName>,
+    /// The company's GitHub administrator, a person's GitHub account; needed
+    /// only when its repository is created.
+    #[arg(long, value_name = "LOGIN", requires = "company")]
+    admin: Option<instrukt_core::ids::GitHubLogin>,
+    /// Whether a human was involved, declared for the root commit of a
+    /// created repository; `false` when omitted.
+    #[arg(long, value_name = "true|false", requires = "company")]
+    human_involved: Option<bool>,
 }
 
 pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    if let Some(key) = args.company.clone() {
+        return run_init_company(args, key, ctx);
+    }
     let slug = args.slug.as_deref().map(ProjectSlug::parse).transpose()?;
     let wiring = crate::wiring::publication_wiring(ctx)?;
     let report = repository::init(
@@ -58,6 +80,106 @@ pub fn run_init(args: InitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         for line in claims_lines(claims) {
             ctx.out.line(&line)?;
         }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `instrukt init --company <key>`: adds the company to the computer. Its
+/// wiring reads nothing of the working directory: the GitHub boundary and
+/// the runtime adapter only.
+fn run_init_company(args: InitArgs, key: ProjectSlug, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
+    let wiring = instrukt_core::interfaces::CoreWiring {
+        caller_identity: crate::wiring::caller_lookup(ctx)?,
+        github_actors: Some(ctx.github.clone()),
+        session_role: Some(std::sync::Arc::new(crate::wiring::RecordedRole(
+            ctx.home.clone(),
+        ))),
+        flavor_schema: Some(std::sync::Arc::new(
+            instrukt_todos::workflow::WorkflowSchema,
+        )),
+        configured_runtimes: crate::wiring::configured_runtimes(ctx)?,
+        ..Default::default()
+    };
+    let env = crate::wiring::environment(ctx)?;
+    let request = repository::CompanyRequest {
+        key,
+        name: args.name,
+        admin: args.admin,
+        human_involved: args.human_involved,
+    };
+    let ports = repository::CompanyPorts {
+        accounts: ctx.github.as_ref(),
+        repositories: ctx.github.as_ref(),
+        env: &env,
+        wiring: &wiring,
+        now: ctx.clock.now(),
+    };
+    let report = repository::adopt_company(&ctx.home, &request, &ports)?;
+    let how = match report.origin {
+        repository::CompanyOrigin::Created if report.resumed => {
+            "created, completing the creation an earlier run recorded"
+        }
+        repository::CompanyOrigin::Created => "created with the company skeleton",
+        repository::CompanyOrigin::ByContract => {
+            "checked out by contract: it already existed, and nothing on GitHub changed"
+        }
+    };
+    ctx.out.line(&format!(
+        "repository {}/{}: {how}",
+        report.organisation, report.repository
+    ))?;
+    ctx.out.line(&format!("home: {}", report.home.display()))?;
+    for flag in &report.unused {
+        ctx.out.line(&format!("{flag}: not used"))?;
+    }
+    ctx.out.line(&format!(
+        "settings document ({}): {}",
+        instrukt_core::config::COMPANY_DOCUMENT,
+        if report.settings_written {
+            "created"
+        } else {
+            "already present"
+        }
+    ))?;
+    ctx.out.line("hook sections:")?;
+    for line in hooks_report_lines(&report.hooks) {
+        ctx.out.line(&format!("  {line}"))?;
+    }
+    let published = match &report.sync {
+        repository::CompanySync::Published => "published".to_owned(),
+        repository::CompanySync::Unchanged => "already published".to_owned(),
+        repository::CompanySync::NotPublished(why) => {
+            format!("not published: {why}; the home stays, and `instrukt sync` in it publishes it")
+        }
+        repository::CompanySync::NoProjectLayer => format!(
+            "does not apply: the repository holds no project layer ({}), so neither publication nor automatic review applies to the home; once its default branch holds one declaring the repository a company's, `instrukt sync` in the home publishes it",
+            instrukt_core::config::CONFIG_FILE_NAME
+        ),
+    };
+    ctx.out.line(&format!("publication: {published}"))?;
+    if report.sync == repository::CompanySync::NoProjectLayer {
+        return Ok(ExitCode::SUCCESS);
+    }
+    // What keeps automatic review from the home is reported, never failed.
+    let layer = instrukt_core::config::Layer::Project(report.home.clone());
+    let inspection = ctx.home.for_inspection();
+    let mut review: Vec<instrukt_core::config::Finding> =
+        instrukt_core::config::validate(&inspection, &layer)?
+            .into_iter()
+            .filter(|finding| finding.key == instrukt_core::config::REVIEW_AUTOMATIC_KEY)
+            .collect();
+    if review.is_empty()
+        && let Some(repository) = instrukt_core::config::review_target(&inspection, &layer)?
+    {
+        review.extend(crate::commands::config::review_readiness_finding(
+            ctx,
+            &layer,
+            &repository,
+        )?);
+    }
+    for finding in &review {
+        ctx.out
+            .line(&format!("automatic review withheld here: {finding}"))?;
     }
     Ok(ExitCode::SUCCESS)
 }

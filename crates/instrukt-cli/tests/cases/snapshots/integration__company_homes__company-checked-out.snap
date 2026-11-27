@@ -1,0 +1,18 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "scrubbed(&env, &stdout(&added))"
+---
+repository homes/company-acme: checked out by contract: it already existed, and nothing on GitHub changed
+home: [TMP]/home/.instrukt/companies/acme
+settings document (company.yaml): created
+hook sections:
+  hooks directory: [TMP]/home/.instrukt/companies/acme/.git/hooks
+  pre-commit: written
+  post-commit: written
+  post-merge: written
+  post-rewrite: written
+  post-checkout: written
+publication: published
+automatic review withheld here: [TMP]/home/.instrukt/companies/acme/instrukt.yaml: review.automatic: automatic review asks for each review with an event, and the project's effective `modules.events` is off; switch event responses on first
+automatic review withheld here: [TMP]/home/.instrukt/companies/acme/instrukt.yaml: review.automatic: automatic review publishes on GitHub, and the project's code is not there: the remote `origin` (file://[TMP]/remotes/homes/company-acme.git) is not a GitHub repository on 127.0.0.1 and `github.repository` is not set
+automatic review withheld here: [TMP]/home/.instrukt/companies/acme/instrukt.yaml: review.automatic: the published set does not route `runner.review_needed` to `sdlc/procedure/lifecycle/work/review-commits` under role `commit-reviewer` alone: no documentation is published on this computer; publish that procedure and no other subscriber to the type

@@ -214,6 +214,16 @@ recorded by publication.
 - **Implementation roots** — the docs module of the `instrukt-core` crate;
   its module layout is set by the architecture design.
 
+A company repository's `docs/` folder is the company's knowledge, not
+documentation positions. Validation asks publication whether the repository
+it validates is a company's (`project/instrukt/spec/domain/publication`);
+in one, it reads no file under `docs/` as a snippet, a position index or a
+third-party doc, places none of them and reports no finding or notice on
+them. The company's index and documents are judged by publication's company
+rendering (`project/instrukt/spec/feature/publication/agent-entrypoints`).
+In every other repository a `docs/index.yaml` stays a misplaced index, as
+`project/instrukt/spec/feature/docs/position-index` states.
+
 Nor does docs own compressed units: `docs/_compressed/`, the units in it,
 their currency and their structural rules are publication's
 (`project/instrukt/spec/domain/publication`). That folder lies outside
@@ -239,6 +249,10 @@ index or schema file, and never a finding of validation.
   - Every reference to a snippet is its id; a required read is an id or a
     bare domain name, listed under `## Required reads`, which is the first H2
     when present.
+  - Its Required reads and See Also run upward only: a `general` snippet
+    names only `general`, a domain snippet only its own domain and `general`,
+    a project snippet its own project, `general` and any domain
+    (`general/policy/referencing-doc-snippets`).
   - A companion shares its parent's identity and never appears in a listing.
   - `delivered_by` is the only pending frontmatter field; pending material for
     a live snippet lives only in companions and planned blocks.
@@ -255,8 +269,8 @@ index or schema file, and never a finding of validation.
   `general`'s `agents` map.
 - **Invariants:**
   - Only the keys allowed at its position appear.
-  - Every id it names is a delivered snippet; a domain's and the project's
-    name only their own position's snippets, `general`'s may name any domain's.
+  - Every id it names is a delivered snippet of its own position, `general`'s
+    index included.
   - No `listed` id is already in the closure of `expanded`.
   - One per position; never nested.
 - **Identifier:** its position.
