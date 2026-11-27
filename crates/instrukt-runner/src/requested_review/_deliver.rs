@@ -55,12 +55,12 @@ enum Route {
 }
 
 enum RepeatOutcome {
-    Done(Reply),
+    Done(Box<Reply>),
     ClosedDeadWake(Option<ReuseImpossible>),
 }
 
 enum WakeAttempt {
-    Accepted(Reply),
+    Accepted(Box<Reply>),
     ClosedDeadWake(Option<ReuseImpossible>),
 }
 
@@ -129,7 +129,7 @@ impl Delivering<'_> {
         // recorded meanwhile within the turn it opened (Outstanding).
         if let Some(ask) = outstanding.filter(|ask| ask.digest == self.rendering.digest) {
             match self.repeat(state, ask, last_bound.as_ref(), rereview_plan.as_ref())? {
-                RepeatOutcome::Done(reply) => return Ok(reply),
+                RepeatOutcome::Done(reply) => return Ok(*reply),
                 RepeatOutcome::ClosedDeadWake(fallback_reason) => {
                     outstanding = None;
                     let refreshed = _store::asks(self.context.home, self.slug(), self.head())
@@ -441,7 +441,7 @@ impl Delivering<'_> {
             Route::Wake { target, session } => {
                 let active_guard = target_guard.as_ref().unwrap_or(self.guard);
                 match self.execute_wake(active_guard, &ask, &target, &session, false, re_review)? {
-                    WakeAttempt::Accepted(reply) => Ok(reply),
+                    WakeAttempt::Accepted(reply) => Ok(*reply),
                     WakeAttempt::ClosedDeadWake(fallback_reason) => {
                         drop(target_guard);
                         self.deliver_after_dead_wake(state, fallback_reason)
@@ -506,18 +506,18 @@ impl Delivering<'_> {
                 ))
             })?;
             tracing::info!(event = "requested_review_repeated", project = %self.slug(), head = %self.head(), ask = ask.number);
-            return Ok(RepeatOutcome::Done(
+            return Ok(RepeatOutcome::Done(Box::new(
                 self.reply(ask, session, true, re_review),
-            ));
+            )));
         }
         tracing::info!(event = "requested_review_replayed", project = %self.slug(), head = %self.head(), ask = ask.number);
         match ask.delivery {
             Delivery::Start => {
                 let successor = self.start_replay_needs_successor(state)?;
                 let session = self.start_with_brief(successor, &ask.rendering)?;
-                Ok(RepeatOutcome::Done(
+                Ok(RepeatOutcome::Done(Box::new(
                     self.accepted(ask, &session, true, re_review)?,
-                ))
+                )))
             }
             Delivery::Send => {
                 let target_guard = self.claim_target_if_distinct(&ask.start_key)?;
@@ -610,9 +610,9 @@ impl Delivering<'_> {
         )
         .map_err(failed)?
         {
-            WakeOutcome::Woken => Ok(WakeAttempt::Accepted(
+            WakeOutcome::Woken => Ok(WakeAttempt::Accepted(Box::new(
                 self.accepted(ask, session, replayed, re_review)?,
-            )),
+            ))),
             WakeOutcome::Refused(NotWoken::NotAccepted { error, .. }) => {
                 Err(self.not_accepted("wake", &error))
             }
@@ -862,9 +862,10 @@ impl Delivering<'_> {
             start_key: ask.start_key.clone(),
             reached: match ask.delivery {
                 Delivery::Start => Reached::Started,
-                Delivery::Send => Reached::Sent,
+                Delivery::Send => Reached::Woke,
             },
             repeated,
+            asker: ask.asker.clone(),
             re_review,
             wakeup_stale: self.wakeup_stale,
             report: self.coordinates.report.clone(),

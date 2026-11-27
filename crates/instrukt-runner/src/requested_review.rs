@@ -1,17 +1,25 @@
 //! Requested review (`project/instrukt/spec/feature/runner/requested-review`):
 //! an authoring session asks for the independent review of an exact
 //! committed worktree head by naming its coordinates only, and the runner
-//! admits the ask, renders the reviewer's assignment and starts or sends to
-//! the head's requested reviewer itself.
+//! admits the ask, renders the reviewer's assignment, routes it by kind to
+//! start or wake the requested reviewer itself, and returns recorded verdicts
+//! to the asking session.
 //!
-//! One entry, [`ask`], runs the whole flow in this order: Form, Procedure
-//! and Runtime, then Placement, Cleanliness and Range; the head's start key
-//! is claimed; under it the same ask while outstanding returns that ask,
-//! and any other ask passes Review state, Request and Outstanding before the
-//! route is decided from the store and the runtime; the ask is recorded
-//! (with a send's command identity); the runtime is reached with no store
-//! lock held; the acceptance is recorded. A refused ask records nothing and
-//! reaches no runtime.
+//! One entry, [`ask`], runs the flow in this order: Form, Procedure, Runtime,
+//! and (for session callers) Delivery wake-up inspection, then Placement,
+//! Cleanliness, Range, and (for re-reviews) project-scoped prior-report trace;
+//! the head's start key is claimed; under it the same ask while outstanding
+//! returns that ask or replays its delivery (closing dead unaccepted wakes
+//! whose target was archived, deleted, or superseded so re-reviews fall back
+//! and disputes refuse under Review state); any other ask passes Review state,
+//! Request, and Outstanding before routing by kind (starting or succeeding the
+//! head's own reviewer, or waking a project-scoped requested reviewer under
+//! its target key lock); the ask (with its asking session, trace, and
+//! canonical report destination) is recorded; the runtime is reached with no
+//! store lock held; acceptance is recorded. A refused ask records nothing and
+//! reaches no runtime. When work records a verdict version,
+//! [`queue_verdict_notices`] queues durable verdict notices for each asking
+//! session on the runner's input route.
 
 mod _admission;
 mod _deliver;
@@ -129,8 +137,8 @@ pub struct AskContext<'a> {
 pub enum Reached {
     /// It started the reviewer, with the rendering as its opening input.
     Started,
-    /// It sent the rendering into the reviewer's idle session.
-    Sent,
+    /// It woke the reviewer's idle session under a fixed command identity.
+    Woke,
 }
 
 /// What the requester receives (`requested-review`, What the requester
@@ -146,6 +154,7 @@ pub struct Reply {
     /// The same ask was already outstanding: this one started or woke
     /// nothing new.
     pub repeated: bool,
+    pub asker: Option<SessionRef>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub re_review: Option<ReReviewOutcome>,
     pub wakeup_stale: bool,
