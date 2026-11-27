@@ -188,6 +188,34 @@ fn require_prd_approval(
     }
     Ok(())
 }
+/// Invariant 3: enforce the deliberate work start before the first `builder`
+/// round when `runner.autostart` is off for the todo's kind (`work-dispatch`,
+/// "Deliberate work start"; `delivery-cycle`, "Three hard integrity invariants").
+/// Admitted only when `autostart` is on, the record already has a `builder`
+/// binding (past the boundary), or it carries `StampFact::WorkReady` with no
+/// standing dispatch hold.
+fn require_work_start(record: &TodoRecord, autostart: bool) -> Result<(), WorkError> {
+    if autostart || record.bindings.iter().any(|b| b.role.as_str() == "builder") {
+        return Ok(());
+    }
+    let has_work_ready = record
+        .stamps
+        .iter()
+        .any(|s| matches!(s.fact, crate::evidence::StampFact::WorkReady {}));
+    if !has_work_ready {
+        return Err(WorkError::refused(format!(
+            "`runner.autostart` is off for `{}` todos and `{}` has not had its deliberate work start; record `instrukt todo stamp {} --work-ready`, release the claim with `instrukt todo update {} --unclaim` and stop. Removing the `hold` label or releasing the hold starts the work",
+            record.kind, record.slug, record.slug, record.slug
+        )));
+    }
+    if record.hold.is_some() {
+        return Err(WorkError::refused(format!(
+            "`{}` carries `--work-ready` and still has a standing dispatch hold; the work waits for that hold's release",
+            record.slug
+        )));
+    }
+    Ok(())
+}
 /// Enforce claim-holding-orchestrator admission for `StampRequest::WorkReady`
 /// (`stamps`, "Build start, completion and review rounds"): refuses outside-session
 /// callers, unclaimed todos, and non-claimant sessions (including bound child roles),
@@ -508,6 +536,10 @@ impl Work {
                     .config
                     .approver(instrukt_core::config::ApprovalGate::Prd)?;
                 require_prd_approval(record, prd_approver)?;
+            }
+            if role.as_str() == "builder" {
+                let autostart = s.config.runner_autostart(record.kind.as_str())?;
+                require_work_start(record, autostart)?;
             }
             let path = driver
                 .worktree
