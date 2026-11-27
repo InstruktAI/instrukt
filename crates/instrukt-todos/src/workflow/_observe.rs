@@ -484,7 +484,10 @@ fn snippet_digest(
     }
 }
 
-/// The commit writers identified by Git from the recorded build or workspace base.
+/// The commit writers identified by Git from the recorded build or workspace base,
+/// excluding commits already on the canonical branch whenever `candidate` is not
+/// itself contained in canonical (so rebasing onto or merging an advanced default
+/// branch does not pull unrelated canonical authors into this todo's writers).
 fn commit_writers(
     root: &Path,
     evidence: &TodoEvidence,
@@ -503,22 +506,39 @@ fn commit_writers(
                 .iter()
                 .find_map(|binding| binding.attempt.base_head.as_ref())
         });
-    let base = match recorded_base {
-        Some(base) => Some(base.clone()),
-        None => {
-            let branch = git::default_branch(root, REMOTE)?;
-            match resolve(root, &format!("refs/remotes/{REMOTE}/{branch}"))? {
-                Some(base) => Some(base),
-                None => resolve(root, &format!("refs/heads/{branch}"))?,
-            }
+    if recorded_base == Some(candidate) {
+        return Ok(BTreeSet::new());
+    }
+    let branch = git::default_branch(root, REMOTE)?;
+    let canonical = match resolve(root, &format!("refs/remotes/{REMOTE}/{branch}"))? {
+        Some(base) => Some(base),
+        None => resolve(root, &format!("refs/heads/{branch}"))?,
+    };
+    if recorded_base.is_none() && canonical.as_ref() == Some(candidate) {
+        return Ok(BTreeSet::new());
+    }
+    let mut specs = vec![candidate.to_string()];
+    if let Some(base) = recorded_base {
+        specs.push(format!("^{base}"));
+    }
+    if let Some(canon) = canonical {
+        let contained = git::run_output(
+            root,
+            [
+                "merge-base",
+                "--is-ancestor",
+                candidate.as_str(),
+                canon.as_str(),
+            ],
+        )?
+        .status
+        .success();
+        if !contained {
+            specs.push(format!("^{canon}"));
         }
-    };
-    let range = match base {
-        Some(base) if &base != candidate => format!("{base}..{candidate}"),
-        Some(_) => format!("{candidate}^!"),
-        None => candidate.to_string(),
-    };
-    Ok(crate::work::review::commit_sessions(root, &[&range])?
+    }
+    let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
+    Ok(crate::work::review::commit_sessions(root, &spec_refs)?
         .into_iter()
         .flat_map(|(_, sessions)| sessions)
         .collect())

@@ -338,7 +338,8 @@ impl Gate {
     }
 
     /// Async counterpart to [`Gate::call`]: pauses with `tokio::time::sleep`
-    /// between tries without blocking a Tokio worker thread.
+    /// between tries without blocking a Tokio worker thread, and bounds each
+    /// in-flight try when [`CallerWait::Within`] is given.
     pub async fn call_async<T, E, Fut>(
         &self,
         key: &Key,
@@ -356,7 +357,49 @@ impl Gate {
             CallerWait::Within(within) => Some(monotonic().checked_add(within)),
         };
         loop {
-            match self.attempt_async(key, settings, &mut try_once).await {
+            let outcome = match bound {
+                None => self.attempt_async(key, settings, &mut try_once).await,
+                Some(deadline) => {
+                    let remaining = deadline
+                        .map_or(Duration::ZERO, |b| b.saturating_duration_since(monotonic()));
+                    if remaining.is_zero() {
+                        if let Some(wait) = self.waiting(key) {
+                            return Attempted::Wait { wait, error: None };
+                        }
+                        let wait = self.failed(
+                            key,
+                            settings,
+                            Unavailable {
+                                reason: Reason::TimedOut,
+                                extent: Extent::Call,
+                                named: None,
+                            },
+                        );
+                        return Attempted::Wait { wait, error: None };
+                    }
+                    match tokio::time::timeout(
+                        remaining,
+                        self.attempt_async(key, settings, &mut try_once),
+                    )
+                    .await
+                    {
+                        Ok(outcome) => outcome,
+                        Err(_) => {
+                            let wait = self.failed(
+                                key,
+                                settings,
+                                Unavailable {
+                                    reason: Reason::TimedOut,
+                                    extent: Extent::Call,
+                                    named: None,
+                                },
+                            );
+                            return Attempted::Wait { wait, error: None };
+                        }
+                    }
+                }
+            };
+            match outcome {
                 Attempted::Wait { wait, error } => {
                     let beyond = bound.is_some_and(|bound| bound.is_none_or(|b| wait.until() > b));
                     if beyond || stop() {
@@ -904,5 +947,29 @@ mod tests {
         assert!(matches!(answer, Attempted::Done(())));
         assert_eq!(tries.load(std::sync::atomic::Ordering::SeqCst), 2);
         assert_eq!(f.records.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn call_async_bounds_in_flight_attempt_by_caller_wait() {
+        let f = Fixture::new();
+        let key = scope().item("slow-op");
+        let answer = crate::runtime::block_on(f.gate.call_async(
+            &key,
+            &Settings::default(),
+            CallerWait::Within(Duration::from_millis(20)),
+            &|| false,
+            || async {
+                tokio::time::sleep(Duration::from_secs(10)).await;
+                Tried::<(), ()>::Done(())
+            },
+        ))
+        .unwrap();
+        assert!(matches!(
+            answer,
+            Attempted::Wait {
+                ref wait,
+                error: None
+            } if wait.reason() == Reason::TimedOut
+        ));
     }
 }

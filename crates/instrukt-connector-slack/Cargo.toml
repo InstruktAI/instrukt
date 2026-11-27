@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+futures-util.workspace = true
 http.workspace = true
 hyper-rustls = { version = "0.27", default-features = false, features = ["rustls-native-certs", "http1", "http2", "ring"] }
 instrukt-connector.workspace = true
@@ -20,6 +21,7 @@ serde_yaml_ng.workspace = true
 slack-morphism.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-tungstenite.workspace = true
 tracing.workspace = true
 
 [lints]

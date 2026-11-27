@@ -1448,6 +1448,7 @@ dependencies = [
 name = "instrukt-connector-slack"
 version = "0.1.0"
 dependencies = [
+ "futures-util",
  "http",
  "hyper-rustls",
  "instrukt-connector",
@@ -1460,6 +1461,7 @@ dependencies = [
  "slack-morphism",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
 ]
 
@@ -1557,10 +1559,8 @@ dependencies = [
  "instrukt-outside",
  "instrukt-runner",
  "jiff 0.2.39",
- "jsonwebtoken 9.3.1",
  "octocrab",
  "proptest",
- "reqwest",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1569,7 +1569,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "ureq",
  "url",
 ]
 

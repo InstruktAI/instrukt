@@ -707,8 +707,7 @@ impl Session<'_> {
                             )?
                             .message
                         }
-                        None if args.role.as_str() == "setup" => brief,
-                        None => bail!("a non-setup reservation requires --procedure"),
+                        None => brief,
                     };
                     let configuration = config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
                     let env = crate::wiring::environment(ctx)?;

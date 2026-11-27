@@ -9,7 +9,6 @@
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use base64::Engine as _;
 use instrukt_core::config::{
     Configuration, LayerKind, McpServer, SecretSource, SignInIdentity, SignInMode,
     resolve_secret_from,
@@ -1258,16 +1257,31 @@ fn exchange_code_via_rmcp(
     manager.set_state_store(state_store.clone());
     manager
         .configure_client(oauth_client_config(registration, client_secret))
-        .map_err(|error| format!("failed to configure OAuth client: {error}"))?;
+        .map_err(|error| {
+            format!(
+                "failed to configure OAuth client: {}",
+                _http::sanitize_auth_error(&error)
+            )
+        })?;
     _http::run_async(server_url, async {
         state_store
             .save(csrf_key, stored_state)
             .await
-            .map_err(|error| format!("failed to store PKCE state: {error}"))?;
+            .map_err(|error| {
+                format!(
+                    "failed to store PKCE state: {}",
+                    _http::sanitize_auth_error(&error)
+                )
+            })?;
         manager
             .exchange_code_for_token_with_issuer(code, csrf_key, received_issuer)
             .await
-            .map_err(|error| format!("token exchange failed: {error}"))
+            .map_err(|error| {
+                format!(
+                    "token exchange failed: {}",
+                    _http::sanitize_auth_error(&error)
+                )
+            })
     })
     .map_err(|e| e.to_string())?
 }
@@ -1454,11 +1468,7 @@ fn revoke_direct(
         && !methods.iter().any(|m| m == "client_secret_basic");
     let mut form: Vec<(&str, &str)> = vec![("token", token), ("token_type_hint", hint)];
     let basic = match (client_secret, use_post_secret) {
-        (Some(secret), false) => {
-            let encoded =
-                base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
-            Some(format!("Basic {encoded}"))
-        }
+        (Some(secret), false) => Some(_http::form_basic_auth(client_id, secret)),
         (Some(secret), true) => {
             form.push(("client_id", client_id));
             form.push(("client_secret", secret));
@@ -1577,7 +1587,10 @@ fn refresh_via_rmcp(
     );
     manager.set_credential_store(cred_store.clone());
     if let Err(error) = manager.configure_client(oauth_client_config(registration, client_secret)) {
-        return RefreshOutcome::Failed(format!("failed to configure OAuth client: {error}"));
+        return RefreshOutcome::Failed(format!(
+            "failed to configure OAuth client: {}",
+            _http::sanitize_auth_error(&error)
+        ));
     }
     match _http::run_async(server_url, async {
         cred_store.save(stored).await?;
@@ -1585,7 +1598,7 @@ fn refresh_via_rmcp(
     }) {
         Ok(Ok(token)) => RefreshOutcome::Refreshed(token),
         Ok(Err(AuthError::TokenRefreshRejected(_))) => RefreshOutcome::Rejected,
-        Ok(Err(error)) => RefreshOutcome::Failed(error.to_string()),
+        Ok(Err(error)) => RefreshOutcome::Failed(_http::sanitize_auth_error(&error)),
         Err(error) => RefreshOutcome::Failed(error.to_string()),
     }
 }

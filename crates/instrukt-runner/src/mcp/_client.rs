@@ -53,7 +53,7 @@ pub struct Tool {
 /// The server's whole tool catalog, every page of it.
 pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
     let (client, config, name, url) = prepare_transport(target)?;
-    _http::run_async(target.name, async move {
+    run_gated(target.name, target.url, "list_tools", async move {
         let running = open_session(client, config, &name, &url).await?;
         let outcome = running
             .peer()
@@ -69,7 +69,7 @@ pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
             });
         let _ = running.cancel().await;
         outcome
-    })?
+    })
 }
 
 /// The result of calling `tool`; a result the server marks as an error
@@ -77,7 +77,7 @@ pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
 pub(super) fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<Value, McpError> {
     let (client, config, name, url) = prepare_transport(target)?;
     let tool_name = tool.to_owned();
-    _http::run_async(target.name, async move {
+    run_gated(target.name, target.url, "call", async move {
         let running = open_session(client, config, &name, &url).await?;
         let mut params = CallToolRequestParams::new(tool_name);
         if let Some(map) = arguments.as_object() {
@@ -101,7 +101,86 @@ pub(super) fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<
             });
         let _ = running.cancel().await;
         outcome
-    })?
+    })
+}
+
+/// Runs one MCP session operation through `instrukt-outside`'s shared gate
+/// (single attempt, never retrying mutations automatically) so unreachable,
+/// timed-out, 429, and 5xx outages are judged and reported once.
+fn run_gated<T, F>(server: &str, url: &str, op: &str, future: F) -> Result<T, McpError>
+where
+    F: std::future::Future<Output = Result<T, McpError>> + Send,
+    T: Send,
+{
+    let key = instrukt_outside::Key::new("mcp", [url]).item(op);
+    let attempted = _http::run_async(server, async move {
+        _http::mcp_gate()
+            .attempt_async(
+                &key,
+                &instrukt_outside::Settings::default(),
+                || async move {
+                    match future.await {
+                        Ok(value) => instrukt_outside::Tried::Done(value),
+                        Err(error) => classify_for_gate(error),
+                    }
+                },
+            )
+            .await
+    })?;
+    match attempted {
+        instrukt_outside::Attempted::Done(value) => Ok(value),
+        instrukt_outside::Attempted::Defect(error) => Err(error),
+        instrukt_outside::Attempted::Wait {
+            error: Some(error), ..
+        } => Err(error),
+        instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
+            server: server.to_owned(),
+            url: url.to_owned(),
+            cause: wait.to_string(),
+        }),
+    }
+}
+
+fn classify_for_gate<T>(error: McpError) -> instrukt_outside::Tried<T, McpError> {
+    match &error {
+        McpError::Unreachable { cause, .. } => instrukt_outside::Tried::Unavailable(
+            instrukt_outside::Unavailable {
+                reason: if cause.contains("timed out") {
+                    instrukt_outside::Reason::TimedOut
+                } else {
+                    instrukt_outside::Reason::Unreachable
+                },
+                extent: instrukt_outside::Extent::Scope,
+                named: None,
+            },
+            error,
+        ),
+        McpError::Server { cause, .. } if cause.starts_with("HTTP 429") => {
+            instrukt_outside::Tried::Unavailable(
+                instrukt_outside::Unavailable {
+                    reason: instrukt_outside::Reason::RateLimited,
+                    extent: instrukt_outside::Extent::Key,
+                    named: None,
+                },
+                error,
+            )
+        }
+        McpError::Server { cause, .. } if cause.starts_with("HTTP 5") => {
+            let status = cause
+                .strip_prefix("HTTP ")
+                .and_then(|s| s.get(..3))
+                .and_then(|s| s.parse::<u16>().ok());
+            instrukt_outside::Tried::Unavailable(
+                instrukt_outside::Unavailable {
+                    reason: instrukt_outside::Reason::Unavailable { status },
+                    extent: instrukt_outside::Extent::Scope,
+                    named: None,
+                },
+                error,
+            )
+        }
+        _ => instrukt_outside::Tried::Defect(error),
+    }
 }
 
 fn prepare_transport(

@@ -11,8 +11,8 @@ use serde::Deserialize;
 use serde_json::Value;
 use slack_morphism::hyper_tokio::{SlackClientHyperConnector, SlackClientHyperHttpsConnector};
 use slack_morphism::prelude::{
-    SlackApiAssistantThreadsSetStatusRequest, SlackApiChatPostMessageRequest,
-    SlackApiUsersInfoRequest,
+    SlackApiAppsConnectionOpenRequest, SlackApiAssistantThreadsSetStatusRequest,
+    SlackApiChatPostMessageRequest, SlackApiUsersInfoRequest,
 };
 use slack_morphism::{
     ClientResult, SlackApiToken, SlackChannelId, SlackClient, SlackClientSession,
@@ -49,13 +49,22 @@ impl SlackApi {
         app_token: String,
         bot_token: String,
     ) -> Result<Self, SlackError> {
-        let tls = HttpsConnectorBuilder::new()
+        let tls_builder = HttpsConnectorBuilder::new()
             .with_native_roots()
-            .map_err(|error| api_error("client setup", error))?
-            .https_or_http()
-            .enable_http1()
-            .enable_http2()
-            .build();
+            .map_err(|error| api_error("client setup", error))?;
+        let tls = if endpoint.local {
+            tls_builder
+                .https_or_http()
+                .enable_http1()
+                .enable_http2()
+                .build()
+        } else {
+            tls_builder
+                .https_only()
+                .enable_http1()
+                .enable_http2()
+                .build()
+        };
         let sdk_connector =
             SlackClientHyperConnector::with_connector(tls).with_slack_api_url(&endpoint.api);
         let admission_client = build_client(&ClientConfig {
@@ -80,12 +89,33 @@ impl SlackApi {
         self.client.open_session(&self.bot_token)
     }
 
+    fn app_session(&self) -> Session<'_> {
+        self.client.open_session(&self.app_token)
+    }
+
     fn bot_call<T: Send>(
         &self,
         method: &str,
         call: impl Future<Output = ClientResult<T>> + Send,
     ) -> Result<T, SlackError> {
-        self.attempt(method, async {
+        self.sdk_call(false, method, call)
+    }
+
+    fn app_call<T: Send>(
+        &self,
+        method: &str,
+        call: impl Future<Output = ClientResult<T>> + Send,
+    ) -> Result<T, SlackError> {
+        self.sdk_call(true, method, call)
+    }
+
+    fn sdk_call<T: Send>(
+        &self,
+        app: bool,
+        method: &str,
+        call: impl Future<Output = ClientResult<T>> + Send,
+    ) -> Result<T, SlackError> {
+        self.attempt(app, method, async {
             let timeout = if method == "assistant.threads.setStatus" {
                 STATUS_TIMEOUT
             } else {
@@ -101,11 +131,12 @@ impl SlackApi {
 
     fn attempt<T: Send>(
         &self,
+        app: bool,
         method: &str,
         call: impl Future<Output = Tried<T, SlackError>> + Send,
     ) -> Result<T, SlackError> {
         let gate = &self.endpoint.gate;
-        let key = token_key(&self.company, &self.connector, false).item(method);
+        let key = token_key(&self.company, &self.connector, app).item(method);
         let attempted = block_on(gate.attempt_async(&key, &Settings::default(), || call))
             .map_err(|error| api_error(method, error))?;
         match attempted {
@@ -122,9 +153,25 @@ impl SlackApi {
         }
     }
 
+    /// Ask Slack for one single-use Socket Mode WebSocket URL under the app
+    /// token, judged by the outside gate and verified against `admits_socket`.
+    pub(crate) fn connection_url(&self) -> Result<String, SlackError> {
+        const METHOD: &str = "apps.connections.open";
+        let opened = self.app_call(
+            METHOD,
+            self.app_session()
+                .apps_connections_open(&SlackApiAppsConnectionOpenRequest::new()),
+        )?;
+        let url = opened.url.0.to_string();
+        if !self.endpoint.admits_socket(&url) {
+            return Err(SlackError::Socket);
+        }
+        Ok(url)
+    }
+
     pub(crate) fn check_scopes(&self, required: &[String]) -> Result<(), SlackError> {
         const METHOD: &str = "auth.test";
-        self.attempt(METHOD, async {
+        self.attempt(false, METHOD, async {
             let response = self
                 .admission_client
                 .post(format!("{}/{METHOD}", self.endpoint.api))

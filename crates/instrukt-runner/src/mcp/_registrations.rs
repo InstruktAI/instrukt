@@ -548,7 +548,8 @@ pub(crate) fn ensure_dynamic_registration(
     .map_err(|error| McpError::Server {
         server: server.to_string(),
         cause: format!(
-            "dynamic client registration failed ({error}); declare `sign_in.client_ref` or `sign_in.client`"
+            "dynamic client registration failed ({}); declare `sign_in.client_ref` or `sign_in.client`",
+            _http::sanitize_auth_error(&error)
         ),
     })?;
     let client_id = registered.client_id;

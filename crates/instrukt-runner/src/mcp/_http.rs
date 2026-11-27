@@ -4,18 +4,97 @@
 //! `instrukt_outside::runtime::block_on` so every MCP/OAuth call shares one
 //! client factory, one runtime bridge, and the `mcp_address_admitted` guard.
 
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
+use base64::Engine as _;
 use http::header::ACCEPT;
 use instrukt_outside::http::{ClientConfig, build_client};
 use instrukt_outside::runtime::block_on;
+use instrukt_outside::{Gate, Report};
+use jiff::Timestamp;
 use rmcp::transport::auth::{
-    OAuthHttpClient, OAuthHttpClientError, OAuthHttpClientFuture, OAuthHttpRequest,
+    AuthError, OAuthHttpClient, OAuthHttpClientError, OAuthHttpClientFuture, OAuthHttpRequest,
 };
 use serde_json::Value;
 
 use super::McpError;
+
+/// Shared outside gate for MCP outbound requests in this process.
+pub(crate) fn mcp_gate() -> &'static Gate {
+    static GATE: OnceLock<Gate> = OnceLock::new();
+    GATE.get_or_init(|| {
+        Gate::new(
+            Arc::new(Timestamp::now),
+            Arc::new(Instant::now),
+            Report::log(),
+        )
+    })
+}
+
+/// Maps `rmcp::transport::auth::AuthError` to a fixed, credential-safe summary
+/// before persisting to SQLite (`mcp_sign_ins.failure`) or returning to callers,
+/// never echoing provider `error_description` bodies or reflected credentials.
+pub(crate) fn sanitize_auth_error(error: &AuthError) -> String {
+    match error {
+        AuthError::AuthorizationRequired => "OAuth authorization required".into(),
+        AuthError::AuthorizationFailed(_) => "OAuth authorization failed".into(),
+        AuthError::TokenExchangeFailed(_) => {
+            "OAuth token exchange rejected by authorization server".into()
+        }
+        AuthError::TokenRefreshFailed(_) => "OAuth token refresh failed".into(),
+        AuthError::TokenRefreshRejected(_) => "OAuth refresh token was rejected".into(),
+        AuthError::CredentialStoreError(_) => "OAuth credential store error".into(),
+        AuthError::HttpError(err) => match err.status() {
+            Some(status) => format!("OAuth HTTP error ({})", status.as_u16()),
+            None if err.is_timeout() => "OAuth HTTP request timed out".into(),
+            None if err.is_connect() => "OAuth HTTP connection failed".into(),
+            None => "OAuth HTTP request failed".into(),
+        },
+        AuthError::OAuthError(_) => "OAuth protocol error".into(),
+        AuthError::MetadataError(_) => "OAuth metadata error".into(),
+        AuthError::DiscoveryRequestFailed { .. } => {
+            "OAuth metadata discovery request failed".into()
+        }
+        AuthError::ProtectedResourceMetadataInvalid { .. } => {
+            "protected resource metadata is invalid".into()
+        }
+        AuthError::AuthorizationServersUnavailable { .. } => {
+            "advertised authorization servers published no usable metadata".into()
+        }
+        AuthError::PkceUnsupported => "authorization server does not support PKCE S256".into(),
+        AuthError::UrlError(_) => "invalid OAuth endpoint URL".into(),
+        AuthError::NoAuthorizationSupport => "no OAuth authorization support detected".into(),
+        AuthError::InvalidTokenType(_) => "unsupported OAuth token_type".into(),
+        AuthError::TokenExpired => "OAuth token expired".into(),
+        AuthError::InvalidScope(_) => "invalid OAuth scope".into(),
+        AuthError::RegistrationFailed(_) => {
+            "authorization server rejected dynamic client registration".into()
+        }
+        AuthError::InsufficientScope { .. } => "insufficient OAuth scope".into(),
+        AuthError::AuthorizationServerMismatch { .. } => {
+            "authorization server issuer mismatch".into()
+        }
+        AuthError::AuthorizationServerMissingIssuer { .. } => {
+            "authorization server response missing required issuer".into()
+        }
+        AuthError::ClientCredentialsError(_) => "OAuth client credentials error".into(),
+        AuthError::InternalError(_) => "internal OAuth client error".into(),
+        _ => "OAuth operation failed".into(),
+    }
+}
+
+/// Builds an RFC 6749 §2.3.1 `Authorization: Basic ...` header value by
+/// `application/x-www-form-urlencoded`-encoding `client_id` and `client_secret`
+/// before joining with `:` and Base64-encoding.
+pub(crate) fn form_basic_auth(client_id: &str, client_secret: &str) -> String {
+    let encoded_id: String = form_urlencoded::byte_serialize(client_id.as_bytes()).collect();
+    let encoded_secret: String =
+        form_urlencoded::byte_serialize(client_secret.as_bytes()).collect();
+    let b64 =
+        base64::engine::general_purpose::STANDARD.encode(format!("{encoded_id}:{encoded_secret}"));
+    format!("Basic {b64}")
+}
 
 /// Maximum response body size read for OAuth metadata, token, JWKS, and
 /// identity endpoints.
@@ -214,4 +293,29 @@ pub(crate) fn string_list(value: Option<&Value>) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn form_basic_auth_percent_encodes_reserved_client_credentials() {
+        let header = form_basic_auth("id:with/colon+space ", "sec&ret=1%2");
+        let decoded = String::from_utf8(
+            base64::engine::general_purpose::STANDARD
+                .decode(header.strip_prefix("Basic ").unwrap())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(decoded, "id%3Awith%2Fcolon%2Bspace+:sec%26ret%3D1%252");
+    }
+
+    #[test]
+    fn sanitize_auth_error_never_echoes_provider_payloads() {
+        let err = AuthError::TokenExchangeFailed("secret-token-leaked-in-body".into());
+        let msg = sanitize_auth_error(&err);
+        assert!(!msg.contains("secret-token-leaked-in-body"), "{msg}");
+        assert!(msg.contains("token exchange"), "{msg}");
+    }
 }

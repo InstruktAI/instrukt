@@ -264,6 +264,42 @@ pub(crate) fn admission_transport(
     failure("auth.test", &error.to_string(), judgment)
 }
 
+/// Judge a WebSocket handshake or pre-hello error for the outside gate without
+/// ever logging or exposing the single-use Socket Mode ticket URL.
+pub(crate) fn socket_judgment(
+    error: &tokio_tungstenite::tungstenite::Error,
+    received_at: Timestamp,
+) -> Option<Unavailable> {
+    use tokio_tungstenite::tungstenite::Error as WsError;
+    let settings = Settings::default();
+    let judgment = match error {
+        WsError::Io(io_err) => http::judge(
+            &HttpAnswer::Transport(TransportFailure::from_io(io_err)),
+            &settings,
+        ),
+        WsError::Http(response) => http::judge_response(
+            response.status().as_u16(),
+            response.headers(),
+            received_at,
+            None,
+            &settings,
+        ),
+        WsError::ConnectionClosed | WsError::AlreadyClosed => http::judge(
+            &HttpAnswer::Transport(TransportFailure::Unreachable),
+            &settings,
+        ),
+        WsError::Tls(_) => Judgment::Defect,
+        _ => http::judge(
+            &HttpAnswer::Transport(TransportFailure::Unreachable),
+            &settings,
+        ),
+    };
+    match judgment {
+        Judgment::Unavailable(wait) => Some(wait),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{admission_answer, scope_finding, sdk_answer, token_key};

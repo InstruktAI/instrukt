@@ -477,11 +477,11 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
     };
     let mut file = builder();
     if matches!(command, Command::Mcp(_)) {
-        // The HTTP client's records carry what an MCP server sent back, a
-        // reflected login among it, before instrukt can remove it: for this
-        // command no third-party record below a warning is written.
+        // Third-party HTTP and MCP SDK loggers can emit raw server payloads or
+        // unexpected pre-initialization messages at WARN/ERROR before instrukt
+        // scrubs credentials: suppress all third-party targets for `mcp`.
         file = file.env_lookup(|name| match name {
-            "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("WARNING".into()),
+            "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("CRITICAL".into()),
             "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
             other => std::env::var_os(other),
         });

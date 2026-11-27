@@ -13,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use url::Url;
 
-use super::_http::{AdmittedOAuthHttpClient, CapturedResourceMetadata, run_async, string_list};
+use super::_http::{
+    AdmittedOAuthHttpClient, CapturedResourceMetadata, client as http_client, run_async,
+    sanitize_auth_error, string_list,
+};
 use super::McpError;
 
 /// IETF Identity Assertion JWT Authorization Grant type advertised by EMA servers.
@@ -142,7 +145,10 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
     let (resolution, captured) = resolve_live(url)?;
     let resolved = resolution.map_err(|error| McpError::Server {
         server: url.to_owned(),
-        cause: format!("OAuth metadata discovery failed: {error}"),
+        cause: format!(
+            "OAuth metadata discovery failed: {}",
+            sanitize_auth_error(&error)
+        ),
     })?;
     if resolved.source != AuthorizationMetadataSource::ProtectedResourceMetadata {
         return Err(McpError::Server {
@@ -177,6 +183,50 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
     })
 }
 
+/// Probes the MCP endpoint with an unauthenticated `POST initialize` so servers
+/// that advertise their RFC 9728 `WWW-Authenticate: Bearer resource_metadata=...`
+/// challenge only on MCP POST requests (without GET well-known fallbacks) are
+/// still discovered via `AuthorizationManager::resolve_metadata_from_challenge`.
+async fn probe_post_initialize_challenge(url: &str) -> Option<String> {
+    let client = http_client(url, CONNECT_TIMEOUT, REQUEST_TIMEOUT, false).ok()?;
+    let init_body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": super::_client::INITIALIZE,
+        "params": {
+            "protocolVersion": super::_client::PROTOCOL_VERSIONS[0],
+            "capabilities": {},
+            "clientInfo": {
+                "name": "instrukt",
+                "version": env!("CARGO_PKG_VERSION"),
+            }
+        }
+    });
+    let response = client
+        .post(url)
+        .header(http::header::ACCEPT, "application/json, text/event-stream")
+        .json(&init_body)
+        .send()
+        .await
+        .ok()?;
+    if response.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return None;
+    }
+    let mut fallback = None;
+    for value in response.headers().get_all(http::header::WWW_AUTHENTICATE) {
+        let Ok(text) = value.to_str() else {
+            continue;
+        };
+        if text.contains("resource_metadata") {
+            return Some(text.to_owned());
+        }
+        if fallback.is_none() {
+            fallback = Some(text.to_owned());
+        }
+    }
+    fallback
+}
+
 fn resolve_live(
     url: &str,
 ) -> Result<
@@ -191,13 +241,21 @@ fn resolve_live(
     let http = AdmittedOAuthHttpClient::new(url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?
         .with_prm_observer(Arc::clone(&prm_slot));
     let resolution = run_async(url, async {
+        let challenge = probe_post_initialize_challenge(url).await;
         let manager = AuthorizationManager::new_with_oauth_http_client(parsed, Arc::new(http))
             .await
             .map_err(|error| McpError::Server {
                 server: url.to_owned(),
-                cause: format!("failed to initialize OAuth discovery: {error}"),
+                cause: format!(
+                    "failed to initialize OAuth discovery: {}",
+                    sanitize_auth_error(&error)
+                ),
             })?;
-        Ok::<_, McpError>(manager.resolve_metadata().await)
+        Ok::<_, McpError>(
+            manager
+                .resolve_metadata_from_challenge(challenge.as_deref())
+                .await,
+        )
     })??;
     let captured = prm_slot
         .lock()

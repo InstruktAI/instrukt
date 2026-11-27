@@ -87,6 +87,9 @@ impl GitHubAccess {
     pub(crate) fn validate(&self) -> Result<(), AppError> {
         self.with_apps(|_| Ok(()))
     }
+    pub(crate) fn gate(&self) -> Result<instrukt_outside::Gate, AppError> {
+        self.with_apps(|apps| Ok(apps.gate.clone()))
+    }
     pub(crate) fn begin_pass(&self) -> Result<(), AppError> {
         let mut state = self
             .state
@@ -163,11 +166,10 @@ impl GitHubAccess {
         let clock = Clock::starting(clock());
         self.with_apps(|apps| {
             let credential = apps.issue(repository, Some(role), operation, clock)?;
-            Ok(super::_github::GitHub::new(
-                &apps.api,
-                repository,
-                credential.token().to_owned(),
-            ))
+            Ok(
+                super::_github::GitHub::new(&apps.api, repository, credential.token().to_owned())
+                    .with_gate(apps.gate.clone()),
+            )
         })
     }
 }
@@ -208,7 +210,8 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
         self.with_apps(|apps| {
             let record = apps.issue(repository, None, Operation::Record, clock)?;
             apps.verified_bots(repository, clock)?;
-            let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into());
+            let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into())
+                .with_gate(apps.gate.clone());
             let inspect = || -> Result<(), super::GitHubError> {
                 if gh.read("")?["has_issues"] == false {
                     return Err(setup("repository issues are disabled").into());
@@ -225,7 +228,8 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
             };
             inspect().map_err(readiness_error)?;
             let account = apps.issue(repository, None, Operation::Board, clock)?;
-            let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into());
+            let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into())
+                .with_gate(apps.gate.clone());
             super::_board::inspect(&gh, board).map_err(readiness_error)
         })
     }
@@ -519,6 +523,26 @@ impl Apps {
                         error,
                     )
                 }
+                Err(error @ AppError::Unreachable) => instrukt_outside::Tried::Unavailable(
+                    instrukt_outside::Unavailable {
+                        reason: instrukt_outside::Reason::Unreachable,
+                        extent: instrukt_outside::Extent::Scope,
+                        named: None,
+                    },
+                    error,
+                ),
+                Err(error @ AppError::Refused { status, .. }) if status >= 500 => {
+                    instrukt_outside::Tried::Unavailable(
+                        instrukt_outside::Unavailable {
+                            reason: instrukt_outside::Reason::Unavailable {
+                                status: Some(status),
+                            },
+                            extent: instrukt_outside::Extent::Scope,
+                            named: None,
+                        },
+                        error,
+                    )
+                }
                 Err(error) => instrukt_outside::Tried::Defect(error),
             },
         );
@@ -528,9 +552,15 @@ impl Apps {
             instrukt_outside::Attempted::Wait {
                 error: Some(error), ..
             } => Err(error),
-            instrukt_outside::Attempted::Wait { wait, error: None } => Err(AppError::RateLimited {
-                until: Some(wait.at()),
-            }),
+            instrukt_outside::Attempted::Wait { wait, error: None } => {
+                if wait.reason() == instrukt_outside::Reason::RateLimited {
+                    Err(AppError::RateLimited {
+                        until: Some(wait.at()),
+                    })
+                } else {
+                    Err(AppError::Unreachable)
+                }
+            }
         };
         tracing::debug!(
             event = "github_credential_acquired",
@@ -723,26 +753,32 @@ impl Apps {
         let crab = build_bearer_octocrab(base_uri, bearer)?;
         let route = route.to_owned();
         let payload = body.cloned();
-        let (status, headers, text) = instrukt_outside::runtime::block_on(async move {
+        let (status, headers, received, text) = instrukt_outside::runtime::block_on(async move {
             tokio::time::timeout(REQUEST_TIMEOUT, async move {
                 let response = match method {
-                    Method::Post => crab._post(route, payload.as_ref()).await?,
-                    Method::Patch => crab._patch(route, payload.as_ref()).await?,
-                    Method::Put => crab._put(route, payload.as_ref()).await?,
-                };
+                    Method::Post => crab._post(route, payload.as_ref()).await,
+                    Method::Patch => crab._patch(route, payload.as_ref()).await,
+                    Method::Put => crab._put(route, payload.as_ref()).await,
+                }
+                .map_err(|_| AppError::Unreachable)?;
+                let received = clock.now();
                 let status = response.status().as_u16();
                 let headers = response.headers().clone();
-                Ok::<_, octocrab::Error>((status, headers, crab.body_to_string(response).await?))
+                // Judge throttling from status + headers BEFORE reading the body so
+                // a body timeout or decode failure on 429/403 cannot discard the retry deadline.
+                if let Some(until) = super::_github::judge_rate_limit(status, &headers, received) {
+                    return Err(AppError::RateLimited { until });
+                }
+                let text = crab
+                    .body_to_string(response)
+                    .await
+                    .map_err(|_| AppError::Unreachable)?;
+                Ok::<_, AppError>((status, headers, received, text))
             })
             .await
             .map_err(|_| AppError::Unreachable)?
-            .map_err(|_| AppError::Unreachable)
         })
         .map_err(|_| AppError::Unreachable)??;
-        let received = clock.now();
-        if let Some(until) = super::_github::judge_rate_limit(status, &headers, received) {
-            return Err(AppError::RateLimited { until });
-        }
         let body = if text.trim().is_empty() {
             Value::Null
         } else {
@@ -870,60 +906,39 @@ pub(super) fn api_base(config: &Configuration) -> Result<String, AppError> {
     Ok(api.trim_end_matches('/').into())
 }
 
-/// Compatibility shim for `_company_repos.rs::account_kind` backed by
-/// [`instrukt_outside::http::build_client`] until Wave 1 merge migrates
-/// `_company_repos.rs` directly to `octocrab`.
-pub(super) struct PublicHttpAgent;
-pub(super) struct PublicGetRequest(String, Vec<(String, String)>);
-pub(super) struct PublicResponse(http::StatusCode, http::HeaderMap, PublicBody);
-pub(super) struct PublicBody(String);
-
-impl PublicHttpAgent {
-    pub(super) fn get(&self, url: &str) -> PublicGetRequest {
-        PublicGetRequest(url.to_owned(), Vec::new())
-    }
-}
-impl PublicGetRequest {
-    pub(super) fn header(mut self, name: &str, value: &str) -> Self {
-        self.1.push((name.to_owned(), value.to_owned()));
-        self
-    }
-    pub(super) fn call(self) -> Result<PublicResponse, String> {
-        let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
-            follow_redirects: false,
-            ..Default::default()
+/// Unauthenticated GET against the configured GitHub API origin through
+/// [`octocrab::Octocrab`], used for public account lookup.
+pub(super) fn public_get(api: &str, route: &str) -> Result<(u16, http::HeaderMap, String), String> {
+    let rt = instrukt_outside::runtime::runtime().map_err(|err| err.to_string())?;
+    let crab = {
+        let _guard = rt.enter();
+        super::_github::octocrab_builder(api, Some("2022-11-28"))
+            .map_err(|err| err.to_string())?
+            .build()
+            .map_err(|err| err.to_string())?
+    };
+    let route = route.to_owned();
+    instrukt_outside::runtime::block_on(async move {
+        tokio::time::timeout(REQUEST_TIMEOUT, async move {
+            let response = crab._get(route).await.map_err(|err| err.to_string())?;
+            let status = response.status().as_u16();
+            let headers = response.headers().clone();
+            if status == 404
+                || super::_github::Limits::read(&headers).refusal_throttles(status)
+                || !(200..300).contains(&status)
+            {
+                return Ok((status, headers, String::new()));
+            }
+            let text = crab
+                .body_to_string(response)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok((status, headers, text))
         })
-        .map_err(|err| err.to_string())?;
-        instrukt_outside::runtime::block_on(async move {
-            let req = self.1.iter().fold(client.get(&self.0), |r, (k, v)| {
-                r.header(k.as_str(), v.as_str())
-            });
-            let resp = req.send().await.map_err(|err| err.to_string())?;
-            let (status, headers) = (resp.status(), resp.headers().clone());
-            let text = resp.text().await.map_err(|err| err.to_string())?;
-            Ok(PublicResponse(status, headers, PublicBody(text)))
-        })
-        .map_err(|err| err.to_string())?
-    }
-}
-impl PublicResponse {
-    pub(super) fn status(&self) -> http::StatusCode {
-        self.0
-    }
-    pub(super) fn headers(&self) -> &http::HeaderMap {
-        &self.1
-    }
-    pub(super) fn body_mut(&mut self) -> &mut PublicBody {
-        &mut self.2
-    }
-}
-impl PublicBody {
-    pub(super) fn read_to_string(&mut self) -> Result<String, std::io::Error> {
-        Ok(std::mem::take(&mut self.0))
-    }
-}
-pub(super) fn agent() -> PublicHttpAgent {
-    PublicHttpAgent
+        .await
+        .map_err(|_| "request timed out".to_owned())?
+    })
+    .map_err(|err| err.to_string())?
 }
 
 fn check_permissions(actual: &Value, required: &HashMap<String, String>) -> Result<(), AppError> {

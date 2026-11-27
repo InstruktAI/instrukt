@@ -25,8 +25,12 @@ pub fn runtime() -> io::Result<&'static Runtime> {
     }
 }
 
-/// Runs `future` to completion from synchronous code without panicking when
-/// invoked from inside an active Tokio runtime (multi-thread or current-thread).
+/// Runs `future` to completion from synchronous code.
+///
+/// Inside a multi-thread Tokio runtime this uses [`tokio::task::block_in_place`].
+/// Inside a current-thread Tokio runtime blocking would pause the sole executor
+/// thread and risk deadlock, so it returns an error instead — async callers
+/// should await directly.
 pub fn block_on<F>(future: F) -> io::Result<F::Output>
 where
     F: Future + Send,
@@ -37,16 +41,27 @@ where
             RuntimeFlavor::MultiThread => {
                 Ok(tokio::task::block_in_place(|| handle.block_on(future)))
             }
-            _ => {
-                let rt = runtime()?;
-                std::thread::scope(|scope| {
-                    scope
-                        .spawn(|| rt.block_on(future))
-                        .join()
-                        .map_err(|_| io::Error::other("async bridge thread panicked"))
-                })
-            }
+            _ => Err(io::Error::other(
+                "cannot block_on from a current-thread Tokio runtime; await directly",
+            )),
         };
     }
     Ok(runtime()?.block_on(future))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_on_rejects_current_thread_runtime_instead_of_deadlocking() {
+        let rt = Builder::new_current_thread().enable_all().build().unwrap();
+        let err = rt
+            .block_on(async { block_on(async { 42u8 }) })
+            .expect_err("current-thread runtime must refuse block_on");
+        assert!(
+            err.to_string().contains("current-thread"),
+            "unexpected error: {err}"
+        );
+    }
 }

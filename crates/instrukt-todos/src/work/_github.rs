@@ -12,6 +12,7 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SECONDARY_WAIT_SECONDS: i64 = 60;
 const API_VERSION: &str = "2026-03-10";
+const MAX_PAGES: usize = 500;
 
 /// A GitHub request did not succeed.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -92,11 +93,21 @@ pub(crate) struct GitHub {
     operation: instrukt_core::github::Operation,
     clock: super::_apps::Clock,
     apps: Option<std::sync::Arc<super::GitHubAccess>>,
+    gate: instrukt_outside::Gate,
     scoped: bool,
+}
+
+fn default_gate(clock: super::_apps::Clock) -> instrukt_outside::Gate {
+    instrukt_outside::Gate::new(
+        std::sync::Arc::new(move || clock.checked_now().unwrap_or(Timestamp::MAX)),
+        std::sync::Arc::new(Instant::now),
+        instrukt_outside::Report::log(),
+    )
 }
 
 impl GitHub {
     pub fn new(api_url: &str, repository: &str, token: String) -> Self {
+        let clock = super::_apps::Clock::starting(Timestamp::now());
         Self {
             client: Default::default(),
             api: api_url.trim_end_matches('/').to_owned(),
@@ -105,10 +116,16 @@ impl GitHub {
             credential: Default::default(),
             role: None,
             operation: instrukt_core::github::Operation::Record,
-            clock: super::_apps::Clock::starting(Timestamp::now()),
+            clock,
             apps: None,
+            gate: default_gate(clock),
             scoped: false,
         }
+    }
+
+    pub(super) fn with_gate(mut self, gate: instrukt_outside::Gate) -> Self {
+        self.gate = gate;
+        self
     }
 
     pub fn for_app(
@@ -119,9 +136,10 @@ impl GitHub {
         operation: instrukt_core::github::Operation,
         clock: super::_apps::Clock,
     ) -> Result<Self, GitHubError> {
-        access.validate()?;
+        let gate = access.gate()?;
         let mut gh = Self::new(api, repository, String::new());
         gh.apps = Some(access);
+        gh.gate = gate;
         gh.clock = clock;
         gh.role = role.map(str::to_owned);
         gh.operation = operation;
@@ -135,6 +153,7 @@ impl GitHub {
     ) -> Self {
         let mut gh = Self::new(&self.api, &self.repository, String::new());
         gh.apps = self.apps.clone();
+        gh.gate = self.gate.clone();
         gh.scoped = true;
         gh.clock = self.clock;
         gh.role = role.map(str::to_owned);
@@ -261,16 +280,47 @@ impl GitHub {
         Ok(body)
     }
 
-    /// Every item of a list endpoint, following `Link` pagination through [`octocrab`].
+    /// Every item of a list endpoint, validating each `Link` pagination URL's
+    /// scheme and authority against the configured API origin before calling
+    /// [`octocrab::Octocrab::get_page`] so installation tokens can never be
+    /// downgraded to plaintext HTTP or redirected off-origin.
     pub fn list(&self, path: &str) -> Result<Vec<Value>, GitHubError> {
         let crab = self.octocrab()?;
+        let base_uri: http::Uri = self
+            .api
+            .parse()
+            .map_err(|err: http::uri::InvalidUri| GitHubError::Unreachable(err.to_string()))?;
         let sep = if path.contains('?') { '&' } else { '?' };
         let route = format!("{}{sep}per_page=100", self.repo_route(path));
         let started = Instant::now();
-        let items = self.call("GET", path, async move {
-            let page: octocrab::Page<Value> = crab.get(&route, None::<&()>).await?;
-            crab.all_pages(page).await
-        })?;
+        let mut page: octocrab::Page<Value> =
+            self.call("GET", path, async { crab.get(&route, None::<&()>).await })?;
+        let mut items = page.take_items();
+        let mut pages = 1usize;
+        while let Some(next) = page.next.take() {
+            if !link_admitted(&base_uri, &next) {
+                return Err(GitHubError::Decode {
+                    path: path.to_owned(),
+                    message: "GitHub pagination link changed scheme or origin".into(),
+                });
+            }
+            if pages >= MAX_PAGES {
+                return Err(GitHubError::Decode {
+                    path: path.to_owned(),
+                    message: format!("GitHub pagination exceeded {MAX_PAGES} pages"),
+                });
+            }
+            pages += 1;
+            let next_opt = Some(next);
+            let Some(next_page) = self.call("GET", path, async {
+                crab.get_page::<Value>(&next_opt).await
+            })?
+            else {
+                break;
+            };
+            page = next_page;
+            items.extend(page.take_items());
+        }
         log(200, "GET", path, started);
         Ok(items)
     }
@@ -354,15 +404,43 @@ impl GitHub {
         F: Future<Output = octocrab::Result<T>> + Send,
         T: Send,
     {
-        let outcome = instrukt_outside::runtime::block_on(async move {
-            tokio::time::timeout(REQUEST_TIMEOUT, future).await
-        })
-        .map_err(|err| GitHubError::Unreachable(err.to_string()))?
-        .map_err(|_| GitHubError::Unreachable("request timed out".to_owned()))?;
-        outcome.map_err(|err| {
-            let now = self.current_time().unwrap_or(Timestamp::MAX);
-            map_octocrab_error(err, method, path, now, self.token.borrow().as_str())
-        })
+        let key = instrukt_outside::Key::new("github", [self.api.as_str()])
+            .item(format!("{method} {path}"));
+        let token = self.token.borrow().clone();
+        let clock = self.clock;
+        let gate = self.gate.clone();
+        let attempted = instrukt_outside::runtime::block_on(gate.attempt_async(
+            &key,
+            &instrukt_outside::Settings::default(),
+            || async move {
+                let outcome = match tokio::time::timeout(REQUEST_TIMEOUT, future).await {
+                    Ok(Ok(value)) => return instrukt_outside::Tried::Done(value),
+                    Ok(Err(err)) => {
+                        let now = clock.checked_now().unwrap_or(Timestamp::MAX);
+                        map_octocrab_error(err, method, path, now, &token)
+                    }
+                    Err(_) => GitHubError::Unreachable("request timed out".to_owned()),
+                };
+                classify_for_gate(outcome)
+            },
+        ))
+        .map_err(|err| GitHubError::Unreachable(err.to_string()))?;
+        match attempted {
+            instrukt_outside::Attempted::Done(value) => Ok(value),
+            instrukt_outside::Attempted::Defect(err) => Err(err),
+            instrukt_outside::Attempted::Wait {
+                error: Some(err), ..
+            } => Err(err),
+            instrukt_outside::Attempted::Wait { wait, error: None } => {
+                if wait.reason() == instrukt_outside::Reason::RateLimited {
+                    Err(GitHubError::RateLimited {
+                        until: Some(wait.at()),
+                    })
+                } else {
+                    Err(GitHubError::Unreachable(wait.to_string()))
+                }
+            }
+        }
     }
 
     fn repo_route(&self, path: &str) -> String {
@@ -380,6 +458,60 @@ impl GitHub {
         let crab = build_octocrab(&self.api, &token)?;
         *self.client.borrow_mut() = Some((token, crab.clone()));
         Ok(crab)
+    }
+}
+
+/// Whether a pagination `Link` URI preserves the configured API origin and
+/// scheme (or is a path-only relative URI on that origin). Rejects scheme
+/// downgrades (`https://` -> `http://`), scheme-relative URIs (`//host/...`),
+/// and cross-origin URLs so installation tokens are never sent over plaintext
+/// or to another host.
+fn link_admitted(base: &http::Uri, next: &http::Uri) -> bool {
+    match (next.scheme_str(), next.authority()) {
+        (None, None) => next.path().starts_with('/') && !next.path().starts_with("//"),
+        (Some(scheme), Some(authority)) => {
+            base.scheme_str() == Some(scheme)
+                && base.authority().map(http::uri::Authority::as_str) == Some(authority.as_str())
+        }
+        _ => false,
+    }
+}
+
+fn classify_for_gate<T>(error: GitHubError) -> instrukt_outside::Tried<T, GitHubError> {
+    match &error {
+        GitHubError::RateLimited { until } => instrukt_outside::Tried::Unavailable(
+            instrukt_outside::Unavailable {
+                reason: instrukt_outside::Reason::RateLimited,
+                extent: instrukt_outside::Extent::Key,
+                named: until.map(instrukt_outside::Named::At),
+            },
+            error,
+        ),
+        GitHubError::Unreachable(msg) => instrukt_outside::Tried::Unavailable(
+            instrukt_outside::Unavailable {
+                reason: if msg.contains("timed out") {
+                    instrukt_outside::Reason::TimedOut
+                } else {
+                    instrukt_outside::Reason::Unreachable
+                },
+                extent: instrukt_outside::Extent::Scope,
+                named: None,
+            },
+            error,
+        ),
+        GitHubError::Status { status, .. } if *status >= 500 => {
+            instrukt_outside::Tried::Unavailable(
+                instrukt_outside::Unavailable {
+                    reason: instrukt_outside::Reason::Unavailable {
+                        status: Some(*status),
+                    },
+                    extent: instrukt_outside::Extent::Scope,
+                    named: None,
+                },
+                error,
+            )
+        }
+        _ => instrukt_outside::Tried::Defect(error),
     }
 }
 
@@ -797,6 +929,37 @@ mod tests {
         );
         assert!(matches!(error, GitHubError::Refused { status: 200, .. }));
         assert!(!error.is_reach());
+    }
+
+    #[test]
+    fn pagination_link_rejects_plaintext_downgrade_and_cross_origin_urls() {
+        let base: http::Uri = "https://api.github.com".parse().unwrap();
+        assert!(link_admitted(
+            &base,
+            &"https://api.github.com/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(link_admitted(
+            &base,
+            &"/repos/o/r/issues?page=2".parse().unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"http://api.github.com/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"https://evil.example/repos/o/r/issues?page=2"
+                .parse()
+                .unwrap()
+        ));
+        assert!(!link_admitted(
+            &base,
+            &"//api.github.com/repos/o/r/issues?page=2".parse().unwrap()
+        ));
     }
 
     #[test]

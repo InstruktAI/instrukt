@@ -193,6 +193,7 @@ pub struct SlackEndpoint {
     /// The outside gate every client this endpoint makes judges through.
     gate: Gate,
     api: String,
+    local: bool,
 }
 
 impl SlackEndpoint {
@@ -210,6 +211,7 @@ impl SlackEndpoint {
             None => Ok(Self {
                 gate,
                 api: SLACK_API.into(),
+                local: false,
             }),
             Some(url) => {
                 let parsed = uri(url).ok_or(SlackError::Endpoint)?;
@@ -219,9 +221,25 @@ impl SlackEndpoint {
                 Ok(Self {
                     gate,
                     api: url.trim_end_matches('/').to_owned(),
+                    local: true,
                 })
             }
         }
+    }
+
+    /// Whether a Socket Mode address Slack offered may be connected to:
+    /// one of Slack's TLS hosts, or the local stand-in's loopback address.
+    pub(crate) fn admits_socket(&self, url: &str) -> bool {
+        let Some(parsed) = uri(url) else {
+            return false;
+        };
+        if self.local {
+            return matches!(parsed.scheme_str(), Some("ws" | "wss")) && loopback(&parsed);
+        }
+        parsed.scheme_str() == Some("wss")
+            && parsed
+                .host()
+                .is_some_and(|host| host == "slack.com" || host.ends_with(".slack.com"))
     }
 }
 
@@ -1055,6 +1073,14 @@ mod tests {
         ] {
             assert!(at(refused).is_err(), "{refused}");
         }
+        let prod = SlackEndpoint::from_lookup(&unset, system()).unwrap();
+        assert!(prod.admits_socket("wss://wss-primary.slack.com/link/?ticket=abc"));
+        assert!(!prod.admits_socket("ws://wss-primary.slack.com/link/?ticket=abc"));
+        assert!(!prod.admits_socket("wss://evil.example/link/?ticket=abc"));
+        assert!(!prod.admits_socket("ws://127.0.0.1:9000/link"));
+        let local = at("http://127.0.0.1:9/api").unwrap();
+        assert!(local.admits_socket("ws://127.0.0.1:9000/link"));
+        assert!(!local.admits_socket("wss://wss-primary.slack.com/link/?ticket=abc"));
     }
 
     #[test]
