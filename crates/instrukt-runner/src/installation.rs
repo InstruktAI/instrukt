@@ -9,9 +9,11 @@ mod _package;
 mod _proposals;
 mod _redis;
 mod _services;
+mod _wakeup;
 use crate::install::{Scheduler, WakeUp};
 use _demand::Demand;
 pub use _event_status::events_status;
+pub use _wakeup::{RunnerWakeup, WakeupRefusal, runner_wakeup};
 use instrukt_blueprint::{Graphify, GraphifyState, graphify_version};
 use instrukt_core::{
     config::{Configuration, Env, Module},
@@ -833,9 +835,18 @@ pub fn ticks_status(
     request: &Request<'_>,
     now: jiff::Timestamp,
 ) -> Result<TickStatus, InstallationError> {
-    let mut registration = Report::default();
-    let demand = _demand::read(request.home, request.cwd, &mut registration)
+    let mut demand_report = Report::default();
+    let demand = _demand::read(request.home, request.cwd, &mut demand_report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
+    ticks_status_with_demand(request, &demand, now)
+}
+
+fn ticks_status_with_demand(
+    request: &Request<'_>,
+    demand: &Demand,
+    now: jiff::Timestamp,
+) -> Result<TickStatus, InstallationError> {
+    let mut registration = Report::default();
     let enabled = !demand.projects().is_empty();
     let policy = Configuration::load_global(request.home)?.ticks_enabled()?;
     let tick = _services::tick(request);
