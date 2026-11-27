@@ -439,7 +439,6 @@ pub(super) fn accept(
 /// Closes an unaccepted ask whose target session was confirmed archived,
 /// deleted, or superseded before replay so it is excluded from `Outstanding`
 /// and assignment resolution.
-#[cfg(test)]
 pub(super) fn close_unaccepted(
     home: &Home,
     project: &ProjectSlug,
@@ -516,7 +515,6 @@ pub(super) fn latest_for_key(home: &Home, start_key: &str) -> Result<Option<Ask>
 
 /// The head of the latest unclosed ask in `project` whose canonical report
 /// destination equals `canonical_report`, excluding `exclude_head`.
-#[cfg(test)]
 pub(super) fn latest_by_report(
     home: &Home,
     project: &ProjectSlug,

@@ -2,6 +2,27 @@
 
 ## 0.1.0
 
+### Requested review delivery check and reply changes
+
+- **`instrukt review start` Delivery admission check:** When invoked from a
+  resolved agent session, `instrukt review start` now checks that a runner
+  wake-up serves this computer so recorded verdicts can be delivered back to
+  the asking session. Any of the following satisfies Delivery:
+  - the shared minute wake-up registered via `instrukt install`,
+  - operator scheduling (`ticks: off`), or
+  - the owned runner service (`instrukt run`).
+
+  When Delivery is unmet, the command refuses before starting or waking a
+  reviewer and names its door: `instrukt install` when the shared minute
+  wake-up registration is missing or broken or a demanded runner service
+  (including on a conversations-only computer) is unmet, or enabling the
+  `todos` or `events` module of a project on this computer and then running
+  `instrukt install` when neither has demand. Callers outside a session and
+  computers already running `todos` or `events` need no action.
+- **`instrukt review start --json` reply:** `reached` renames `"sent"` to
+  `"woke"`, and replies gain `asker`, `wakeup_stale`, and (for re-reviews)
+  `re_review`.
+
 ### Retired discussion links, control wrappers, bare NOOP suppression, and proxy review recording
 
 The following legacy surfaces have been retired:

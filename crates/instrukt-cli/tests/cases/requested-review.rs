@@ -134,42 +134,82 @@ fn findings_on_an_unchanged_head_are_disputed_with_the_reviewer_that_recorded_th
     assert_eq!(
         (project.rt.started_count(), project.rt.sent_count("s1")),
         (1, 1),
-        "the dispute reaches the reviewer that recorded the verdict"
+        "the dispute wakes the reviewer that recorded the verdict"
     );
     let commits = [(head.as_str(), "HEAD"), (base.as_str(), "BASE")];
     insta::assert_snapshot!(
         "requested-review-dispute-input",
         project.redact(&project.rt.sent("s1", 1), &commits, &[])
     );
-
-    project.record(&reviewer, &head, "approve").success();
-    let shown = project
-        .as_session(&reviewer)
-        .args(["review", "show", &head])
-        .assert()
-        .success();
-    // The run's clock decides the timestamps `review show` prints.
-    insta::with_settings!({filters => vec![(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z", "[TIME]")]}, {
-        insta::assert_snapshot!(
-            "requested-review-revised-verdict",
-            project.redact(&stdout(&shown), &commits, &["s1"])
-        );
-    });
+    project.rt.consume("s1");
+    project.rt.set_status("s1", "ended ok");
 
     let fixed = project.commit_in(&worktree, "fix.txt");
-    project
+    let rereview = project
         .ask(
             &worktree,
             "feature",
             &fixed,
             &project.report("fix.md", None),
-            &["--prior-report", prior.to_str().unwrap()],
+            &["--prior-report", prior.to_str().unwrap(), "--json"],
+        )
+        .success();
+    assert_eq!(
+        (project.rt.started_count(), project.rt.sent_count("s1")),
+        (1, 2),
+        "the fixing commit wakes the reviewer that recorded the earlier verdict"
+    );
+    let rereview_json: serde_json::Value = serde_json::from_str(&stdout(&rereview)).unwrap();
+    assert_eq!(
+        rereview_json["re_review"],
+        serde_json::json!({
+            "reached_reviewer": {
+                "earlier": {
+                    "head": head,
+                    "traced_by": "digest"
+                }
+            }
+        })
+    );
+    insta::assert_snapshot!(
+        "requested-review-rereview-input",
+        project.redact(
+            &project.rt.sent("s1", 2),
+            &[(fixed.as_str(), "FIXED"), (base.as_str(), "BASE")],
+            &[]
+        )
+    );
+    project.rt.consume("s1");
+    project.rt.set_status("s1", "ended ok");
+
+    project.rt.archive("s1");
+    let fixed2 = project.commit_in(&worktree, "fix2.txt");
+    let fresh = project
+        .ask(
+            &worktree,
+            "feature",
+            &fixed2,
+            &project.report("fix2.md", None),
+            &["--prior-report", prior.to_str().unwrap(), "--json"],
         )
         .success();
     assert_eq!(
         project.rt.started_count(),
         2,
-        "the fixing commit is reviewed in its own right"
+        "an archived earlier reviewer starts a fresh reviewer for the fixing head"
+    );
+    let fresh_json: serde_json::Value = serde_json::from_str(&stdout(&fresh)).unwrap();
+    assert_eq!(
+        fresh_json["re_review"],
+        serde_json::json!({
+            "fresh_reviewer": {
+                "reason": "reviewer_gone",
+                "earlier": {
+                    "head": head,
+                    "traced_by": "digest"
+                }
+            }
+        })
     );
 }
 

@@ -16,6 +16,7 @@
 mod _admission;
 mod _notices;
 mod _rendering;
+mod _route;
 mod _store;
 
 use std::path::{Path, PathBuf};
@@ -29,13 +30,18 @@ use serde::Serialize;
 
 pub use _admission::{Coordinate, Coordinates, FormRefusal, Kind, RawCoordinates, SourcePointer};
 pub use _notices::{NoticeError, RecordedVersion, queue_verdict_notices};
+pub use _route::{ReReviewOutcome, ReuseImpossible};
 pub use _store::{EarlierHead, TracedBy};
 
+use crate::installation::RunnerWakeup;
 use crate::interfaces::{HeadVerdicts, ProjectRef};
-use crate::keyed::{self, KeyGuard, RuntimeInvocation};
+use crate::keyed::{
+    self, KeyGuard, NotWoken, RuntimeInvocation, WakeOutcome, WakeTarget, WakeTargetLookup,
+};
 use crate::runtime::{Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::RunnerState;
+use _route::{Preflight, ReReviewPlan};
 use _store::{Ask, Delivery, RecordOutcome};
 
 /// How long an ask waits for the machine's dispatch gate, which runner
@@ -57,7 +63,24 @@ pub enum Check {
     Request,
     Outstanding,
     Runtime,
+    Delivery,
     Procedure,
+}
+
+impl Check {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Placement => "placement",
+            Self::Cleanliness => "cleanliness",
+            Self::Range => "range",
+            Self::ReviewState => "review_state",
+            Self::Request => "request",
+            Self::Outstanding => "outstanding",
+            Self::Runtime => "runtime",
+            Self::Delivery => "delivery",
+            Self::Procedure => "procedure",
+        }
+    }
 }
 
 /// Why an ask was not admitted or not accepted.
@@ -96,6 +119,9 @@ pub struct AskContext<'a> {
     pub verdicts: &'a dyn HeadVerdicts,
     /// The session that asked, when one resolved for the caller.
     pub asker: Option<SessionRef>,
+    /// Read-only inspection answering whether a runner wake-up serves this
+    /// computer; invoked only when `asker` is `Some`.
+    pub delivery: &'a dyn Fn() -> Result<RunnerWakeup, String>,
     pub now: Timestamp,
 }
 
@@ -119,9 +145,12 @@ pub struct Reply {
     pub reviewer: SessionRef,
     pub start_key: String,
     pub reached: Reached,
-    /// The same ask was already outstanding: this one started or sent
+    /// The same ask was already outstanding: this one started or woke
     /// nothing new.
     pub repeated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub re_review: Option<ReReviewOutcome>,
+    pub wakeup_stale: bool,
     pub report: PathBuf,
     /// Where the verdict shows once the reviewer records it.
     pub show: String,
@@ -129,34 +158,95 @@ pub struct Reply {
 
 /// Asks for the independent review of the head `coordinates` name.
 pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, AskError> {
+    let slug = &context.project.slug;
+    let head = &coordinates.head;
+    let result = ask_inner(context, &coordinates);
+    if let Err(AskError::Refused { check, message }) = &result {
+        tracing::warn!(
+            event = "requested_review_refused",
+            project = %slug,
+            head = %head,
+            check = check.as_str(),
+            reason = %message
+        );
+    }
+    result
+}
+
+fn ask_inner(context: &AskContext<'_>, coordinates: &Coordinates) -> Result<Reply, AskError> {
     let kind = coordinates.kind()?;
     let slug = &context.project.slug;
     let head = &coordinates.head;
     _admission::procedure(context.home)?;
     let runtime = _admission::runtime(context.config)?;
+    let wakeup_stale = if context.asker.is_some() {
+        match (context.delivery)() {
+            Ok(RunnerWakeup::Served { stale }) => stale,
+            Ok(RunnerWakeup::Refused { reason, door }) => {
+                return Err(refused(Check::Delivery, format!("{reason}; {door}")));
+            }
+            Err(error) => {
+                return Err(AskError::Failed(format!(
+                    "cannot inspect whether a runner wake-up serves this computer: {error}; check `instrukt ticks status`"
+                )));
+            }
+        }
+    } else {
+        false
+    };
     let adapter = crate::runtime::adapter(runtime);
     let checkout = registered_checkout(context.home, slug)?;
-    _admission::placement(&checkout, &coordinates)?;
+    _admission::placement(&checkout, coordinates)?;
     _admission::cleanliness(&coordinates.worktree)?;
     let verdict = context
         .verdicts
         .head_verdict(context.project, head)
         .map_err(AskError::Failed)?;
-    _admission::range(&coordinates, verdict.pinned_base.as_ref())?;
+    _admission::range(coordinates, verdict.pinned_base.as_ref())?;
     let state = RunnerState::new(context.home);
     let requests = crate::review::requests(&state, slug, head).map_err(failed)?;
+    let rereview_plan = match (kind, coordinates.prior_report.as_deref()) {
+        (Kind::ReReview, Some(prior)) => Some(_route::trace_rereview(
+            context,
+            &state,
+            runtime.name(),
+            head,
+            prior,
+        )?),
+        _ => None,
+    };
 
-    let rendering = _rendering::render(slug, &coordinates);
+    let rendering = _rendering::render(slug, coordinates);
     let key = keyed::review_key(slug.as_str(), head.as_str());
     let invocation = RuntimeInvocation::acquire(context.home, DISPATCH_WAIT).map_err(failed)?;
-    let guard = KeyGuard::claim(
-        &invocation,
-        adapter.as_ref(),
-        &key,
-        Some(slug.as_str()),
-        context.now,
-    )
-    .map_err(|error| match error {
+    let guard = claim_key(&invocation, adapter.as_ref(), &key, slug, head, context.now)?;
+    let delivery = Delivering {
+        context,
+        adapter: adapter.as_ref(),
+        invocation: &invocation,
+        guard: &guard,
+        coordinates,
+        kind,
+        key: &key,
+        checkout: &checkout,
+        rendering: &rendering,
+        wakeup_stale,
+    };
+    let reply = delivery.run(&state, &verdict.standing, &requests, rereview_plan)?;
+    drop(guard);
+    retire(context, slug);
+    Ok(reply)
+}
+
+fn claim_key(
+    invocation: &RuntimeInvocation,
+    adapter: &dyn RuntimeAdapter,
+    key: &str,
+    slug: &ProjectSlug,
+    head: &CommitSha,
+    now: Timestamp,
+) -> Result<KeyGuard, AskError> {
+    KeyGuard::claim(invocation, adapter, key, Some(slug.as_str()), now).map_err(|error| match error {
         SessionsError::Refused(_) => refused(
             Check::Outstanding,
             format!(
@@ -164,26 +254,11 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
             ),
         ),
         error => failed(error),
-    })?;
-    let delivery = Delivering {
-        context,
-        adapter: adapter.as_ref(),
-        invocation: &invocation,
-        guard: &guard,
-        coordinates: &coordinates,
-        kind,
-        key: &key,
-        checkout: &checkout,
-        rendering: &rendering,
-    };
-    let reply = delivery.run(&state, &verdict.standing, &requests)?;
-    drop(guard);
-    retire(context, slug);
-    Ok(reply)
+    })
 }
 
 /// The assignment of the requested reviewer started under `start_key`, from
-/// the latest ask recorded under it, accepted or not: role
+/// the latest unclosed ask recorded under it, accepted or not: role
 /// `commit-reviewer`, the project and the worktree it was started in
 /// (`roles-and-capabilities`, Caller and object resolution).
 pub(crate) fn assignment(
@@ -252,13 +327,23 @@ fn turn(thread: &Thread) -> Result<Turn, AskError> {
 enum Route {
     Start,
     Successor,
-    Send {
+    Wake {
+        target: WakeTarget,
         session: SessionRef,
-        generation: u64,
     },
 }
 
-/// One admitted ask under its key.
+enum RepeatOutcome {
+    Done(Reply),
+    ClosedDeadWake(Option<ReuseImpossible>),
+}
+
+enum WakeAttempt {
+    Accepted(Reply),
+    ClosedDeadWake(Option<ReuseImpossible>),
+}
+
+/// One admitted ask under its head key.
 struct Delivering<'a> {
     context: &'a AskContext<'a>,
     adapter: &'a dyn RuntimeAdapter,
@@ -269,6 +354,7 @@ struct Delivering<'a> {
     key: &'a str,
     checkout: &'a Path,
     rendering: &'a _rendering::Rendering,
+    wakeup_stale: bool,
 }
 
 impl Delivering<'_> {
@@ -280,49 +366,239 @@ impl Delivering<'_> {
         &self.coordinates.head
     }
 
-    /// Under the key: returns the same ask while it is outstanding; admits
-    /// any other ask under Review state, Request and Outstanding; decides
-    /// the route, records the ask, reaches the runtime and records the
-    /// acceptance.
+    fn read_present(&self, session: &SessionRef) -> Result<Option<Thread>, AskError> {
+        let thread = match self.adapter.read_state(session) {
+            Ok(thread) => Some(thread),
+            Err(SessionsError::Gone(_)) => None,
+            Err(error) => return Err(failed(error)),
+        };
+        Ok(thread.filter(|t| t.presence == Presence::Present && t.state != SessionState::Gone))
+    }
+
+    /// Under the head's key: returns the same ask while it is outstanding
+    /// (closing dead unaccepted wakes on replay); admits any other ask under
+    /// Review state, Request and Outstanding; routes by kind, records the ask,
+    /// reaches the runtime with no store lock held, and records acceptance.
     fn run(
         &self,
         state: &RunnerState,
         standing: &crate::interfaces::VerdictStanding,
         requests: &[crate::review::Request],
+        mut rereview_plan: Option<ReReviewPlan>,
     ) -> Result<Reply, AskError> {
-        let runtime = self.adapter.runtime();
-        let bound = keyed::bound(state, runtime.name(), self.key).map_err(failed)?;
-        let thread = bound
-            .as_ref()
-            .map(|bound| self.adapter.read_state(&bound.session))
-            .transpose()
-            .map_err(failed)?;
-        let present = thread
-            .as_ref()
-            .filter(|thread| thread.presence == Presence::Present);
-        let reviewer_turn = present.map(turn).transpose()?;
+        let runtime = self.adapter.runtime().name();
         let asks = _store::asks(self.context.home, self.slug(), self.head()).map_err(failed)?;
-        let expected_last_number = asks
-            .iter()
-            .rev()
-            .find(|ask| ask.closed_at.is_none())
-            .map(|ask| ask.number);
-        let outstanding = asks
-            .iter()
-            .rev()
-            .find(|ask| ask.closed_at.is_none())
-            .filter(|ask| ask.accepted_at.is_none() || reviewer_turn == Some(Turn::InProgress));
+        let latest_unclosed = asks.iter().rev().find(|ask| ask.closed_at.is_none());
+        let mut expected_last_number = latest_unclosed.map(|ask| ask.number);
+        let last_bound = latest_unclosed
+            .map(|ask| keyed::bound(state, runtime, &ask.start_key))
+            .transpose()
+            .map_err(failed)?
+            .flatten();
+        let last_present = last_bound
+            .as_ref()
+            .map(|bound| self.read_present(&bound.session))
+            .transpose()?
+            .flatten();
+        let last_turn = last_present.as_ref().map(turn).transpose()?;
+        let mut outstanding = latest_unclosed
+            .filter(|ask| ask.accepted_at.is_none() || last_turn == Some(Turn::InProgress));
+
         // The same ask while outstanding returns it, whatever its reviewer
         // recorded meanwhile within the turn it opened (Outstanding).
         if let Some(ask) = outstanding.filter(|ask| ask.digest == self.rendering.digest) {
-            return self.repeat(ask, bound.as_ref().map(|bound| &bound.session));
+            match self.repeat(state, ask, last_bound.as_ref(), rereview_plan.as_ref())? {
+                RepeatOutcome::Done(reply) => return Ok(reply),
+                RepeatOutcome::ClosedDeadWake(fallback_reason) => {
+                    outstanding = None;
+                    let refreshed = _store::asks(self.context.home, self.slug(), self.head())
+                        .map_err(failed)?;
+                    expected_last_number = refreshed
+                        .iter()
+                        .rev()
+                        .find(|a| a.closed_at.is_none())
+                        .map(|a| a.number);
+                    if let Some(reason) = fallback_reason {
+                        rereview_plan = Some(ReReviewPlan::Fresh(reason));
+                    }
+                }
+            }
         }
+
         _admission::review_state(self.kind, self.head(), standing)?;
         _admission::request(self.head(), requests)?;
         if let Some(ask) = outstanding {
-            return self.repeat(ask, bound.as_ref().map(|bound| &bound.session));
+            return Err(refused(
+                Check::Outstanding,
+                format!(
+                    "ask {} of {} ({}) is outstanding with its requested reviewer {}; ask again once the turn it opened ends",
+                    ask.number,
+                    self.head(),
+                    ask.kind,
+                    last_bound
+                        .as_ref()
+                        .map_or_else(|| "(not started yet)".to_owned(), |b| b.session.to_string())
+                ),
+            ));
         }
-        if let (Some(Turn::InProgress), Some(thread)) = (reviewer_turn, present) {
+
+        let (route, target_guard, re_review) = match self.kind {
+            Kind::Review => (self.plan_head_key(state)?, None, None),
+            Kind::Dispute => {
+                let (session, target) = _route::resolve_dispute_target(
+                    state,
+                    runtime,
+                    self.slug(),
+                    self.head(),
+                    standing,
+                )?;
+                let target_guard = self.claim_target_if_distinct(&target.key)?;
+                self.check_preflight_for_dispute(state, &target, &session)?;
+                (Route::Wake { target, session }, target_guard, None)
+            }
+            Kind::ReReview => match rereview_plan {
+                Some(ReReviewPlan::Wake(reviewer)) => {
+                    let target_guard = self.claim_target_if_distinct(&reviewer.target.key)?;
+                    match _route::preflight_wake(
+                        state,
+                        self.adapter,
+                        &reviewer.target,
+                        &reviewer.session,
+                    )? {
+                        Preflight::Ready => (
+                            Route::Wake {
+                                target: reviewer.target,
+                                session: reviewer.session,
+                            },
+                            target_guard,
+                            Some(ReReviewOutcome::ReachedReviewer {
+                                earlier: reviewer.earlier,
+                            }),
+                        ),
+                        Preflight::Gone => {
+                            drop(target_guard);
+                            let reason = ReuseImpossible::ReviewerGone {
+                                earlier: reviewer.earlier,
+                            };
+                            _route::log_reuse_impossible(self.slug(), self.head(), &reason);
+                            (
+                                self.plan_head_key(state)?,
+                                None,
+                                Some(ReReviewOutcome::FreshReviewer(reason)),
+                            )
+                        }
+                        Preflight::TurnInProgress => {
+                            return Err(refused(
+                                Check::Outstanding,
+                                format!(
+                                    "the requested reviewer {} has a turn in progress; ask again once it ends",
+                                    reviewer.session
+                                ),
+                            ));
+                        }
+                        Preflight::ReadinessUnknown => {
+                            return Err(refused(
+                                Check::Runtime,
+                                format!(
+                                    "the runtime cannot say whether the requested reviewer {} has a turn in progress; run the same command again once it answers",
+                                    reviewer.session
+                                ),
+                            ));
+                        }
+                        Preflight::Misplaced(cause) => {
+                            return Err(refused(
+                                Check::Runtime,
+                                format!(
+                                    "the requested reviewer {} is misplaced ({cause}); run the same command again once the placement issue is resolved",
+                                    reviewer.session
+                                ),
+                            ));
+                        }
+                    }
+                }
+                Some(ReReviewPlan::Fresh(reason)) => (
+                    self.plan_head_key(state)?,
+                    None,
+                    Some(ReReviewOutcome::FreshReviewer(reason)),
+                ),
+                None => {
+                    let reason = ReuseImpossible::NoEarlierHead;
+                    _route::log_reuse_impossible(self.slug(), self.head(), &reason);
+                    (
+                        self.plan_head_key(state)?,
+                        None,
+                        Some(ReReviewOutcome::FreshReviewer(reason)),
+                    )
+                }
+            },
+        };
+
+        self.record_and_deliver(state, route, target_guard, expected_last_number, re_review)
+    }
+
+    fn claim_target_if_distinct(&self, target_key: &str) -> Result<Option<KeyGuard>, AskError> {
+        if target_key == self.key {
+            return Ok(None);
+        }
+        Ok(Some(claim_key(
+            self.invocation,
+            self.adapter,
+            target_key,
+            self.slug(),
+            self.head(),
+            self.context.now,
+        )?))
+    }
+
+    fn check_preflight_for_dispute(
+        &self,
+        state: &RunnerState,
+        target: &WakeTarget,
+        session: &SessionRef,
+    ) -> Result<(), AskError> {
+        match _route::preflight_wake(state, self.adapter, target, session)? {
+            Preflight::Ready => Ok(()),
+            Preflight::Gone => Err(refused(
+                Check::ReviewState,
+                format!(
+                    "the requested reviewer {session} that recorded {}'s verdict was archived or deleted, and a successor did not record it; a revised head is the way forward",
+                    self.head()
+                ),
+            )),
+            Preflight::TurnInProgress => Err(refused(
+                Check::Outstanding,
+                format!(
+                    "the requested reviewer {session} of {} has a turn in progress; ask again once it ends",
+                    self.head()
+                ),
+            )),
+            Preflight::ReadinessUnknown => Err(refused(
+                Check::Runtime,
+                format!(
+                    "the runtime cannot say whether the requested reviewer {session} has a turn in progress; run the same command again once it answers"
+                ),
+            )),
+            Preflight::Misplaced(cause) => Err(refused(
+                Check::Runtime,
+                format!(
+                    "the requested reviewer {session} is misplaced ({cause}); run the same command again once the placement issue is resolved"
+                ),
+            )),
+        }
+    }
+
+    /// Evaluates the head's own requested reviewer across all four states
+    /// (`requested-review`, Reaching the reviewer): none yet -> Start,
+    /// idle -> Wake, busy -> Outstanding, archived/deleted -> Successor.
+    fn plan_head_key(&self, state: &RunnerState) -> Result<Route, AskError> {
+        let runtime = self.adapter.runtime().name();
+        let Some(bound) = keyed::bound(state, runtime, self.key).map_err(failed)? else {
+            return Ok(Route::Start);
+        };
+        let Some(thread) = self.read_present(&bound.session)? else {
+            return Ok(Route::Successor);
+        };
+        if turn(&thread)? == Turn::InProgress {
             return Err(refused(
                 Check::Outstanding,
                 format!(
@@ -332,34 +608,63 @@ impl Delivering<'_> {
                 ),
             ));
         }
-        if self.kind == Kind::Dispute {
-            let reviewer = bound.as_ref().map(|bound| &bound.session);
-            _admission::dispute_recorder(self.head(), standing, reviewer)?;
-            if let (Some(reviewer), None) = (reviewer, present) {
-                return Err(refused(
-                    Check::ReviewState,
-                    format!(
-                        "the requested reviewer {reviewer} that recorded {}'s verdict was archived or deleted, and a successor did not record it; a revised head is the way forward",
-                        self.head()
-                    ),
-                ));
+        match keyed::wake_target(state, runtime, &bound.session).map_err(failed)? {
+            WakeTargetLookup::Found(target) if target.key == self.key => {
+                match _route::preflight_wake(state, self.adapter, &target, &bound.session)? {
+                    Preflight::Ready => Ok(Route::Wake {
+                        target,
+                        session: bound.session,
+                    }),
+                    Preflight::Gone => Ok(Route::Successor),
+                    Preflight::TurnInProgress => Err(refused(
+                        Check::Outstanding,
+                        format!(
+                            "the requested reviewer {} of {} has a turn in progress; ask again once it ends",
+                            bound.session,
+                            self.head()
+                        ),
+                    )),
+                    Preflight::ReadinessUnknown => Err(refused(
+                        Check::Runtime,
+                        format!(
+                            "the runtime cannot say whether the requested reviewer {} has a turn in progress; run the same command again once it answers",
+                            bound.session
+                        ),
+                    )),
+                    Preflight::Misplaced(cause) => Err(refused(
+                        Check::Runtime,
+                        format!(
+                            "the requested reviewer {} is misplaced ({cause}); run the same command again once the placement issue is resolved",
+                            bound.session
+                        ),
+                    )),
+                }
             }
+            _ => Ok(Route::Successor),
         }
-        let route = match (&bound, present) {
-            (None, _) => Route::Start,
-            (Some(bound), Some(_)) => Route::Send {
-                session: bound.session.clone(),
-                generation: bound.generation,
-            },
-            (Some(_), None) => Route::Successor,
-        };
-        let (delivery, send_generation) = match &route {
-            Route::Start | Route::Successor => (Delivery::Start, None),
-            Route::Send { generation, .. } => (Delivery::Send, Some(*generation)),
+    }
+
+    fn record_and_deliver(
+        &self,
+        state: &RunnerState,
+        route: Route,
+        target_guard: Option<KeyGuard>,
+        expected_last_number: Option<u64>,
+        re_review: Option<ReReviewOutcome>,
+    ) -> Result<Reply, AskError> {
+        let (start_key, delivery, send_generation) = match &route {
+            Route::Start | Route::Successor => (self.key.to_owned(), Delivery::Start, None),
+            Route::Wake { target, .. } => {
+                (target.key.clone(), Delivery::Send, Some(target.generation))
+            }
         };
         let worktree_path = self.worktree_path()?;
         let report_path = _store::canonical_report(&self.coordinates.report).map_err(failed)?;
         let named = serde_json::to_string(&self.coordinates.named()).map_err(failed)?;
+        let trace = re_review
+            .as_ref()
+            .and_then(ReReviewOutcome::earlier)
+            .cloned();
         let ask = match _store::record(
             self.context.home,
             &_store::NewAsk {
@@ -369,13 +674,13 @@ impl Delivering<'_> {
                 coordinates: &named,
                 rendering: &self.rendering.text,
                 digest: &self.rendering.digest,
-                start_key: self.key,
+                start_key: &start_key,
                 checkout: &worktree_path,
                 delivery,
                 send_generation,
                 admitted_at: self.context.now,
                 asker: self.context.asker.as_ref(),
-                trace: None,
+                trace: trace.as_ref(),
                 report: &report_path,
             },
             expected_last_number,
@@ -403,67 +708,281 @@ impl Delivering<'_> {
             trace = ?ask.trace,
             report = %ask.report.display()
         );
-        let session = match route {
-            Route::Start => self.start(false)?,
-            Route::Successor => self.start(true)?,
-            Route::Send { session, .. } => {
-                self.send(&ask, &session)?;
-                session
+        match route {
+            Route::Start => {
+                let session = self.start_with_brief(false, &ask.rendering)?;
+                self.accepted(&ask, &session, false, re_review)
+            }
+            Route::Successor => {
+                let session = self.start_with_brief(true, &ask.rendering)?;
+                self.accepted(&ask, &session, false, re_review)
+            }
+            Route::Wake { target, session } => {
+                let active_guard = target_guard.as_ref().unwrap_or(self.guard);
+                match self.execute_wake(active_guard, &ask, &target, &session, false, re_review)? {
+                    WakeAttempt::Accepted(reply) => Ok(reply),
+                    WakeAttempt::ClosedDeadWake(fallback_reason) => {
+                        drop(target_guard);
+                        self.deliver_after_dead_wake(state, fallback_reason)
+                    }
+                }
+            }
+        }
+    }
+
+    fn deliver_after_dead_wake(
+        &self,
+        state: &RunnerState,
+        fallback_reason: Option<ReuseImpossible>,
+    ) -> Result<Reply, AskError> {
+        let refreshed =
+            _store::asks(self.context.home, self.slug(), self.head()).map_err(failed)?;
+        let expected_last_number = refreshed
+            .iter()
+            .rev()
+            .find(|a| a.closed_at.is_none())
+            .map(|a| a.number);
+        let (route, re_review) = match self.kind {
+            Kind::ReReview => {
+                let reason = fallback_reason.unwrap_or(ReuseImpossible::NoEarlierHead);
+                _route::log_reuse_impossible(self.slug(), self.head(), &reason);
+                (
+                    self.plan_head_key(state)?,
+                    Some(ReReviewOutcome::FreshReviewer(reason)),
+                )
+            }
+            Kind::Review => (Route::Successor, None),
+            Kind::Dispute => {
+                return Err(refused(
+                    Check::ReviewState,
+                    format!(
+                        "the requested reviewer that recorded {}'s verdict was archived or deleted; a revised head is the way forward",
+                        self.head()
+                    ),
+                ));
             }
         };
-        self.accepted(&ask, &session, false)
+        self.record_and_deliver(state, route, None, expected_last_number, re_review)
     }
 
     /// The same ask while it is outstanding returns it, replaying its
-    /// delivery while the runtime's acceptance is not recorded; a different
-    /// ask is refused.
-    fn repeat(&self, ask: &Ask, bound: Option<&SessionRef>) -> Result<Reply, AskError> {
-        if ask.digest != self.rendering.digest {
-            return Err(refused(
-                Check::Outstanding,
-                format!(
-                    "ask {} of {} ({}) is outstanding with its requested reviewer {}; ask again once the turn it opened ends",
-                    ask.number,
-                    self.head(),
-                    ask.kind,
-                    bound.map_or_else(|| "(not started yet)".to_owned(), ToString::to_string)
-                ),
-            ));
-        }
+    /// delivery while the runtime's acceptance is not recorded.
+    fn repeat(
+        &self,
+        state: &RunnerState,
+        ask: &Ask,
+        bound: Option<&keyed::Bound>,
+        rereview_plan: Option<&ReReviewPlan>,
+    ) -> Result<RepeatOutcome, AskError> {
+        let re_review = self.re_review_from_ask(ask, rereview_plan);
         if ask.accepted_at.is_some() {
-            let session = bound.cloned().ok_or_else(|| {
+            let session = bound.map(|b| b.session.clone()).ok_or_else(|| {
                 failed(format!(
                     "ask {} of {} was accepted but its start key `{}` binds no session",
                     ask.number,
                     self.head(),
-                    self.key
+                    ask.start_key
                 ))
             })?;
             tracing::info!(event = "requested_review_repeated", project = %self.slug(), head = %self.head(), ask = ask.number);
-            return Ok(self.reply(ask, session, true));
+            return Ok(RepeatOutcome::Done(
+                self.reply(ask, session, true, re_review),
+            ));
         }
         tracing::info!(event = "requested_review_replayed", project = %self.slug(), head = %self.head(), ask = ask.number);
-        let session = match (ask.delivery, &ask.command_id, bound) {
-            (Delivery::Send, Some(_), Some(session)) => {
-                self.send(ask, session)?;
-                session.clone()
+        match ask.delivery {
+            Delivery::Start => {
+                let successor = self.start_replay_needs_successor(state)?;
+                let session = self.start_with_brief(successor, &ask.rendering)?;
+                Ok(RepeatOutcome::Done(
+                    self.accepted(ask, &session, true, re_review)?,
+                ))
             }
-            (Delivery::Send, _, _) => {
-                return Err(failed(format!(
-                    "ask {} of {} is a send without its recorded command identity or target session",
-                    ask.number,
-                    self.head()
-                )));
+            Delivery::Send => {
+                let target_guard = self.claim_target_if_distinct(&ask.start_key)?;
+                let runtime = self.adapter.runtime().name();
+                let current_bound = keyed::bound(state, runtime, &ask.start_key).map_err(failed)?;
+                let target_lookup = match &current_bound {
+                    Some(b) if Some(b.generation) == ask.generation => {
+                        match keyed::wake_target(state, runtime, &b.session).map_err(failed)? {
+                            WakeTargetLookup::Found(target) if target.key == ask.start_key => {
+                                Ok((target, b.session.clone()))
+                            }
+                            WakeTargetLookup::DifferentGeneration { .. } => {
+                                Err("different_generation")
+                            }
+                            WakeTargetLookup::NotBound | WakeTargetLookup::Found(_) => {
+                                Err("not_bound")
+                            }
+                        }
+                    }
+                    Some(_) => Err("different_generation"),
+                    None => Err("not_bound"),
+                };
+                match target_lookup {
+                    Ok((target, session)) => {
+                        let active_guard = target_guard.as_ref().unwrap_or(self.guard);
+                        match self.execute_wake(
+                            active_guard,
+                            ask,
+                            &target,
+                            &session,
+                            true,
+                            re_review,
+                        )? {
+                            WakeAttempt::Accepted(reply) => Ok(RepeatOutcome::Done(reply)),
+                            WakeAttempt::ClosedDeadWake(fallback_reason) => {
+                                drop(target_guard);
+                                Ok(RepeatOutcome::ClosedDeadWake(fallback_reason))
+                            }
+                        }
+                    }
+                    Err(reason_kind) => {
+                        drop(target_guard);
+                        let fallback_reason = self.close_dead_wake(ask, reason_kind)?;
+                        Ok(RepeatOutcome::ClosedDeadWake(fallback_reason))
+                    }
+                }
             }
-            (Delivery::Start, _, _) => self.start_with_brief(false, &ask.rendering)?,
-        };
-        self.accepted(ask, &session, true)
+        }
     }
 
-    /// The keyed start of the requested reviewer with the rendering as its
-    /// opening input; `successor` succeeds an archived or deleted generation.
-    fn start(&self, successor: bool) -> Result<SessionRef, AskError> {
-        self.start_with_brief(successor, &self.rendering.text)
+    fn start_replay_needs_successor(&self, state: &RunnerState) -> Result<bool, AskError> {
+        let runtime = self.adapter.runtime().name();
+        let Some(bound) = keyed::bound(state, runtime, self.key).map_err(failed)? else {
+            return Ok(false);
+        };
+        let Some(thread) = self.read_present(&bound.session)? else {
+            return Ok(true);
+        };
+        let misplaced = self
+            .adapter
+            .verify_thread_project(self.checkout, &thread, Some(self.key))
+            .is_err();
+        Ok(misplaced)
+    }
+
+    fn execute_wake(
+        &self,
+        active_guard: &KeyGuard,
+        ask: &Ask,
+        target: &WakeTarget,
+        session: &SessionRef,
+        replayed: bool,
+        re_review: Option<ReReviewOutcome>,
+    ) -> Result<WakeAttempt, AskError> {
+        let command = ask.command_id.as_deref().ok_or_else(|| {
+            failed(format!(
+                "ask {} of {} is a wake without its recorded command identity",
+                ask.number,
+                self.head()
+            ))
+        })?;
+        match keyed::wake(
+            active_guard,
+            self.adapter,
+            target,
+            session,
+            command,
+            &ask.rendering,
+            self.context.now,
+        )
+        .map_err(failed)?
+        {
+            WakeOutcome::Woken => Ok(WakeAttempt::Accepted(
+                self.accepted(ask, session, replayed, re_review)?,
+            )),
+            WakeOutcome::Refused(NotWoken::NotAccepted { error, .. }) => {
+                Err(self.not_accepted("wake", &error))
+            }
+            WakeOutcome::Refused(NotWoken::TurnInProgress { session }) => Err(refused(
+                Check::Outstanding,
+                format!(
+                    "the requested reviewer {session} has a turn in progress; ask again once it ends"
+                ),
+            )),
+            WakeOutcome::Refused(NotWoken::ReadinessUnknown { session }) => Err(refused(
+                Check::Runtime,
+                format!(
+                    "the runtime cannot say whether the requested reviewer {session} has a turn in progress; run the same command again once it answers"
+                ),
+            )),
+            WakeOutcome::Refused(NotWoken::Misplaced { session, cause }) => Err(refused(
+                Check::Runtime,
+                format!(
+                    "the requested reviewer {session} is misplaced ({cause}); run the same command again once the placement issue is resolved"
+                ),
+            )),
+            WakeOutcome::Refused(
+                reason @ (NotWoken::Gone { .. }
+                | NotWoken::NotBound { .. }
+                | NotWoken::DifferentGeneration { .. }),
+            ) => {
+                let fallback_reason = self.close_dead_wake(ask, reason.kind())?;
+                Ok(WakeAttempt::ClosedDeadWake(fallback_reason))
+            }
+        }
+    }
+
+    /// Closes an unaccepted wake whose target session is archived, deleted, or
+    /// superseded (F2). Refuses disputes under `Check::ReviewState`; returns
+    /// the fallback `ReuseImpossible` for re-reviews.
+    fn close_dead_wake(
+        &self,
+        ask: &Ask,
+        reason_kind: &'static str,
+    ) -> Result<Option<ReuseImpossible>, AskError> {
+        _store::close_unaccepted(
+            self.context.home,
+            self.slug(),
+            self.head(),
+            ask.number,
+            self.context.now,
+        )
+        .map_err(failed)?;
+        tracing::info!(
+            event = "requested_review_wake_closed",
+            project = %self.slug(),
+            head = %self.head(),
+            ask = ask.number,
+            reason = reason_kind
+        );
+        match self.kind {
+            Kind::Dispute => Err(refused(
+                Check::ReviewState,
+                format!(
+                    "the requested reviewer that recorded {}'s verdict was archived or deleted; a revised head is the way forward",
+                    self.head()
+                ),
+            )),
+            Kind::ReReview => Ok(Some(match ask.trace.clone() {
+                Some(earlier) => ReuseImpossible::ReviewerGone { earlier },
+                None => ReuseImpossible::NoEarlierHead,
+            })),
+            Kind::Review => Ok(None),
+        }
+    }
+
+    fn re_review_from_ask(
+        &self,
+        ask: &Ask,
+        rereview_plan: Option<&ReReviewPlan>,
+    ) -> Option<ReReviewOutcome> {
+        if self.kind != Kind::ReReview {
+            return None;
+        }
+        if ask.start_key != self.key
+            && let Some(earlier) = ask.trace.clone()
+        {
+            return Some(ReReviewOutcome::ReachedReviewer { earlier });
+        }
+        if let Some(ReReviewPlan::Fresh(reason)) = rereview_plan {
+            return Some(ReReviewOutcome::FreshReviewer(reason.clone()));
+        }
+        Some(ReReviewOutcome::FreshReviewer(match ask.trace.clone() {
+            Some(earlier) => ReuseImpossible::ReviewerGone { earlier },
+            None => ReuseImpossible::NoEarlierHead,
+        }))
     }
 
     fn start_with_brief(&self, successor: bool, brief: &str) -> Result<SessionRef, AskError> {
@@ -552,21 +1071,6 @@ impl Delivering<'_> {
         ))
     }
 
-    /// Sends the ask's stored rendering under its recorded command identity;
-    /// the runtime accepts one identity once.
-    fn send(&self, ask: &Ask, session: &SessionRef) -> Result<(), AskError> {
-        let command = ask.command_id.as_deref().ok_or_else(|| {
-            failed(format!(
-                "ask {} of {} is a send without its recorded command identity",
-                ask.number,
-                self.head()
-            ))
-        })?;
-        self.adapter
-            .dispatch_send(session, command, &ask.rendering, &mut || Ok(()))
-            .map_err(|error| self.not_accepted("send", &error.into_inner()))
-    }
-
     fn not_accepted(&self, what: &str, error: &SessionsError) -> AskError {
         refused(
             Check::Runtime,
@@ -578,13 +1082,19 @@ impl Delivering<'_> {
         )
     }
 
-    /// Records the acceptance at the generation the key reached.
-    fn accepted(&self, ask: &Ask, session: &SessionRef, replayed: bool) -> Result<Reply, AskError> {
+    /// Records the acceptance at the generation `ask.start_key` reached.
+    fn accepted(
+        &self,
+        ask: &Ask,
+        session: &SessionRef,
+        replayed: bool,
+        re_review: Option<ReReviewOutcome>,
+    ) -> Result<Reply, AskError> {
         let context = self.context;
         let state = RunnerState::new(context.home);
         let generation = match ask.delivery {
             Delivery::Send => ask.generation,
-            Delivery::Start => keyed::bound(&state, self.adapter.runtime().name(), self.key)
+            Delivery::Start => keyed::bound(&state, self.adapter.runtime().name(), &ask.start_key)
                 .map_err(failed)?
                 .map(|bound| bound.generation),
         }
@@ -598,23 +1108,44 @@ impl Delivering<'_> {
             context.now,
         )
         .map_err(failed)?;
-        tracing::info!(event = "requested_review_accepted", project = %self.slug(), head = %self.head(), ask = ask.number, session = %session, replayed);
-        Ok(self.reply(ask, session.clone(), replayed))
+        let reached = match ask.delivery {
+            Delivery::Start => "started",
+            Delivery::Send => "woke",
+        };
+        tracing::info!(
+            event = "requested_review_accepted",
+            project = %self.slug(),
+            head = %self.head(),
+            ask = ask.number,
+            session = %session,
+            start_key = %ask.start_key,
+            reached,
+            replayed
+        );
+        Ok(self.reply(ask, session.clone(), replayed, re_review))
     }
 
-    fn reply(&self, ask: &Ask, reviewer: SessionRef, repeated: bool) -> Reply {
+    fn reply(
+        &self,
+        ask: &Ask,
+        reviewer: SessionRef,
+        repeated: bool,
+        re_review: Option<ReReviewOutcome>,
+    ) -> Reply {
         let head = self.head().clone();
         Reply {
             show: format!("instrukt review show {head}"),
             base: self.coordinates.base.clone(),
             kind: self.kind.as_str(),
             reviewer,
-            start_key: self.key.to_owned(),
+            start_key: ask.start_key.clone(),
             reached: match ask.delivery {
                 Delivery::Start => Reached::Started,
                 Delivery::Send => Reached::Sent,
             },
             repeated,
+            re_review,
+            wakeup_stale: self.wakeup_stale,
             report: self.coordinates.report.clone(),
             head,
         }
@@ -686,14 +1217,14 @@ mod tests {
 
     #[test]
     fn linked_worktree_returns_none_for_registered_checkout() {
-        let checkout = PathBuf::from("/workspace/project");
+        let checkout = PathBuf::from("/tmp/repo");
         assert_eq!(linked_worktree(checkout.clone(), &checkout), None);
     }
 
     #[test]
     fn linked_worktree_returns_some_for_distinct_worktree() {
-        let checkout = PathBuf::from("/workspace/project");
-        let worktree = PathBuf::from("/worktrees/project-feature");
+        let checkout = PathBuf::from("/tmp/repo");
+        let worktree = PathBuf::from("/tmp/repo-wt");
         assert_eq!(linked_worktree(worktree.clone(), &checkout), Some(worktree));
     }
 }

@@ -221,6 +221,13 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     })?;
     let verdicts = crate::wiring::head_verdicts(ctx);
     let asker = caller(ctx, &config)?;
+    let now = ctx.clock.now();
+    let delivery = || {
+        super::runner::with_installation(ctx, true, None, |request| {
+            instrukt_runner::installation::runner_wakeup(request, now)
+        })
+        .map_err(|error| error.to_string())
+    };
     let project = instrukt_runner::interfaces::ProjectRef {
         slug: project.slug,
         root: project.root,
@@ -232,7 +239,8 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             project: &project,
             verdicts: verdicts.as_ref(),
             asker,
-            now: ctx.clock.now(),
+            delivery: &delivery,
+            now,
         },
         coordinates,
     )?;
