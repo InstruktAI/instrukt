@@ -1,29 +1,39 @@
 //! OAuth 2.1 authorization-code sign-in (`sign_in.mode: authorization-code`),
 //! local-boundary ingress reachability check (`instrukt mcp check-ingress`),
 //! and `instrukt mcp sign-out`.
+//!
+//! OAuth PKCE authorization URL construction, authorization-code token
+//! exchange, RFC 9207 `iss` verification, and refresh-token renewal delegate
+//! to `rmcp::transport::auth::AuthorizationManager`.
 
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use instrukt_core::config::{
-    Configuration, McpServer, SecretSource, SignInIdentity, SignInMode, resolve_secret_from,
+    Configuration, LayerKind, McpServer, SecretSource, SignInIdentity, SignInMode,
+    resolve_secret_from,
 };
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
-use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
+use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, params};
 use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
 use jiff::Timestamp;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use rmcp::transport::auth::{
+    AuthError, CredentialStore, InMemoryCredentialStore, InMemoryStateStore, OAuthClientConfig,
+    OAuthTokenResponse, StateStore, StoredAuthorizationState, StoredCredentials,
+};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use super::_discover::{DiscoveredAuth, discover_auth};
+use super::_discover::{self, DiscoveredAuth, discover_auth};
+use super::_http;
 use super::_issuer::{bearer_logins, cached_login_usable, is_token_fresh, obtain_issuer_login};
 use super::_redis_mcp::{claim_sign_in_return, ping_cluster};
 use super::_registrations::{
     Registration, ensure_company_client_registration, ensure_dynamic_registration,
-    ensure_host_client_registration, random_base64url_256, random_hex_128, sha256_base64url,
-    sha256_hex,
+    ensure_host_client_registration, random_base64url_256, random_hex_128, sha256_hex,
 };
 use super::{Login, McpError, Speaker};
 use crate::state::RunnerState;
@@ -42,10 +52,66 @@ pub struct IngressCheckReport {
     pub callback_verified: bool,
 }
 
+fn current_generation(
+    conn: &Connection,
+    path: &Path,
+    company: &str,
+    person: &str,
+    server: &str,
+) -> Result<i64, StateDbError> {
+    Ok(conn
+        .query_row(
+            "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
+            params![company, person, server],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(StateDbError::sqlite(path))?
+        .unwrap_or(0))
+}
+
+struct StoredLogin {
+    resource: String,
+    subject: Option<String>,
+    return_id: String,
+    access_token: String,
+    expires_at: Option<String>,
+    checked: i32,
+    refresh_token: Option<String>,
+    renewing_until: Option<String>,
+}
+
+fn query_login(
+    conn: &Connection,
+    path: &Path,
+    company: &str,
+    person: &str,
+    server: &str,
+) -> Result<Option<StoredLogin>, StateDbError> {
+    conn.query_row(
+        "SELECT resource, subject, return_id, access_token, expires_at, checked, refresh_token, renewing_until
+         FROM mcp_logins
+         WHERE company = ?1 AND person = ?2 AND server = ?3",
+        params![company, person, server],
+        |r| {
+            Ok(StoredLogin {
+                resource: r.get(0)?,
+                subject: r.get(1)?,
+                return_id: r.get(2)?,
+                access_token: r.get(3)?,
+                expires_at: r.get(4)?,
+                checked: r.get(5)?,
+                refresh_token: r.get(6)?,
+                renewing_until: r.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(StateDbError::sqlite(path))
+}
+
 /// Verify local `ingress.url`, local cluster Redis reachability, and one real
-/// external GET probe through `<ingress.url>/hooks/inbound/sign-in/<probe_return_id>`,
-/// confirming the matching `SHA-256(probe_state)` entry arrives in cluster Redis
-/// and immediately claiming and deleting it. Never inspects any other computer's config.
+/// external GET probe through `<ingress.url>/hooks/inbound/sign-in/<probe_return_id>`.
 pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
     let global = Configuration::load_global(home)?;
     let ingress_url = global.ingress_url()?.ok_or_else(|| McpError::Server {
@@ -74,21 +140,18 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
         form_urlencoded::byte_serialize(probe_state.as_bytes()).collect::<String>()
     );
 
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(PROBE_TIMEOUT))
-        .timeout_global(Some(PROBE_TIMEOUT))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-    let response = agent
-        .get(&probe_url)
-        .call()
-        .map_err(|error| McpError::Server {
-            server: "ingress".into(),
-            cause: format!("external callback probe to {ingress_url} failed: {error}"),
-        })?;
-    let status = response.status().as_u16();
+    let http_client = _http::client("ingress", PROBE_TIMEOUT, PROBE_TIMEOUT, false)?;
+    let status = _http::run_async("ingress", async {
+        http_client
+            .get(&probe_url)
+            .send()
+            .await
+            .map(|response| response.status().as_u16())
+            .map_err(|error| McpError::Server {
+                server: "ingress".into(),
+                cause: format!("external callback probe to {ingress_url} failed: {error}"),
+            })
+    })??;
     if status != 200 {
         let _ = claim_sign_in_return(&transport, &state_digest);
         return Err(McpError::Server {
@@ -99,12 +162,10 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
         });
     }
 
-    let claimed =
-        claim_sign_in_return(&transport, &state_digest).map_err(|error| McpError::Server {
-            server: "ingress".into(),
-            cause: format!("failed to claim probe return from cluster Redis: {error}"),
-        })?;
-    match claimed {
+    match claim_sign_in_return(&transport, &state_digest).map_err(|error| McpError::Server {
+        server: "ingress".into(),
+        cause: format!("failed to claim probe return from cluster Redis: {error}"),
+    })? {
         Some(entry)
             if entry.return_id == probe_return_id && entry.code.as_deref() == Some("probe") =>
         {
@@ -128,8 +189,7 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
 
 /// Remove a speaker's signed-in login(s) and cancel open/exchanging sign-ins
 /// for one server (or all servers of `company`), raising `mcp_generations` in
-/// one transaction, followed by best-effort OAuth token revocation for any
-/// removed refresh tokens.
+/// one transaction, followed by best-effort OAuth token revocation.
 pub fn sign_out(
     home: &Home,
     company: &ProjectSlug,
@@ -169,42 +229,11 @@ pub fn sign_out(
                 }
             };
 
-            struct RevokeItem {
-                resource: String,
-                return_id: String,
-                token: String,
-                token_type_hint: &'static str,
-            }
-            let mut revoke_list: Vec<RevokeItem> = Vec::new();
+            let mut revoke_list: Vec<StoredLogin> = Vec::new();
             let mut affected = 0usize;
             for srv in &servers {
-                if let Some((resource, return_id, access_token, refresh_token)) = tx
-                    .query_row(
-                        "SELECT resource, return_id, access_token, refresh_token FROM mcp_logins
-                         WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, srv],
-                        |r| {
-                            Ok((
-                                r.get::<_, String>(0)?,
-                                r.get::<_, String>(1)?,
-                                r.get::<_, String>(2)?,
-                                r.get::<_, Option<String>>(3)?,
-                            ))
-                        },
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(&path))?
-                {
-                    let (token, hint) = match refresh_token {
-                        Some(rt) => (rt, "refresh_token"),
-                        None => (access_token, "access_token"),
-                    };
-                    revoke_list.push(RevokeItem {
-                        resource,
-                        return_id,
-                        token,
-                        token_type_hint: hint,
-                    });
+                if let Some(login) = query_login(tx, &path, company.as_str(), &person, srv)? {
+                    revoke_list.push(login);
                 }
                 tx.execute(
                     "INSERT INTO mcp_generations (company, person, server, generation)
@@ -233,18 +262,16 @@ pub fn sign_out(
         .map_err(McpError::State)?
     };
 
-    // Best-effort RFC 7009 revocation after writer.lock has been released.
     for item in to_revoke {
         best_effort_revoke_token(
             home,
             company,
             &item.resource,
             &item.return_id,
-            &item.token,
-            item.token_type_hint,
+            item.refresh_token.as_deref(),
+            &item.access_token,
         );
     }
-
     Ok(affected)
 }
 
@@ -253,10 +280,11 @@ fn best_effort_revoke_token(
     company: &ProjectSlug,
     resource: &str,
     return_id: &str,
-    token: &str,
-    token_type_hint: &str,
+    refresh_token: Option<&str>,
+    access_token: &str,
 ) {
-    let Ok(Some(read)) = StateRead::open(&home.for_inspection()) else {
+    let inspection = home.for_inspection();
+    let Ok(Some(read)) = StateRead::open(&inspection) else {
         return;
     };
     struct RevokeReg {
@@ -302,14 +330,7 @@ fn best_effort_revoke_token(
     if !pinned_issuer.is_empty() && auth.issuer != pinned_issuer {
         return;
     }
-    let Some(revocation_endpoint) = auth.revocation_endpoint.as_deref() else {
-        return;
-    };
-    if !instrukt_core::config::mcp_address_admitted(revocation_endpoint) {
-        return;
-    }
 
-    let inspection = home.for_inspection();
     let client_secret = if let Some(ref host_name) = host_client {
         ProjectSlug::parse(host_name).ok().and_then(|slug| {
             Configuration::load_global(&inspection)
@@ -327,7 +348,7 @@ fn best_effort_revoke_token(
             .and_then(|slug| {
                 Configuration::load_company(&inspection, company)
                     .ok()?
-                    .mcp_servers(instrukt_core::config::LayerKind::Company)
+                    .mcp_servers(LayerKind::Company)
                     .ok()?
                     .get(&slug)?
                     .sign_in
@@ -346,44 +367,17 @@ fn best_effort_revoke_token(
         dcr_secret
     };
 
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(5)))
-        .timeout_global(Some(Duration::from_secs(10)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-    let use_post_secret = client_secret.is_some()
-        && auth
-            .token_endpoint_auth_methods_supported
-            .iter()
-            .any(|m| m == "client_secret_post")
-        && !auth
-            .token_endpoint_auth_methods_supported
-            .iter()
-            .any(|m| m == "client_secret_basic");
-    let mut form: Vec<(&str, &str)> = vec![("token", token), ("token_type_hint", token_type_hint)];
-    let mut req = agent.post(revocation_endpoint);
-    match (client_secret.as_deref(), use_post_secret) {
-        (Some(secret), false) => {
-            let encoded =
-                base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
-            req = req.header("Authorization", format!("Basic {encoded}"));
-        }
-        (Some(secret), true) => {
-            form.push(("client_id", &client_id));
-            form.push(("client_secret", secret));
-        }
-        (None, _) => {
-            form.push(("client_id", &client_id));
-        }
-    }
-    let _ = req.send_form(form);
+    revoke_direct(
+        &auth,
+        &client_id,
+        client_secret.as_deref(),
+        refresh_token,
+        access_token,
+    );
 }
 
 /// Obtain a speaker's Bearer login for a `speaker_login: sign-in` server,
 /// dispatching by `sign_in.mode` (`authorization-code` or `issuer`).
-/// `rejected_access_token` is the access token the server just refused, on a retry.
 pub(crate) fn resolve_sign_in_login(
     home: &Home,
     company: &ProjectSlug,
@@ -412,6 +406,79 @@ pub(crate) fn resolve_sign_in_login(
     }
 }
 
+fn oauth_client_config(
+    registration: &Registration,
+    client_secret: Option<&str>,
+) -> OAuthClientConfig {
+    let mut cfg = OAuthClientConfig::new(
+        registration.client_id.clone(),
+        registration.return_address.clone(),
+    );
+    if let Some(secret) = client_secret {
+        cfg = cfg.with_client_secret(secret.to_owned());
+    }
+    cfg
+}
+
+/// Start an OAuth 2.1 PKCE S256 authorization flow through `rmcp`'s
+/// `AuthorizationManager`, returning `(auth_link, state, code_verifier)`.
+fn start_oauth_authorization(
+    server_url: &str,
+    auth: &DiscoveredAuth,
+    registration: &Registration,
+    client_secret: Option<&str>,
+    scopes: &[String],
+    nonce: Option<&str>,
+) -> Result<(String, String, String), McpError> {
+    let state_store = InMemoryStateStore::new();
+    let mut manager = _discover::auth_manager(server_url, auth)?;
+    manager.set_state_store(state_store.clone());
+    manager
+        .configure_client(oauth_client_config(registration, client_secret))
+        .map_err(|error| McpError::Server {
+            server: server_url.to_owned(),
+            cause: format!("failed to configure OAuth client: {error}"),
+        })?;
+    let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
+    let (mut auth_url, state, pkce_verifier) = _http::run_async(server_url, async {
+        let raw_url = manager
+            .get_authorization_url(&scope_refs)
+            .await
+            .map_err(|error| McpError::Server {
+                server: server_url.to_owned(),
+                cause: format!("failed to build OAuth authorization URL: {error}"),
+            })?;
+        let parsed = url::Url::parse(&raw_url).map_err(|error| McpError::Server {
+            server: server_url.to_owned(),
+            cause: format!("invalid authorization URL: {error}"),
+        })?;
+        let state = parsed
+            .query_pairs()
+            .find_map(|(k, v)| (k == "state").then(|| v.into_owned()))
+            .ok_or_else(|| McpError::Server {
+                server: server_url.to_owned(),
+                cause: "authorization URL missing `state` parameter".into(),
+            })?;
+        let stored = state_store
+            .load(&state)
+            .await
+            .map_err(|error| McpError::Server {
+                server: server_url.to_owned(),
+                cause: format!("failed to load PKCE state: {error}"),
+            })?
+            .ok_or_else(|| McpError::Server {
+                server: server_url.to_owned(),
+                cause: "PKCE state missing from OAuth manager".into(),
+            })?;
+        Ok::<_, McpError>((parsed, state, stored.pkce_verifier))
+    })??;
+
+    if let Some(nonce) = nonce {
+        auth_url.query_pairs_mut().append_pair("nonce", nonce);
+    }
+    Ok((auth_url.into(), state, pkce_verifier))
+}
+
 fn obtain_authorization_code_login(
     home: &Home,
     company: &ProjectSlug,
@@ -437,9 +504,8 @@ fn obtain_authorization_code_login(
     let global = Configuration::load_global(&inspection)?;
     let ingress_url_opt = global.ingress_url()?;
 
-    // 1. Check declared client registration FIRST (no network call) so any rotation or
-    //    switch (`client_ref` <-> `client`, or rotated client_id/secret/issuer) retires
-    //    its old logins BEFORE we ever honor a cached token!
+    // 1. Pre-check declared client registration (no network call) so rotated/switched
+    //    credentials retire old logins before any cached token is honored.
     let prechecked_reg: Option<Registration> = if let Some(ref client_ref) = sign_in_cfg.client_ref
     {
         let slug = ProjectSlug::parse(client_ref).map_err(|e| McpError::Server {
@@ -472,63 +538,36 @@ fn obtain_authorization_code_login(
         None
     };
 
-    // 2. Check cached login in mcp_logins, verifying it belongs to the active registration.
-    type LoginRow = (
-        String,
-        Option<String>,
-        String,
-        String,
-        Option<String>,
-        i32,
-        Option<String>,
-    );
-    let cached: Option<LoginRow> = if let Some(db) = StateRead::open(&inspection)? {
-        db.conn()
-            .query_row(
-                "SELECT resource, subject, return_id, access_token, expires_at, checked, refresh_token
-                 FROM mcp_logins
-                 WHERE company = ?1 AND person = ?2 AND server = ?3",
-                params![company.as_str(), person, server.name.as_str()],
-                |r| {
-                    Ok((
-                        r.get(0)?,
-                        r.get(1)?,
-                        r.get(2)?,
-                        r.get(3)?,
-                        r.get(4)?,
-                        r.get(5)?,
-                        r.get(6)?,
-                    ))
-                },
-            )
-            .optional()
-            .map_err(StateDbError::sqlite(db.path()))?
+    // 2. Check cached login in mcp_logins.
+    let cached = if let Some(db) = StateRead::open(&inspection)? {
+        query_login(
+            db.conn(),
+            db.path(),
+            company.as_str(),
+            &person,
+            server.name.as_str(),
+        )?
     } else {
         None
     };
 
-    let cached_matches_reg = |ret_id: &str| {
-        prechecked_reg
+    if let Some(ref row) = cached
+        && row.resource == server.url
+        && prechecked_reg
             .as_ref()
-            .is_none_or(|reg| reg.return_id == ret_id)
-    };
-
-    if let Some((ref resource, _, ref ret_id, ref access_token, ref expires_at, checked, _)) =
-        cached
-        && resource == &server.url
-        && cached_matches_reg(ret_id)
+            .is_none_or(|reg| reg.return_id == row.return_id)
         && cached_login_usable(
-            access_token,
-            checked,
-            expires_at.as_deref(),
+            &row.access_token,
+            row.checked,
+            row.expires_at.as_deref(),
             rejected_access_token,
             now,
         )
     {
-        return Ok(bearer_logins(&server.name, access_token.clone()));
+        return Ok(bearer_logins(&server.name, row.access_token.clone()));
     }
 
-    // 3. Discover AS metadata and enforce security gates BEFORE resolving any client secret.
+    // 3. Discover AS metadata and enforce security gates before resolving any client secret.
     let auth = discover_auth(&server.url)?;
     if !auth.report.pkce_s256_supported {
         return Err(McpError::Server {
@@ -549,19 +588,15 @@ fn obtain_authorization_code_login(
         });
     }
     let auth_endpoint = auth
-        .authorization_endpoint
-        .as_deref()
+        .authorization_endpoint()
         .ok_or_else(|| McpError::Server {
             server: server.name.to_string(),
             cause: "authorization server metadata omits `authorization_endpoint`".into(),
         })?;
-    let token_endpoint = auth
-        .token_endpoint
-        .as_deref()
-        .ok_or_else(|| McpError::Server {
-            server: server.name.to_string(),
-            cause: "authorization server metadata omits `token_endpoint`".into(),
-        })?;
+    let token_endpoint = auth.token_endpoint().ok_or_else(|| McpError::Server {
+        server: server.name.to_string(),
+        cause: "authorization server metadata omits `token_endpoint`".into(),
+    })?;
     if !instrukt_core::config::mcp_address_admitted(auth_endpoint)
         || !instrukt_core::config::mcp_address_admitted(token_endpoint)
     {
@@ -571,7 +606,7 @@ fn obtain_authorization_code_login(
         });
     }
 
-    // 4. Resolve local ingress.url & cluster Redis transport.
+    // 4. Resolve ingress.url & cluster Redis transport.
     let ingress_url = ingress_url_opt.ok_or_else(|| McpError::Server {
         server: server.name.to_string(),
         cause: "global `ingress.url` must be configured for MCP sign-in".into(),
@@ -582,8 +617,7 @@ fn obtain_authorization_code_login(
             cause: format!("cluster Redis is unavailable for MCP sign-in: {error}"),
         })?;
 
-    // 5. Enforce issuer pinning BEFORE resolving client secret (prevents cross-tenant
-    //    secret exfiltration to a company-controlled rogue authorization server).
+    // 5. Enforce issuer pinning BEFORE resolving client secret.
     let (registration, client_secret) = if let Some(ref client_ref) = sign_in_cfg.client_ref {
         let slug = ProjectSlug::parse(client_ref).map_err(|e| McpError::Server {
             server: server.name.to_string(),
@@ -638,29 +672,29 @@ fn obtain_authorization_code_login(
         (reg, secret)
     };
 
-    // 6. Handle existing cached login:
-    //    - If the server's declared URL changed from the login's resource, remove + revoke it.
-    //    - If it belongs to the active registration, attempt single-flight refresh-token renewal
-    //      (or repeat identity re-check for an unchecked token) before falling back to sign-in.
-    if let Some((ref resource, _, ref ret_id, ref access_token, _, _, ref refresh_token)) = cached {
-        if resource != &server.url {
+    // 6. Handle existing cached login: remove+revoke if resource changed, or refresh.
+    if let Some(ref row) = cached {
+        if row.resource != server.url {
             let mut db = StateDb::open(home)?;
             let path = db.path().to_path_buf();
             db.write::<_, StateDbError>(|tx| {
                 tx.execute(
                     "DELETE FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3 AND resource = ?4",
-                    params![company.as_str(), person, server.name.as_str(), resource],
+                    params![company.as_str(), person, server.name.as_str(), row.resource],
                 )
                 .map_err(StateDbError::sqlite(&path))?;
                 Ok(())
             })?;
             drop(db);
-            let (tok, hint) = match refresh_token.as_deref() {
-                Some(rt) => (rt, "refresh_token"),
-                None => (access_token.as_str(), "access_token"),
-            };
-            best_effort_revoke_token(home, company, resource, ret_id, tok, hint);
-        } else if ret_id == &registration.return_id
+            best_effort_revoke_token(
+                home,
+                company,
+                &row.resource,
+                &row.return_id,
+                row.refresh_token.as_deref(),
+                &row.access_token,
+            );
+        } else if row.return_id == registration.return_id
             && let Some(renewed) = try_refresh_login(
                 home,
                 company,
@@ -677,8 +711,7 @@ fn obtain_authorization_code_login(
         }
     }
 
-    // 7. Capture generation and record (or join) the pending sign-in + waiter,
-    //    then release the writer lock immediately before waiting or calling network endpoints.
+    // 7. Build PKCE S256 authorization URL via `rmcp` and persist pending sign-in + waiter.
     let mut scopes = if !sign_in_cfg.scopes.is_empty() {
         sign_in_cfg.scopes.clone()
     } else {
@@ -692,16 +725,20 @@ fn obtain_authorization_code_login(
         }
     }
     let scope_param = scopes.join(" ");
-
-    let state = random_base64url_256()?;
-    let state_digest = sha256_hex(&state);
-    let code_verifier = random_base64url_256()?;
-    let code_challenge = sha256_base64url(&code_verifier);
     let nonce = sign_in_cfg
         .identity
         .is_none()
         .then(random_base64url_256)
         .transpose()?;
+    let (auth_link, state, code_verifier) = start_oauth_authorization(
+        &server.url,
+        &auth,
+        &registration,
+        client_secret.as_deref(),
+        &scopes,
+        nonce.as_deref(),
+    )?;
+    let state_digest = sha256_hex(&state);
     let waiter_id = random_hex_128()?;
     let expires_at = now
         .checked_add(jiff::SignedDuration::from_secs(SIGN_IN_LIFETIME_SECS))
@@ -710,37 +747,12 @@ fn obtain_authorization_code_login(
         .checked_add(jiff::SignedDuration::from_secs(SIGN_IN_WAIT_SECS as i64))
         .unwrap_or(now);
 
-    let auth_link = build_authorization_link(
-        auth_endpoint,
-        &registration.client_id,
-        &registration.return_address,
-        &scope_param,
-        &state,
-        &code_challenge,
-        &server.url,
-        nonce.as_deref(),
-    )?;
-
-    let connector_name = speaker.connector.as_deref().unwrap_or_default();
-    let conversation_id = speaker.conversation.as_deref().unwrap_or_default();
-    let message_id = speaker.message.as_deref().unwrap_or_default();
-    let recipient_id = speaker.identity.as_deref().unwrap_or(&person);
-
     let (active_digest, active_generation, active_verifier, active_nonce) = {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
         db.write::<_, StateDbError>(|tx| {
-            let current_gen: i64 = tx
-                .query_row(
-                    "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                    params![company.as_str(), person, server.name.as_str()],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(StateDbError::sqlite(&path))?
-                .unwrap_or(0);
-
-            // Expire any stale open sign-ins first.
+            let current_gen =
+                current_generation(tx, &path, company.as_str(), &person, server.name.as_str())?;
             tx.execute(
                 "UPDATE mcp_sign_ins
                  SET state = 'expired', closed_at = ?1, code_verifier = NULL, nonce = NULL, link = NULL
@@ -778,10 +790,10 @@ fn obtain_authorization_code_login(
                             server.url,
                             scope_param,
                             current_gen,
-                            connector_name,
-                            conversation_id,
-                            message_id,
-                            recipient_id,
+                            speaker.connector.as_deref().unwrap_or_default(),
+                            speaker.conversation.as_deref().unwrap_or_default(),
+                            speaker.message.as_deref().unwrap_or_default(),
+                            speaker.identity.as_deref().unwrap_or(&person),
                             code_verifier,
                             nonce,
                             auth_link,
@@ -810,7 +822,7 @@ fn obtain_authorization_code_login(
         })?
     };
 
-    // 6. Wait for the return entry in cluster Redis (up to 90s) without holding writer.lock.
+    // 8. Wait for the return entry in cluster Redis (up to 90s) without holding writer.lock.
     let deadline = Instant::now() + Duration::from_secs(SIGN_IN_WAIT_SECS);
     let result = wait_and_complete(
         home,
@@ -829,7 +841,6 @@ fn obtain_authorization_code_login(
         deadline,
     );
 
-    // Always remove our own waiter row when stopping.
     if let Ok(mut db) = StateDb::open(home) {
         let path = db.path().to_path_buf();
         let _ = db.write::<_, StateDbError>(|tx| {
@@ -841,7 +852,6 @@ fn obtain_authorization_code_login(
             Ok(())
         });
     }
-
     result
 }
 
@@ -881,7 +891,6 @@ fn wait_and_complete(
             );
         }
 
-        // Check if another waiter or sign-out already closed this sign-in (read-only, no lock).
         let (status, completed_token) = {
             let read = StateRead::open(home)?.ok_or_else(|| McpError::Server {
                 server: server.name.to_string(),
@@ -897,60 +906,57 @@ fn wait_and_complete(
                 .optional()
                 .map_err(StateDbError::sqlite(read.path()))?;
             let token = if status.as_ref().is_some_and(|(s, _, _)| s == "completed") {
-                read.conn()
-                    .query_row(
-                        "SELECT access_token FROM mcp_logins WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, server.name.as_str()],
-                        |r| r.get::<_, String>(0),
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(read.path()))?
+                query_login(
+                    read.conn(),
+                    read.path(),
+                    company.as_str(),
+                    person,
+                    server.name.as_str(),
+                )?
+                .map(|row| row.access_token)
             } else {
                 None
             };
             (status, token)
         };
-        if let Some((state, failure, link_sent_at)) = status {
-            match state.as_str() {
-                "completed" => {
-                    if let Some(access_token) = completed_token {
-                        return Ok(bearer_logins(&server.name, access_token));
-                    }
-                }
-                "cancelled" => {
-                    return Err(McpError::Server {
-                        server: server.name.to_string(),
-                        cause: "sign-in was cancelled by a sign-out".into(),
-                    });
-                }
-                "declined" | "refused" | "failed" | "undelivered" | "expired" => {
-                    let detail = failure.unwrap_or(state);
-                    return Err(McpError::Server {
-                        server: server.name.to_string(),
-                        cause: format!("sign-in did not complete: {detail}"),
-                    });
-                }
-                _ => {
-                    if Instant::now() >= deadline {
-                        let msg = if state == "exchanging" {
-                            "sign-in is being completed; please ask again shortly"
-                        } else if link_sent_at.is_some() {
-                            "sign-in is pending; a sign-in link was sent by direct message"
-                        } else {
-                            "sign-in is pending; its sign-in link has not been delivered yet"
-                        };
-                        return Err(McpError::Server {
-                            server: server.name.to_string(),
-                            cause: msg.into(),
-                        });
-                    }
-                }
-            }
-        } else {
+        let Some((state, failure, link_sent_at)) = status else {
             return Err(McpError::Server {
                 server: server.name.to_string(),
                 cause: "pending sign-in record disappeared".into(),
             });
+        };
+        match state.as_str() {
+            "completed" => {
+                if let Some(access_token) = completed_token {
+                    return Ok(bearer_logins(&server.name, access_token));
+                }
+            }
+            "cancelled" => {
+                return Err(McpError::Server {
+                    server: server.name.to_string(),
+                    cause: "sign-in was cancelled by a sign-out".into(),
+                });
+            }
+            "declined" | "refused" | "failed" | "undelivered" | "expired" => {
+                return Err(McpError::Server {
+                    server: server.name.to_string(),
+                    cause: format!("sign-in did not complete: {}", failure.unwrap_or(state)),
+                });
+            }
+            _ if Instant::now() >= deadline => {
+                let msg = if state == "exchanging" {
+                    "sign-in is being completed; please ask again shortly"
+                } else if link_sent_at.is_some() {
+                    "sign-in is pending; a sign-in link was sent by direct message"
+                } else {
+                    "sign-in is pending; its sign-in link has not been delivered yet"
+                };
+                return Err(McpError::Server {
+                    server: server.name.to_string(),
+                    cause: msg.into(),
+                });
+            }
+            _ => {}
         }
 
         std::thread::sleep(Duration::from_millis(100));
@@ -973,6 +979,59 @@ fn close_sign_in_failure(home: &Home, state_digest: &str, state_name: &str, caus
     }
 }
 
+struct ParsedTokenResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    granted_scopes: Option<String>,
+    expires_at: Option<String>,
+    id_token: Option<String>,
+}
+
+fn parse_token_response(
+    response: &OAuthTokenResponse,
+    now: Timestamp,
+) -> Result<ParsedTokenResponse, String> {
+    let body = serde_json::to_value(response)
+        .map_err(|error| format!("failed to inspect OAuth token response: {error}"))?;
+    let token_type = body
+        .get("token_type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !token_type.eq_ignore_ascii_case("Bearer") {
+        return Err(format!("unsupported token_type `{token_type}`"));
+    }
+    let access_token = body
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "token response omitted access_token".to_owned())?;
+    let refresh_token = body
+        .get("refresh_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    let granted_scopes = body.get("scope").and_then(Value::as_str).map(str::to_owned);
+    let expires_at = body
+        .get("expires_in")
+        .and_then(Value::as_i64)
+        .filter(|&secs| secs > 0)
+        .and_then(|secs| now.checked_add(jiff::SignedDuration::from_secs(secs)).ok())
+        .map(|ts| ts.to_string());
+    let id_token = body
+        .get("id_token")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_owned);
+    Ok(ParsedTokenResponse {
+        access_token,
+        refresh_token,
+        granted_scopes,
+        expires_at,
+        id_token,
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn complete_claimed_return(
     home: &Home,
@@ -990,8 +1049,6 @@ fn complete_claimed_return(
     entry: super::_redis_mcp::SignInReturnEntry,
 ) -> Result<(Login, Vec<Login>), McpError> {
     let now = Timestamp::now();
-    // Move open -> exchanging atomically before calling the authorization server,
-    // releasing the writer lock before any HTTP call.
     let claimed = {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
@@ -1013,35 +1070,20 @@ fn complete_claimed_return(
         });
     }
 
-    if entry.return_id != registration.return_id {
-        let msg = "return_id did not match the sign-in's registration";
-        close_sign_in_failure(home, state_digest, "failed", msg);
-        return Err(McpError::Server {
+    let fail = |state_name: &str, msg: String| {
+        close_sign_in_failure(home, state_digest, state_name, &msg);
+        McpError::Server {
             server: server.name.to_string(),
-            cause: msg.into(),
-        });
-    }
-
-    if auth.report.iss_parameter_supported {
-        if entry.iss.as_deref() != Some(auth.issuer.as_str()) {
-            let msg = "return omitted or mismatched RFC 9207 `iss` parameter";
-            close_sign_in_failure(home, state_digest, "failed", msg);
-            return Err(McpError::Server {
-                server: server.name.to_string(),
-                cause: msg.into(),
-            });
+            cause: msg,
         }
-    } else if let Some(ref got_iss) = entry.iss
-        && got_iss != &auth.issuer
-    {
-        let msg = "return `iss` parameter did not match the authorization server";
-        close_sign_in_failure(home, state_digest, "failed", msg);
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: msg.into(),
-        });
-    }
+    };
 
+    if entry.return_id != registration.return_id {
+        return Err(fail(
+            "failed",
+            "return_id did not match the sign-in's registration".into(),
+        ));
+    }
     if let Some(err_code) = entry.error {
         close_sign_in_failure(home, state_digest, "declined", &err_code);
         return Err(McpError::Server {
@@ -1049,154 +1091,35 @@ fn complete_claimed_return(
             cause: format!("authorization server declined sign-in: {err_code}"),
         });
     }
-
     let Some(code) = entry.code else {
-        close_sign_in_failure(
-            home,
-            state_digest,
+        return Err(fail(
             "failed",
-            "return carried neither code nor error",
-        );
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: "return carried neither code nor error".into(),
-        });
+            "return carried neither code nor error".into(),
+        ));
     };
     let Some(verifier) = code_verifier else {
-        close_sign_in_failure(home, state_digest, "failed", "missing PKCE code_verifier");
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: "missing PKCE code_verifier".into(),
-        });
+        return Err(fail("failed", "missing PKCE code_verifier".into()));
     };
 
-    // Exchange authorization code at token endpoint.
-    let token_endpoint = auth.token_endpoint.as_deref().unwrap_or_default();
-    let token_body = exchange_authorization_code(
-        token_endpoint,
-        &code,
-        verifier,
-        &registration.return_address,
+    let token_response = exchange_code_via_rmcp(
         &server.url,
-        &registration.client_id,
+        auth,
+        registration,
         client_secret,
-        &auth.token_endpoint_auth_methods_supported,
+        state_digest,
+        verifier,
+        &code,
+        entry.iss.as_deref(),
     )
-    .map_err(|cause| {
-        close_sign_in_failure(home, state_digest, "failed", &cause);
-        McpError::Server {
-            server: server.name.to_string(),
-            cause,
-        }
-    })?;
+    .map_err(|cause| fail("failed", cause))?;
 
-    let token_type = token_body
-        .get("token_type")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !token_type.eq_ignore_ascii_case("Bearer") {
-        let msg = format!("unsupported token_type `{token_type}`");
-        close_sign_in_failure(home, state_digest, "failed", &msg);
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: msg,
-        });
-    }
-    let Some(access_token) = token_body
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_owned)
-    else {
-        close_sign_in_failure(
-            home,
-            state_digest,
-            "failed",
-            "token response omitted access_token",
-        );
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: "token response omitted access_token".into(),
-        });
-    };
-    let refresh_token = token_body
-        .get("refresh_token")
-        .and_then(Value::as_str)
-        .filter(|s| !s.trim().is_empty())
-        .map(str::to_owned);
-    let granted_scopes = token_body
-        .get("scope")
-        .and_then(Value::as_str)
-        .map(str::to_owned);
     let now = Timestamp::now();
-    let expires_at = token_body
-        .get("expires_in")
-        .and_then(Value::as_i64)
-        .filter(|&secs| secs > 0)
-        .and_then(|secs| now.checked_add(jiff::SignedDuration::from_secs(secs)).ok())
-        .map(|ts| ts.to_string());
+    let parsed =
+        parse_token_response(&token_response, now).map_err(|cause| fail("failed", cause))?;
+    let access_token = parsed.access_token;
+    let refresh_token = parsed.refresh_token;
 
-    // Verify who signed in.
-    let (verified_email, subject) = match identity_cfg {
-        Some(identity) => {
-            let email = verify_declared_identity(identity, &access_token).map_err(|cause| {
-                close_sign_in_failure(home, state_digest, "failed", &cause);
-                McpError::Server {
-                    server: server.name.to_string(),
-                    cause,
-                }
-            })?;
-            (email, None)
-        }
-        None => {
-            let id_token = token_body
-                .get("id_token")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    revoke_direct(
-                        auth,
-                        &registration.client_id,
-                        client_secret,
-                        refresh_token.as_deref(),
-                        &access_token,
-                    );
-                    close_sign_in_failure(
-                        home,
-                        state_digest,
-                        "refused",
-                        "token response omitted OpenID Connect id_token",
-                    );
-                    McpError::Server {
-                        server: server.name.to_string(),
-                        cause: "token response omitted OpenID Connect id_token".into(),
-                    }
-                })?;
-            verify_oidc_identity(
-                auth,
-                &registration.client_id,
-                nonce,
-                id_token,
-                &access_token,
-            )
-            .map_err(|cause| {
-                revoke_direct(
-                    auth,
-                    &registration.client_id,
-                    client_secret,
-                    refresh_token.as_deref(),
-                    &access_token,
-                );
-                close_sign_in_failure(home, state_digest, "refused", &cause);
-                McpError::Server {
-                    server: server.name.to_string(),
-                    cause,
-                }
-            })?
-        }
-    };
-
-    if verified_email.trim().to_lowercase() != person {
-        let msg = "sign-in account email did not match the speaker's email address";
+    let revoke_and_refuse = |cause: String| {
         revoke_direct(
             auth,
             &registration.client_id,
@@ -1204,29 +1127,44 @@ fn complete_claimed_return(
             refresh_token.as_deref(),
             &access_token,
         );
-        close_sign_in_failure(home, state_digest, "refused", msg);
-        return Err(McpError::Server {
-            server: server.name.to_string(),
-            cause: msg.into(),
-        });
+        fail("refused", cause)
+    };
+
+    let (verified_email, subject) = match identity_cfg {
+        Some(identity) => {
+            let email =
+                verify_declared_identity(identity, &access_token).map_err(|c| fail("failed", c))?;
+            (email, None)
+        }
+        None => {
+            let id_token = parsed.id_token.as_deref().ok_or_else(|| {
+                revoke_and_refuse("token response omitted OpenID Connect id_token".into())
+            })?;
+            verify_oidc_identity(
+                auth,
+                &registration.client_id,
+                nonce,
+                id_token,
+                &access_token,
+            )
+            .map_err(revoke_and_refuse)?
+        }
+    };
+
+    if verified_email.trim().to_lowercase() != person {
+        return Err(revoke_and_refuse(
+            "sign-in account email did not match the speaker's email address".into(),
+        ));
     }
 
-    // Store login and close sign-in in one brief transaction checking generation.
     let now_str = now.to_string();
     let saved = {
         let mut db = StateDb::open(home)?;
         let path = db.path().to_path_buf();
         db.write::<_, StateDbError>(|tx| {
-            let current_gen: i64 = tx
-                .query_row(
-                    "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                    params![company.as_str(), person, server.name.as_str()],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(StateDbError::sqlite(&path))?
-                .unwrap_or(0);
-            if current_gen != generation {
+            if current_generation(tx, &path, company.as_str(), person, server.name.as_str())?
+                != generation
+            {
                 return Ok(false);
             }
             tx.execute(
@@ -1253,15 +1191,13 @@ fn complete_claimed_return(
                     subject,
                     registration.return_id,
                     access_token,
-                    expires_at,
+                    parsed.expires_at,
                     refresh_token,
-                    granted_scopes,
+                    parsed.granted_scopes,
                     now_str,
                 ],
             )
             .map_err(StateDbError::sqlite(&path))?;
-            // Record told_at when at least one call is still waiting; otherwise leave told_at NULL
-            // so the runner sends the contracted completion DM.
             let active_waiters: i64 = tx
                 .query_row(
                     "SELECT count(*) FROM mcp_sign_in_waiters WHERE state_digest = ?1 AND waiting_until > ?2",
@@ -1298,138 +1234,62 @@ fn complete_claimed_return(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_authorization_link(
-    auth_endpoint: &str,
-    client_id: &str,
-    redirect_uri: &str,
-    scope: &str,
-    state: &str,
-    code_challenge: &str,
-    resource: &str,
-    nonce: Option<&str>,
-) -> Result<String, McpError> {
-    let mut url = url::Url::parse(auth_endpoint).map_err(|error| McpError::Server {
-        server: auth_endpoint.to_owned(),
-        cause: format!("invalid authorization_endpoint: {error}"),
-    })?;
-    {
-        let mut pairs = url.query_pairs_mut();
-        pairs.append_pair("response_type", "code");
-        pairs.append_pair("client_id", client_id);
-        pairs.append_pair("redirect_uri", redirect_uri);
-        if !scope.is_empty() {
-            pairs.append_pair("scope", scope);
-        }
-        pairs.append_pair("state", state);
-        pairs.append_pair("code_challenge", code_challenge);
-        pairs.append_pair("code_challenge_method", "S256");
-        pairs.append_pair("resource", resource);
-        if let Some(nonce) = nonce {
-            pairs.append_pair("nonce", nonce);
-        }
-    }
-    Ok(url.into())
-}
-
-#[allow(clippy::too_many_arguments)]
-fn exchange_authorization_code(
-    token_endpoint: &str,
-    code: &str,
-    code_verifier: &str,
-    redirect_uri: &str,
-    resource: &str,
-    client_id: &str,
+fn exchange_code_via_rmcp(
+    server_url: &str,
+    auth: &DiscoveredAuth,
+    registration: &Registration,
     client_secret: Option<&str>,
-    auth_methods: &[String],
-) -> Result<Value, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-
-    let use_post_secret = client_secret.is_some()
-        && auth_methods.iter().any(|m| m == "client_secret_post")
-        && !auth_methods.iter().any(|m| m == "client_secret_basic");
-
-    let mut form: Vec<(&str, &str)> = vec![
-        ("grant_type", "authorization_code"),
-        ("code", code),
-        ("code_verifier", code_verifier),
-        ("redirect_uri", redirect_uri),
-        ("resource", resource),
-    ];
-
-    let mut request = agent
-        .post(token_endpoint)
-        .header("Accept", "application/json");
-    match (client_secret, use_post_secret) {
-        (Some(secret), false) => {
-            let encoded =
-                base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
-            request = request.header("Authorization", format!("Basic {encoded}"));
-        }
-        (Some(secret), true) => {
-            form.push(("client_id", client_id));
-            form.push(("client_secret", secret));
-        }
-        (None, _) => {
-            form.push(("client_id", client_id));
-        }
-    }
-
-    let mut response = request
-        .send_form(form)
-        .map_err(|error| format!("token endpoint request failed: {error}"))?;
-    let status = response.status().as_u16();
-    let body_text = response
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-        .unwrap_or_default();
-    if !(200..300).contains(&status) {
-        let code = serde_json::from_str::<Value>(&body_text)
-            .ok()
-            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
-            .unwrap_or_else(|| format!("HTTP {status}"));
-        return Err(format!("token exchange refused ({code})"));
-    }
-    serde_json::from_str(&body_text).map_err(|_| "token endpoint returned invalid JSON".to_owned())
+    csrf_key: &str,
+    code_verifier: &str,
+    code: &str,
+    received_issuer: Option<&str>,
+) -> Result<OAuthTokenResponse, String> {
+    let mut manager = _discover::auth_manager(server_url, auth).map_err(|e| e.to_string())?;
+    let state_store = InMemoryStateStore::new();
+    let stored_state: StoredAuthorizationState = serde_json::from_value(json!({
+        "pkce_verifier": code_verifier,
+        "csrf_token": csrf_key,
+        "expected_issuer": auth.issuer,
+        "require_issuer": auth.report.iss_parameter_supported,
+        "created_at": u64::try_from(Timestamp::now().as_second()).unwrap_or(0),
+        "requested_scopes": [],
+    }))
+    .map_err(|error| format!("failed to prepare PKCE authorization state: {error}"))?;
+    manager.set_state_store(state_store.clone());
+    manager
+        .configure_client(oauth_client_config(registration, client_secret))
+        .map_err(|error| format!("failed to configure OAuth client: {error}"))?;
+    _http::run_async(server_url, async {
+        state_store
+            .save(csrf_key, stored_state)
+            .await
+            .map_err(|error| format!("failed to store PKCE state: {error}"))?;
+        manager
+            .exchange_code_for_token_with_issuer(code, csrf_key, received_issuer)
+            .await
+            .map_err(|error| format!("token exchange failed: {error}"))
+    })
+    .map_err(|e| e.to_string())?
 }
 
 fn verify_declared_identity(
     identity: &SignInIdentity,
     access_token: &str,
 ) -> Result<String, String> {
-    if !instrukt_core::config::mcp_address_admitted(&identity.url) {
-        return Err("identity endpoint address is not admitted".into());
-    }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(20)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-    let mut response = agent
-        .get(&identity.url)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Accept", "application/json")
-        .call()
-        .map_err(|error| format!("identity request failed: {error}"))?;
-    let status = response.status().as_u16();
+    let http_client = _http::client(
+        &identity.url,
+        Duration::from_secs(10),
+        Duration::from_secs(20),
+        false,
+    )
+    .map_err(|e| e.to_string())?;
+    let (status, body_text) = _http::run_async(&identity.url, async {
+        _http::get_json_text(&http_client, &identity.url, Some(access_token)).await
+    })
+    .map_err(|e| e.to_string())??;
     if status != 200 {
         return Err(format!("identity request returned HTTP {status}"));
     }
-    let body_text = response
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-        .map_err(|error| format!("unreadable identity response: {error}"))?;
     let doc: Value =
         serde_json::from_str(&body_text).map_err(|_| "identity response is not JSON".to_owned())?;
     let mut current = &doc;
@@ -1451,6 +1311,41 @@ fn verify_declared_identity(
         })
 }
 
+fn fetch_userinfo_json(userinfo_endpoint: &str, access_token: &str) -> Result<Value, String> {
+    let http_client = _http::client(
+        userinfo_endpoint,
+        Duration::from_secs(10),
+        Duration::from_secs(20),
+        false,
+    )
+    .map_err(|e| e.to_string())?;
+    let (status, text) = _http::run_async(userinfo_endpoint, async {
+        _http::get_json_text(&http_client, userinfo_endpoint, Some(access_token)).await
+    })
+    .map_err(|e| e.to_string())??;
+    if status != 200 {
+        return Err(format!("UserInfo endpoint returned HTTP {status}"));
+    }
+    serde_json::from_str(&text).map_err(|_| "UserInfo response is not JSON".to_owned())
+}
+
+fn verify_userinfo_claims(ui: &Value, expected_sub: Option<&str>) -> Result<String, String> {
+    if let Some(sub) = expected_sub
+        && ui.get("sub").and_then(Value::as_str) != Some(sub)
+    {
+        return Err("UserInfo `sub` does not match the recorded sign-in subject".into());
+    }
+    if ui.get("email_verified").and_then(Value::as_bool) != Some(true) {
+        return Err("UserInfo `email_verified` is not true".into());
+    }
+    ui.get("email")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "UserInfo omitted `email`".to_owned())
+}
+
 fn verify_oidc_identity(
     auth: &DiscoveredAuth,
     client_id: &str,
@@ -1459,12 +1354,10 @@ fn verify_oidc_identity(
     access_token: &str,
 ) -> Result<(String, Option<String>), String> {
     let jwks_uri = auth
-        .jwks_uri
-        .as_deref()
+        .jwks_uri()
         .ok_or_else(|| "OpenID Provider metadata omits jwks_uri".to_owned())?;
     let userinfo_endpoint = auth
-        .userinfo_endpoint
-        .as_deref()
+        .userinfo_endpoint()
         .ok_or_else(|| "OpenID Provider metadata omits userinfo_endpoint".to_owned())?;
     if !instrukt_core::config::mcp_address_admitted(jwks_uri)
         || !instrukt_core::config::mcp_address_admitted(userinfo_endpoint)
@@ -1473,31 +1366,20 @@ fn verify_oidc_identity(
     }
 
     let header = decode_header(id_token).map_err(|e| format!("invalid id_token header: {e}"))?;
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(20)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-
-    let mut jwks_resp = agent
-        .get(jwks_uri)
-        .header("Accept", "application/json")
-        .call()
-        .map_err(|e| format!("failed to fetch JWKS: {e}"))?;
-    if jwks_resp.status().as_u16() != 200 {
-        return Err(format!(
-            "JWKS endpoint returned HTTP {}",
-            jwks_resp.status().as_u16()
-        ));
+    let http_client = _http::client(
+        jwks_uri,
+        Duration::from_secs(10),
+        Duration::from_secs(20),
+        false,
+    )
+    .map_err(|e| e.to_string())?;
+    let (jwks_status, jwks_text) = _http::run_async(jwks_uri, async {
+        _http::get_json_text(&http_client, jwks_uri, None).await
+    })
+    .map_err(|e| e.to_string())??;
+    if jwks_status != 200 {
+        return Err(format!("JWKS endpoint returned HTTP {jwks_status}"));
     }
-    let jwks_text = jwks_resp
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-        .map_err(|e| format!("unreadable JWKS: {e}"))?;
     let jwks: jsonwebtoken::jwk::JwkSet =
         serde_json::from_str(&jwks_text).map_err(|_| "invalid JWKS JSON".to_owned())?;
     let jwk = match header.kid.as_deref() {
@@ -1519,9 +1401,9 @@ fn verify_oidc_identity(
     let mut validation = Validation::new(alg);
     validation.set_issuer(&[auth.issuer.as_str()]);
     validation.set_audience(&[client_id]);
-    let data = decode::<Value>(id_token, &decoding_key, &validation)
-        .map_err(|e| format!("id_token verification failed: {e}"))?;
-    let claims = data.claims;
+    let claims = decode::<Value>(id_token, &decoding_key, &validation)
+        .map_err(|e| format!("id_token verification failed: {e}"))?
+        .claims;
     if let Some(expected) = expected_nonce
         && claims.get("nonce").and_then(Value::as_str) != Some(expected)
     {
@@ -1534,39 +1416,8 @@ fn verify_oidc_identity(
         .ok_or_else(|| "id_token missing `sub`".to_owned())?
         .to_owned();
 
-    let mut ui_resp = agent
-        .get(userinfo_endpoint)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Accept", "application/json")
-        .call()
-        .map_err(|e| format!("UserInfo request failed: {e}"))?;
-    if ui_resp.status().as_u16() != 200 {
-        return Err(format!(
-            "UserInfo endpoint returned HTTP {}",
-            ui_resp.status().as_u16()
-        ));
-    }
-    let ui_text = ui_resp
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-        .map_err(|e| format!("unreadable UserInfo response: {e}"))?;
-    let ui: Value =
-        serde_json::from_str(&ui_text).map_err(|_| "UserInfo response is not JSON".to_owned())?;
-    if ui.get("sub").and_then(Value::as_str) != Some(sub.as_str()) {
-        return Err("UserInfo `sub` does not match id_token `sub`".into());
-    }
-    if ui.get("email_verified").and_then(Value::as_bool) != Some(true) {
-        return Err("UserInfo `email_verified` is not true".into());
-    }
-    let email = ui
-        .get("email")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .ok_or_else(|| "UserInfo omitted `email`".to_owned())?
-        .to_owned();
+    let ui = fetch_userinfo_json(userinfo_endpoint, access_token)?;
+    let email = verify_userinfo_claims(&ui, Some(&sub))?;
     Ok((email, Some(sub)))
 }
 
@@ -1579,49 +1430,52 @@ fn revoke_direct(
     refresh_token: Option<&str>,
     access_token: &str,
 ) {
-    let Some(revocation_endpoint) = auth.revocation_endpoint.as_deref() else {
+    let Some(revocation_endpoint) = auth.revocation_endpoint() else {
         return;
     };
     if !instrukt_core::config::mcp_address_admitted(revocation_endpoint) {
         return;
     }
+    let Ok(http_client) = _http::client(
+        revocation_endpoint,
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        false,
+    ) else {
+        return;
+    };
     let (token, hint) = match refresh_token {
         Some(rt) => (rt, "refresh_token"),
         None => (access_token, "access_token"),
     };
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(5)))
-        .timeout_global(Some(Duration::from_secs(10)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
+    let methods = auth.token_endpoint_auth_methods();
     let use_post_secret = client_secret.is_some()
-        && auth
-            .token_endpoint_auth_methods_supported
-            .iter()
-            .any(|m| m == "client_secret_post")
-        && !auth
-            .token_endpoint_auth_methods_supported
-            .iter()
-            .any(|m| m == "client_secret_basic");
+        && methods.iter().any(|m| m == "client_secret_post")
+        && !methods.iter().any(|m| m == "client_secret_basic");
     let mut form: Vec<(&str, &str)> = vec![("token", token), ("token_type_hint", hint)];
-    let mut req = agent.post(revocation_endpoint);
-    match (client_secret, use_post_secret) {
+    let basic = match (client_secret, use_post_secret) {
         (Some(secret), false) => {
             let encoded =
                 base64::engine::general_purpose::STANDARD.encode(format!("{client_id}:{secret}"));
-            req = req.header("Authorization", format!("Basic {encoded}"));
+            Some(format!("Basic {encoded}"))
         }
         (Some(secret), true) => {
             form.push(("client_id", client_id));
             form.push(("client_secret", secret));
+            None
         }
         (None, _) => {
             form.push(("client_id", client_id));
+            None
         }
-    }
-    let _ = req.send_form(form);
+    };
+    let _ = _http::run_async(revocation_endpoint, async {
+        let mut req = http_client.post(revocation_endpoint);
+        if let Some(auth_val) = basic {
+            req = req.header(http::header::AUTHORIZATION, auth_val);
+        }
+        let _ = req.form(&form).send().await;
+    });
 }
 
 enum IdentityRecheckOutcome {
@@ -1630,9 +1484,6 @@ enum IdentityRecheckOutcome {
     RequestFailed(String),
 }
 
-/// Re-verify who a renewed access token identifies as (`mcp-access` "Keeping and
-/// renewing a login"), distinguishing transport/endpoint failures (keep login unchecked)
-/// from confirmed identity mismatches (remove + revoke login and restart sign-in).
 fn recheck_renewed_identity(
     auth: &DiscoveredAuth,
     identity_cfg: Option<&SignInIdentity>,
@@ -1652,113 +1503,96 @@ fn recheck_renewed_identity(
         };
     }
 
-    let Some(userinfo_endpoint) = auth.userinfo_endpoint.as_deref() else {
+    let Some(userinfo_endpoint) = auth.userinfo_endpoint() else {
         return IdentityRecheckOutcome::RequestFailed(
             "authorization server omits `userinfo_endpoint`".into(),
         );
     };
-    if !instrukt_core::config::mcp_address_admitted(userinfo_endpoint) {
-        return IdentityRecheckOutcome::RequestFailed(
-            "userinfo_endpoint must be https (or loopback http)".into(),
-        );
-    }
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(20)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-    let mut ui_resp = match agent
-        .get(userinfo_endpoint)
-        .header("Authorization", format!("Bearer {access_token}"))
-        .header("Accept", "application/json")
-        .call()
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            return IdentityRecheckOutcome::RequestFailed(format!("UserInfo request failed: {e}"));
-        }
+    let ui = match fetch_userinfo_json(userinfo_endpoint, access_token) {
+        Ok(ui) => ui,
+        Err(cause) => return IdentityRecheckOutcome::RequestFailed(cause),
     };
-    let status = ui_resp.status().as_u16();
-    if status != 200 {
-        return IdentityRecheckOutcome::RequestFailed(format!(
-            "UserInfo endpoint returned HTTP {status}"
-        ));
-    }
-    let ui_text = match ui_resp
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-    {
-        Ok(t) => t,
-        Err(e) => {
-            return IdentityRecheckOutcome::RequestFailed(format!(
-                "unreadable UserInfo response: {e}"
-            ));
-        }
-    };
-    let Ok(ui) = serde_json::from_str::<Value>(&ui_text) else {
-        return IdentityRecheckOutcome::RequestFailed("UserInfo response is not JSON".into());
-    };
-    if let Some(exp_sub) = expected_subject
-        && ui.get("sub").and_then(Value::as_str) != Some(exp_sub)
-    {
-        return IdentityRecheckOutcome::Mismatch(
-            "UserInfo `sub` no longer matches the recorded sign-in subject".into(),
-        );
-    }
-    if ui.get("email_verified").and_then(Value::as_bool) != Some(true) {
-        return IdentityRecheckOutcome::Mismatch("UserInfo `email_verified` is not true".into());
-    }
-    let Some(email) = ui
-        .get("email")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    else {
-        return IdentityRecheckOutcome::Mismatch("UserInfo omitted `email`".into());
-    };
-    if email.to_lowercase() != expected_person {
-        return IdentityRecheckOutcome::Mismatch(
+    match verify_userinfo_claims(&ui, expected_subject) {
+        Ok(email) if email.to_lowercase() == expected_person => IdentityRecheckOutcome::Matched,
+        Ok(_) => IdentityRecheckOutcome::Mismatch(
             "UserInfo `email` no longer matches the speaker's address".into(),
-        );
+        ),
+        Err(cause) => IdentityRecheckOutcome::Mismatch(cause),
     }
-    IdentityRecheckOutcome::Matched
 }
 
 fn clear_renewal_lease(home: &Home, company: &ProjectSlug, person: &str, server: &str) {
-    match StateDb::open(home) {
-        Ok(mut db) => {
-            let path = db.path().to_path_buf();
-            if let Err(error) = db.write::<_, StateDbError>(|tx| {
-                tx.execute(
-                    "UPDATE mcp_logins SET renewing_until = NULL
-                     WHERE company = ?1 AND person = ?2 AND server = ?3",
-                    params![company.as_str(), person, server],
-                )
-                .map_err(StateDbError::sqlite(&path))?;
-                Ok(())
-            }) {
-                tracing::warn!(event = "mcp_renewal_lease_clear_failed", company = %company, server, %error);
-            }
-        }
-        Err(error) => {
-            tracing::warn!(event = "mcp_renewal_lease_open_failed", company = %company, server, %error);
+    if let Ok(mut db) = StateDb::open(home) {
+        let path = db.path().to_path_buf();
+        if let Err(error) = db.write::<_, StateDbError>(|tx| {
+            tx.execute(
+                "UPDATE mcp_logins SET renewing_until = NULL
+                 WHERE company = ?1 AND person = ?2 AND server = ?3",
+                params![company.as_str(), person, server],
+            )
+            .map_err(StateDbError::sqlite(&path))?;
+            Ok(())
+        }) {
+            tracing::warn!(event = "mcp_renewal_lease_clear_failed", company = %company, server, %error);
         }
     }
 }
 
-/// Single-flight OAuth 2.1 refresh-token renewal and identity re-check per
-/// `mcp-access` "Keeping and renewing a login":
-/// - Enforces one renewal at a time via `renewing_until` CAS; concurrent callers wait.
-/// - Stores renewed tokens with `checked = 0` and checks `UPDATE` row count + generation.
-/// - Re-verifies identity (UserInfo `sub` + `email_verified` + `email`, or declared identity).
-/// - Classifies failures strictly: only `invalid_grant` (or identity mismatch) removes the
-///   login and falls back to sign-in; transport / 5xx / `invalid_client` / identity errors
-///   fail the call while preserving the login.
-/// - Revokes received tokens on stale generation (sign-out race) or identity mismatch.
+enum RefreshOutcome {
+    Refreshed(OAuthTokenResponse),
+    Rejected,
+    Failed(String),
+}
+
+fn refresh_via_rmcp(
+    server_url: &str,
+    auth: &DiscoveredAuth,
+    registration: &Registration,
+    client_secret: Option<&str>,
+    existing_access: &str,
+    refresh_token: &str,
+) -> RefreshOutcome {
+    let mut manager = match _discover::auth_manager(server_url, auth) {
+        Ok(m) => m,
+        Err(error) => return RefreshOutcome::Failed(error.to_string()),
+    };
+    let cred_store = InMemoryCredentialStore::new();
+    let seed_token: OAuthTokenResponse = match serde_json::from_value(json!({
+        "access_token": existing_access,
+        "token_type": "Bearer",
+        "refresh_token": refresh_token,
+    })) {
+        Ok(token) => token,
+        Err(error) => {
+            return RefreshOutcome::Failed(format!(
+                "failed to prepare refresh credentials: {error}"
+            ));
+        }
+    };
+    let stored = StoredCredentials::new(
+        registration.client_id.clone(),
+        Some(seed_token),
+        Vec::new(),
+        None,
+    );
+    manager.set_credential_store(cred_store.clone());
+    if let Err(error) = manager.configure_client(oauth_client_config(registration, client_secret)) {
+        return RefreshOutcome::Failed(format!("failed to configure OAuth client: {error}"));
+    }
+    match _http::run_async(server_url, async {
+        cred_store.save(stored).await?;
+        manager.refresh_token().await
+    }) {
+        Ok(Ok(token)) => RefreshOutcome::Refreshed(token),
+        Ok(Err(AuthError::TokenRefreshRejected(_))) => RefreshOutcome::Rejected,
+        Ok(Err(error)) => RefreshOutcome::Failed(error.to_string()),
+        Err(error) => RefreshOutcome::Failed(error.to_string()),
+    }
+}
+
+/// Single-flight OAuth 2.1 refresh-token renewal and identity re-check:
+/// delegates the refresh-token grant to `rmcp::transport::auth::AuthorizationManager`
+/// while coordinating cross-process callers through `mcp_logins.renewing_until`.
 #[allow(clippy::too_many_arguments)]
 fn try_refresh_login(
     home: &Home,
@@ -1771,13 +1605,10 @@ fn try_refresh_login(
     identity_cfg: Option<&SignInIdentity>,
     failed_access_token: Option<&str>,
 ) -> Result<Option<(Login, Vec<Login>)>, McpError> {
-    let token_endpoint = auth
-        .token_endpoint
-        .as_deref()
-        .ok_or_else(|| McpError::Server {
-            server: server.name.to_string(),
-            cause: "authorization server metadata omits `token_endpoint`".into(),
-        })?;
+    let token_endpoint = auth.token_endpoint().ok_or_else(|| McpError::Server {
+        server: server.name.to_string(),
+        cause: "authorization server metadata omits `token_endpoint`".into(),
+    })?;
     if !instrukt_core::config::mcp_address_admitted(token_endpoint) {
         return Err(McpError::Server {
             server: server.name.to_string(),
@@ -1786,13 +1617,9 @@ fn try_refresh_login(
     }
 
     enum LeaseStep {
-        /// Another caller already completed renewal with a checked, fresh token.
         AlreadyFresh(String),
-        /// Login was removed or rotated away; caller should start a new interactive sign-in.
         StartSignIn,
-        /// Another renewal holds an unexpired lease; wait and poll again.
         Wait,
-        /// We acquired the renewal lease and must either refresh or re-check a fresh unchecked token.
         Acquired {
             generation: i64,
             subject: Option<String>,
@@ -1809,36 +1636,14 @@ fn try_refresh_login(
         let now = Timestamp::now();
         let now_str = now.to_string();
 
-        // N2: Poll under read-only StateRead first so waiting callers never contend on writer.lock.
         if let Some(read) = StateRead::open(&inspection)? {
-            struct PeekRow {
-                resource: String,
-                return_id: String,
-                access_token: String,
-                expires_at: Option<String>,
-                checked: i32,
-                renewing_until: Option<String>,
-            }
-            let peek = read
-                .conn()
-                .query_row(
-                    "SELECT resource, return_id, access_token, expires_at, checked, renewing_until
-                     FROM mcp_logins
-                     WHERE company = ?1 AND person = ?2 AND server = ?3",
-                    params![company.as_str(), person, server.name.as_str()],
-                    |r| {
-                        Ok(PeekRow {
-                            resource: r.get(0)?,
-                            return_id: r.get(1)?,
-                            access_token: r.get(2)?,
-                            expires_at: r.get(3)?,
-                            checked: r.get(4)?,
-                            renewing_until: r.get(5)?,
-                        })
-                    },
-                )
-                .optional()
-                .map_err(StateDbError::sqlite(read.path()))?;
+            let peek = query_login(
+                read.conn(),
+                read.path(),
+                company.as_str(),
+                person,
+                server.name.as_str(),
+            )?;
             drop(read);
             let Some(peek) = peek else {
                 return Ok(None);
@@ -1867,7 +1672,6 @@ fn try_refresh_login(
             }
         }
 
-        // N1: 90 s lease outlasts refresh POST (30 s) + identity re-check (20 s) + margin.
         let lease_until = now
             .checked_add(jiff::SignedDuration::from_secs(RENEWAL_LEASE_SECS))
             .unwrap_or(now)
@@ -1877,39 +1681,9 @@ fn try_refresh_login(
             let mut db = StateDb::open(home)?;
             let path = db.path().to_path_buf();
             db.write::<_, StateDbError>(|tx| {
-                struct Row {
-                    resource: String,
-                    subject: Option<String>,
-                    return_id: String,
-                    access_token: String,
-                    expires_at: Option<String>,
-                    checked: i32,
-                    refresh_token: Option<String>,
-                    renewing_until: Option<String>,
-                }
-                let row = tx
-                    .query_row(
-                        "SELECT resource, subject, return_id, access_token, expires_at, checked, refresh_token, renewing_until
-                         FROM mcp_logins
-                         WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, server.name.as_str()],
-                        |r| {
-                            Ok(Row {
-                                resource: r.get(0)?,
-                                subject: r.get(1)?,
-                                return_id: r.get(2)?,
-                                access_token: r.get(3)?,
-                                expires_at: r.get(4)?,
-                                checked: r.get(5)?,
-                                refresh_token: r.get(6)?,
-                                renewing_until: r.get(7)?,
-                            })
-                        },
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(&path))?;
-
-                let Some(row) = row else {
+                let Some(row) =
+                    query_login(tx, &path, company.as_str(), person, server.name.as_str())?
+                else {
                     return Ok(LeaseStep::StartSignIn);
                 };
                 if row.resource != server.url || row.return_id != registration.return_id {
@@ -1928,8 +1702,6 @@ fn try_refresh_login(
                 if lease_held {
                     return Ok(LeaseStep::Wait);
                 }
-                // F1: An unchecked token is only re-checked directly while it is still fresh
-                // and was not rejected with 401; once expired it must be refreshed again.
                 let needs_refresh = row.checked != 0 || !fresh || still_bad;
                 if needs_refresh && row.refresh_token.is_none() {
                     tx.execute(
@@ -1947,15 +1719,8 @@ fn try_refresh_login(
                     return Ok(LeaseStep::StartSignIn);
                 }
 
-                let gen_val: i64 = tx
-                    .query_row(
-                        "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, server.name.as_str()],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(&path))?
-                    .unwrap_or(0);
+                let gen_val =
+                    current_generation(tx, &path, company.as_str(), person, server.name.as_str())?;
                 let acquired = tx
                     .execute(
                         "UPDATE mcp_logins SET renewing_until = ?4
@@ -2014,9 +1779,6 @@ fn try_refresh_login(
         }
     };
 
-    // If the stored access token is unchecked AND still fresh (and not rejected),
-    // skip the refresh POST and proceed directly to re-checking that token's identity.
-    // Once expired, refresh it first (F1) so an expired unchecked token never locks out a speaker.
     let (candidate_access, candidate_refresh) = if !needs_refresh {
         (existing_access, existing_refresh)
     } else {
@@ -2024,71 +1786,16 @@ fn try_refresh_login(
             clear_renewal_lease(home, company, person, server.name.as_str());
             return Ok(None);
         };
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_global(Some(Duration::from_secs(30)))
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .build()
-            .into();
-        let use_post_secret = client_secret.is_some()
-            && auth
-                .token_endpoint_auth_methods_supported
-                .iter()
-                .any(|m| m == "client_secret_post")
-            && !auth
-                .token_endpoint_auth_methods_supported
-                .iter()
-                .any(|m| m == "client_secret_basic");
-
-        let mut form: Vec<(&str, &str)> = vec![
-            ("grant_type", "refresh_token"),
-            ("refresh_token", &refresh_token),
-            ("resource", &server.url),
-        ];
-        let mut request = agent
-            .post(token_endpoint)
-            .header("Accept", "application/json");
-        match (client_secret, use_post_secret) {
-            (Some(secret), false) => {
-                let encoded = base64::engine::general_purpose::STANDARD
-                    .encode(format!("{}:{secret}", registration.client_id));
-                request = request.header("Authorization", format!("Basic {encoded}"));
-            }
-            (Some(secret), true) => {
-                form.push(("client_id", &registration.client_id));
-                form.push(("client_secret", secret));
-            }
-            (None, _) => {
-                form.push(("client_id", &registration.client_id));
-            }
-        }
-
-        let mut response = match request.send_form(form) {
-            Ok(resp) => resp,
-            Err(error) => {
-                clear_renewal_lease(home, company, person, server.name.as_str());
-                return Err(McpError::Server {
-                    server: server.name.to_string(),
-                    cause: format!("token renewal request failed: {error}"),
-                });
-            }
-        };
-        let status = response.status().as_u16();
-        let body_text = response
-            .body_mut()
-            .with_config()
-            .limit(1024 * 1024)
-            .read_to_string()
-            .unwrap_or_default();
-
-        if !(200..300).contains(&status) {
-            let err_code = serde_json::from_str::<Value>(&body_text)
-                .ok()
-                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned));
-            if matches!(status, 400 | 401) && err_code.as_deref() == Some("invalid_grant") {
-                // Only `invalid_grant` removes the login and falls back to interactive sign-in.
-                // N4: clear lease if row wasn't deleted (e.g. refresh_token mismatch).
+        let token_response = match refresh_via_rmcp(
+            &server.url,
+            auth,
+            registration,
+            client_secret,
+            &existing_access,
+            &refresh_token,
+        ) {
+            RefreshOutcome::Refreshed(resp) => resp,
+            RefreshOutcome::Rejected => {
                 let mut db = StateDb::open(home)?;
                 let path = db.path().to_path_buf();
                 db.write::<_, StateDbError>(|tx| {
@@ -2117,84 +1824,36 @@ fn try_refresh_login(
                 })?;
                 return Ok(None);
             }
-            clear_renewal_lease(home, company, person, server.name.as_str());
-            return Err(McpError::Server {
-                server: server.name.to_string(),
-                cause: format!(
-                    "token renewal failed ({})",
-                    err_code.unwrap_or_else(|| format!("HTTP {status}"))
-                ),
-            });
-        }
-
-        let body: Value = match serde_json::from_str(&body_text) {
-            Ok(v) => v,
-            Err(_) => {
+            RefreshOutcome::Failed(cause) => {
                 clear_renewal_lease(home, company, person, server.name.as_str());
                 return Err(McpError::Server {
                     server: server.name.to_string(),
-                    cause: "token renewal response is not valid JSON".into(),
+                    cause: format!("token renewal failed: {cause}"),
                 });
             }
         };
-        let token_type = body
-            .get("token_type")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if !token_type.eq_ignore_ascii_case("Bearer") {
-            clear_renewal_lease(home, company, person, server.name.as_str());
-            return Err(McpError::Server {
-                server: server.name.to_string(),
-                cause: format!("token renewal returned unsupported token_type `{token_type}`"),
-            });
-        }
-        let Some(access_token) = body
-            .get("access_token")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_owned)
-        else {
-            clear_renewal_lease(home, company, person, server.name.as_str());
-            return Err(McpError::Server {
-                server: server.name.to_string(),
-                cause: "token renewal response omitted `access_token`".into(),
-            });
-        };
-        let new_refresh = body
-            .get("refresh_token")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
-            .map(str::to_owned)
-            .unwrap_or(refresh_token);
-        let now_done = Timestamp::now();
-        let expires_at = body
-            .get("expires_in")
-            .and_then(Value::as_i64)
-            .filter(|&secs| secs > 0)
-            .and_then(|secs| {
-                now_done
-                    .checked_add(jiff::SignedDuration::from_secs(secs))
-                    .ok()
-            })
-            .map(|ts| ts.to_string());
-        let granted_scopes = body.get("scope").and_then(Value::as_str).map(str::to_owned);
 
-        // Persist the renewed access token with `checked = 0` (keeping renewing_until active
-        // for the identity re-check), checking both generation and UPDATE row count.
+        let now_done = Timestamp::now();
+        let parsed = match parse_token_response(&token_response, now_done) {
+            Ok(parsed) => parsed,
+            Err(cause) => {
+                clear_renewal_lease(home, company, person, server.name.as_str());
+                return Err(McpError::Server {
+                    server: server.name.to_string(),
+                    cause: format!("token renewal failed: {cause}"),
+                });
+            }
+        };
+        let access_token = parsed.access_token;
+        let new_refresh = parsed.refresh_token.unwrap_or(refresh_token);
+
         let saved = {
             let mut db = StateDb::open(home)?;
             let path = db.path().to_path_buf();
             db.write::<_, StateDbError>(|tx| {
-                let current_gen: i64 = tx
-                    .query_row(
-                        "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, server.name.as_str()],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(&path))?
-                    .unwrap_or(0);
-                if current_gen != generation {
+                if current_generation(tx, &path, company.as_str(), person, server.name.as_str())?
+                    != generation
+                {
                     return Ok(false);
                 }
                 let updated = tx
@@ -2208,9 +1867,9 @@ fn try_refresh_login(
                             person,
                             server.name.as_str(),
                             access_token,
-                            expires_at,
+                            parsed.expires_at,
                             new_refresh,
-                            granted_scopes,
+                            parsed.granted_scopes,
                             now_done.to_string(),
                             registration.return_id,
                         ],
@@ -2236,7 +1895,6 @@ fn try_refresh_login(
         (access_token, Some(new_refresh))
     };
 
-    // Re-check who the renewed access token identifies as before marking `checked = 1`.
     match recheck_renewed_identity(
         auth,
         identity_cfg,
@@ -2249,16 +1907,14 @@ fn try_refresh_login(
                 let mut db = StateDb::open(home)?;
                 let path = db.path().to_path_buf();
                 db.write::<_, StateDbError>(|tx| {
-                    let current_gen: i64 = tx
-                        .query_row(
-                            "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                            params![company.as_str(), person, server.name.as_str()],
-                            |r| r.get(0),
-                        )
-                        .optional()
-                        .map_err(StateDbError::sqlite(&path))?
-                        .unwrap_or(0);
-                    if current_gen != generation {
+                    if current_generation(
+                        tx,
+                        &path,
+                        company.as_str(),
+                        person,
+                        server.name.as_str(),
+                    )? != generation
+                    {
                         return Ok(false);
                     }
                     let updated = tx
@@ -2299,16 +1955,9 @@ fn try_refresh_login(
             let mut db = StateDb::open(home)?;
             let path = db.path().to_path_buf();
             db.write::<_, StateDbError>(|tx| {
-                let current_gen: i64 = tx
-                    .query_row(
-                        "SELECT generation FROM mcp_generations WHERE company = ?1 AND person = ?2 AND server = ?3",
-                        params![company.as_str(), person, server.name.as_str()],
-                        |r| r.get(0),
-                    )
-                    .optional()
-                    .map_err(StateDbError::sqlite(&path))?
-                    .unwrap_or(0);
-                if current_gen == generation {
+                if current_generation(tx, &path, company.as_str(), person, server.name.as_str())?
+                    == generation
+                {
                     tx.execute(
                         "DELETE FROM mcp_logins
                          WHERE company = ?1 AND person = ?2 AND server = ?3 AND return_id = ?4",
@@ -2334,7 +1983,6 @@ fn try_refresh_login(
             Ok(None)
         }
         IdentityRecheckOutcome::RequestFailed(cause) => {
-            // Keep login + newest refresh token with `checked = 0`; next call repeats check.
             clear_renewal_lease(home, company, person, server.name.as_str());
             Err(McpError::Server {
                 server: server.name.to_string(),
