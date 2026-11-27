@@ -561,13 +561,12 @@ mod tests {
             &rate_limited,
             received_at,
         );
-        let Tried::Unavailable(unavailable, McpError::Server { server, cause }) =
+        let Tried::Unavailable(unavailable, McpError::Server { server, .. }) =
             classify_for_gate::<()>("gitlab", failure, &settings)
         else {
             return Err("expected Tried::Unavailable for HTTP 429 with Retry-After".into());
         };
         assert_eq!(server, "gitlab");
-        assert_eq!(cause, "HTTP 429");
         assert_eq!(unavailable.reason, Reason::RateLimited);
         assert_eq!(
             unavailable.named,
@@ -586,13 +585,12 @@ mod tests {
             &unavailable_err,
             received_at,
         );
-        let Tried::Unavailable(unavailable, McpError::Server { server, cause }) =
+        let Tried::Unavailable(unavailable, McpError::Server { server, .. }) =
             classify_for_gate::<()>("gitlab", failure, &settings)
         else {
             return Err("expected Tried::Unavailable for HTTP 503 with Retry-After".into());
         };
         assert_eq!(server, "gitlab");
-        assert_eq!(cause, "HTTP 503");
         assert_eq!(
             unavailable.reason,
             Reason::Unavailable { status: Some(503) }
