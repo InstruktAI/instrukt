@@ -50,14 +50,17 @@ One Cargo workspace, one binary `instrukt`. Crates: `instrukt-cli`,
 shared by `todos`, `events` and `history`), `instrukt-todos`,
 `instrukt-company` (the company context's conversation core and connector
 host), `instrukt-connector` (the connector interface and each kind's
-declaration data) and one crate per connector, `instrukt-connector-slack`
-first. Dependencies point one way:
-`instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
+declaration data), one crate per connector, `instrukt-connector-slack`
+first, and `instrukt-outside`, the outside gate
+(`project/instrukt/design/architecture/outside-gate`). Dependencies point one
+way: `instrukt-cli` → the others; `instrukt-todos` → `instrukt-runner` →
 `instrukt-core` and `instrukt-blueprint`; `instrukt-company` →
-`instrukt-runner`, `instrukt-core` and `instrukt-connector`; a connector crate →
-`instrukt-connector` only; `instrukt-blueprint` → `instrukt-core`;
+`instrukt-runner`, `instrukt-core`, `instrukt-connector` and
+`instrukt-outside`; a connector crate → `instrukt-connector` and
+`instrukt-outside` only; `instrukt-blueprint` → `instrukt-core`;
 `instrukt-core` → `instrukt-connector`, for the declarations configuration
-validates against; `instrukt-connector` → nothing of instrukt. Only
+validates against; `instrukt-connector` → `instrukt-outside` only;
+`instrukt-outside` → nothing of instrukt. Only
 `instrukt-cli` depends on `instrukt-company` or a connector crate. Where core needs an answer only an optional module has
 (whether a todo slug named by a pending doc exists), core declares the
 interface and the CLI wires the module's implementation in only when that

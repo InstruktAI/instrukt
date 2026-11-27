@@ -921,6 +921,7 @@ dependencies = [
  "hex",
  "instrukt-connector",
  "instrukt-core",
+ "instrukt-outside",
  "instrukt-runner",
  "jiff",
  "serde",
@@ -936,6 +937,7 @@ dependencies = [
 name = "instrukt-connector"
 version = "0.1.0"
 dependencies = [
+ "instrukt-outside",
  "jiff",
  "serde",
  "thiserror",
@@ -946,6 +948,7 @@ name = "instrukt-connector-slack"
 version = "0.1.0"
 dependencies = [
  "instrukt-connector",
+ "instrukt-outside",
  "jiff",
  "serde",
  "serde_json",
@@ -982,6 +985,17 @@ dependencies = [
  "tracing",
  "url",
  "walkdir",
+]
+
+[[package]]
+name = "instrukt-outside"
+version = "0.1.0"
+dependencies = [
+ "httpdate",
+ "jiff",
+ "thiserror",
+ "tracing",
+ "ureq",
 ]
 
 [[package]]

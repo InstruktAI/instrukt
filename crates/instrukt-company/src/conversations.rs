@@ -4827,12 +4827,19 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         Box<dyn instrukt_runner::interfaces::CompanySupervision>,
         instrukt_runner::interfaces::CompanyError,
     > {
+        // One outside gate per hosting: every client of a connector in this
+        // process shares its waits.
+        let gate = instrukt_outside::Gate::new(
+            std::sync::Arc::clone(&start.clock),
+            std::sync::Arc::new(std::time::Instant::now),
+            instrukt_outside::Report::log(),
+        );
         let kinds = self
             .builders
             .iter()
             .map(|build| {
                 let lookup = |name: &str| start.env.get(name).map(str::to_owned);
-                build(&lookup, std::sync::Arc::clone(&start.clock))
+                build(&lookup, gate.clone())
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(|error| instrukt_runner::interfaces::CompanyError(error.cause))?;

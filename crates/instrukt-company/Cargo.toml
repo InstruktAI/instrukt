@@ -11,6 +11,7 @@ repository.workspace = true
 hex.workspace = true
 instrukt-connector.workspace = true
 instrukt-core.workspace = true
+instrukt-outside.workspace = true
 instrukt-runner.workspace = true
 jiff.workspace = true
 serde.workspace = true

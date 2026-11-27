@@ -467,6 +467,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_company",
         "instrukt_connector",
         "instrukt_connector_slack",
+        "instrukt_outside",
     ];
     let builder = || {
         APP_TARGETS.iter().fold(
