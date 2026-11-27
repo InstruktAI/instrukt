@@ -60,11 +60,16 @@ build, review, verify, fix, process deferrals, and finalize.
 3. **Human-owned gates:** configured `approvals.prd` is enforced on
    `builder` and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact. With
-   `runner.autostart` off for the todo's kind, the deliberate work start is
-   enforced on `builder` reservations: for a todo that has had no `builder`
-   round, the reservation needs a `--work-ready` stamp and no standing
-   dispatch hold (`project/instrukt/spec/feature/runner/work-dispatch`,
-   Deliberate work start).
+   `runner.autostart` off for the todo's kind, workflow enforces a deliberate
+   work start on `builder` reservations: for a todo that has had no `builder`
+   round, the reservation is admitted only when the todo carries a
+   `--work-ready` stamp (`project/instrukt/spec/feature/work/stamps`) and no
+   standing dispatch hold, whether the orchestrator continues from preparation
+   or is started again. Releasing that automatic hold — removing the `hold`
+   label on GitHub (`project/instrukt/spec/feature/work/github-record`) or
+   running `instrukt todo update <slug> --release` — starts the work. Turning
+   `runner.autostart` on for a kind lets newly prepared todos continue into
+   work; a todo already on hold waits until released.
 <!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ### Live verification disposition

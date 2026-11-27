@@ -143,10 +143,9 @@ and approved plan digest before implementation. Reconciliation preserves that ba
 <!-- planned:fix-autostart-prepare-work-boundary -->
 `instrukt todo stamp <slug> --work-ready` records, from the claim-holding
 orchestrator, that the todo's work waits for its deliberate start, and places
-an automatic dispatch hold in the same transaction. Releasing that hold starts
-the work; until then no `builder` round is reserved for a kind whose
-`runner.autostart` is off
-(`project/instrukt/spec/feature/runner/work-dispatch`, Deliberate work start).
+an automatic dispatch hold in the same transaction. Workflow consumes this
+stamp and the release of its hold at the first-builder execution gate
+(`project/instrukt/spec/feature/workflow/delivery-cycle`).
 <!-- /planned:fix-autostart-prepare-work-boundary -->
 
 Completion resolves the caller's bound outstanding attempt and verifies the
