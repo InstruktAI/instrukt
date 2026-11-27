@@ -353,38 +353,23 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `runtime`, `semantic_key`, `display_title` | Selected runtime, stable assignment identity and independently mutable display title. Native child keys are assignment facts, not adapter lookup entries. |
 | `session` | Scoped native identity from `todo bind`, or `NULL` while unresolved. |
 | `worktree`, `branch`, `base_head` | The todo's single shared `<slug>/work` worktree, branch, and captured starting head (`NULL` for worktree-less `kind: task` assignments; legacy prepare rows remain readable for history). Retained after release. |
-| `completion_sequence`, `completed_head` | Releasing stamp and its exact shared head; read-only roles retain their captured head. `NULL` until completion. |
+| `completion_sequence`, `completed_head` | Releasing stamp and its exact workspace head, where applicable. `NULL` until completion. |
 | `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Failure evidence and current shared head, not a recovery source branch. |
 | `released_at` | Completion, verdict, disposition or confirmed failure release time; `NULL` while outstanding. |
 | `evidence` | Rendered assignment, native task identity, matching placement and any no-start proof; deliberate driver entry retains its supplied native placement/source evidence; runner-owned task acceptance retains its own claim and task-start stamp transaction. |
 
-One todo has one work-phase workspace binding owned by its orchestrator and
-at most one outstanding workspace-role attempt. All its children inherit that
-workspace and commit directly on its todo branch. Reserving the next role
-captures the current shared head. An unresolved native start blocks admission.
-The orchestrator coordinates work and keeps the workspace clean between roles.
+A repository todo has one recorded work-phase workspace and at most one open
+workspace or child attempt. The claim holder reserves and binds the attempt.
+Reservation captures the workspace's current head. An unresolved reservation
+occupies the same slot as a bound attempt.
 
-| Role | Evidence and release in the same record transaction |
-| --- | --- |
-| Setup | `--role-complete` at the clean shared todo head after setup. |
-| Builder, including plan reconciliation and remediation rounds | `--build-complete` at the clean shared todo head. |
-| Build reviewer | Verdict bound to the complete findings and current captured shared head. |
-| Verifier | `--verification` disposition bound to the complete `verification-findings` and current captured shared head. |
-| Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
-| Finalizer | `--role-complete` at the clean, published shared candidate; readiness is a later record-only write against the retained binding. |
-| Failed attempt | Record-only `todo attempt --failed --reason` after native stop evidence and a clean shared tree; no completion stamp. |
-
-The stamp or failure, release, new revision and reflection obligation commit
-together. A retry reads that retained outcome. Git refs have no per-role advance
-intent: every commit is already on the checked-out todo branch. Missing or stale
-evidence leaves the attempt outstanding; native idleness supplies no release.
-Dirty or conflicted work remains in the same workspace for recovery within that
-attempt. A released failure permits a successor at the current shared head.
-Failure creates neither a different starting base nor setup/build completion.
-The original build base remains fixed. Native child lifetime remains runtime-owned. Preparation doc writers release
-with `--role-complete` bound to required artifacts and exact authored local-main
-commits; preparation reviewers release with their verdict stamps. Direct commit
-review is still owed before preparation release.
+An attempt's completion stamp, release, new todo revision and reflection
+obligation commit in one transaction. The stamp resolves to the caller's own
+bound attempt. A workspace attempt requires a clean worktree on its recorded
+branch. A matching retry returns the retained outcome. Failure stores its own
+release evidence from the matching stopped session. Both paths retain the
+attempt's starting coordinates and the original build base. Git refs already
+point to the commits recorded by the attempt.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
@@ -796,29 +781,6 @@ retry revalidates the claim and never revives or starts an orchestrator. A known
 absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
-
-**`conversation_links`** — runner-owned links between two runtime-scoped native
-threads, with active/closed state, member references and the opening positions.
-An active member belongs to at most one link. Closure updates the whole link;
-it preserves delivery evidence rather than deleting progress.
-
-**`conversation_relay_positions`** — one record per link and source direction,
-retaining the source stream position, completed-turn delivery position, fixed
-native target, pending range/content identity, native acceptance receipts (or
-explicit empty-content dispositions) and
-last stream/handover failure. The source observation position is distinct from
-accepted delivery progress. Link creation initializes both directions; target
-acceptance or a recorded empty disposition advances delivery. Source occurrence
-times are attribution, never cursors. Pending evidence survives runner restart.
-Pending handovers distinguish native turns, opening contributions and final
-contributions. Existing native handovers migrate to the native origin before
-consumption. A final contribution's acceptance receipt commits with whole-link
-closure; management receipts do not advance the native completed-turn position.
-
-These tables realize the runner's contract in
-`project/instrukt/spec/feature/runner/conversation-links`; work owns their file,
-migration and writer boundary, not the relay decision. Native stream and send
-operations run outside local writer transactions.
 
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their

@@ -97,9 +97,8 @@ missing `url` or `description`.
 
 ### Whose declarations a call sees
 
-The command takes its caller from the selected runtime's caller identity, as
-`instrukt discuss` does
-(`project/instrukt/spec/feature/runner/conversation-links`), and reads the
+The command takes its caller from the selected runtime's caller identity
+(`project/instrukt/spec/feature/runner/session-continuity`), and reads the
 runner's recorded assignment for that session.
 
 | Caller | Declarations |

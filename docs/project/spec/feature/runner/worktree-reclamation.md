@@ -32,7 +32,7 @@ that computer, from the project's own checkout. It applies alike to every
 todo worktree of the project there, whatever that worktree's branch holds. A
 declaration that reaches outside a checkout is a configuration finding at
 each point where configuration enters, and removes nothing
-(`project/instrukt/policy/checks-and-guards`).
+(`sdlc/principle/design-fundamentals`, Fail Fast).
 
 In a worktree, a declared path is removed only where it is reached through
 that worktree's real directories and git ignores it there. A declared path

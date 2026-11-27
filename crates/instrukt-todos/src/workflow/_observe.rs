@@ -12,14 +12,11 @@ use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, SnippetId, TodoSlug};
 use instrukt_core::repository::RepositoryError;
 
-use crate::evidence::{
-    Actor, ContentDigest, Grounding, StampFact, TodoEvidence, VerificationDisposition,
-};
+use crate::evidence::{Actor, BuildVerdict, ContentDigest, Grounding, StampFact, TodoEvidence};
 
 use super::_provider::{
-    ChangeSinceReview, CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations,
-    WorktreeObservation, current_build_verdict, dependency_change, handoff_disposition,
-    is_independent_reviewer,
+    CodeChange, DRIFT_ARTIFACTS, GroundingChange, Observations, WorktreeObservation,
+    current_build_verdict, dependency_change, handoff_disposition, is_independent_reviewer,
 };
 
 /// The remote todo branches are published to (the sdlc flavor's
@@ -40,6 +37,8 @@ pub enum ObservationError {
     },
     #[error(transparent)]
     Docs(#[from] DocsError),
+    #[error(transparent)]
+    Review(#[from] crate::work::review::ReviewError),
     #[error("git printed `{value}` where a commit id belongs ({context})")]
     NotACommit { value: String, context: String },
 }
@@ -73,13 +72,22 @@ pub(crate) fn observe(
         project_root,
         &format!("refs/remotes/{REMOTE}/{branch_name}"),
     )?;
-    let current_head = branch_head.clone();
-    let reviewed_change = match (current_build_verdict(evidence), &current_head) {
-        (Some((_, reviewed, _)), Some(head)) => {
-            let dir = worktree_dir.as_deref().unwrap_or(project_root);
-            Some(change_since(dir, project_root, reviewed, head))
+    let candidate = worktree
+        .as_ref()
+        .and_then(|tree| tree.head.as_ref())
+        .or(branch_head.as_ref());
+    let commit_writers = match candidate {
+        Some(head)
+            if evidence.stamps.iter().any(|stamp| {
+                matches!(
+                    stamp.fact,
+                    StampFact::BuildVerdict { .. } | StampFact::VerificationDisposition { .. }
+                )
+            }) =>
+        {
+            commit_writers(project_root, evidence, head)?
         }
-        _ => None,
+        _ => BTreeSet::new(),
     };
     let owned_root = owned_snippet_root(project_root, evidence)?;
     let (grounding, judged_grounding) =
@@ -89,7 +97,7 @@ pub(crate) fn observe(
         worktree,
         branch_head,
         remote_head,
-        reviewed_change,
+        commit_writers,
         grounding,
         judged_grounding,
     })
@@ -154,86 +162,6 @@ fn resolve(dir: &Path, revision: &str) -> Result<Option<CommitSha>, ObservationE
             value: text,
             context: format!("rev-parse {revision}"),
         })
-}
-
-/// Whether the todo's work changed between `reviewed` and `head`, read in
-/// `dir`: unchanged when they are equal; clean upstream merges when every
-/// first-parent commit after `reviewed` is a merge of a commit already on
-/// the canonical branch whose tree is exactly what git's own merge of its
-/// parents produces; changed otherwise. A repository that cannot answer
-/// leaves it undetermined.
-fn change_since(
-    dir: &Path,
-    project_root: &Path,
-    reviewed: &CommitSha,
-    head: &CommitSha,
-) -> ChangeSinceReview {
-    if reviewed == head {
-        return ChangeSinceReview::Unchanged;
-    }
-    match classify(dir, project_root, reviewed, head) {
-        Ok(change) => change,
-        Err(err) => {
-            tracing::warn!(
-                event = "review_change_undetermined",
-                reviewed = %reviewed,
-                head = %head,
-                error = %err,
-            );
-            ChangeSinceReview::Undetermined
-        }
-    }
-}
-
-fn classify(
-    dir: &Path,
-    project_root: &Path,
-    reviewed: &CommitSha,
-    head: &CommitSha,
-) -> Result<ChangeSinceReview, ObservationError> {
-    if !git::succeeds(
-        dir,
-        [
-            "merge-base",
-            "--is-ancestor",
-            reviewed.as_str(),
-            head.as_str(),
-        ],
-    )? {
-        return Ok(ChangeSinceReview::TodoChanged);
-    }
-    let main = git::default_branch(project_root, REMOTE)?;
-    // Upstream is the published canonical branch. Local main is not
-    // upstream evidence: an unpublished merge of it is not a clean upstream
-    // merge, so without the remote-tracking branch nothing is determined.
-    let Some(canonical) = resolve(dir, &format!("refs/remotes/{REMOTE}/{main}"))? else {
-        return Ok(ChangeSinceReview::Undetermined);
-    };
-    let range = format!("{reviewed}..{head}");
-    let listing = git::run(
-        dir,
-        ["rev-list", "--first-parent", "--parents", range.as_str()],
-    )?;
-    for line in listing.lines() {
-        let ids: Vec<&str> = line.split_whitespace().collect();
-        let [commit, first, second] = ids.as_slice() else {
-            return Ok(ChangeSinceReview::TodoChanged);
-        };
-        if !git::succeeds(
-            dir,
-            ["merge-base", "--is-ancestor", second, canonical.as_str()],
-        )? {
-            return Ok(ChangeSinceReview::TodoChanged);
-        }
-        match reproduce_merge(dir, commit, first, second)? {
-            MergeReproduction::Reproduced => {}
-            MergeReproduction::Differs | MergeReproduction::Conflicted => {
-                return Ok(ChangeSinceReview::TodoChanged);
-            }
-            MergeReproduction::Undetermined => return Ok(ChangeSinceReview::Undetermined),
-        }
-    }
-    Ok(ChangeSinceReview::CleanUpstreamMerges)
 }
 
 /// What git's own merge of a merge commit's two parents says of the commit.
@@ -556,152 +484,116 @@ fn snippet_digest(
     }
 }
 
-/// Invariant 2: readiness requires an independent reviewer's `APPROVE` stamp
-/// bound to the exact candidate commit SHA and current `review-findings` digest.
-pub(crate) fn readiness_approved(
-    record: &crate::work::TodoRecord,
-    _root: &Path,
+/// The commit writers identified by Git from the recorded build or workspace base,
+/// excluding commits already on the canonical branch whenever `candidate` is not
+/// itself contained in canonical (so rebasing onto or merging an advanced default
+/// branch does not pull unrelated canonical authors into this todo's writers).
+fn commit_writers(
+    root: &Path,
+    evidence: &TodoEvidence,
     candidate: &CommitSha,
-    caller: &instrukt_core::ids::SessionRef,
-) -> bool {
-    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
-    let Some((verdict, target, report)) = current_build_verdict(&evidence) else {
-        return false;
-    };
-    if verdict != crate::evidence::BuildVerdict::Approve
-        || target != candidate
-        || record.current_digest(crate::evidence::artifact_names::REVIEW_FINDINGS) != Some(report)
-    {
-        return false;
-    }
-    record
+) -> Result<BTreeSet<String>, ObservationError> {
+    let recorded_base = evidence
         .stamps
         .iter()
-        .rev()
-        .find(|s| matches!(s.fact, StampFact::BuildVerdict { .. }))
-        .is_some_and(|s| independent(record, &s.actor, Some(caller)))
-}
-
-/// The handoff half of invariant 2 over the work record: a current
-/// verification disposition admitting handoff at `candidate`, as
-/// [`handoff_disposition`] judges it (the reason when not).
-pub(crate) fn handoff_admitted(
-    record: &crate::work::TodoRecord,
-    candidate: &CommitSha,
-    caller: &instrukt_core::ids::SessionRef,
-) -> Result<(), String> {
-    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
-    handoff_disposition(&evidence, candidate, Some(caller))
-}
-
-/// Whether `actor` is independent of the todo's claim holder, driver and
-/// writer roles (and of `caller`, when given), as
-/// [`is_independent_reviewer`] judges it over the record's bindings.
-fn independent(
-    record: &crate::work::TodoRecord,
-    actor: &Actor,
-    caller: Option<&instrukt_core::ids::SessionRef>,
-) -> bool {
-    let bindings: Vec<(
-        instrukt_core::ids::RoleName,
-        instrukt_runner::interfaces::AssignmentKind,
-        Option<&instrukt_core::ids::SessionRef>,
-    )> = record
-        .bindings
-        .iter()
-        .map(|b| (b.role.clone(), b.attempt.assignment, b.session.as_ref()))
-        .collect();
-    is_independent_reviewer(
-        record.claim.as_ref().and_then(|c| c.session.as_ref()),
-        &bindings,
-        actor,
-        caller,
-    )
-}
-
-/// The verifier role, whose bound attempt records a live verification
-/// disposition (`delivery-cycle`, "Live verification disposition").
-pub(crate) const VERIFIER_ROLE: &str = "verifier";
-
-/// Who may record which verification disposition for `commit`, and which
-/// may follow another for it (`delivery-cycle`, "Live verification
-/// disposition"): the single owner of the rule on both of work's paths.
-/// `binding_role` is the role of the binding `caller` acts under: a bound
-/// `verifier` attempt, or the caller's live driver binding.
-///
-/// - pass, fail, blocked: only an independent bound `verifier`;
-/// - Tier 0 skip: that verifier, or the claim-holding orchestrator;
-/// - hotfix deferral: the claim-holding orchestrator alone.
-///
-/// While the latest disposition a `verifier` recorded for `commit` is fail,
-/// the orchestrator's skip and deferral are refused; while it is blocked,
-/// its skip is. Every refusal names its door.
-pub(crate) fn verification_admission(
-    record: &crate::work::TodoRecord,
-    caller: &instrukt_core::ids::SessionRef,
-    binding_role: &instrukt_core::ids::RoleName,
-    disposition: VerificationDisposition,
-    commit: &CommitSha,
-) -> Result<(), String> {
-    const NEW_VERIFIER: &str = "a pass, fail or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip or hotfix deferral from the claim-holding orchestrator";
-    if binding_role.as_str() == VERIFIER_ROLE {
-        if !independent(record, &Actor::Session(caller.clone()), None) {
-            return Err(format!(
-                "this verifier is not independent: its session holds the claim, drives the todo or wrote this change; {NEW_VERIFIER}"
-            ));
-        }
-        if disposition == VerificationDisposition::HotfixDeferred {
-            return Err(
-                "a hotfix deferral is the claim-holding orchestrator's alone; a verifier records pass, fail, blocked or tier_0_skip"
-                    .to_owned(),
-            );
-        }
-        return Ok(());
-    }
-    let holds_claim = record
-        .claim
-        .as_ref()
-        .is_some_and(|claim| claim.session.as_ref() == Some(caller));
-    if !holds_claim {
-        return Err(format!(
-            "a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator, and this session is neither; {NEW_VERIFIER}"
-        ));
-    }
-    if !matches!(
-        disposition,
-        VerificationDisposition::Tier0Skip | VerificationDisposition::HotfixDeferred
-    ) {
-        return Err(format!(
-            "the orchestrator records a Tier 0 skip or a hotfix deferral, never a {disposition}: {NEW_VERIFIER}"
-        ));
-    }
-    let verifier_recorded = record
-        .stamps
-        .iter()
-        .rev()
         .find_map(|stamp| match &stamp.fact {
-            StampFact::VerificationDisposition {
-                disposition,
-                commit: recorded,
-                ..
-            } if recorded == commit
-                && stamp.role.as_ref().map(|r| r.as_str()) == Some(VERIFIER_ROLE) =>
-            {
-                Some(*disposition)
-            }
+            StampFact::BuildStarted { base, .. } => Some(base),
             _ => None,
+        })
+        .or_else(|| {
+            evidence
+                .bindings
+                .iter()
+                .find_map(|binding| binding.attempt.base_head.as_ref())
         });
-    match (verifier_recorded, disposition) {
-        (Some(VerificationDisposition::Fail), _) => Err(format!(
-            "a verifier recorded fail for commit {commit}, which a {disposition} does not wave through; what clears it is a new candidate commit, or a new verifier attempt on this commit"
-        )),
-        (Some(VerificationDisposition::Blocked), VerificationDisposition::Tier0Skip) => {
-            Err(format!(
-                "a verifier recorded blocked for commit {commit}, which a tier_0_skip does not wave through; what clears it is a new candidate commit, a new verifier attempt on this commit, or a hotfix deferral naming its tracked follow-up (`--verification hotfix_deferred --follow-up <slug>`)"
-            ))
-        }
-        _ => Ok(()),
+    if recorded_base == Some(candidate) {
+        return Ok(BTreeSet::new());
     }
+    let branch = git::default_branch(root, REMOTE)?;
+    let canonical = match resolve(root, &format!("refs/remotes/{REMOTE}/{branch}"))? {
+        Some(base) => Some(base),
+        None => resolve(root, &format!("refs/heads/{branch}"))?,
+    };
+    if recorded_base.is_none() && canonical.as_ref() == Some(candidate) {
+        return Ok(BTreeSet::new());
+    }
+    let mut specs = vec![candidate.to_string()];
+    if let Some(base) = recorded_base {
+        specs.push(format!("^{base}"));
+    }
+    if let Some(canon) = canonical {
+        let contained = git::run_output(
+            root,
+            [
+                "merge-base",
+                "--is-ancestor",
+                candidate.as_str(),
+                canon.as_str(),
+            ],
+        )?
+        .status
+        .success();
+        if !contained {
+            specs.push(format!("^{canon}"));
+        }
+    }
+    let spec_refs: Vec<&str> = specs.iter().map(String::as_str).collect();
+    Ok(crate::work::review::commit_sessions(root, &spec_refs)?
+        .into_iter()
+        .flat_map(|(_, sessions)| sessions)
+        .collect())
+}
+
+pub(crate) fn require_independent(
+    record: &crate::work::TodoRecord,
+    root: &Path,
+    candidate: &CommitSha,
+    actor: &Actor,
+) -> Result<(), crate::work::WorkError> {
+    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
+    let writers = commit_writers(root, &evidence, candidate)
+        .map_err(|err| crate::work::WorkError::refused(err.to_string()))?;
+    if is_independent_reviewer(&evidence, actor, &writers) {
+        Ok(())
+    } else {
+        Err(crate::work::WorkError::refused(
+            "approval and verification pass require an independent session distinct from the claimant, drivers, and writers",
+        ))
+    }
+}
+
+/// Check both exact-commit stamps against the current findings and writer evidence.
+pub(crate) fn check_handoff_evidence(
+    record: &crate::work::TodoRecord,
+    root: &Path,
+    candidate: &CommitSha,
+) -> Result<(), crate::work::WorkError> {
+    use crate::work::WorkError;
+    let evidence = crate::work::_ports::to_evidence(record.clone(), Vec::new());
+    let writers = commit_writers(root, &evidence, candidate)
+        .map_err(|err| WorkError::refused(err.to_string()))?;
+    let approved = current_build_verdict(&evidence).is_some_and(|(verdict, target, report)| {
+        verdict == BuildVerdict::Approve
+            && target == candidate
+            && record.current_digest(crate::evidence::artifact_names::REVIEW_FINDINGS)
+                == Some(report)
+            && record
+                .stamps
+                .iter()
+                .rev()
+                .find(|stamp| matches!(stamp.fact, StampFact::BuildVerdict { .. }))
+                .is_some_and(|stamp| is_independent_reviewer(&evidence, &stamp.actor, &writers))
+    });
+    if !approved {
+        return Err(WorkError::refused(
+            "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
+        ));
+    }
+    handoff_disposition(&evidence, candidate, &writers).map_err(|why| {
+        WorkError::refused(format!(
+            "readiness requires a current verification disposition: {why}"
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -823,179 +715,6 @@ mod tests {
                 ..GroundingChange::default()
             }
         );
-    }
-
-    mod admission {
-        use super::super::super::_testing::{session, sha};
-        use super::*;
-        use crate::evidence::{ModelProvenance, StampRecord};
-        use crate::work::{Attempt, Binding, TodoRecord};
-        use VerificationDisposition::{Blocked, Fail, HotfixDeferred, Pass, Tier0Skip};
-        use instrukt_core::ids::RoleName;
-        use instrukt_runner::interfaces::AssignmentKind;
-
-        fn role(name: &str) -> RoleName {
-            RoleName::parse(name).unwrap()
-        }
-
-        fn binding(name: &str, who: &str, assignment: AssignmentKind) -> Binding {
-            Binding {
-                role: role(name),
-                session: Some(session(who)),
-                worktree: None,
-                attempt: Attempt {
-                    assignment,
-                    ..Attempt::default()
-                },
-            }
-        }
-
-        /// A todo claimed by `orchestrator`, driving it, which `builder`
-        /// built and `verifier` (also its earlier build reviewer) verifies.
-        fn record() -> TodoRecord {
-            let mut record: TodoRecord = serde_json::from_value(serde_json::json!({
-                "schema": 4, "id": "ab".repeat(16), "project": "demo", "slug": "ship-it",
-                "kind": "change", "status": "active", "created": "2026-01-01T00:00:00Z",
-                "created_by": {"person": {"name": "dev"}}, "revision": 1,
-                "claim": {"machine": "cd".repeat(16), "session": "cli:orchestrator",
-                          "at": "2026-01-02T00:00:00Z"},
-            }))
-            .unwrap();
-            record.bindings = vec![
-                binding("todo-lead", "orchestrator", AssignmentKind::Driver),
-                binding("builder", "builder", AssignmentKind::Workspace),
-                binding("build-reviewer", "verifier", AssignmentKind::Workspace),
-                binding(VERIFIER_ROLE, "verifier", AssignmentKind::Workspace),
-            ];
-            record
-        }
-
-        /// `disposition` for `commit`, recorded by `who` as `recorded_as`.
-        fn recorded(
-            record: &mut TodoRecord,
-            who: &str,
-            recorded_as: &str,
-            disposition: VerificationDisposition,
-            commit: &CommitSha,
-        ) {
-            let sequence = record.next_sequence();
-            record.stamps.push(StampRecord {
-                source_comment: None,
-                fact: StampFact::VerificationDisposition {
-                    disposition,
-                    commit: commit.clone(),
-                    report: ContentDigest::of("findings"),
-                    follow_up: None,
-                },
-                at: jiff::Timestamp::from_second(1_800_000_000).unwrap(),
-                actor: Actor::Session(session(who)),
-                model: None,
-                eval_fingerprint: None,
-                role: Some(role(recorded_as)),
-                human_involved: None,
-                sequence,
-                model_provenance: ModelProvenance::Unknown,
-            });
-        }
-
-        fn admit(
-            record: &TodoRecord,
-            who: &str,
-            acting_as: &str,
-            disposition: VerificationDisposition,
-            commit: &CommitSha,
-        ) -> Result<(), String> {
-            verification_admission(record, &session(who), &role(acting_as), disposition, commit)
-        }
-
-        #[test]
-        fn an_independent_verifier_records_all_but_a_deferral() {
-            let record = record();
-            let head = sha('a');
-            for disposition in [Pass, Fail, Blocked, Tier0Skip] {
-                assert_eq!(
-                    admit(&record, "verifier", VERIFIER_ROLE, disposition, &head),
-                    Ok(())
-                );
-            }
-            assert!(admit(&record, "verifier", VERIFIER_ROLE, HotfixDeferred, &head).is_err());
-        }
-
-        #[test]
-        fn a_verifier_that_wrote_or_drives_the_change_records_nothing() {
-            let mut record = record();
-            record
-                .bindings
-                .push(binding(VERIFIER_ROLE, "builder", AssignmentKind::Workspace));
-            record.bindings.push(binding(
-                VERIFIER_ROLE,
-                "orchestrator",
-                AssignmentKind::Workspace,
-            ));
-            let head = sha('a');
-            for who in ["builder", "orchestrator"] {
-                for disposition in [Pass, Tier0Skip] {
-                    let admitted = admit(&record, who, VERIFIER_ROLE, disposition, &head);
-                    assert!(admitted.is_err(), "{who} {disposition}");
-                }
-            }
-        }
-
-        #[test]
-        fn the_claim_holder_records_only_a_skip_or_a_deferral() {
-            let record = record();
-            let head = sha('a');
-            for disposition in [Tier0Skip, HotfixDeferred] {
-                assert_eq!(
-                    admit(&record, "orchestrator", "todo-lead", disposition, &head),
-                    Ok(())
-                );
-            }
-            for disposition in [Pass, Fail, Blocked] {
-                let admitted = admit(&record, "orchestrator", "todo-lead", disposition, &head);
-                assert!(admitted.is_err(), "{disposition}");
-            }
-            assert!(admit(&record, "builder", "todo-lead", Tier0Skip, &head).is_err());
-        }
-
-        #[test]
-        fn a_verifiers_fail_or_blocked_limits_the_orchestrator_on_that_commit_only() {
-            let head = sha('a');
-            let mut failed = record();
-            // The verifier first served as build reviewer: its disposition's
-            // recorded role, not its first binding, keys the limit.
-            recorded(&mut failed, "verifier", VERIFIER_ROLE, Fail, &head);
-            for disposition in [Tier0Skip, HotfixDeferred] {
-                let admitted = admit(&failed, "orchestrator", "todo-lead", disposition, &head);
-                assert!(admitted.is_err(), "{disposition}");
-            }
-            assert_eq!(
-                admit(&failed, "orchestrator", "todo-lead", Tier0Skip, &sha('b')),
-                Ok(())
-            );
-
-            let mut blocked = record();
-            recorded(&mut blocked, "verifier", VERIFIER_ROLE, Blocked, &head);
-            assert!(admit(&blocked, "orchestrator", "todo-lead", Tier0Skip, &head).is_err());
-            assert_eq!(
-                admit(&blocked, "orchestrator", "todo-lead", HotfixDeferred, &head),
-                Ok(())
-            );
-
-            // Only the latest disposition a verifier recorded limits.
-            recorded(&mut failed, "verifier", VERIFIER_ROLE, Pass, &head);
-            assert_eq!(
-                admit(&failed, "orchestrator", "todo-lead", Tier0Skip, &head),
-                Ok(())
-            );
-            // An orchestrator's own disposition is no verifier's.
-            let mut skipped = record();
-            recorded(&mut skipped, "orchestrator", "todo-lead", Tier0Skip, &head);
-            assert_eq!(
-                admit(&skipped, "orchestrator", "todo-lead", HotfixDeferred, &head),
-                Ok(())
-            );
-        }
     }
 
     #[test]

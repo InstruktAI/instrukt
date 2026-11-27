@@ -1,6 +1,6 @@
 //! The connector host of `instrukt run` (`slack-connector` and
 //! `conversations` specs): hosts and admits declared company connectors,
-//! manages their OS threads and connection state, runs each connector's
+//! manages their tasks and connection state, runs each connector's
 //! listen/reconnect loop, and delegates per-connection supervision workers to
 //! `_workers`. Each connector is opened from the admitted generation current
 //! at each pass, its secrets resolved from that generation: no connector reads
@@ -8,9 +8,12 @@
 mod _workers;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
+
+use tokio::runtime::{Handle, Runtime};
+use tokio::sync::mpsc::Sender as AsyncSender;
+use tokio::sync::{Notify, oneshot, watch};
+use tokio::task::{JoinHandle, block_in_place};
 
 use instrukt_connector::{
     Clock, Connector, ConnectorError, Declared, Inbox, Incoming, Kind, SecretResolver,
@@ -44,11 +47,13 @@ fn after_failure(wait: Option<&Wait>, now: Instant) -> Instant {
     wait.map_or(now + RECHECK, Wait::until)
 }
 
-/// Sleep until `until` or `stop`, in slices that observe it.
-fn sleep_until(until: Instant, stop: &dyn Fn() -> bool) {
-    while Instant::now() < until && !stop() {
-        std::thread::sleep(Duration::from_millis(100).min(until - Instant::now()));
-    }
+/// A host shutdown closes the watch or sets its value once.
+async fn stopped(stop: &mut watch::Receiver<bool>) {
+    let _ = stop.wait_for(|requested| *requested).await;
+}
+
+async fn sleep_until(until: Instant) {
+    tokio::time::sleep_until(until.into()).await;
 }
 
 /// The connectors the host reaches: one company's, opened from a generation,
@@ -203,40 +208,69 @@ impl SecretResolver for AdmittedResolver<'_> {
     }
 }
 
-/// Wakes the runner's supervision when a connection thread ends, whether it
-/// returned or unwound.
-struct ExitNotice(SyncSender<()>);
+/// Close the exit channel before waking supervision, including on unwind.
+struct ExitNotice {
+    connection: Arc<Connection>,
+    exited: Option<oneshot::Sender<()>>,
+    wake: AsyncSender<()>,
+}
+
 impl Drop for ExitNotice {
     fn drop(&mut self) {
-        let _ = self.0.try_send(());
+        if std::thread::panicking() {
+            let connection = &self.connection;
+            connection
+                .connectors
+                .set_ready(&connection.company, &connection.key, None);
+            connection.state(
+                ConnectionState::Failed,
+                Some("the connector's task stopped unexpectedly"),
+            );
+        }
+        drop(self.exited.take());
+        let _ = self.wake.try_send(());
     }
 }
 
 struct Hosted {
     company: ProjectSlug,
     key: String,
-    thread: Option<std::thread::JoinHandle<()>>,
+    task: JoinHandle<()>,
+    exited: oneshot::Receiver<()>,
     identity: ConnectorIdentity,
-    stop: Arc<AtomicBool>,
+    stop: watch::Sender<bool>,
 }
 
-/// Where a connection reaches its company: the admitted generation current
-/// at each pass, and the connectors that open from it.
-#[derive(Clone, Copy)]
-struct Reach<'a> {
-    current: &'a Current,
-    connectors: &'a Arc<dyn Connectors>,
-    accepted: &'a conversations::Accepted,
-}
-
-/// The connections `instrukt run` holds open, supervised by the run loop.
-pub struct Connections {
+struct Connection {
     home: Home,
     current: Current,
     connectors: Arc<dyn Connectors>,
     accepted: Arc<conversations::Accepted>,
-    wake: SyncSender<()>,
-    supervise: SyncSender<()>,
+    wake: AsyncSender<()>,
+    company: ProjectSlug,
+    key: String,
+}
+
+impl Connection {
+    fn open(&self) -> Result<Box<dyn Connector>, ConnectorError> {
+        self.connectors
+            .open(&self.current.get(), &self.company, &self.key)
+    }
+
+    fn state(&self, status: ConnectionState, failure: Option<&str>) {
+        block_in_place(|| state(&self.home, &self.company, &self.key, status, failure));
+    }
+}
+
+/// The connections `instrukt run` holds open, supervised by the run loop.
+pub struct Connections {
+    runtime: &'static Runtime,
+    home: Home,
+    current: Current,
+    connectors: Arc<dyn Connectors>,
+    accepted: Arc<conversations::Accepted>,
+    wake: AsyncSender<()>,
+    supervise: AsyncSender<()>,
     hosted: Vec<Hosted>,
     observed: std::collections::HashSet<ConnectorKey>,
     published: Vec<(String, String)>,
@@ -245,16 +279,19 @@ pub struct Connections {
 impl Connections {
     /// Open one connection per declared connector. `wake` tells the relay
     /// that retained work arrived; `supervise` tells the run loop that a
-    /// connection thread ended.
+    /// connection task ended.
     pub fn start(
         home: &Home,
         current: &Current,
         connectors: Arc<dyn Connectors>,
         accepted: Arc<conversations::Accepted>,
-        wake: SyncSender<()>,
-        supervise: SyncSender<()>,
+        wake: AsyncSender<()>,
+        supervise: AsyncSender<()>,
     ) -> Result<Self, conversations::ConversationError> {
+        let runtime = instrukt_outside::runtime::runtime()
+            .map_err(|error| ConnectorError::new(error.to_string()))?;
         let mut connections = Self {
+            runtime,
             home: home.clone(),
             current: current.clone(),
             connectors,
@@ -269,44 +306,65 @@ impl Connections {
         Ok(connections)
     }
 
-    fn spawn(
-        &self,
-        company: &ProjectSlug,
-        key: &str,
-        identity: ConnectorIdentity,
-        stop: Arc<AtomicBool>,
-    ) -> Option<std::thread::JoinHandle<()>> {
-        let home = self.home.clone();
-        let current = self.current.clone();
-        let connectors = Arc::clone(&self.connectors);
-        let accepted = Arc::clone(&self.accepted);
-        let wake = self.wake.clone();
-        let notice = ExitNotice(self.supervise.clone());
-        let company = company.clone();
-        let key = key.to_owned();
-        let spawned = std::thread::Builder::new()
-            .name(format!("{key}-{company}"))
-            .spawn(move || {
-                let _notice = notice;
-                let reach = Reach {
-                    current: &current,
-                    connectors: &connectors,
-                    accepted: &accepted,
-                };
-                admit_connector(&home, reach, &company, &key, &stop);
-                if !stop.load(Ordering::Acquire) {
-                    connectors.set_ready(&company, &key, Some(identity));
-                    let _ = wake.try_send(());
-                    connection(&home, reach, &company, &key, &stop, &wake);
+    fn spawn(&self, company: ProjectSlug, key: String, identity: ConnectorIdentity) -> Hosted {
+        let connection = Arc::new(Connection {
+            home: self.home.clone(),
+            current: self.current.clone(),
+            connectors: Arc::clone(&self.connectors),
+            accepted: Arc::clone(&self.accepted),
+            wake: self.wake.clone(),
+            company: company.clone(),
+            key: key.clone(),
+        });
+        let (stop, mut shutdown) = watch::channel(false);
+        let (exit, exited) = oneshot::channel();
+        let notice = ExitNotice {
+            connection: Arc::clone(&connection),
+            exited: Some(exit),
+            wake: self.supervise.clone(),
+        };
+        let admitted_identity = identity.clone();
+        let task = self.runtime.spawn(async move {
+            let _notice = notice;
+            let admitted = tokio::select! {
+                biased;
+                () = stopped(&mut shutdown) => false,
+                () = admit_connector(&connection) => true,
+            };
+            if admitted {
+                // Serialize readiness publication with a concurrent stop.
+                let stopping = shutdown.borrow();
+                if !*stopping {
+                    connection.connectors.set_ready(
+                        &connection.company,
+                        &connection.key,
+                        Some(admitted_identity),
+                    );
+                    let _ = connection.wake.try_send(());
                 }
-                connectors.set_ready(&company, &key, None);
-            });
-        match spawned {
-            Ok(thread) => Some(thread),
-            Err(error) => {
-                tracing::error!(target: LOG_TARGET, event = "connector_start_failed", error = %error);
-                None
             }
+            if admitted {
+                let result = _workers::supervise(Arc::clone(&connection), shutdown).await;
+                connection
+                    .connectors
+                    .set_ready(&connection.company, &connection.key, None);
+                match result {
+                    Ok(()) => connection.state(ConnectionState::Stopped, None),
+                    Err(error) => connection.state(ConnectionState::Failed, Some(&error)),
+                }
+            } else {
+                connection
+                    .connectors
+                    .set_ready(&connection.company, &connection.key, None);
+            }
+        });
+        Hosted {
+            company,
+            key,
+            task,
+            exited,
+            identity,
+            stop,
         }
     }
 
@@ -338,32 +396,20 @@ impl Connections {
         for hosted in &self.hosted {
             if identity(&admitted, &hosted.company, &hosted.key).as_ref() != Some(&hosted.identity)
             {
+                hosted.stop.send_replace(true);
                 self.connectors
                     .set_ready(&hosted.company, &hosted.key, None);
-                hosted.stop.store(true, Ordering::Release);
             }
         }
         self.hosted.retain_mut(|hosted| {
-            if hosted
-                .thread
-                .as_ref()
-                .is_some_and(|thread| !thread.is_finished())
-            {
+            if matches!(
+                hosted.exited.try_recv(),
+                Err(oneshot::error::TryRecvError::Empty)
+            ) {
                 return true;
             }
             self.connectors
                 .set_ready(&hosted.company, &hosted.key, None);
-            if let Some(thread) = hosted.thread.take()
-                && thread.join().is_err()
-            {
-                state(
-                    &self.home,
-                    &hosted.company,
-                    &hosted.key,
-                    ConnectionState::Failed,
-                    Some("the connector's worker stopped unexpectedly; restarted"),
-                );
-            }
             false
         });
         for (company, key) in demand {
@@ -377,20 +423,12 @@ impl Connections {
             let Some(identity) = identity(&admitted, &company, &key) else {
                 continue;
             };
-            let stop = Arc::new(AtomicBool::new(false));
-            let thread = self.spawn(&company, &key, identity.clone(), Arc::clone(&stop));
-            self.hosted.push(Hosted {
-                company,
-                key,
-                thread,
-                identity,
-                stop,
-            });
+            self.hosted.push(self.spawn(company, key, identity));
         }
         let hosted: Vec<_> = self
             .hosted
             .iter()
-            .filter(|hosted| !hosted.stop.load(Ordering::Acquire))
+            .filter(|hosted| !*hosted.stop.borrow())
             .map(|hosted| (hosted.company.to_string(), hosted.key.clone()))
             .collect();
         if hosted != self.published {
@@ -404,44 +442,50 @@ impl Connections {
     }
 }
 
-fn admit_connector(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    key: &str,
-    stop: &AtomicBool,
-) {
-    let stop = || stop.load(Ordering::Acquire);
-    while !stop() {
-        let result = reach
-            .connectors
-            .open(&reach.current.get(), company, key)
-            .and_then(|connector| connector.check_permissions());
+async fn admit_connector(connection: &Connection) {
+    loop {
+        let result = match connection.open() {
+            Ok(connector) => connector.check_permissions().await,
+            Err(error) => Err(error),
+        };
         let error = match result {
             Ok(()) => return,
             Err(error) => error,
         };
-        state(
-            home,
-            company,
-            key,
-            ConnectionState::Failed,
-            Some(&error.to_string()),
-        );
-        sleep_until(after_failure(error.wait.as_ref(), Instant::now()), &stop);
+        connection.state(ConnectionState::Failed, Some(&error.to_string()));
+        sleep_until(after_failure(error.wait.as_ref(), Instant::now())).await;
     }
 }
 
 impl Drop for Connections {
     fn drop(&mut self) {
         for hosted in &self.hosted {
-            hosted.stop.store(true, Ordering::Release);
+            hosted.stop.send_replace(true);
+            self.connectors
+                .set_ready(&hosted.company, &hosted.key, None);
         }
-        for hosted in &mut self.hosted {
-            if let Some(thread) = hosted.thread.take()
-                && thread.join().is_err()
-            {
-                tracing::error!(target: LOG_TARGET, event = "connector_thread_panicked");
+        let hosted = std::mem::take(&mut self.hosted);
+        if hosted.is_empty() {
+            return;
+        }
+        let finish = async move {
+            for hosted in hosted {
+                if let Err(error) = hosted.task.await {
+                    tracing::error!(target: LOG_TARGET, event = "connector_task_failed", %error);
+                }
+            }
+        };
+        // Drain hosted tasks before returning whenever the caller can block:
+        // synchronously, or via `block_in_place` on a multi-thread Tokio worker.
+        match Handle::try_current() {
+            Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+                tokio::task::block_in_place(|| self.runtime.block_on(finish));
+            }
+            Ok(_) => {
+                self.runtime.spawn(finish);
+            }
+            Err(_) => {
+                self.runtime.block_on(finish);
             }
         }
     }
@@ -495,106 +539,87 @@ fn connector_admit(
 
 /// The host's side of one connection: what it retains is recorded and the
 /// intake nudged; the connection's state follows what the connector reports.
-struct HostInbox<'a> {
-    home: &'a Home,
-    current: &'a Current,
-    company: &'a ProjectSlug,
-    key: &'a str,
-    workers: _workers::WorkerNudges<'a>,
-    clock: &'a dyn Connectors,
+struct HostInbox {
+    connection: Arc<Connection>,
+    intake: Arc<Notify>,
+    read_back: Arc<Notify>,
 }
 
-impl Inbox for HostInbox<'_> {
+impl Inbox for HostInbox {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
-        let (role, _, session_scope, reply_mode) =
-            connector_policy(&self.current.get(), self.company, self.key)?;
-        conversations::retain_with_policy(
-            self.home,
-            self.company,
-            &incoming,
-            &role,
-            session_scope,
-            reply_mode,
-            self.clock.now(),
-        )
+        let Connection {
+            home,
+            current,
+            company,
+            key,
+            connectors,
+            ..
+        } = self.connection.as_ref();
+        let (role, _, session_scope, reply_mode) = connector_policy(&current.get(), company, key)?;
+        block_in_place(|| {
+            conversations::retain_with_policy(
+                home,
+                company,
+                &incoming,
+                &role,
+                session_scope,
+                reply_mode,
+                connectors.now(),
+            )
+        })
         .map_err(|error| ConnectorError::new(error.to_string()))?;
-        self.workers.nudge_intake();
+        self.intake.notify_one();
         Ok(())
     }
 
     fn connected(&self) {
-        self.workers.nudge_read_back();
-        state(
-            self.home,
-            self.company,
-            self.key,
-            ConnectionState::Connected,
-            None,
-        );
+        self.read_back.notify_one();
+        self.connection.state(ConnectionState::Connected, None);
     }
 
     fn unretained(&self, cause: &str) {
-        state(
-            self.home,
-            self.company,
-            self.key,
-            ConnectionState::Connected,
-            Some(cause),
-        );
+        self.connection
+            .state(ConnectionState::Connected, Some(cause));
     }
 }
 
 /// Keep one company's connection open until `stop`: a refused or dropped
 /// connection is recorded and retried, and retained intake work continues
 /// while it is down.
-fn connection(
-    home: &Home,
-    reach: Reach<'_>,
-    company: &ProjectSlug,
-    key: &str,
-    stop: &AtomicBool,
-    wake: &SyncSender<()>,
+async fn listen(
+    connection: &Arc<Connection>,
+    mut shutdown: watch::Receiver<bool>,
+    intake: Arc<Notify>,
+    read_back: Arc<Notify>,
 ) {
-    _workers::supervise(home, reach, company, key, stop, wake, |workers, quit| {
-        while !quit() {
-            state(home, company, key, ConnectionState::Connecting, None);
-            let inbox = HostInbox {
-                home,
-                current: reach.current,
-                company,
-                key,
-                workers,
-                clock: reach.connectors.as_ref(),
-            };
-            let failure = reach
-                .connectors
-                .open(&reach.current.get(), company, key)
-                .and_then(|connector| connector.listen(&inbox, quit))
-                .err();
-            if quit() {
-                break;
-            }
-            let until = match &failure {
-                None => Instant::now() + RECONNECT,
-                Some(error) => {
-                    if error.wait.is_none() {
-                        tracing::warn!(target: LOG_TARGET, event = "connector_failed", company = %company, connector = key, error = %error);
-                    }
-                    state(
-                        home,
-                        company,
-                        key,
-                        ConnectionState::Failed,
-                        Some(&error.to_string()),
-                    );
-                    after_failure(error.wait.as_ref(), Instant::now())
-                }
-            };
-            sleep_until(until, quit);
+    while !*shutdown.borrow() {
+        connection.state(ConnectionState::Connecting, None);
+        let inbox: Arc<dyn Inbox> = Arc::new(HostInbox {
+            connection: Arc::clone(connection),
+            intake: Arc::clone(&intake),
+            read_back: Arc::clone(&read_back),
+        });
+        let result = match connection.open() {
+            Ok(connector) => connector.listen(inbox, shutdown.clone()).await,
+            Err(error) => Err(error),
+        };
+        if *shutdown.borrow() {
+            break;
         }
-    });
-    if stop.load(Ordering::Acquire) {
-        state(home, company, key, ConnectionState::Stopped, None);
+        let until = match result {
+            Ok(()) => Instant::now() + RECONNECT,
+            Err(error) => {
+                if error.wait.is_none() {
+                    tracing::warn!(target: LOG_TARGET, event = "connector_failed", company = %connection.company, connector = %connection.key, error = %error);
+                }
+                connection.state(ConnectionState::Failed, Some(&error.to_string()));
+                after_failure(error.wait.as_ref(), Instant::now())
+            }
+        };
+        tokio::select! {
+            () = stopped(&mut shutdown) => break,
+            () = sleep_until(until) => {}
+        }
     }
 }
 

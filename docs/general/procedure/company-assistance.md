@@ -9,7 +9,6 @@ role: company-agent
 ## Required reads
 
 - [general/policy/message-identity-headers](../policy/message-identity-headers.md)
-- [general/policy/no-output-turn](../policy/no-output-turn.md)
 - [general/procedure/mcp-server-tools](mcp-server-tools.md)
 
 ## Goal
@@ -114,14 +113,12 @@ of instrukt itself (`general/procedure/bug-reporting`).
    locally and on the remote.
 4. **Answer.** Write the answer as the turn's output: it is posted to the
    conversation, and your tool calls, their results and your reasoning are
-   not. Write it for the people in the conversation. When the turn needs no
-   answer, output exactly `NOOP`; nothing is posted
-   (`general/policy/no-output-turn`).
+   not. Write it for the people in the conversation.
 
 ## Outputs
 
 - One answer per addressed message, posted to the conversation as the turn's
-  output, or `NOOP`.
+  output.
 
 ## Recovery
 

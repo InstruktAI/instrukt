@@ -117,7 +117,7 @@ Successful configuration is distinct from successful installation. An interrupte
 or partially failed install reports its completed and remaining resources;
 rerunning reconciles observed state rather than assuming the prior run completed.
 An interrupted install is completed by the next one: every definition is written
-again under its name (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof).
+again whole under its name without checking proof of earlier writes.
 Reports name installed, reused, repaired, withdrawn, externally supplied or
 unmet resources, their paths/units and demanding project identities, without
 expanded credentials. A failed prerequisite never produces an overall success.
@@ -200,7 +200,8 @@ holder when known, and its manager starts it again. An acquired lock is kept
 even when the wait bound has elapsed. Installation writes the service's
 definition and restarts the service every time it runs, so the installed
 executable and configuration are the ones running; it keeps no record of what the
-running process executes (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). `install --check` reports
+running process executes, rewriting instrukt's own unit whole without consulting
+any prior write record. `install --check` reports
 a missing, stopped or unloaded service as unmet demand without changing it.
 
 `instrukt events status` reports the service as `runner_service` in one of
@@ -232,7 +233,8 @@ events off; it prepares no event consumers solely for history. The private
 Redis's configuration and ACL are written from the stored secret on every
 install and the service is restarted when they change; an existing secret is
 reused and a missing one is generated, and the data Redis keeps stays reachable
-with it (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Installation checks a Redis it started or restarted only
+with it, rewriting instrukt's own Redis files whole without checking proof of
+earlier writes. Installation checks a Redis it started or restarted only
 once it answers and has finished loading its data, waiting a bounded time for
 both; past the bound the check reports what Redis answers. Read-only inspection reports a pending repair without changing
 files or services. An unused local
@@ -362,7 +364,8 @@ the default home keeps today's names. An earlier unit without the suffix that na
 this non-default home in its environment is withdrawn by this home's install; the
 default home never touches a unit naming another home. Anything under another name
 is never read or touched; an incomplete demand still withdraws nothing
-(`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Cron withdrawal replaces or removes only the line marked with this home's name.
+(instrukt writes and withdraws only its own named places without consulting
+earlier write records). Cron withdrawal replaces or removes only the line marked with this home's name.
 Withdrawal stops/unregisters owned units only; it never
 deletes the database, Redis data, streams, pending delivery records, credentials
 or foreign services, and never uninstalls a shared Redis executable. Re-enable

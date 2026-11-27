@@ -16,6 +16,8 @@ A guardrail earns its place only where **restoring state cannot repair the harm*
 
 Everything else is direction. Direction is carried by the agent's brief, not by a gate.
 
+Tools are neutral surfaces of fact, not workflow police. A CLI, ledger, or store records neutral facts about objects and guards only the two unrepairable harms above; workflow choreography, role interaction, and turn-state rules live in briefs and procedures, never in tool code or gates. A tool's help describes what its verbs do and record, and a tool records only provenance that is observed rather than inferred or fabricated.
+
 Reversibility is an invariant of the state layer, engineered rather than enforced: durable records are versioned, removals are soft, and a mutation that cannot be undone is a defect in the state layer, never an occasion for a permission rule. A gate placed around a destructive operation makes the destructiveness permanent, because the gate outlives the repair.
 
 A guardrail is addressed to the object, never to the caller's rank. It reads what the object is — who holds it, what phase it is in — and never who is asking. Rank is a proxy for the object's state, and a proxy drifts from the thing it stands for.

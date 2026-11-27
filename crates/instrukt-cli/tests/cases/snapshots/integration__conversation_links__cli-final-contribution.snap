@@ -1,8 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/conversation-links.rs
-assertion_line: 499
-expression: "boundaries(&fake.message(\"parent\",\n1).replace(source.identity(), \"t3:[SOURCE]\"))"
----
-[Peer (t3:[SOURCE]:child · agent · 2030-01-01 12:05 UTC · [BOUNDARY-1])]
-We have reached a conclusion.
-[/Peer (t3:[SOURCE]:child · agent · 2030-01-01 12:05 UTC · [BOUNDARY-1])]

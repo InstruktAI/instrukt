@@ -22,35 +22,16 @@ retained item is addressed as `<slug>@<identity-prefix>`, and a plain slug
 always means the live item. Prerequisites are stored by durable identity and a
 delivered one is shown as `<slug> (delivered)`.
 
-`instrukt todo create <slug> <content> --kind <kind>` requires substantive
-content and an explicit kind. Without `--approved`, it prints the admission
-questions and creates nothing. With `--approved`, creation writes the entry, initial state and
-first input-artifact version in one transaction of the state database
-(`project/instrukt/spec/feature/work/state-database`). Invalid content,
-kind, dependency or grouping rejects creation before partial work is recorded.
-`--icebox` creates the todo in the icebox. For a task, `--agent <name>
-[--tier light|standard|strong|premium]` sets its optional agent preference, which
-dispatch uses before the role mapping in `~/.instrukt/agents.yaml`. Admission is the agent's judgment;
-there is no machine proof gate.
-`instrukt todo create --kind bug` is refused before anything is recorded,
-with or without `--approved`; the refusal names the one door a bug is filed
-through, `instrukt bugs report '<description>'` (Bug reports, below).
-`instrukt todo create` accepts `--human-involved true|false` as an action-scoped,
-audit-only declaration under `general/policy/human-involvement-recording`.
-It records observed human involvement and supplies no authorization.
-GitHub reflection is owned by
-`project/instrukt/spec/feature/work/github-record`.
+`instrukt todo create <slug> <content> --kind <kind> --approved` writes the
+entry, initial state and first input version in one transaction. Omitting
+`--approved` leaves the record unchanged. Invalid content, kind, dependency or
+grouping refuses the write. `--kind bug` is refused with the address of the
+bug-report command. `--human-involved true|false` records audit attribution.
 
-Creation places the todo by what it waits on, and its help and admission
-questions name the three placements apart:
-
-- `--after <slugs>` makes it wait for other todos and leaves it ready once they
-  deliver (`project/instrukt/spec/feature/work/dependencies-and-holds`).
-- `--hold --reason <text>` files converged work held for a condition outside
-  the project's todos, the hold committed with the todo
-  (`project/instrukt/spec/feature/work/dependencies-and-holds`).
-- `--icebox` parks work whose outcome has not converged, outside the
-  lifecycle (Parking, withdrawal and delivery, below).
+`--after <slugs>` records prerequisites. `--hold --reason <text>` records a
+dispatch hold in the creation transaction. `--icebox` sets the initial status
+to iceboxed. For a task, `--agent <name> [--tier light|standard|strong|premium]`
+sets an optional agent preference.
 
 ### Kinds
 
@@ -177,88 +158,37 @@ sessions; release changes the claim, not their lifecycle.
 ### Native role-attempt recording
 
 `instrukt todo attempt <slug> --role <role> [--procedure <id>] [--args <text>]
---brief <file|->` reserves an attempt for the claim-holding orchestrator. It
-returns the rendered assignment, declared role, monotonic attempt, semantic key,
-and display title. For repository todos (`feature`, `change`, `bug`), the
-assignment carries the todo's single recorded `<slug>/work` worktree, branch,
-and captured starting SHA; for `kind: task` todos, only `task-preparer` is
-admitted and the reservation is a worktree-less `Child` assignment with no
-`worktree`, `branch`, or `base`. The command records facts and calls no runtime.
-Setup admits its setup-only brief; other roles match the procedure's declared role.
+--brief <file|->` records an assignment for the claim holder. It includes the
+supplied role, attempt number, stable semantic key and display title.
+Repository assignments capture the recorded worktree, branch and current
+clean head. Task child assignments omit Git coordinates.
 
-The reply also names the role's prior session when the record holds one: the
-native identity and attempt number of the role's most recent earlier attempt
-that was bound on the reservation's runtime, with that attempt's recorded
-selection and the session that dispatched it where the record holds them. It
-is read from the record's session bindings when the reply is made and is absent
-when the role has no such attempt. Whether that session is still usable is the
-orchestrator's native evidence, not a recorded fact.
-
-Reservation commits before native delegation. An outstanding same-role retry
-returns the same attempt and inputs. Changed inputs or a second workspace/child
-role refuse while that attempt is outstanding. Claim, hold, and configured
-`approvals.prd` checks apply (`builder` and `finalizer` reservations
-require PRD approval when configured). Every new repository attempt captures the
-current shared `<slug>/work` head. Whether the reserved round starts a fresh
-worker or continues the role's prior session, and the order of the
-orchestrator's native operations, belong to `general/procedure/orchestration`.
+At most one workspace or child reservation is open per todo. An identical
+reservation retry returns its retained inputs. Unresolved dispatch suppresses
+another start until `--not-started --attempt <n> --reason <text>` records
+no-start evidence. The reply can include `prior_session`, the latest earlier
+session bound for the same role on that runtime, with the retained attempt
+number, dispatching session and selection when recorded.
 
 `instrukt todo bind <slug> --role <role> --attempt <n> --session <runtime:id>
-[--worktree <path>] [--branch <branch>] [--base <sha>]` records the native
-session that works the reserved attempt. Binding requires the reservation, same
-claim holder and selected runtime, and exact role/attempt. For repository todos,
-`--branch` and `--base` (and matching worktree, branch, and clean initial head)
-are required and every child inherits `todo-orchestrator`'s single
-`<slug>/work` worktree. For worktree-less `kind: task` (`task-preparer`)
-reservations, `--worktree`, `--branch`, and `--base` must be omitted. The
-binding is the prerequisite for the attempt's workspace work, record writes and
-stamps; a session that starts before its binding reports that prerequisite.
-Exact replay succeeds; changed child identity or
-workspace refuses. A later attempt of a role may bind the native session an
-earlier attempt of that role was bound to: the earlier attempt keeps its
-recorded completion and release, and the session's evidence is attributed to
-the new attempt. Binding neither calls the runtime nor transfers the
-orchestrator's claim to the child.
-
-An interrupted dispatch or bind leaves the reservation outstanding. Recover the
-existing child through the parent's native task evidence and bind it; project
-listings may omit native children. `instrukt todo attempt <slug> --role <role>
---attempt <n> --not-started --reason <text>` records proof of rejection before
-creation, or explicit confirmation that no child exists and no start remains in
-flight, before retrying the same assignment. Silence, missing binding and empty
-listings supply no such evidence. A workspace mismatch stays a visible binding
-gap; resolve that assignment before admitting work.
-
-`todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
-`planner`, reviewers) and delivery roles (`builder`, `build-reviewer`,
-`verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
-outstanding workspace-role attempt at a time (`task-preparer` runs without a
-worktree on `kind: task`). Completion stamps release writing
-attempts atomically; review verdicts, verification dispositions and
-deferral-processing stamps release their read-only attempts. Released bindings
-remain tracking and evaluation evidence. Native parent linkage and child
-attention remain runtime-owned.
+[--worktree <path>] [--branch <branch>] [--base <sha>]` associates a native
+session with the reservation. The claim holder supplies matching identity
+and placement. Repository bindings require the captured clean head and branch.
+Task child bindings omit worktree, branch and base. Changed coordinates or a
+changed session on a bound attempt are refused. A repeat of the same binding
+succeeds. The claim and Git refs stay in place.
 
 ### Role completion and failed attempts
 
-Successful role completion and attempt release commit together under
-`project/instrukt/spec/feature/work/stamps`. All commits already belong to the
-todo branch in its shared worktree. A repeated completion records no second
-release; interrupted record writes leave either the previous state or the
-completed transaction. No separate Git advancement is owed between roles.
+Successful completion and attempt release commit together under
+`project/instrukt/spec/feature/work/stamps`. For a workspace attempt, the
+recorded head is already on the bound branch.
 
-When an attempt cannot continue, its parent records `instrukt todo attempt
-<slug> --role <role> --attempt <n> --failed --reason <text> --evidence <file|->` only with supplied native
-evidence that the child has stopped and a clean shared worktree on the recorded
-branch. It validates the supplied stopped-child evidence and placement against the
-binding without calling the runtime. The command retains the reason, observed
-head and workspace evidence,
-and releases that attempt with reflection in one transaction. It creates no
-completion or readiness stamp. Repeating the same failure reports its retained
-outcome; a changed binding or supplied evidence of continuing work refuses. A dirty or conflicted tree
-keeps the attempt outstanding for native recovery. A successor starts at the
-current shared head after confirmed release, preserving all committed work.
-The original build base remains unchanged. There is no failed-branch recovery base.
+`instrukt todo attempt <slug> --role <role> --attempt <n> --failed --reason <text>
+--evidence <file|->` records a stopped child's failure and releases its attempt.
+The evidence must match the bound session and placement. A workspace requires
+a clean tree and the recorded branch and perceived head. Replay returns the
+retained failure. A refusal leaves the attempt open.
 
 ### Supported metadata and listing selections
 
@@ -391,27 +321,22 @@ Prior slugs are retained with the immutable todo identity in the work record. Pe
 
 Retired: every role commits directly in the todo's single shared worktree.
 
-### UC-TD7: Record a natively delegated worker without starting another
+### UC-TD7: Record a native session against a reservation
 
 ```gherkin
-Given a developer's orchestrator reserved a role attempt and delegated its assignment with shared isolation
-When it binds the returned native child id and the same worktree, todo branch and captured head
-Then instrukt records that role and attempt without calling the runtime
-And the worker can stamp its required evidence against the binding
-But a different child id, workspace, branch or starting head is refused
-And the original attempt remains outstanding
+Given a todo has an outstanding workspace attempt
+When the claim holder binds a native session and matching workspace coordinates
+Then instrukt records that session on the attempt
+But different bound coordinates or a different session are refused
 ```
 
-### UC-TD8: Recover a native dispatch whose binding was interrupted
+### UC-TD8: Recover an interrupted attempt reservation
 
 ```gherkin
-Given a developer's orchestrator reserved a role attempt before native delegation
-And the child result or subsequent binding was interrupted
-When the orchestrator resumes
-Then the same attempt and assignment remain outstanding
-And it recovers the child from native delegation evidence and records the binding
-But missing local evidence or an empty project thread list does not permit another child
-And retry is admitted only after recorded proof or explicit confirmation of no native start
+Given a todo has an outstanding unbound attempt
+When the claim holder repeats the reservation
+Then it returns the same attempt and assignment
+And another start is admitted after recorded no-start evidence
 ```
 
 ### UC-TD9: An agent faces the pre-filing questions before reporting a defect
@@ -454,14 +379,13 @@ Then nothing is filed
 And the agent is told that a bug is reported through the bug front door, and how to reach it
 ```
 
-### UC-TD13: A developer's further round assigned to the earlier worker keeps its context
+### UC-TD13: Inspect the previous attempt's binding
 
 ```gherkin
-Given a developer's todo whose worker completed an earlier round in its role
-When that role's further round is assigned to the same worker
-Then the further round is recorded on that worker's conversation, where its earlier context lives
-And each round's evidence is attributed to its own round
-And the earlier round's record stays as it was
+Given an earlier attempt has a session bound on the selected runtime
+When a later attempt for that role is reserved
+Then the reservation exposes the previous session and attempt number
+And the earlier attempt and its evidence stay readable
 ```
 
 ### UC-TD14: A worker bound in one role is not bound to another

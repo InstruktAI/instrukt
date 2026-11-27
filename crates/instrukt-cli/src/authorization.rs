@@ -68,7 +68,6 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "todo",
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
-        ["discuss", "open" | "close"] => ConversationLink,
         ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
@@ -364,7 +363,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
-        SessionObserve | ConversationLink => true,
+        SessionObserve => true,
         CompanyReply => assignment.company.is_some(),
         // A raise belongs to the project the assignment works in; the
         // command itself refuses every other project.
@@ -456,11 +455,7 @@ pub fn help(mut command: Command, path: &mut Vec<String>, caps: &Capabilities) -
     }
     if let Some(action) = action(&path.iter().map(String::as_str).collect::<Vec<_>>()) {
         let scope = caps.scope(action);
-        if caps.class == RoleClass::Focused
-            && (scope.is_none()
-                || (action == Action::ConversationLink
-                    && path.last().is_some_and(|name| name == "open")))
-        {
+        if caps.class == RoleClass::Focused && scope.is_none() {
             command = command
                 .hide(true)
                 .override_help(caps.refusal(action, &path.join(" ")));

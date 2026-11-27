@@ -102,8 +102,7 @@ person.
   - When the proposal store cannot be opened or written, the recording writes
     its cause to the commit's standard error and records nothing; the commit
     is unrecorded and waits for a person. A failure of this local store is a
-    defect of the part, not an outage
-    (`project/instrukt/policy/checks-and-guards`).
+    defect of the part, not an outage.
   - A head is an admitted proposal only when every commit it adds to the
     company's canonical branch is a proposal, and the paths it changes are
     only the company's knowledge as its owners define it (the company's

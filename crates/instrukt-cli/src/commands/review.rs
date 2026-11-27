@@ -121,10 +121,6 @@ struct RecordArgs {
     /// The complete review report: a file, or `-` for standard input.
     #[arg(long)]
     report: PathBuf,
-    /// Enter the approval this named session reached and returned without
-    /// recording it, as its standing result.
-    #[arg(long)]
-    reviewer: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -275,19 +271,12 @@ fn record(args: RecordArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         std::fs::read_to_string(&args.report)
             .with_context(|| format!("cannot read the report {}", args.report.display()))?
     };
-    let reviewer = args
-        .reviewer
-        .as_deref()
-        .map(instrukt_core::ids::SessionRef::parse)
-        .transpose()
-        .map_err(|error| anyhow::anyhow!("--reviewer: {error}"))?;
     let request = review::RecordRequest {
         head: args.head,
         base: args.base,
         verdict: args.verdict,
         report,
         caller: caller(ctx, &config)?,
-        reviewer,
     };
     let clock = ctx.clock.clone();
     let env = crate::wiring::environment(ctx)?;

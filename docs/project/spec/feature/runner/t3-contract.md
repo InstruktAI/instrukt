@@ -68,9 +68,9 @@ the owners of the required behavior.
 | Upstream surface | Instrukt contracts to check |
 | --- | --- |
 | Contracts package, `packages/contracts/` | Runtime operations, response shapes and capability evidence in `project/instrukt/spec/feature/runner/session-continuity`. |
-| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Runtime-owned conversation-source compatibility in `project/instrukt/spec/feature/runner/session-continuity`, extraction in `project/instrukt/spec/feature/runner/history`, finished-turn relay in `project/instrukt/spec/feature/runner/conversation-links`, and the running turn's assistant messages a conversation's status shows in `project/instrukt/spec/feature/company/conversations`. |
+| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Runtime-owned conversation-source compatibility in `project/instrukt/spec/feature/runner/session-continuity`, extraction in `project/instrukt/spec/feature/runner/history`, and finished-turn answer relay and the running turn's assistant messages a conversation's status shows in `project/instrukt/spec/feature/company/conversations`. |
 | WebSocket contracts/handlers, native `ThreadLaunchService`, and project HTTP snapshot | Fixed native launch/replay, captured project/model/modes and existing-worktree placement in `project/instrukt/spec/feature/runner/session-continuity`. |
-| CLI entry and commands, `apps/server/scripts/cli.ts` and `apps/server/src/cli/` | Unattended runtime operations and evidence in `project/instrukt/spec/feature/runner/session-continuity`, and native input delivery in `project/instrukt/spec/feature/runner/conversation-links`. |
+| CLI entry and commands, `apps/server/scripts/cli.ts` and `apps/server/src/cli/` | Unattended runtime operations and evidence in `project/instrukt/spec/feature/runner/session-continuity`. |
 
 ### Isolation and real evidence
 
@@ -283,7 +283,6 @@ And it leaves the maintainer's runtime and home untouched
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/runner/session-continuity](session-continuity.md)
 - [project/instrukt/spec/feature/runner/history](history.md)
-- [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
 - [project/instrukt/policy/testing](../../../policy/testing.md)

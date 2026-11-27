@@ -333,12 +333,6 @@ where
 /// `modules.events` are off: in the caller's effective configuration and
 /// in every published project's.
 fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
-    if instrukt_runner::links::status(&ctx.home)?
-        .iter()
-        .any(|link| link.active)
-    {
-        return Ok(());
-    }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
     if command == "run" && instrukt_runner::history::enabled(&ctx.home)? {
         return Ok(());

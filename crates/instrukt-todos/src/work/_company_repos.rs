@@ -15,7 +15,7 @@ use instrukt_core::interfaces::{
 use jiff::Timestamp;
 use serde_json::{Value, json};
 
-use super::_apps::{Answer, Apps, Clock, GitHubAccess, Method, agent, api_base};
+use super::_apps::{Answer, Apps, Clock, GitHubAccess, Method, api_base, public_get};
 
 fn unanswered(message: impl Into<String>) -> InterfaceError {
     InterfaceError {
@@ -49,17 +49,12 @@ impl GitHubAccounts for GitHubAccess {
         let config = Configuration::load_global(&self.home)
             .map_err(|error| unanswered(format!("cannot read the machine layer: {error}")))?;
         let api = api_base(&config).map_err(|error| unanswered(error.to_string()))?;
-        let mut response = agent()
-            .get(&format!("{api}/users/{login}"))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .call()
+        let (status, headers, text) = public_get(&api, &format!("/users/{login}"))
             .map_err(|error| unanswered(format!("GitHub is unreachable: {error}")))?;
-        let status = response.status().as_u16();
         if status == 404 {
             return Ok(AccountKind::Absent);
         }
-        let limits = super::_github::Limits::read(response.headers());
+        let limits = super::_github::Limits::read(&headers);
         if limits.refusal_throttles(status) {
             return Err(unanswered(
                 "GitHub's rate limit for unauthenticated reads is reached",
@@ -70,10 +65,6 @@ impl GitHubAccounts for GitHubAccess {
                 "GitHub answered {status} for the account `{login}`"
             )));
         }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|error| unanswered(format!("GitHub's answer cannot be read: {error}")))?;
         let record: Value = serde_json::from_str(&text)
             .map_err(|_| unanswered("GitHub's account record is not JSON"))?;
         kind_of(login, &record)
