@@ -630,6 +630,11 @@ mod tests {
             super::agents_value(&home, Some("profiles.codex.standard.0.model")).unwrap(),
             Value::String("gpt-{project}".into())
         );
+    }
+
+    #[test]
+    fn agents_value_refuses_a_missing_dotted_path_naming_the_missing_segment() {
+        let (_dir, home) = temp_home();
         assert!(matches!(
             super::agents_value(&home, Some("roles.missing")),
             Err(super::ConfigError::MissingKey { segment, .. }) if segment == "missing"
