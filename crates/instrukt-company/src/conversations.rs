@@ -14,7 +14,7 @@
 //! until the connector accepted its post.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver, SyncSender, TryRecvError};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use instrukt_connector::{Accompanying, ConversationDisplay, Incoming, RefusalReason, Sender};
@@ -30,7 +30,14 @@ use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::connector_host::Connectors;
-use instrukt_runner::envelopes::{self, ContextEntry, Control, Span};
+mod _envelopes;
+pub mod envelopes {
+    pub use super::_envelopes::{
+        ContextBody, ContextLine, MemberEnvelope, Span, context_body, member, segment,
+    };
+    pub(crate) use super::_envelopes::{context, control_field, delivery_boundary};
+}
+use _envelopes::{ContextEntry, Span};
 use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::keyed::{self, RuntimeInvocation};
 use instrukt_runner::runtime::conversations::{
@@ -1305,16 +1312,16 @@ fn framed(
     let input = format!(
         "{}\n{}",
         envelopes::context(&token, &entries, accompanying.left_out),
-        envelopes::member(
+        envelopes::member(&envelopes::MemberEnvelope {
             connector,
             conversation,
-            sender,
+            member: sender,
             is_admin,
             is_direct,
-            Some(written_at),
-            &token,
-            text
-        )
+            at: Some(written_at),
+            token: &token,
+            text,
+        })
     );
     Ok((token, input))
 }
@@ -1394,10 +1401,10 @@ fn assignment(
         (ReplyMode::Explicit, SessionScope::Conversation) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`)".to_owned(),
         (ReplyMode::Explicit, SessionScope::Company) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`)".to_owned(),
     };
-    Ok(Control::Assignment.frame(&format!(
-        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
+    Ok(format!(
+        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.",
         c.company, c.connector
-    )))
+    ))
 }
 
 /// The position a new session's answers are read from: one over no
@@ -1689,8 +1696,7 @@ fn prepare_delivery(
                     "Reply command: instrukt company reply --conversation {safe_conversation} --text <text>\n"
                 ));
             }
-            let header = Control::Notification.frame(&body);
-            format!("{header}\n{base_content}")
+            format!("{body}\n{base_content}")
         }
     };
     let ids = serde_json::to_string(&ids)?;
@@ -2539,7 +2545,7 @@ pub struct Accepted {
 /// or start a turn until it returns.
 struct RelayWorkers {
     connectors: Arc<dyn Connectors>,
-    wake: SyncSender<()>,
+    wake: tokio::sync::mpsc::Sender<()>,
     probes: Mutex<BTreeMap<String, MissingProbe>>,
     absence_reads: Mutex<BTreeMap<String, AbsenceRead>>,
     work: Mutex<BTreeMap<String, DeliveryWork>>,
@@ -3200,7 +3206,14 @@ fn post(
                 if claimed == 0 {
                     continue;
                 }
-                let mut receipt = match connector.answer(&piece.conversation, &piece.text) {
+                let answer_result = instrukt_outside::runtime::block_on(
+                    connector.answer(&piece.conversation, &piece.text),
+                )
+                .map_err(|err| instrukt_connector::AnswerError {
+                    cause: err.to_string(),
+                })
+                .and_then(|res| res);
+                let mut receipt = match answer_result {
                     Ok(receipt) => receipt,
                     Err(error) => {
                         piece_failed(state, c, piece, &error.cause)?;

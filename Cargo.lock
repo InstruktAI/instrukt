@@ -1418,6 +1418,7 @@ dependencies = [
 name = "instrukt-company"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "hex",
  "instrukt-connector",
  "instrukt-core",
@@ -1438,16 +1439,19 @@ dependencies = [
 name = "instrukt-connector"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "instrukt-outside",
  "jiff 0.2.39",
  "serde",
  "thiserror 2.0.21",
+ "tokio",
 ]
 
 [[package]]
 name = "instrukt-connector-slack"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "futures-util",
  "http",
  "hyper-rustls",

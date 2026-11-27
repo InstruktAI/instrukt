@@ -274,9 +274,9 @@ fn deliver_pending_sign_in_dms(
                 "To let the agent use {} as you, sign in here. The link works once, for ten minutes: {}",
                 item.server, item.link
             );
-            connector
-                .direct_message(&item.recipient, &message)
-                .map(|_| ())
+            instrukt_outside::runtime::block_on(connector.direct_message(&item.recipient, &message))
+                .map_err(|e| DirectMessageError::Retryable(e.to_string()))
+                .and_then(|res| res.map(|_| ()))
         };
         match send_outcome {
             Ok(()) => {
@@ -357,7 +357,9 @@ fn deliver_pending_sign_in_dms(
                 }
                 _ => continue,
             };
-            connector.direct_message(&item.recipient, &text).map(|_| ())
+            instrukt_outside::runtime::block_on(connector.direct_message(&item.recipient, &text))
+                .map_err(|e| DirectMessageError::Retryable(e.to_string()))
+                .and_then(|res| res.map(|_| ()))
         };
         match send_outcome {
             Ok(()) => {

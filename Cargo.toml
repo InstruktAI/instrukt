@@ -35,6 +35,7 @@ instrukt-outside = { path = "crates/instrukt-outside", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"
+async-trait = "0.1"
 backon = { version = "1.6", default-features = false, features = ["std", "std-blocking-sleep", "tokio-sleep"] }
 base64 = "0.23"
 http = "1"

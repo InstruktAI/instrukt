@@ -1,11 +1,11 @@
-//! The Slack SDK sessions and the admission request that needs response headers.
+//! The Slack SDK sessions and the admission request that needs response headers,
+//! natively async on the shared Tokio runtime with every call judged by `Gate`.
 use std::future::Future;
 use std::sync::Arc;
 
 use hyper_rustls::HttpsConnectorBuilder;
 use instrukt_connector::{AnswerReceipt, DirectMessageReceipt};
 use instrukt_outside::http::{ClientConfig, build_client};
-use instrukt_outside::runtime::block_on;
 use instrukt_outside::{Attempted, Settings, Tried};
 use serde::Deserialize;
 use serde_json::Value;
@@ -93,23 +93,23 @@ impl SlackApi {
         self.client.open_session(&self.app_token)
     }
 
-    fn bot_call<T: Send>(
+    async fn bot_call<T: Send>(
         &self,
         method: &str,
         call: impl Future<Output = ClientResult<T>> + Send,
     ) -> Result<T, SlackError> {
-        self.sdk_call(false, method, call)
+        self.sdk_call(false, method, call).await
     }
 
-    fn app_call<T: Send>(
+    async fn app_call<T: Send>(
         &self,
         method: &str,
         call: impl Future<Output = ClientResult<T>> + Send,
     ) -> Result<T, SlackError> {
-        self.sdk_call(true, method, call)
+        self.sdk_call(true, method, call).await
     }
 
-    fn sdk_call<T: Send>(
+    async fn sdk_call<T: Send>(
         &self,
         app: bool,
         method: &str,
@@ -127,9 +127,10 @@ impl SlackApi {
                 self.endpoint.gate.now(),
             )
         })
+        .await
     }
 
-    fn attempt<T: Send>(
+    async fn attempt<T: Send>(
         &self,
         app: bool,
         method: &str,
@@ -137,9 +138,10 @@ impl SlackApi {
     ) -> Result<T, SlackError> {
         let gate = &self.endpoint.gate;
         let key = token_key(&self.company, &self.connector, app).item(method);
-        let attempted = block_on(gate.attempt_async(&key, &Settings::default(), || call))
-            .map_err(|error| api_error(method, error))?;
-        match attempted {
+        match gate
+            .attempt_async(&key, &Settings::default(), || call)
+            .await
+        {
             Attempted::Done(value) => Ok(value),
             Attempted::Defect(error) => Err(error),
             Attempted::Wait { wait, error } => Err(SlackError::Unavailable {
@@ -155,13 +157,15 @@ impl SlackApi {
 
     /// Ask Slack for one single-use Socket Mode WebSocket URL under the app
     /// token, judged by the outside gate and verified against `admits_socket`.
-    pub(crate) fn connection_url(&self) -> Result<String, SlackError> {
+    pub(crate) async fn connection_url(&self) -> Result<String, SlackError> {
         const METHOD: &str = "apps.connections.open";
-        let opened = self.app_call(
-            METHOD,
-            self.app_session()
-                .apps_connections_open(&SlackApiAppsConnectionOpenRequest::new()),
-        )?;
+        let opened = self
+            .app_call(
+                METHOD,
+                self.app_session()
+                    .apps_connections_open(&SlackApiAppsConnectionOpenRequest::new()),
+            )
+            .await?;
         let url = opened.url.0.to_string();
         if !self.endpoint.admits_socket(&url) {
             return Err(SlackError::Socket);
@@ -169,7 +173,7 @@ impl SlackApi {
         Ok(url)
     }
 
-    pub(crate) fn check_scopes(&self, required: &[String]) -> Result<(), SlackError> {
+    pub(crate) async fn check_scopes(&self, required: &[String]) -> Result<(), SlackError> {
         const METHOD: &str = "auth.test";
         self.attempt(false, METHOD, async {
             let response = self
@@ -190,19 +194,22 @@ impl SlackApi {
                 Err(error) => admission_transport(Some((status, &headers)), received_at, &error),
             }
         })
+        .await
     }
 
-    pub(crate) fn identity(&self) -> Result<Me, SlackError> {
+    pub(crate) async fn identity(&self) -> Result<Me, SlackError> {
         const METHOD: &str = "auth.test";
         // Identity needs only the installation IDs, which also work when
         // Slack omits the workspace's display information.
         let session = self.bot_session();
-        let identity: Identity = self.bot_call(
-            METHOD,
-            session
-                .http_session_api
-                .http_get(METHOD, &[] as &[(&str, Option<&str>); 0], None),
-        )?;
+        let identity: Identity = self
+            .bot_call(
+                METHOD,
+                session
+                    .http_session_api
+                    .http_get(METHOD, &[] as &[(&str, Option<&str>); 0], None),
+            )
+            .await?;
         if identity.user_id.is_empty() || identity.team_id.is_empty() {
             return Err(api_error(METHOD, "missing installation IDs"));
         }
@@ -213,18 +220,24 @@ impl SlackApi {
         })
     }
 
-    pub(crate) fn user(&self, user: &str) -> Result<Value, SlackError> {
-        let result = self.bot_call(
-            "users.info",
-            self.bot_session()
-                .users_info(&SlackApiUsersInfoRequest::new(user.into())),
-        )?;
+    pub(crate) async fn user(&self, user: &str) -> Result<Value, SlackError> {
+        let result = self
+            .bot_call(
+                "users.info",
+                self.bot_session()
+                    .users_info(&SlackApiUsersInfoRequest::new(user.into())),
+            )
+            .await?;
         serde_json::to_value(result.user).map_err(|error| api_error("users.info", error))
     }
 
     /// Keep the full conversation response for unmodelled Slack fields,
     /// including DM partners and message subtypes published after this SDK.
-    pub(crate) fn read(&self, method: &str, args: &[(&str, &str)]) -> Result<Value, SlackError> {
+    pub(crate) async fn read(
+        &self,
+        method: &str,
+        args: &[(&str, &str)],
+    ) -> Result<Value, SlackError> {
         let params: Vec<_> = args
             .iter()
             .map(|&(name, value)| (name, Some(value)))
@@ -235,9 +248,10 @@ impl SlackApi {
                 .http_session_api
                 .http_get(method, &params, None),
         )
+        .await
     }
 
-    pub(crate) fn status(
+    pub(crate) async fn status(
         &self,
         channel: &str,
         thread: &str,
@@ -252,10 +266,11 @@ impl SlackApi {
             "assistant.threads.setStatus",
             self.bot_session().assistant_threads_set_status(&request),
         )
+        .await
         .map(drop)
     }
 
-    fn post_content(
+    async fn post_content(
         &self,
         channel: SlackChannelId,
         thread: Option<SlackTs>,
@@ -270,13 +285,20 @@ impl SlackApi {
                 .http_session_api
                 .http_post(METHOD, &request, None),
         )
+        .await
     }
 
     /// Post Slack-rendered Markdown to a channel thread or direct conversation.
-    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<AnswerReceipt, SlackError> {
+    pub async fn answer(
+        &self,
+        conversation: &str,
+        markdown: &str,
+    ) -> Result<AnswerReceipt, SlackError> {
         let (channel, thread) = split_conversation(conversation);
         let content = SlackMessageContent::new().with_markdown_text(markdown.into());
-        let post = self.post_content(channel.into(), thread.map(Into::into), content)?;
+        let post = self
+            .post_content(channel.into(), thread.map(Into::into), content)
+            .await?;
         Ok(AnswerReceipt {
             posted_at: post.ts.as_deref().and_then(ts_time),
             message_id: post.ts,
@@ -284,16 +306,17 @@ impl SlackApi {
     }
 
     /// Post plain text to a channel thread or direct conversation.
-    pub fn post(&self, conversation: &str, text: &str) -> Result<(), SlackError> {
+    pub async fn post(&self, conversation: &str, text: &str) -> Result<(), SlackError> {
         let (channel, thread) = split_conversation(conversation);
         let content = SlackMessageContent::new().with_text(text.into());
         self.post_content(channel.into(), thread.map(Into::into), content)
+            .await
             .map(drop)
     }
 
     /// Post directly to a Slack user ID and mark the DM private so it is
     /// excluded from context reads.
-    pub fn post_private_dm(
+    pub async fn post_private_dm(
         &self,
         recipient: &str,
         text: &str,
@@ -303,7 +326,7 @@ impl SlackApi {
         let content = SlackMessageContent::new()
             .with_text(text.into())
             .with_metadata(metadata);
-        let post = self.post_content(recipient.into(), None, content)?;
+        let post = self.post_content(recipient.into(), None, content).await?;
         Ok(DirectMessageReceipt {
             channel: post.channel,
             message_id: post.ts,

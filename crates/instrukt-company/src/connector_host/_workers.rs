@@ -94,12 +94,12 @@ pub(super) struct WorkerNudges<'a> {
 }
 
 impl WorkerNudges<'_> {
-    pub(super) fn nudge_intake(&self) {
-        let _ = self.intake.try_send(());
+    pub(super) fn intake_sender(&self) -> SyncSender<()> {
+        self.intake.clone()
     }
 
-    pub(super) fn nudge_read_back(&self) {
-        let _ = self.read_back.try_send(());
+    pub(super) fn read_back_sender(&self) -> SyncSender<()> {
+        self.read_back.clone()
     }
 }
 
@@ -119,7 +119,7 @@ pub(super) fn supervise(
     company: &ProjectSlug,
     key: &str,
     stop: &AtomicBool,
-    relay_wake: &SyncSender<()>,
+    relay_wake: &tokio::sync::mpsc::Sender<()>,
     run: impl FnOnce(WorkerNudges<'_>, &dyn Fn() -> bool),
 ) {
     // Intake runs beside the connection, so reading what accompanies a
@@ -302,7 +302,7 @@ fn read_back_worker(
 /// Wake the relay on capture and intake when a context read completes.
 #[derive(Clone, Copy)]
 struct Wakes<'a> {
-    relay: &'a SyncSender<()>,
+    relay: &'a tokio::sync::mpsc::Sender<()>,
     context: &'a SyncSender<()>,
 }
 
@@ -434,9 +434,11 @@ fn deliver_notice(
     );
     let result = match step {
         Ok(conversations::NoticeStep::Post) => {
-            let outcome = connector
-                .unavailable_notice(&notice.conversation, &notice.sender)
-                .map_err(|error| error.to_string());
+            let outcome = instrukt_outside::runtime::block_on(
+                connector.unavailable_notice(&notice.conversation, &notice.sender),
+            )
+            .map_err(|error| error.to_string())
+            .and_then(|res| res.map_err(|error| error.to_string()));
             tracing::info!(target: LOG_TARGET, event = "conversation_notice_posted", company = %company, connector = key, accepted = outcome.is_ok());
             conversations::notice_posted(
                 home,
@@ -568,7 +570,7 @@ impl ContextReads {
                 let spawned = std::thread::Builder::new()
                     .name("conversation-context".into())
                     .spawn(move || {
-                        let result = connector.capture(
+                        let result = instrukt_outside::runtime::block_on(connector.capture(
                             &item.conversation,
                             &item.message,
                             &item.text,
@@ -578,7 +580,9 @@ impl ContextReads {
                                     let _ = wake.try_send(());
                                 }
                             },
-                        );
+                        ))
+                        .map_err(|e| ConnectorError::new(e.to_string()))
+                        .and_then(|res| res);
                         if send.send(ContextReply::Finished(result)).is_ok() {
                             let _ = wake.try_send(());
                         }
@@ -668,7 +672,14 @@ fn admit_messages(
             progress.failures.add(Some(&wait));
             continue;
         }
-        let next = next_record(connector.admit(sender), admit);
+        let admitted =
+            instrukt_outside::runtime::block_on(connector.admit(sender)).unwrap_or_else(|e| {
+                Admission::Undecided {
+                    cause: e.to_string(),
+                    wait: None,
+                }
+            });
+        let next = next_record(admitted, admit);
         owed.answered(
             call,
             match &next {
@@ -705,7 +716,11 @@ fn admit_messages(
             progress.failures.add(Some(&wait));
             continue;
         }
-        let outcome = connector.turn_away(&refusal.conversation, refusal.reason);
+        let outcome = instrukt_outside::runtime::block_on(
+            connector.turn_away(&refusal.conversation, refusal.reason),
+        )
+        .map_err(|e| ConnectorError::new(e.to_string()))
+        .and_then(|res| res);
         owed.answered(
             call,
             outcome.as_ref().err().and_then(|error| error.wait.as_ref()),
@@ -954,7 +969,10 @@ fn call(
     place: &Place,
     status: Option<&Status>,
 ) -> Option<Wait> {
-    match connector.status(place, status) {
+    match instrukt_outside::runtime::block_on(connector.status(place, status))
+        .map_err(|e| ConnectorError::new(e.to_string()))
+        .and_then(|res| res)
+    {
         Ok(()) => None,
         Err(error) => {
             tracing::debug!(target: LOG_TARGET, event = "connector_status_skipped", company = %company, connector = key, error = %error);
@@ -978,23 +996,28 @@ mod test_connector {
         pub per_message: bool,
     }
 
+    #[async_trait::async_trait]
     impl Connector for TestConnector {
         fn limits(&self) -> Limits {
             self.limits
         }
-        fn listen(&self, _: &dyn Inbox, _: &dyn Fn() -> bool) -> Result<(), ConnectorError> {
+        async fn listen(
+            &self,
+            _: std::sync::Arc<dyn Inbox>,
+            _: tokio::sync::watch::Receiver<bool>,
+        ) -> Result<(), ConnectorError> {
             Ok(())
         }
-        fn admit(&self, _: &str) -> Admission {
+        async fn admit(&self, _: &str) -> Admission {
             Admission::NotOwn
         }
-        fn capture(
+        async fn capture(
             &self,
             _: &str,
             _: &str,
             text: &str,
             _: &std::collections::HashSet<String>,
-            _: &dyn Fn(instrukt_connector::ContextSnapshot),
+            _: &(dyn Fn(instrukt_connector::ContextSnapshot) + Send + Sync),
         ) -> Result<Captured, ConnectorError> {
             Ok(Captured {
                 display: None,
@@ -1002,21 +1025,21 @@ mod test_connector {
                 accompanying: Default::default(),
             })
         }
-        fn answer(
+        async fn answer(
             &self,
             _: &str,
             _: &str,
         ) -> Result<instrukt_connector::AnswerReceipt, instrukt_connector::AnswerError> {
             Ok(instrukt_connector::AnswerReceipt::default())
         }
-        fn turn_away(
+        async fn turn_away(
             &self,
             _: &str,
             _: instrukt_connector::RefusalReason,
         ) -> Result<(), ConnectorError> {
             Ok(())
         }
-        fn unavailable_notice(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
+        async fn unavailable_notice(&self, _: &str, _: &str) -> Result<(), ConnectorError> {
             Ok(())
         }
         fn place(&self, conversation: &str, message: &str) -> Place {
@@ -1026,7 +1049,7 @@ mod test_connector {
                 Place(conversation.to_owned(), conversation.to_owned())
             }
         }
-        fn status(&self, _: &Place, _: Option<&Status>) -> Result<(), ConnectorError> {
+        async fn status(&self, _: &Place, _: Option<&Status>) -> Result<(), ConnectorError> {
             Ok(())
         }
     }

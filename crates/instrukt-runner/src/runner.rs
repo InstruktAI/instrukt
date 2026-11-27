@@ -372,7 +372,7 @@ pub fn run(
     // The relay serves links and, while a company declares a connector and
     // conversations are on, the connector destination; the connections take
     // the intake. Both report their unexpected end to this loop at once.
-    let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
+    let (supervise, mut supervision) = tokio::sync::mpsc::channel::<()>(8);
     if let Some(company) = &cx.wiring.company
         && let Err(error) = company.maintain_read_back(cx.home, clock())
     {
@@ -383,7 +383,7 @@ pub fn run(
     // once; a setting a kind refuses stops the runner here. The relay then
     // serves its conversations beside links.
     let company = cx.wiring.company.as_ref();
-    let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
+    let (arrive, arrivals) = tokio::sync::mpsc::channel::<()>(1);
     let mut connections = match company {
         Some(company) => Some(
             company

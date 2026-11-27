@@ -405,7 +405,17 @@ pub(crate) fn scan(
                 } else {
                     Vec::new()
                 };
-                match connector.read_back_page(window.from, progress.position, &gaps) {
+                let page_result = instrukt_outside::runtime::block_on(connector.read_back_page(
+                    window.from,
+                    progress.position,
+                    &gaps,
+                ))
+                .map_err(|error| instrukt_connector::ReadBackError {
+                    cause: error.to_string(),
+                    wait: None,
+                })
+                .and_then(|res| res);
+                match page_result {
                     Ok(page) => {
                         let encoded = serde_json::to_string(&page).map_err(failed)?;
                         conn.execute(

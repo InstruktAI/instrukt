@@ -9,8 +9,9 @@ mod _workers;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
+
+use tokio::sync::mpsc::Sender as AsyncSender;
 
 use instrukt_connector::{
     Clock, Connector, ConnectorError, Declared, Inbox, Incoming, Kind, SecretResolver,
@@ -205,7 +206,7 @@ impl SecretResolver for AdmittedResolver<'_> {
 
 /// Wakes the runner's supervision when a connection thread ends, whether it
 /// returned or unwound.
-struct ExitNotice(SyncSender<()>);
+struct ExitNotice(AsyncSender<()>);
 impl Drop for ExitNotice {
     fn drop(&mut self) {
         let _ = self.0.try_send(());
@@ -235,8 +236,8 @@ pub struct Connections {
     current: Current,
     connectors: Arc<dyn Connectors>,
     accepted: Arc<conversations::Accepted>,
-    wake: SyncSender<()>,
-    supervise: SyncSender<()>,
+    wake: AsyncSender<()>,
+    supervise: AsyncSender<()>,
     hosted: Vec<Hosted>,
     observed: std::collections::HashSet<ConnectorKey>,
     published: Vec<(String, String)>,
@@ -251,8 +252,8 @@ impl Connections {
         current: &Current,
         connectors: Arc<dyn Connectors>,
         accepted: Arc<conversations::Accepted>,
-        wake: SyncSender<()>,
-        supervise: SyncSender<()>,
+        wake: AsyncSender<()>,
+        supervise: AsyncSender<()>,
     ) -> Result<Self, conversations::ConversationError> {
         let mut connections = Self {
             home: home.clone(),
@@ -416,7 +417,10 @@ fn admit_connector(
         let result = reach
             .connectors
             .open(&reach.current.get(), company, key)
-            .and_then(|connector| connector.check_permissions());
+            .and_then(|connector| {
+                instrukt_outside::runtime::block_on(connector.check_permissions())
+                    .map_err(|e| ConnectorError::new(e.to_string()))?
+            });
         let error = match result {
             Ok(()) => return,
             Err(error) => error,
@@ -495,22 +499,23 @@ fn connector_admit(
 
 /// The host's side of one connection: what it retains is recorded and the
 /// intake nudged; the connection's state follows what the connector reports.
-struct HostInbox<'a> {
-    home: &'a Home,
-    current: &'a Current,
-    company: &'a ProjectSlug,
-    key: &'a str,
-    workers: _workers::WorkerNudges<'a>,
-    clock: &'a dyn Connectors,
+struct HostInbox {
+    home: Home,
+    current: Current,
+    company: ProjectSlug,
+    key: String,
+    intake: std::sync::mpsc::SyncSender<()>,
+    read_back: std::sync::mpsc::SyncSender<()>,
+    clock: Arc<dyn Connectors>,
 }
 
-impl Inbox for HostInbox<'_> {
+impl Inbox for HostInbox {
     fn retain(&self, incoming: Incoming) -> Result<(), ConnectorError> {
         let (role, _, session_scope, reply_mode) =
-            connector_policy(&self.current.get(), self.company, self.key)?;
+            connector_policy(&self.current.get(), &self.company, &self.key)?;
         conversations::retain_with_policy(
-            self.home,
-            self.company,
+            &self.home,
+            &self.company,
             &incoming,
             &role,
             session_scope,
@@ -518,16 +523,16 @@ impl Inbox for HostInbox<'_> {
             self.clock.now(),
         )
         .map_err(|error| ConnectorError::new(error.to_string()))?;
-        self.workers.nudge_intake();
+        let _ = self.intake.try_send(());
         Ok(())
     }
 
     fn connected(&self) {
-        self.workers.nudge_read_back();
+        let _ = self.read_back.try_send(());
         state(
-            self.home,
-            self.company,
-            self.key,
+            &self.home,
+            &self.company,
+            &self.key,
             ConnectionState::Connected,
             None,
         );
@@ -535,9 +540,9 @@ impl Inbox for HostInbox<'_> {
 
     fn unretained(&self, cause: &str) {
         state(
-            self.home,
-            self.company,
-            self.key,
+            &self.home,
+            &self.company,
+            &self.key,
             ConnectionState::Connected,
             Some(cause),
         );
@@ -553,23 +558,41 @@ fn connection(
     company: &ProjectSlug,
     key: &str,
     stop: &AtomicBool,
-    wake: &SyncSender<()>,
+    wake: &AsyncSender<()>,
 ) {
     _workers::supervise(home, reach, company, key, stop, wake, |workers, quit| {
         while !quit() {
             state(home, company, key, ConnectionState::Connecting, None);
-            let inbox = HostInbox {
-                home,
-                current: reach.current,
-                company,
-                key,
-                workers,
-                clock: reach.connectors.as_ref(),
-            };
+            let inbox: Arc<dyn Inbox> = Arc::new(HostInbox {
+                home: home.clone(),
+                current: reach.current.clone(),
+                company: company.clone(),
+                key: key.to_owned(),
+                intake: workers.intake_sender(),
+                read_back: workers.read_back_sender(),
+                clock: Arc::clone(reach.connectors),
+            });
             let failure = reach
                 .connectors
                 .open(&reach.current.get(), company, key)
-                .and_then(|connector| connector.listen(&inbox, quit))
+                .and_then(|connector| {
+                    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+                    let rt = instrukt_outside::runtime::runtime()
+                        .map_err(|e| ConnectorError::new(e.to_string()))?;
+                    let handle =
+                        rt.spawn(async move { connector.listen(inbox, shutdown_rx).await });
+                    while !handle.is_finished() {
+                        if quit() {
+                            let _ = shutdown_tx.send(true);
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                    let _ = shutdown_tx.send(true);
+                    instrukt_outside::runtime::block_on(handle)
+                        .map_err(|e| ConnectorError::new(e.to_string()))?
+                        .map_err(|e| ConnectorError::new(e.to_string()))?
+                })
                 .err();
             if quit() {
                 break;

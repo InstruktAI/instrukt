@@ -17,11 +17,11 @@ pub(crate) struct Worker {
 #[derive(Clone)]
 pub(crate) struct Destinations {
     pub(crate) company: std::sync::Arc<dyn crate::interfaces::CompanyPorts>,
-    pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<mpsc::Receiver<()>>>,
+    pub(crate) arrivals: std::sync::Arc<std::sync::Mutex<tokio::sync::mpsc::Receiver<()>>>,
 }
 /// Wakes the run loop's supervision when the relay ends, whether it
 /// returned or unwound.
-struct ExitNotice(Option<mpsc::SyncSender<()>>);
+struct ExitNotice(Option<tokio::sync::mpsc::Sender<()>>);
 impl Drop for ExitNotice {
     fn drop(&mut self) {
         if let Some(notice) = &self.0 {
@@ -48,7 +48,7 @@ impl Worker {
         env: &Env,
         current: Current,
         destinations: Option<Destinations>,
-        supervise: Option<mpsc::SyncSender<()>>,
+        supervise: Option<tokio::sync::mpsc::Sender<()>>,
     ) -> Result<Self, LinkError> {
         let owner_home = home.clone();
         let home = home.clone();
@@ -179,7 +179,7 @@ fn serve(
             if destinations.is_some_and(|d| {
                 d.arrivals
                     .lock()
-                    .is_ok_and(|arrivals| arrivals.try_recv().is_ok())
+                    .is_ok_and(|mut arrivals| arrivals.try_recv().is_ok())
             }) {
                 break CompanyRelayPass::Retry;
             }
