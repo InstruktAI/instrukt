@@ -243,7 +243,7 @@ pub(super) fn available_bytes(path: &Path) -> Result<u64, BackupError> {
     Ok(stat.f_bavail.saturating_mul(unit))
 }
 
-fn existing_ancestor(path: &Path) -> Result<PathBuf, BackupError> {
+pub(super) fn existing_ancestor(path: &Path) -> Result<PathBuf, BackupError> {
     let mut current = path.to_path_buf();
     loop {
         if current.exists() {
@@ -262,7 +262,7 @@ fn existing_ancestor(path: &Path) -> Result<PathBuf, BackupError> {
     }
 }
 
-fn confine_path(root: &Path, rel: &Path) -> Result<PathBuf, BackupError> {
+pub(super) fn confine_path(root: &Path, rel: &Path) -> Result<PathBuf, BackupError> {
     fsx::confined(root, rel).map_err(|err| match err {
         fsx::FsError::Unconfined { path } => BackupError::Unconfined { path },
         fsx::FsError::Read { path, source } => BackupError::Io { path, source },
@@ -346,7 +346,7 @@ fn is_excluded_filename(name: &str) -> bool {
         || name.contains(".recovered-")
 }
 
-fn is_sqlite_filename(name: &str) -> bool {
+pub(super) fn is_sqlite_filename(name: &str) -> bool {
     (name.ends_with(".db") || name.ends_with(".sqlite")) && !is_excluded_filename(name)
 }
 

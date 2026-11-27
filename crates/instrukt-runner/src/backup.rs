@@ -2,6 +2,8 @@
 //! standing query (`project/instrukt/spec/feature/runner/home-backup`).
 
 mod _archive;
+mod _locks;
+mod _restore;
 mod _snapshot;
 mod _standing;
 mod _state;
@@ -19,6 +21,7 @@ use instrukt_core::machine::{MachineId, existing_machine_id, machine_id};
 use jiff::Timestamp;
 
 pub use _archive::{ARCHIVE_EXTENSION, StagedArchive, StagingDir, archive_filename};
+pub use _restore::{IdentityInput, RestoreOptions, RestoreReport, restore};
 pub use _standing::{STALENESS_THRESHOLD, Standing};
 pub use _state::{BackupOutcome, BackupState, STATE_SCHEMA_VERSION};
 pub use _storage::{
@@ -287,6 +290,38 @@ pub enum BackupError {
     Withheld { findings: String },
     #[error("another home backup is already running ({lock} is held)")]
     Busy { lock: PathBuf },
+    #[error(
+        "cannot restore into live instrukt home while {lock} is held{}; stop instrukt services first, or pass `--into <dir>` to extract beside the live home for inspection or selective recovery",
+        holder.as_ref().map(|h| format!(" (holder: {h})")).unwrap_or_default()
+    )]
+    LiveHomeBusy {
+        lock: PathBuf,
+        holder: Option<String>,
+    },
+    #[error("restore requires confirmation in a non-interactive session; re-run with `--yes`")]
+    ConfirmationRequired,
+    #[error("restore aborted by operator")]
+    RestoreDeclined,
+    #[error("invalid age identity: {0}")]
+    InvalidIdentity(String),
+    #[error("{0}")]
+    NoGenerationFound(String),
+    #[error("unsupported backup archive format `{key}`; expected extension `{expected_extension}`")]
+    UnsupportedArchiveFormat {
+        key: String,
+        expected_extension: &'static str,
+    },
+    #[error("unsafe archive entry `{path}`: {reason}")]
+    UnsafeArchiveEntry { path: String, reason: String },
+    #[error("invalid restore target {path}: {reason}")]
+    RestoreInvalidTarget { path: PathBuf, reason: String },
+    #[error("restore swap failed for `{key}`: {cause} ({rollback_hint})")]
+    RestoreSwapFailed {
+        cause: String,
+        rolled_back: bool,
+        key: String,
+        rollback_hint: String,
+    },
     #[error(
         "{path} is a symbolic link or escapes its owning root; remove or replace it before backing up or restoring"
     )]
