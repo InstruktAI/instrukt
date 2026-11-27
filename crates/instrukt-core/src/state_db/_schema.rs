@@ -51,7 +51,15 @@ pub(super) const MIGRATIONS: &[Migration] = &[
     Sql(V38),
     Sql(V39),
     Step(v40),
+    Sql(V41),
 ];
+
+/// Version 41: runner worker failures and per-Redis reachability leave the
+/// state database for isolated state files (`state-database`, Version 41).
+const V41: &str = r#"
+DROP TABLE IF EXISTS runner_workers;
+DROP TABLE IF EXISTS redis_reachability;
+"#;
 
 /// Version 40: the shared remote record ends (`state-database`, Version
 /// 40). `listing_copies` and the reflection columns that tracked a record

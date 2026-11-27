@@ -1120,7 +1120,7 @@ mod tests {
              VALUES ('acme','slack','C1/1','1.000000','1.000001','2026-11-18T10:00:00Z')",
             [],
         ).unwrap();
-        conn.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+        conn.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); CREATE TABLE runner_workers (worker TEXT PRIMARY KEY, failure TEXT NOT NULL, since TEXT NOT NULL); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
         conn.pragma_update(None, "user_version", before).unwrap();
         migrate(&mut conn, path).unwrap();
 
@@ -1438,7 +1438,14 @@ mod tests {
         conn.pragma_update(None, "user_version", 18).unwrap();
         let seeded = "T3 is unreachable";
         conn.execute("INSERT INTO conversation_relay(id,failure,updated_at) VALUES(1,?1,'2026-11-18T10:00:00Z')", [seeded]).unwrap();
-        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let tx = conn.transaction().unwrap();
+        match &_schema::MIGRATIONS[18] {
+            _schema::Migration::Sql(script) => tx.execute_batch(script),
+            _schema::Migration::Step(step) => step(&tx),
+        }
+        .unwrap();
+        tx.commit().unwrap();
+        conn.pragma_update(None, "user_version", 19).unwrap();
         // The relay's recorded failure is kept as it was stored.
         let kept: i64 = conn
             .query_row(
@@ -1628,6 +1635,70 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn version_41_drops_retired_worker_and_reachability_tables_keeping_work_and_runner_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(40) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 40).unwrap();
+        conn.execute_batch(
+            "INSERT INTO runner_workers(worker,failure,since)
+             VALUES ('history-extraction','stale','2026-11-27T00:00:00Z');
+             INSERT INTO redis_reachability(source,reachable)
+             VALUES ('src-v40',1);
+             INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence)
+             VALUES ('t-40','demo','keep-me','change','active','2026-11-27T00:00:00Z','session-1',1,'none',1);
+             INSERT INTO events(seq,id,name,project,payload,envelope,logged_at)
+             VALUES (1,'ev-40','runner.test','demo','{}','{}','2026-11-27T00:00:00Z');
+             INSERT INTO conversation_relay(id,failure,updated_at)
+             VALUES (1,'relay-ok','2026-11-27T00:00:00Z');",
+        )
+        .unwrap();
+
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, schema_version());
+
+        let retired: u32 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retired, 0);
+
+        let todo_slug: String = conn
+            .query_row("SELECT slug FROM todos WHERE id = 't-40'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(todo_slug, "keep-me");
+        let event_name: String = conn
+            .query_row("SELECT name FROM events WHERE id = 'ev-40'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(event_name, "runner.test");
+        let relay_failure: String = conn
+            .query_row(
+                "SELECT failure FROM conversation_relay WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(relay_failure, "relay-ok");
     }
 
     #[test]

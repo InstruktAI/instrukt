@@ -918,6 +918,16 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
             .unwrap();
         // The v35 work rows: no shipped migration since changed their shape.
         db.execute_batch(V35_WORK).unwrap();
+        db.execute(
+            "INSERT INTO runner_workers(worker,failure,since) VALUES('history-extraction','stale','2026-11-23T08:00:00Z')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO redis_reachability(source,reachable) VALUES('src-v37',1)",
+            [],
+        )
+        .unwrap();
         let version: u32 = db
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
@@ -933,6 +943,17 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
         .unwrap();
     assert_eq!(version, instrukt_core::state_db::schema_version());
     assert_eq!(work_rows(&raw), before);
+    let retired: u32 = raw
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        retired, 0,
+        "version 41 drops retired runner_workers and redis_reachability tables"
+    );
 
     // Unrelated records of every kind a standing lookup reads.
     raw.execute_batch(
