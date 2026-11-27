@@ -68,9 +68,15 @@ Edge (UI / API adapters) → Core (business logic, domain services) → Infrastr
 
 ### 6. CLI-first agency
 
+<!-- planned-change:doctrine-commands-and-scan -->
 **Every project gets a CLI.** The CLI is the agent's primary interaction surface — new behavior gets a CLI command before (or alongside) any other surface. Agents extend the platform by extending the CLI; humans operate the platform through the CLI.
 
 CLI design follows the platform's chosen pattern (progressive disclosure of help, structured subcommands, idempotent operations, typed arguments). The platform's own CLI is the reference shape.
+<!-- change:doctrine-commands-and-scan -->
+**Every project gets a CLI — and every command earns its place through a named caller.** The CLI is the primary interaction surface for behavior that an interactive or automated caller invokes, rather than a catch-all for every internal step. A command exists only for a named caller that runs it and can reach it: a person, a role's procedure, a hook, the integrator, or a pipeline. A command only a pipeline runs is hidden plumbing and stays out of agents' help.
+
+CLI design follows the platform's chosen pattern (progressive disclosure of help, structured subcommands, idempotent operations, typed arguments). The platform's own CLI is the reference shape.
+<!-- /planned-change:doctrine-commands-and-scan -->
 
 ### 7. Standard scaffolds for surfaces
 

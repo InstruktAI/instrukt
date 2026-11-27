@@ -220,6 +220,15 @@ this spec does not restate them. Across every type:
 - `## See Also` — optional soft references by id, using the same link form for
   same-repository snippets, never rendered into a closure. A code reference stays a repository-relative path.
 - `<!-- @config: <path> -->` — replaced by the configured value at `<path>` when the snippet is read, resolved in-process through configuration. In the global agent files it is resolved at publication against the publishing project's effective configuration, where a `runtime.*` path is a finding. A committed `AGENTS.md` admits none: a `@config` in anything such a file renders in full is a finding, and a snippet carrying one is listed instead. The format has no directive that runs a command or includes another file: `@exec` and `@include` are validation findings, never run or expanded. Text several snippets need is a snippet of its own, named as a required read.
+<!-- planned:doctrine-commands-and-scan -->
+- **Commands in code containers.** Every CLI command written in a snippet sits
+  inside an inline code span (backticks) or a fenced code block. Shared
+  doctrine (`general` and every domain) names operations or placeholders rather
+  than `instrukt` CLI invocations (`general/policy/snippet-value-contract`), and
+  validation emits a non-failing notice when an inline code span or fenced code
+  block in shared doctrine invokes a subcommand of the binary; `project`
+  snippets are exempt.
+<!-- /planned:doctrine-commands-and-scan -->
 
 A procedure's optional `Discipline` section is required once an agent command
 explicitly delegates to that procedure's discipline. The section is the procedure's

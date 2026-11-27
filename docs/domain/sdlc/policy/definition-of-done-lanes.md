@@ -674,6 +674,16 @@ The concrete rule belongs in the applicable language policy and the generic
 surface references that owner. Judge the meaning; do not build or rely on a
 keyword scanner.
 
+<!-- planned:doctrine-commands-and-scan -->
+**Shared-doctrine command check.** For changed regions in `docs/general/` and
+`docs/domain/**`, verify that commands sit inside backticks or fenced code
+blocks (`general/spec/snippet-authoring-schema`) and that shared doctrine names
+operations or placeholders rather than `instrukt` CLI syntax
+(`general/policy/snippet-value-contract`). Catch commands written in plain prose
+outside backticks and `instrukt` command invocations or flag syntax in shared
+doctrine; `docs/project/**` snippets are exempt.
+<!-- /planned:doctrine-commands-and-scan -->
+
 For each changed snippet body, flag the Narration anti-pattern in its four forms
 (`general/policy/snippet-value-contract` owns the full definition; do not re-derive it here):
 
@@ -788,6 +798,11 @@ Severity guidance:
 - A language-specific directive introduced in a generic snippet → **Important**;
   **Critical** when it conflicts with the applicable language owner or directs
   implementation through the wrong language mechanism.
+<!-- planned:doctrine-commands-and-scan -->
+- A command written outside backticks or fenced code blocks, or `instrukt` CLI
+  syntax introduced in shared doctrine (`docs/general/`, `docs/domain/**`) →
+  **Important**.
+<!-- /planned:doctrine-commands-and-scan -->
 - Pre-existing narration in a region this change did not touch → **drop the
   observation; it is not a finding** (the sweep owns it, not this review).
 

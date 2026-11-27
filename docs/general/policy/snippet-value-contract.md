@@ -150,6 +150,23 @@ The default is **skip unless justified**, not "produce when applicable."
     → present-tense description of the intended shape. Forward design is
     written as contract, not as forecast.
 
+<!-- planned:doctrine-commands-and-scan -->
+### Commands and placeholders in shared doctrine
+
+- **Operations, not CLI syntax.** Shared doctrine (`general` and every domain)
+  names the operation a step performs, never `instrukt` CLI syntax; `-h`
+  supplies current syntax (`general/policy/command-contract-read`), applying
+  the ban on restatement above.
+- **Placeholders for machine-specific steps.** Machine-specific steps —
+  instrukt bookkeeping included, such as reserving a round — sit behind
+  placeholders filled per target: from configured runtime values locally, and
+  from generic text or nothing in a published skill.
+- **Code-container convention and project exemption.** Commands in snippets
+  appear inside inline code spans (backticks) or fenced code blocks
+  (`general/spec/snippet-authoring-schema`). Project snippets are exempt from
+  the shared-doctrine command ban.
+<!-- /planned:doctrine-commands-and-scan -->
+
 ### A statement's owner decides its home
 
 Every statement an author wants to add is owned by one party, and the owner
@@ -262,6 +279,14 @@ read without surface words, show that the deciding party is elsewhere. Every
 such copy is a fence a test could bind to the owner's current wording, and a
 change at the owner leaves every copy stale.
 
+<!-- planned:doctrine-commands-and-scan -->
+Copied CLI syntax in shared doctrine drifts whenever flags change and couples
+reusable doctrine to one local binary; naming operations lets `-h` remain the
+single syntax authority, placeholders keep machine-specific bookkeeping
+portable across runtimes and published skills, and project specs stay exempt
+because describing a project's own commands is their job.
+<!-- /planned:doctrine-commands-and-scan -->
+
 ## Scope
 
 Applies to all snippet authoring contexts and company home knowledge:
@@ -293,6 +318,13 @@ would violate `general/principle/intelligence-boundaries`.
 - The discovery-to-taxonomy tables in `project-analysis` and
   `init-scaffolding` describe shapes worth considering, not slots to fill.
   Each row is conditional on the value test.
+<!-- planned:doctrine-commands-and-scan -->
+- Documentation validation emits a non-failing structural notice when an inline
+  code span or fenced code block in shared doctrine invokes a subcommand of the
+  binary; review (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene)
+  catches commands written outside backticks and `instrukt` command syntax in
+  shared doctrine.
+<!-- /planned:doctrine-commands-and-scan -->
 
 ## Exceptions
 
