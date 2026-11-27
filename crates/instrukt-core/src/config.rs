@@ -47,7 +47,7 @@ pub use _agents::{
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
-pub use _agents_file::{agents_document, agents_revision, patch_agents};
+pub use _agents_file::{agents_revision, agents_value, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,

@@ -43,11 +43,25 @@ pub fn agents_revision(home: &Home) -> Result<Revision, ConfigError> {
     Ok(revision_of(read_existing(&home.agents_file())?.as_deref()))
 }
 
+/// The value at dotted `path` of the effective agent selection
+/// ([`agents_document`]), or the whole selection without a path, literally:
+/// nothing is interpolated. A path that does not exist fails, naming the
+/// missing segment. Nothing is locked or written.
+pub fn agents_value(home: &Home, path: Option<&str>) -> Result<Value, ConfigError> {
+    let document = agents_document(home)?;
+    let Some(path) = path else {
+        return Ok(document);
+    };
+    let segments: Vec<&str> = path.split('.').collect();
+    let (_, value) = super::_interpolate::at_path(&document, &segments, path)?;
+    Ok(value.clone())
+}
+
 /// The effective agent selection as every reading command sees the file —
 /// an older file converted and an older global layer's selection carried
 /// over in memory, merged over the shipped defaults — validated, as literal
 /// data. Nothing is locked or written.
-pub fn agents_document(home: &Home) -> Result<Value, ConfigError> {
+fn agents_document(home: &Home) -> Result<Value, ConfigError> {
     let stored = read_existing(&home.agents_file())?;
     let global = super::_layer::read(&home.global_config())?.map(|document| document.value);
     let text = Agents::selection_text(stored, global.as_ref())?;
