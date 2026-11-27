@@ -256,6 +256,12 @@ impl Recording {
     }
 }
 
+impl instrukt_core::interfaces::ProposalRecording for Recording {
+    fn record(&self, home: &Home, root: &Path, env: &Env, stderr: &mut dyn Write) {
+        Recording::record(self, home, root, env, stderr);
+    }
+}
+
 /// Reports `message` to the log under `event` and as one line on the
 /// commit's standard error.
 fn report(stderr: &mut dyn Write, event: &'static str, message: &str) {
