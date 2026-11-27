@@ -1454,14 +1454,8 @@ pub(crate) fn report_start_finding(
 /// tag starts the brief; plain briefs are bounded to the opening
 /// `instrukt conversation assignment` paragraph.
 fn conversation_assignment_prefix(brief: &str) -> Option<String> {
-    const FRAMED_OPEN: &str = "[Instrukt Assignment]\n";
-    const FRAMED_CLOSE: &str = "\n[/Instrukt Assignment]";
-    if brief.starts_with(FRAMED_OPEN) {
-        let (assignment, rest) = brief.split_once(FRAMED_CLOSE)?;
-        if rest.is_empty() || rest.starts_with('\n') {
-            return Some(format!("{assignment}{FRAMED_CLOSE}"));
-        }
-        return None;
+    if let Some((frame, _, _)) = crate::control::Control::Assignment.split_leading(brief) {
+        return Some(frame.to_owned());
     }
     const PLAIN_OPEN: &str = "instrukt conversation assignment\n";
     const PLAIN_END: &str = " before handling the member's message.";
