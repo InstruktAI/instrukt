@@ -188,36 +188,26 @@ fn require_prd_approval(
     }
     Ok(())
 }
-/// Invariant 3: enforce the deliberate work start before the first `builder`
-/// round when `runner.autostart` is off for the todo's kind (`work-dispatch`,
-/// "Deliberate work start"; `delivery-cycle`, "Three hard integrity invariants").
-/// Admitted only when `autostart` is on, the record already has a `builder`
-/// binding (past the boundary), or it carries `StampFact::WorkReady` with no
-/// standing dispatch hold.
+/// Invariant 3: delegate the deliberate work-start gate for `builder`
+/// reservations to `workflow::work_start_decision`
+/// (`project/instrukt/spec/feature/workflow/delivery-cycle`) and translate
+/// non-admitted decisions into refusal doors.
 fn require_work_start(record: &TodoRecord, autostart: bool) -> Result<(), WorkError> {
-    if autostart || record.bindings.iter().any(|b| b.role.as_str() == "builder") {
-        return Ok(());
-    }
-    let has_work_ready = record
-        .stamps
-        .iter()
-        .any(|s| matches!(s.fact, crate::evidence::StampFact::WorkReady {}));
-    if !has_work_ready {
-        return Err(WorkError::refused(format!(
+    let evidence = super::_ports::to_evidence(record.clone(), Vec::new());
+    match crate::workflow::work_start_decision(&evidence, autostart) {
+        crate::workflow::WorkStartDecision::Admitted => Ok(()),
+        crate::workflow::WorkStartDecision::NeedsWorkReady => Err(WorkError::refused(format!(
             "`runner.autostart` is off for `{}` todos and `{}` has not had its deliberate work start; record `instrukt todo stamp {} --work-ready`, release the claim with `instrukt todo update {} --unclaim` and stop. Removing the `hold` label or releasing the hold starts the work",
             record.kind, record.slug, record.slug, record.slug
-        )));
-    }
-    if record.hold.is_some() {
-        return Err(WorkError::refused(format!(
+        ))),
+        crate::workflow::WorkStartDecision::WaitingOnHold => Err(WorkError::refused(format!(
             "`{}` carries `--work-ready` and still has a standing dispatch hold; the work waits for that hold's release",
             record.slug
-        )));
+        ))),
     }
-    Ok(())
 }
 /// Enforce claim-holding-orchestrator admission for `StampRequest::WorkReady`
-/// (`stamps`, "Build start, completion and review rounds"): refuses outside-session
+/// (`project/instrukt/spec/feature/work/stamps`): refuses outside-session
 /// callers, unclaimed todos, and non-claimant sessions (including bound child roles),
 /// without requiring `record.hold.is_none()` so an exact retry before unclaim succeeds.
 pub(super) fn require_work_ready_caller(
@@ -2994,6 +2984,60 @@ mod tests {
                 &in_workspace(repo.path()),
                 Some(&proof)
             ),
+            Err(WorkError::Refused(_))
+        ));
+    }
+
+    #[test]
+    fn require_work_ready_caller_admits_only_claim_holding_orchestrator() {
+        let machine = this_machine();
+        let other_machine = MachineId::parse("fedcba9876543210").unwrap();
+        let driver = session("driver-1");
+        let child = session("planner-1");
+
+        // Claim-holding orchestrator on matching machine succeeds when unheld and when already held.
+        let mut record = base_record();
+        assert!(require_work_ready_caller(&record, Some(&driver), &machine).is_ok());
+        record.hold = Some(crate::evidence::HoldRecord {
+            source: crate::evidence::HoldSource::Automatic,
+            reason: "already held".into(),
+            by: crate::evidence::Actor::Session(driver.clone()),
+            at: jiff::Timestamp::from_second(10).unwrap(),
+        });
+        assert!(require_work_ready_caller(&record, Some(&driver), &machine).is_ok());
+
+        // Outside session is refused.
+        assert!(matches!(
+            require_work_ready_caller(&record, None, &machine),
+            Err(WorkError::Refused(_))
+        ));
+
+        // Bound child role / other session and other machine are refused.
+        record.bindings.push(Binding {
+            role: RoleName::parse("planner").unwrap(),
+            session: Some(child.clone()),
+            worktree: None,
+            attempt: Attempt {
+                assignment: AssignmentKind::Workspace,
+                number: 1,
+                semantic_key: "demo/bug-fix:planner:1".into(),
+                ..Default::default()
+            },
+        });
+        assert!(matches!(
+            require_work_ready_caller(&record, Some(&child), &machine),
+            Err(WorkError::Refused(_))
+        ));
+        assert!(matches!(
+            require_work_ready_caller(&record, Some(&driver), &other_machine),
+            Err(WorkError::Refused(_))
+        ));
+
+        // Unclaimed todo is refused.
+        let mut unclaimed = base_record();
+        unclaimed.claim = None;
+        assert!(matches!(
+            require_work_ready_caller(&unclaimed, Some(&driver), &machine),
             Err(WorkError::Refused(_))
         ));
     }
