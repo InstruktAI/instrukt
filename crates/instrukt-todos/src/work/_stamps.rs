@@ -888,4 +888,46 @@ mod tests {
             None,
         )));
     }
+
+    #[test]
+    fn intent_checked_without_conversation_records_no_origin() {
+        let mut record = record();
+        let digest = ContentDigest::of("Preserve literal intent.");
+        record.artifacts.push(Artifact {
+            name: ArtifactName::new(artifact_names::INPUT),
+            address: None,
+            versions: vec![Version {
+                digest: digest.clone(),
+                writer: Actor::Person { name: "dev".into() },
+                created: Timestamp::from_second(5).unwrap(),
+                derived_from: Vec::new(),
+                sequence: 1,
+                grounding: Grounding::default(),
+                remote: None,
+                content: None,
+            }],
+        });
+        let inputs = StampInputs {
+            cwd: Path::new(NOWHERE),
+            base_branch: "main",
+            session: None,
+            now: Timestamp::from_second(9).unwrap(),
+            follow_up: None,
+            completion: None,
+            workspace_head: None,
+        };
+        let resolved = resolve(
+            &StampRequest::IntentChecked { conversation: None },
+            &record,
+            &inputs,
+        )
+        .unwrap();
+        assert_eq!(
+            resolved.fact,
+            StampFact::IntentChecked {
+                input: digest,
+                conversation: None,
+            }
+        );
+    }
 }

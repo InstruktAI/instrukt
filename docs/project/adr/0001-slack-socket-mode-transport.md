@@ -30,7 +30,7 @@ Each connection attempt acquires one URL via `slack-morphism`'s `apps_connection
 ## Consequences
 
 - `instrukt-connector-slack` keeps a bounded (~300-line) Socket Mode WebSocket loop in `crates/instrukt-connector-slack/src/_socket_mode.rs` while delegating Slack HTTP API and Events API body models to `slack-morphism`.
-- Reconnect backoff, `Retry-After` handling, outage reporting, `ConnectionState::Failed`, `admits_socket`, retain-before-ack, and `?ticket=` redaction all remain under one owner (`instrukt-outside::Gate` and `connector_host`).
+- `instrukt-outside::Gate` owns reconnect pacing, `Retry-After` handling, and outage reporting; `connector_host` owns connection lifecycle and `ConnectionState::Failed` reporting; and `instrukt-connector-slack` owns outbound `admits_socket` validation, handshake `?ticket=` log suppression, and durable retain-before-ack.
 - If a future `slack-morphism` release exposes single-shot, ticket-redacted, origin-validated Socket Mode connections without an internal reconnect loop, this ADR can be superseded and `_socket_mode.rs` moved onto that SDK surface.
 
 ## See Also

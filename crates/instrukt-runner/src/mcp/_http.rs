@@ -157,32 +157,66 @@ where
     })
 }
 
+/// Typed failure from [`read_bounded_body`] so transport errors keep their
+/// `reqwest::Error` classification for [`judge_reqwest_error`].
+#[derive(Debug)]
+pub(crate) enum BodyReadError {
+    Transport(reqwest::Error),
+    TooLarge(usize),
+}
+
+impl std::fmt::Display for BodyReadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Transport(error) => write!(f, "unreadable HTTP body: {error}"),
+            Self::TooLarge(max_bytes) => {
+                write!(f, "HTTP response body exceeds {max_bytes} bytes")
+            }
+        }
+    }
+}
+
+impl std::error::Error for BodyReadError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Transport(error) => Some(error),
+            Self::TooLarge(_) => None,
+        }
+    }
+}
+
 /// Reads a `reqwest::Response` body up to `max_bytes`, failing before
-/// buffering unbounded payloads.
+/// buffering unbounded payloads while preserving transport error types.
 pub(crate) async fn read_bounded_body(
     mut response: reqwest::Response,
     max_bytes: usize,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, BodyReadError> {
     let mut body = Vec::new();
-    while let Some(chunk) = response
-        .chunk()
-        .await
-        .map_err(|error| format!("unreadable HTTP body: {error}"))?
-    {
+    while let Some(chunk) = response.chunk().await.map_err(BodyReadError::Transport)? {
         if chunk.len() > max_bytes.saturating_sub(body.len()) {
-            return Err(format!("HTTP response body exceeds {max_bytes} bytes"));
+            return Err(BodyReadError::TooLarge(max_bytes));
         }
         body.extend_from_slice(&chunk);
     }
     Ok(body)
 }
 
-/// Performs a bounded GET `Accept: application/json` request to an admitted URL
-/// through the shared MCP outside gate.
-pub(crate) async fn get_json_text(
-    client: &reqwest::Client,
+fn judge_body_error(
+    error: &BodyReadError,
+    settings: &Settings<'_>,
+) -> Option<instrukt_outside::Unavailable> {
+    match error {
+        BodyReadError::Transport(req_err) => match judge_reqwest_error(req_err, settings) {
+            Judgment::Unavailable(unavailable) => Some(unavailable),
+            Judgment::Success | Judgment::Defect => None,
+        },
+        BodyReadError::TooLarge(_) => None,
+    }
+}
+
+async fn send_gated_text(
     url: &str,
-    bearer_token: Option<&str>,
+    build: impl FnOnce() -> reqwest::RequestBuilder,
 ) -> Result<(u16, String), String> {
     if !instrukt_core::config::mcp_address_admitted(url) {
         return Err("endpoint address must be https (or loopback http)".into());
@@ -193,11 +227,7 @@ pub(crate) async fn get_json_text(
     let settings = Settings::default();
     let attempted = gate
         .attempt_async(&key, &settings, || async {
-            let mut request = client.get(url).header(ACCEPT, "application/json");
-            if let Some(token) = bearer_token {
-                request = request.bearer_auth(token);
-            }
-            let response = match request.send().await {
+            let response = match build().send().await {
                 Ok(response) => response,
                 Err(error) => {
                     let message = format!("HTTP request failed: {error}");
@@ -212,23 +242,29 @@ pub(crate) async fn get_json_text(
             let status = response.status().as_u16();
             let headers = response.headers().clone();
             let now = gate.now();
-            let bytes = match read_bounded_body(response, MAX_OAUTH_BODY_BYTES).await {
-                Ok(bytes) => bytes,
-                Err(message) => return Tried::Defect(Err(message)),
+            // Judge status and headers (including Retry-After) before reading
+            // the body so an interrupted or oversized body never discards a
+            // received temporary wait.
+            let status_judgment = judge_response(status, &headers, now, None, &settings);
+            let body_text = match read_bounded_body(response, MAX_OAUTH_BODY_BYTES).await {
+                Ok(bytes) => String::from_utf8(bytes)
+                    .map_err(|error| (None, format!("HTTP response is not valid UTF-8: {error}"))),
+                Err(error) => Err((judge_body_error(&error, &settings), error.to_string())),
             };
-            let text = match String::from_utf8(bytes) {
-                Ok(text) => text,
-                Err(error) => {
-                    return Tried::Defect(Err(format!(
-                        "HTTP response is not valid UTF-8: {error}"
-                    )));
-                }
-            };
-            match judge_response(status, &headers, now, None, &settings) {
-                Judgment::Unavailable(unavailable) => {
+            match (status_judgment, body_text) {
+                (Judgment::Unavailable(unavailable), Ok(text)) => {
                     Tried::Unavailable(unavailable, Ok((status, text)))
                 }
-                Judgment::Success | Judgment::Defect => Tried::Done((status, text)),
+                (Judgment::Unavailable(unavailable), Err((_, message))) => {
+                    Tried::Unavailable(unavailable, Err(message))
+                }
+                (Judgment::Success | Judgment::Defect, Ok(text)) => Tried::Done((status, text)),
+                (Judgment::Success | Judgment::Defect, Err((Some(unavailable), message))) => {
+                    Tried::Unavailable(unavailable, Err(message))
+                }
+                (Judgment::Success | Judgment::Defect, Err((None, message))) => {
+                    Tried::Defect(Err(message))
+                }
             }
         })
         .await;
@@ -244,11 +280,42 @@ pub(crate) async fn get_json_text(
             ..
         }
         | Attempted::Defect(Err(message)) => Err(message),
-        Attempted::Wait { wait, error: None } => Err(format!(
-            "OAuth endpoint temporarily unavailable; wait until {}",
-            wait.at()
-        )),
+        Attempted::Wait { wait, error: None } => Err(wait.to_string()),
     }
+}
+
+/// Performs a bounded GET `Accept: application/json` request to an admitted URL
+/// through the shared MCP outside gate.
+pub(crate) async fn get_json_text(
+    client: &reqwest::Client,
+    url: &str,
+    bearer_token: Option<&str>,
+) -> Result<(u16, String), String> {
+    send_gated_text(url, || {
+        let mut request = client.get(url).header(ACCEPT, "application/json");
+        if let Some(token) = bearer_token {
+            request = request.bearer_auth(token);
+        }
+        request
+    })
+    .await
+}
+
+/// Performs a single-shot bounded POST `application/x-www-form-urlencoded`
+/// request with `Accept: application/json` to an admitted URL through the
+/// shared MCP outside gate.
+pub(crate) async fn post_form_text(
+    client: &reqwest::Client,
+    url: &str,
+    form: &[(&str, &str)],
+) -> Result<(u16, String), String> {
+    send_gated_text(url, || {
+        client
+            .post(url)
+            .header(ACCEPT, "application/json")
+            .form(form)
+    })
+    .await
 }
 
 /// Protected resource metadata fields observed while `rmcp`'s
@@ -267,6 +334,7 @@ pub(crate) struct CapturedResourceMetadata {
 pub(crate) struct AdmittedOAuthHttpClient {
     client: reqwest::Client,
     captured_prm: Option<Arc<Mutex<Option<CapturedResourceMetadata>>>>,
+    last_unavailable: Option<Arc<Mutex<Option<String>>>>,
 }
 
 impl AdmittedOAuthHttpClient {
@@ -278,6 +346,7 @@ impl AdmittedOAuthHttpClient {
         Ok(Self {
             client: client(server, connect_timeout, request_timeout, false)?,
             captured_prm: None,
+            last_unavailable: None,
         })
     }
 
@@ -286,6 +355,11 @@ impl AdmittedOAuthHttpClient {
         slot: Arc<Mutex<Option<CapturedResourceMetadata>>>,
     ) -> Self {
         self.captured_prm = Some(slot);
+        self
+    }
+
+    pub(crate) fn with_unavailable_observer(mut self, slot: Arc<Mutex<Option<String>>>) -> Self {
+        self.last_unavailable = Some(slot);
         self
     }
 
@@ -325,12 +399,24 @@ impl AdmittedOAuthHttpClient {
                 let version = response.version();
                 let headers = response.headers().clone();
                 let now = gate.now();
+                // Judge status and headers (including Retry-After) before reading
+                // the body so an interrupted or oversized body never discards a
+                // received temporary wait.
+                let status_judgment =
+                    judge_response(status.as_u16(), &headers, now, None, &settings);
                 let body = match read_bounded_body(response, MAX_OAUTH_BODY_BYTES).await {
                     Ok(body) => body,
-                    Err(msg) => {
-                        return Tried::Defect(Err(
-                            Box::new(std::io::Error::other(msg)) as OAuthHttpClientError
-                        ));
+                    Err(error) => {
+                        let body_unavailable = judge_body_error(&error, &settings);
+                        let boxed = Box::new(error) as OAuthHttpClientError;
+                        return match (status_judgment, body_unavailable) {
+                            (Judgment::Unavailable(unavailable), _) | (_, Some(unavailable)) => {
+                                Tried::Unavailable(unavailable, Err(boxed))
+                            }
+                            (Judgment::Success | Judgment::Defect, None) => {
+                                Tried::Defect(Err(boxed))
+                            }
+                        };
                     }
                 };
 
@@ -376,10 +462,16 @@ impl AdmittedOAuthHttpClient {
                 let built = match builder.body(body) {
                     Ok(built) => built,
                     Err(error) => {
-                        return Tried::Defect(Err(Box::new(error) as OAuthHttpClientError));
+                        let boxed = Box::new(error) as OAuthHttpClientError;
+                        return match status_judgment {
+                            Judgment::Unavailable(unavailable) => {
+                                Tried::Unavailable(unavailable, Err(boxed))
+                            }
+                            Judgment::Success | Judgment::Defect => Tried::Defect(Err(boxed)),
+                        };
                     }
                 };
-                match judge_response(status.as_u16(), &headers, now, None, &settings) {
+                match status_judgment {
                     Judgment::Unavailable(unavailable) => {
                         Tried::Unavailable(unavailable, Ok(built))
                     }
@@ -387,6 +479,12 @@ impl AdmittedOAuthHttpClient {
                 }
             })
             .await;
+        if let Attempted::Wait { ref wait, .. } = attempted
+            && let Some(slot) = &self.last_unavailable
+            && let Ok(mut guard) = slot.lock()
+        {
+            *guard = Some(wait.to_string());
+        }
         match attempted {
             Attempted::Done(response)
             | Attempted::Defect(Ok(response))
@@ -401,10 +499,7 @@ impl AdmittedOAuthHttpClient {
             | Attempted::Defect(Err(error)) => Err(error),
             Attempted::Wait { wait, error: None } => Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                format!(
-                    "OAuth endpoint temporarily unavailable; wait until {}",
-                    wait.at()
-                ),
+                wait.to_string(),
             )) as OAuthHttpClientError),
         }
     }

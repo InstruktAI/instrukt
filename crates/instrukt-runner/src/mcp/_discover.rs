@@ -105,25 +105,60 @@ pub(crate) fn auth_manager(
     })?
 }
 
+struct LiveResolution {
+    resolution: Result<rmcp::transport::auth::AuthorizationMetadataResolution, AuthError>,
+    captured: CapturedResourceMetadata,
+    unavailable: Option<String>,
+}
+
 /// Probe a remote MCP server's HTTPS (or loopback HTTP) URL live and report
 /// its RFC 9728 / RFC 8414 / OIDC / EMA capabilities. Writes nothing.
 pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
-    let (resolution, captured) = resolve_live(url)?;
+    let LiveResolution {
+        resolution,
+        captured,
+        unavailable,
+    } = resolve_live(url)?;
     match resolution {
         Ok(resolved) if resolved.source.is_discovered() => {
             Ok(build_report(url, &captured, &resolved.metadata))
         }
-        Ok(_) => Ok(empty_report(url, None, Vec::new(), Vec::new())),
+        Ok(_) => {
+            if let Some(cause) = unavailable {
+                return Err(McpError::Unreachable {
+                    server: url.to_owned(),
+                    url: url.to_owned(),
+                    cause,
+                });
+            }
+            Ok(empty_report(url, None, Vec::new(), Vec::new()))
+        }
         Err(AuthError::AuthorizationServersUnavailable {
             authorization_servers,
             ..
-        }) => Ok(empty_report(
-            url,
-            captured.resource,
-            authorization_servers,
-            captured.scopes_supported,
-        )),
+        }) => {
+            if let Some(cause) = unavailable {
+                return Err(McpError::Unreachable {
+                    server: url.to_owned(),
+                    url: url.to_owned(),
+                    cause,
+                });
+            }
+            Ok(empty_report(
+                url,
+                captured.resource,
+                authorization_servers,
+                captured.scopes_supported,
+            ))
+        }
         Err(_) => {
+            if let Some(cause) = unavailable {
+                return Err(McpError::Unreachable {
+                    server: url.to_owned(),
+                    url: url.to_owned(),
+                    cause,
+                });
+            }
             let servers = if captured.resource.is_some() {
                 captured.authorization_servers
             } else {
@@ -142,13 +177,27 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
 /// Discover authorization server metadata for sign-in / issuer token exchange,
 /// enforcing RFC 9728 `resource` and RFC 8414 `issuer` matching.
 pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
-    let (resolution, captured) = resolve_live(url)?;
-    let resolved = resolution.map_err(|error| McpError::Server {
-        server: url.to_owned(),
-        cause: format!(
-            "OAuth metadata discovery failed: {}",
-            sanitize_auth_error(&error)
-        ),
+    let LiveResolution {
+        resolution,
+        captured,
+        unavailable,
+    } = resolve_live(url)?;
+    let resolved = resolution.map_err(|error| {
+        if let Some(cause) = unavailable {
+            McpError::Unreachable {
+                server: url.to_owned(),
+                url: url.to_owned(),
+                cause,
+            }
+        } else {
+            McpError::Server {
+                server: url.to_owned(),
+                cause: format!(
+                    "OAuth metadata discovery failed: {}",
+                    sanitize_auth_error(&error)
+                ),
+            }
+        }
     })?;
     if resolved.source != AuthorizationMetadataSource::ProtectedResourceMetadata {
         return Err(McpError::Server {
@@ -271,29 +320,21 @@ async fn probe_post_initialize_challenge(url: &str) -> Result<Option<String>, Mc
         instrukt_outside::Attempted::Wait { wait, error } => Err(McpError::Unreachable {
             server: url.to_owned(),
             url: url.to_owned(),
-            cause: error.unwrap_or_else(|| {
-                format!(
-                    "MCP server temporarily unavailable; wait until {}",
-                    wait.at()
-                )
-            }),
+            cause: match error {
+                Some(cause) => format!("{wait} ({cause})"),
+                None => wait.to_string(),
+            },
         }),
     }
 }
 
-fn resolve_live(
-    url: &str,
-) -> Result<
-    (
-        Result<rmcp::transport::auth::AuthorizationMetadataResolution, AuthError>,
-        CapturedResourceMetadata,
-    ),
-    McpError,
-> {
+fn resolve_live(url: &str) -> Result<LiveResolution, McpError> {
     let parsed = validate_probe_url(url)?;
     let prm_slot = Arc::new(Mutex::new(None));
+    let unavailable_slot = Arc::new(Mutex::new(None));
     let http = AdmittedOAuthHttpClient::new(url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?
-        .with_prm_observer(Arc::clone(&prm_slot));
+        .with_prm_observer(Arc::clone(&prm_slot))
+        .with_unavailable_observer(Arc::clone(&unavailable_slot));
     let resolution = run_async(url, async {
         let challenge = probe_post_initialize_challenge(url).await?;
         let manager = AuthorizationManager::new_with_oauth_http_client(parsed, Arc::new(http))
@@ -316,7 +357,12 @@ fn resolve_live(
         .ok()
         .and_then(|guard| guard.clone())
         .unwrap_or_default();
-    Ok((resolution, captured))
+    let unavailable = unavailable_slot.lock().ok().and_then(|guard| guard.clone());
+    Ok(LiveResolution {
+        resolution,
+        captured,
+        unavailable,
+    })
 }
 
 fn build_report(

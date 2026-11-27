@@ -379,20 +379,4 @@ fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation
         "intent-checked",
         redact(&format!("{checked}---\n{received}"))
     );
-
-    // Omitting `--conversation` records intent-checked with no fabricated origin.
-    project.env.set_env("T3CODE_THREAD_ID", "author-1");
-    project.create(
-        "plain-intent",
-        "feature",
-        "Preserve literal intent with no explicit origin conversation.",
-    );
-    project.env.set_env("T3CODE_THREAD_ID", "checker-2");
-    let omitted = project.ok(["stamp", "plain-intent", "--intent-checked"]);
-    assert!(!omitted.contains("against conversation"), "{omitted}");
-    let shown_omitted = project.ok(["show", "plain-intent"]);
-    assert!(
-        !shown_omitted.contains("against conversation"),
-        "{shown_omitted}"
-    );
 }

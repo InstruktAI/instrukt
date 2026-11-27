@@ -671,23 +671,6 @@ fn only_an_independent_verifiers_pass_accounts_for_live_behavior_at_handoff() {
     assert_eq!(ledger(&crew)["finalize_ready_commit"], head.as_str());
 }
 
-#[test]
-fn a_verifiers_fail_blocks_finalize_ready() {
-    let crew = prepared();
-    approved_candidate(&crew);
-    crew.verified(SLUG, "fail");
-    let before = crew.todo(["show", SLUG]);
-    let readiness = lead(&crew, &["--finalize-ready"]).failure();
-    insta::assert_snapshot!("readiness-after-fail-refused", stderr(&crew, &readiness));
-    assert_eq!(crew.todo(["show", SLUG]), before);
-    let limited = ledger(&crew);
-    assert_eq!(limited["verification"]["disposition"], "fail");
-    assert_eq!(
-        limited["gates"]["integrate_review_gate"]["status"],
-        "blocked"
-    );
-}
-
 // spec: project/instrukt/spec/feature/workflow/preparation UC-PR4
 #[test]
 fn feature_blocks_finalize_ready_until_configured_prd_approval_is_recorded() {

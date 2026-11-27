@@ -37,8 +37,12 @@ standing/review/conversation records finish cleanly. Scripts or agent
 instructions invoking `instrukt discuss`, `instrukt config get runtime.discuss`,
 or `instrukt review record --reviewer` must be updated to native runtime
 delegation/messaging and direct reviewer-session `instrukt review record`
-calls. To roll back, restore the previous `instrukt` binary; no destructive
-SQLite schema migration is performed by this release.
+calls. To roll back, let any open new-format manual standing reservations
+complete or clear them before restoring the previous `instrukt` binary:
+although this release performs no destructive SQLite schema migration, manual
+standing reservations opened on this release store plain (unwrapped) briefs
+that older binaries cannot resume because older builds require exact matches
+against the legacy `[Instrukt Assignment]` wrapper.
 
 ### A company repository declares its company identity
 
@@ -396,9 +400,8 @@ published. To switch it on for a project, in this order:
    `runner.review_needed` under the `commit-reviewer` role and is the only
    procedure subscribed to it. Admission requires that route.
 4. Record the approval of every head reviewed before the cutover that is not
-   on the canonical branch yet: its reviewing session with `instrukt review
-   record`, or another session with `instrukt review record --reviewer
-   <session>`. A head whose approval is not recorded is reviewed as part of its
+   on the canonical branch yet from its reviewing session with `instrukt review
+   record`. A head whose approval is not recorded is reviewed as part of its
    candidate.
 5. Set `review: {automatic: true}` in the project layer through a reviewed
    commit. `instrukt config patch` refuses it while a finding stands, and

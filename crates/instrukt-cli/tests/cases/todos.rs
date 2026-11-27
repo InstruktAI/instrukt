@@ -626,6 +626,7 @@ fn a_further_round_keeps_the_worker_that_did_the_earlier_one() {
     insta::assert_snapshot!("continued-worker-record", redact(&shown));
 }
 
+// spec: project/instrukt/spec/feature/work/todos UC-TD14
 #[test]
 fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
     let crew = Crew::new();

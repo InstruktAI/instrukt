@@ -389,6 +389,16 @@ Then the reservation exposes the previous session and attempt number
 And the earlier attempt and its evidence stay readable
 ```
 
+### UC-TD14: A worker bound in one role is not bound to another
+
+```gherkin
+Given a developer's todo whose worker is bound to an attempt of one role
+When the orchestrator binds that worker's session to a reserved attempt of another role
+Then the binding is refused, naming the attempt that session holds and that the reserved attempt binds a new session
+And the reserved attempt stays outstanding and unbound
+And that worker's instrukt commands still run in the role it holds
+```
+
 ## Known caveats
 
 None.

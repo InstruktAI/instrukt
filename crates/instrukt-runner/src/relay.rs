@@ -101,6 +101,13 @@ impl WakeSlot {
     }
 }
 
+fn format_relay_wait(wait: &instrukt_outside::Wait, error: Option<&str>) -> String {
+    match error {
+        Some(cause) => format!("{wait} ({cause})"),
+        None => wait.to_string(),
+    }
+}
+
 impl Worker {
     /// Spawns the company conversation relay on the shared Tokio runtime.
     /// Source acquisition and reader failures are judged by `instrukt-outside::Gate`,
@@ -159,14 +166,9 @@ impl Worker {
                 let (adapter, source, notifications) = match acquired {
                     Attempted::Done(ready) => ready,
                     Attempted::Wait { wait, error } => {
-                        let cause = error.unwrap_or_else(|| {
-                            format!(
-                                "T3 conversation source unavailable; waiting until {}",
-                                wait.at()
-                            )
-                        });
+                        let status = format_relay_wait(&wait, error.as_deref());
                         tokio::task::block_in_place(|| {
-                            destinations.company.relay_state(&home, Some(&cause));
+                            destinations.company.relay_state(&home, Some(&status));
                         });
                         tokio::select! {
                             changed = stopping.changed() => {
@@ -217,8 +219,15 @@ impl Worker {
                                 )
                             })
                             .await;
+                        let status = match &recorded {
+                            Attempted::Wait { wait, error } => {
+                                format_relay_wait(wait, error.as_deref().or(Some(cause.as_str())))
+                            }
+                            Attempted::Defect(detail) => detail.clone(),
+                            Attempted::Done(()) => cause,
+                        };
                         tokio::task::block_in_place(|| {
-                            destinations.company.relay_state(&home, Some(&cause));
+                            destinations.company.relay_state(&home, Some(&status));
                         });
                         if let Attempted::Wait { wait, .. } = recorded {
                             tokio::select! {

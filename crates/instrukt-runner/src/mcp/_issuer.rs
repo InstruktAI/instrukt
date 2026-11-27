@@ -579,21 +579,13 @@ pub(crate) fn obtain_issuer_login(
         false,
     )?;
     let (status, body_text) = super::_http::run_async(server.name.as_str(), async {
-        let response = http_client
-            .post(token_endpoint)
-            .header(http::header::ACCEPT, "application/json")
-            .form(&form)
-            .send()
+        super::_http::post_form_text(&http_client, token_endpoint, &form)
             .await
-            .map_err(|error| McpError::Server {
+            .map_err(|error| McpError::Unreachable {
                 server: server.name.to_string(),
+                url: token_endpoint.to_owned(),
                 cause: format!("issuer token exchange failed: {error}"),
-            })?;
-        let status = response.status().as_u16();
-        let bytes = super::_http::read_bounded_body(response, super::_http::MAX_OAUTH_BODY_BYTES)
-            .await
-            .unwrap_or_default();
-        Ok::<_, McpError>((status, String::from_utf8_lossy(&bytes).into_owned()))
+            })
     })??;
     if !(200..300).contains(&status) {
         let code = serde_json::from_str::<Value>(&body_text)

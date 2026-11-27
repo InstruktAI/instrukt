@@ -140,16 +140,68 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
     );
 
     let http_client = _http::client("ingress", PROBE_TIMEOUT, PROBE_TIMEOUT, false)?;
+    let (origin, _) = _http::gate_scope(&ingress_url);
+    let key =
+        instrukt_outside::Key::new("mcp-ingress", [origin.as_str()]).item("/hooks/inbound/sign-in");
+    let settings = instrukt_outside::Settings::default();
     let status = _http::run_async("ingress", async {
-        http_client
-            .get(&probe_url)
-            .send()
-            .await
-            .map(|response| response.status().as_u16())
-            .map_err(|error| McpError::Server {
-                server: "ingress".into(),
-                cause: format!("external callback probe to {ingress_url} failed: {error}"),
+        let gate = _http::mcp_gate();
+        let attempted = gate
+            .attempt_async(&key, &settings, || async {
+                let response = match http_client.get(&probe_url).send().await {
+                    Ok(response) => response,
+                    Err(error) => {
+                        let cause =
+                            format!("external callback probe to {ingress_url} failed: {error}");
+                        return match instrukt_outside::http::judge_reqwest_error(&error, &settings)
+                        {
+                            instrukt_outside::http::Judgment::Unavailable(unavailable) => {
+                                instrukt_outside::Tried::Unavailable(unavailable, Err(cause))
+                            }
+                            instrukt_outside::http::Judgment::Success
+                            | instrukt_outside::http::Judgment::Defect => {
+                                instrukt_outside::Tried::Defect(Err(cause))
+                            }
+                        };
+                    }
+                };
+                let status = response.status().as_u16();
+                let headers = response.headers().clone();
+                let now = gate.now();
+                match instrukt_outside::http::judge_response(status, &headers, now, None, &settings)
+                {
+                    instrukt_outside::http::Judgment::Unavailable(unavailable) => {
+                        instrukt_outside::Tried::Unavailable(unavailable, Ok(status))
+                    }
+                    instrukt_outside::http::Judgment::Success
+                    | instrukt_outside::http::Judgment::Defect => {
+                        instrukt_outside::Tried::Done(status)
+                    }
+                }
             })
+            .await;
+        match attempted {
+            instrukt_outside::Attempted::Done(status)
+            | instrukt_outside::Attempted::Defect(Ok(status))
+            | instrukt_outside::Attempted::Wait {
+                error: Some(Ok(status)),
+                ..
+            } => Ok(status),
+            instrukt_outside::Attempted::Wait {
+                error: Some(Err(cause)),
+                ..
+            }
+            | instrukt_outside::Attempted::Defect(Err(cause)) => Err(McpError::Unreachable {
+                server: "ingress".into(),
+                url: ingress_url.clone(),
+                cause,
+            }),
+            instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
+                server: "ingress".into(),
+                url: ingress_url.clone(),
+                cause: format!("external callback probe to {ingress_url} delayed: {wait}"),
+            }),
+        }
     })??;
     if status != 200 {
         let _ = claim_sign_in_return(&transport, &state_digest);

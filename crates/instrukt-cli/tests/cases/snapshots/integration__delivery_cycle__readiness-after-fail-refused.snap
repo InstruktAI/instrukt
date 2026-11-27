@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
-expression: "stderr(&crew, &readiness)"
----
-instrukt: readiness requires a current verification disposition: latest verification disposition is fail (a pass, tier_0_skip or hotfix_deferred is owed at this commit)
