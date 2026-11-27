@@ -81,19 +81,23 @@ mod tests {
     use super::Control;
 
     #[test]
-    fn frame_wraps_once_and_round_trips_trimmed_body() {
-        let framed = Control::Notification.frame("instrukt delivery log\nline\n\n");
-        insta::assert_snapshot!("control-notification-frame", framed);
+    fn frame_is_idempotent_and_requires_complete_matching_delimiters() {
+        let id = "entry-42";
+        let framed = Control::Notification.frame(&format!("{id}\n\n"));
+        assert!(Control::Notification.is_framed(&framed));
+        assert!(!Control::Assignment.is_framed(&framed));
         assert_eq!(Control::Notification.frame(&framed), framed);
         assert_eq!(
             Control::Notification.split_leading(&framed),
-            Some((framed.as_str(), "instrukt delivery log\nline", ""))
+            Some((framed.as_str(), id, ""))
         );
-        assert_eq!(
-            Control::unwrap_any(&framed),
-            Some("instrukt delivery log\nline")
-        );
+        assert_eq!(Control::unwrap_any(&framed), Some(id));
         assert_eq!(Control::Assignment.split_leading(&framed), None);
+
+        let truncated = &framed[..framed.len() - 1];
+        assert!(!Control::Notification.is_framed(truncated));
+        assert_eq!(Control::Notification.split_leading(truncated), None);
+        assert_eq!(Control::unwrap_any(truncated), None);
     }
 
     #[test]
