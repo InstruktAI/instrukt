@@ -110,10 +110,9 @@ impl Drop for Ended<'_> {
     }
 }
 
-/// Supervise a live connector's six background workers (admission intake,
-/// context capture, working status, unavailable notices, MCP sign-in DM
-/// delivery, and read-back scan) for the lifetime of `run`, joining all
-/// workers before returning.
+/// Run `run` alongside the live connector's scoped supervision workers,
+/// propagating intake-worker exit through the stop predicate and joining every
+/// worker before returning.
 pub(super) fn supervise(
     home: &Home,
     reach: Reach<'_>,
