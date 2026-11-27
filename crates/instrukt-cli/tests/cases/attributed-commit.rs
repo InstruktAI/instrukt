@@ -18,6 +18,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use nix::poll::{PollFd, PollFlags, PollTimeout, poll};
+use rustix::process::Signal;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
@@ -476,8 +477,6 @@ fn a_developer_outside_any_session_commits_as_themselves() {
 // spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC4
 #[test]
 fn an_interrupted_commit_leaves_the_repository_as_it_was() {
-    use rustix::process::Signal;
-
     let signal = Signal::INT;
     let env = TestEnv::new();
     configure_machine(&env);

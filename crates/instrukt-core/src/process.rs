@@ -21,6 +21,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use rustix::io::Errno;
+use rustix::process::{Signal, kill_process_group, test_kill_process_group};
+
 /// How a command ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finished {
@@ -432,9 +435,9 @@ fn groups() -> std::sync::MutexGuard<'static, Vec<Arc<ProcessGroup>>> {
 fn stop_for(signal: i32) {
     let registry = groups();
     let forwarded = match signal {
-        signal_hook::consts::SIGINT => rustix::process::Signal::INT,
-        signal_hook::consts::SIGTERM => rustix::process::Signal::TERM,
-        _ => rustix::process::Signal::TERM,
+        signal_hook::consts::SIGINT => Signal::INT,
+        signal_hook::consts::SIGTERM => Signal::TERM,
+        _ => Signal::TERM,
     };
     for group in registry.iter() {
         if let Err(error) = group.forward(forwarded) {
@@ -539,24 +542,17 @@ struct ProcessGroup {
 impl ProcessGroup {
     /// Force-stops every member of this process group with `SIGKILL`.
     fn stop(&self) -> std::io::Result<()> {
-        use rustix::process::{Signal, kill_process_group};
-
         self.stop_with(|pid| kill_process_group(pid, Signal::KILL))
     }
 
     /// Forwards `signal` to every member of this process group.
-    fn forward(&self, signal: rustix::process::Signal) -> std::io::Result<()> {
-        use rustix::process::kill_process_group;
-
+    fn forward(&self, signal: Signal) -> std::io::Result<()> {
         self.stop_with(|pid| kill_process_group(pid, signal))
     }
 
     /// Whether any process in this group is still alive (or cannot be confirmed
     /// gone, so post-grace forced cleanup still runs and logs any error).
     fn is_alive(&self) -> bool {
-        use rustix::io::Errno;
-        use rustix::process::test_kill_process_group;
-
         match self.signal_raw(test_kill_process_group) {
             (Err(Errno::SRCH), _) => false,
             // Darwin's POSIX group probe found no member we can signal after reap.
@@ -572,8 +568,6 @@ impl ProcessGroup {
     ) -> (rustix::io::Result<()>, bool) {
         #[cfg(target_os = "macos")]
         {
-            use rustix::io::Errno;
-
             // Classify the signal using the reap evidence available when it starts.
             let reaped = self.reaped.load(Ordering::Acquire);
             let result = op(self.pid);
@@ -594,8 +588,6 @@ impl ProcessGroup {
         &self,
         signal: impl FnMut(rustix::process::Pid) -> rustix::io::Result<()>,
     ) -> std::io::Result<()> {
-        use rustix::io::Errno;
-
         match self.signal_raw(signal) {
             (Ok(()) | Err(Errno::SRCH), _) => Ok(()),
             // Darwin's POSIX group signal found no member we can signal.
