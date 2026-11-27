@@ -176,6 +176,32 @@ An enabled scheduled computer with no wake for five minutes is stale; no-demand
 mode reports inactivity without treating it as broken required infrastructure.
 One wake proves neither delivered activation nor completed task.
 
+<!-- planned:instrukt-home-backup -->
+### Daily home backup timer
+
+While the global layer carries a valid `backup` declaration
+(`project/instrukt/spec/feature/configuration/layered-configuration`),
+installation demands one owned daily OS timer that invokes `instrukt backup run`
+at the configured local time (`project/instrukt/spec/feature/runner/home-backup`),
+independently of adopted projects and module switches and without starting an
+agent session.
+
+- On macOS, installation converges a launchd user agent; on Linux, a systemd
+  user timer and service pair (subject to the same boot-without-login linger
+  prerequisite as every other owned systemd user unit); where neither service
+  manager is available, a crontab entry marked with this home's name.
+- Unit names, files, and crontab markers follow the home-isolation rules of
+  Withdrawal and ownership below, carrying a path-derived suffix for homes
+  other than `~/.instrukt` and re-writing instrukt's own definition whole on
+  every install (`project/instrukt/policy/checks-and-guards`).
+- `instrukt install --check` reports a missing, drifted, or unloaded backup
+  timer as unmet demand (and an obsolete owned timer when `backup` is absent)
+  without creating or mutating files or units.
+- Removing `backup` from the global layer ends the timer demand; the next
+  `instrukt install` withdraws the owned timer without deleting local state,
+  credentials, or remote backups.
+<!-- /planned:instrukt-home-backup -->
+
 ### Runner service
 
 A connector is served only by a running `instrukt run`
@@ -554,6 +580,21 @@ Then the service is written again, restarted and running
 And a definition under another name is left as it was
 And a second instrukt home on the computer installs under its own names without touching the first
 ```
+
+<!-- planned:instrukt-home-backup -->
+### UC-MI16: Converge and withdraw the owned daily home backup timer
+
+```gherkin
+Given an operator configures home backup in the machine's global configuration
+When the operator runs installation
+Then one owned daily OS timer for home backup is converged for that home, with isolated unit naming for non-default homes and without starting any agent session
+And checking installation reports the timer as met without modifying files or units
+But when the timer is missing or drifted
+Then checking installation reports unmet demand without mutating anything
+When the operator removes home backup from the global configuration and runs installation again
+Then the owned backup timer is withdrawn while local state, credentials and remote backups remain untouched
+```
+<!-- /planned:instrukt-home-backup -->
 
 ## Known caveats
 

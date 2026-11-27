@@ -114,6 +114,44 @@ output is removed without an admitted declaration; the release of a delivered
 todo's worktree does not depend on it
 (`project/instrukt/spec/feature/runner/worktree-reclamation`).
 
+<!-- planned:instrukt-home-backup -->
+### Home backup configuration
+
+`backup` is allowed in the global layer only; a project layer or company home
+never configures machine backup (`project/instrukt/spec/feature/runner/home-backup`).
+When absent, home backup is unconfigured and creates no scheduling or alerting
+demand.
+
+When present, `backup` declares:
+
+- `endpoint` — S3-compatible endpoint URL;
+- `region` — S3 region name;
+- `bucket` — target bucket name;
+- `prefix` — key prefix under which each computer stores its machine-ID
+  namespace;
+- `access_key_id` and `secret_access_key` — exact `${NAME}` secret references
+  resolved exclusively from the selected home's protected `secrets.env`
+  (`project/instrukt/spec/feature/configuration/owned-files`); literal
+  credentials are findings and expanded values are never disclosed in reads or
+  diagnostics;
+- `age_recipient` — valid public `age` recipient string for client-side
+  encryption;
+- `keep` — positive integer generation retention count (default declared by the
+  global schema);
+- `time` — daily local schedule time in `HH:MM` 24-hour form (default declared
+  by the global schema).
+
+A `backup` declaration in a project layer or company home, a missing required
+field, a literal credential instead of a `${NAME}` reference, an invalid `age`
+recipient, an invalid schedule time, a non-positive retention count, or an
+unknown subkey is a validation finding at `backup` naming the offending key
+(`project/instrukt/policy/checks-and-guards`: prerequisites are checked where
+configuration enters). `config patch` refuses a write that introduces such a
+finding, and `config validate --global` reports it without changing anything.
+Adding `backup` advances the global schema version with forward migration that
+preserves all existing global settings.
+<!-- /planned:instrukt-home-backup -->
+
 ### Layer rules
 
 | Key | Layer | Meaning owned by |
@@ -595,6 +633,18 @@ But when the declaration names a location outside the project's checkout
 Then validation reports that entry
 And the project is not admitted for reclaiming that output on the computer
 ```
+
+<!-- planned:instrukt-home-backup -->
+### UC-CL10: Configure machine home backup globally with protected credentials
+
+```gherkin
+Given an operator configures encrypted offsite home backup in the machine's global configuration using secret references stored in the machine's protected secrets file and a valid public encryption recipient
+When the operator validates or writes the global configuration
+Then the backup declaration is accepted and secret values remain undisclosed
+But when a project configuration or company home declares home backup, or the global declaration embeds literal credentials or an invalid recipient, schedule time or retention count
+Then validation reports the offending setting and configuration writes refuse it
+```
+<!-- /planned:instrukt-home-backup -->
 
 ## Known caveats
 

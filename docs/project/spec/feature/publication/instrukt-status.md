@@ -70,6 +70,21 @@ only current path availability, never running-session receipt or current bytes.
 An unavailable adapter reports `runtime_unreachable` and its cause rather than
 an empty configured list. These answers do not fail status or unrelated sections.
 
+<!-- planned:instrukt-home-backup -->
+### Backup status
+
+The report carries an additive `backup` section in both text output and
+`instrukt status --json`. It reads only this computer's configuration and local
+backup bookkeeping (`project/instrukt/spec/feature/runner/home-backup`) and
+never contacts remote object storage or acquires backup locks.
+
+- When home backup is not configured in the global layer, the section reports
+  that backup is unconfigured.
+- When home backup is configured, the section reports whether a run has been
+  recorded, the latest recorded status (success, failed, or stale), the last
+  backup timestamp, and the last published generation identifier when present.
+<!-- /planned:instrukt-home-backup -->
+
 ### Reading and failure
 
 - Except for the bounded instruction-target query, sections use what instrukt
@@ -131,6 +146,19 @@ When they read instrukt's status
 Then the report names the project that owns that domain
 And shows that this repository's publication of it would be refused
 ```
+
+<!-- planned:instrukt-home-backup -->
+### UC-IS5: See home backup standing in status without contacting remote storage
+
+```gherkin
+Given an operator's computer has home backup configured and local backup bookkeeping records the latest backup outcome
+When the operator or an agent reads instrukt's status in text or JSON form
+Then the report includes the additive backup section showing the recorded status, timestamp and published generation from local state alone
+And no remote object storage call is made and no home file is modified
+But when home backup is unconfigured or has not yet run
+Then the backup section reports that state clearly and status still succeeds
+```
+<!-- /planned:instrukt-home-backup -->
 
 ## Known caveats
 

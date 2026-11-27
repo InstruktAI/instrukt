@@ -61,6 +61,14 @@ except while its todo waits on a person
 (`project/instrukt/spec/feature/runner/session-continuity`).
 The finding persists until the workflow advances or the execution is released.
 
+<!-- planned:instrukt-home-backup -->
+When home backup records a failed run or a stale backup past its staleness
+threshold (`project/instrukt/spec/feature/runner/home-backup`), the runner
+raises an anomaly through `runner.notify` and lists it with its repair door in
+`instrukt events status`, whether or not a notification command is configured,
+until a subsequent backup succeeds (`project/instrukt/policy/checks-and-guards`).
+<!-- /planned:instrukt-home-backup -->
+
 ## Use cases
 
 ### UC-AN1: Notice a failed task that is not waiting in a conversation
