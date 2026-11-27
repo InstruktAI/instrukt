@@ -161,13 +161,22 @@ impl Recording {
     /// `stderr`, the commit's standard error, and leaves the commit
     /// unrecorded, waiting for a person.
     pub fn record(&self, home: &Home, root: &Path, env: &Env, stderr: &mut dyn Write) {
-        if let Err(cause) = self.try_record(home, root, env, stderr) {
-            report(
+        match self.try_record(home, root, env, stderr) {
+            Ok(()) => {}
+            Err(Unrecorded::Store(cause)) => report(
                 stderr,
+                Severity::Defect,
+                "knowledge_proposal_store_failed",
+                "the knowledge-proposal store could not record the commit, so it waits for a person",
+                &cause,
+            ),
+            Err(Unrecorded::Other(cause)) => report(
+                stderr,
+                Severity::Warning,
                 "knowledge_proposal_not_recorded",
                 "the commit is not recorded as a knowledge proposal and waits for a person",
                 &cause,
-            );
+            ),
         }
     }
 
@@ -177,17 +186,18 @@ impl Recording {
         root: &Path,
         env: &Env,
         stderr: &mut dyn Write,
-    ) -> Result<(), String> {
-        if !instrukt_core::publication::is_company_repository(root).map_err(|e| e.to_string())? {
+    ) -> Result<(), Unrecorded> {
+        let other = |error: &dyn std::fmt::Display| Unrecorded::Other(error.to_string());
+        if !instrukt_core::publication::is_company_repository(root).map_err(|e| other(&e))? {
             return Ok(());
         }
         let inspection = home.for_inspection();
-        let global = Configuration::load_global(&inspection).map_err(|e| e.to_string())?;
-        let Some(session) = global.caller(env).map_err(|e| e.to_string())? else {
+        let global = Configuration::load_global(&inspection).map_err(|e| other(&e))?;
+        let Some(session) = global.caller(env).map_err(|e| other(&e))? else {
             return Ok(());
         };
-        let identity = identity(root)?;
-        let adapter = (self.adapters)(global.runner_runtime().map_err(|e| e.to_string())?);
+        let identity = identity(root).map_err(Unrecorded::Other)?;
+        let adapter = (self.adapters)(global.runner_runtime().map_err(|e| other(&e))?);
         let first = Instant::now();
         let asked = loop {
             let answer = crate::conversations::speaker(&inspection, &session, adapter.as_ref());
@@ -208,7 +218,7 @@ impl Recording {
                 SpeakerDecision::Retry(cause) => break (None, Some(cause)),
             }
         };
-        let commit = head(root)?;
+        let commit = head(root).map_err(Unrecorded::Other)?;
         let entry = match asked {
             (Some(speaker), _) => Entry {
                 company: identity.key.clone(),
@@ -228,6 +238,7 @@ impl Recording {
                 let cause = cause.unwrap_or_default();
                 report(
                     stderr,
+                    Severity::Warning,
                     "knowledge_proposal_unestablished",
                     "the speaker of the committing turn could not be established, so the commit is recorded unestablished and waits for a person",
                     &cause,
@@ -251,6 +262,7 @@ impl Recording {
             Err(cause) => {
                 report(
                     stderr,
+                    Severity::Warning,
                     "knowledge_proposal_retirement_skipped",
                     "no recorded proposal was retired this time",
                     &cause,
@@ -258,8 +270,24 @@ impl Recording {
                 Vec::new()
             }
         };
-        _store::record(home, &entry, &retire).map_err(|e| e.to_string())
+        _store::record(home, &entry, &retire).map_err(|e| Unrecorded::Store(e.to_string()))
     }
+}
+
+/// Why a commit was left unrecorded.
+enum Unrecorded {
+    /// The local proposal store could not be opened or written: a defect of
+    /// the part, not an outage (`project/instrukt/spec/domain/company`).
+    Store(String),
+    /// Anything else the recording could not establish.
+    Other(String),
+}
+
+/// How a report is logged: a recoverable condition, or a defect to fix.
+#[derive(Clone, Copy)]
+enum Severity {
+    Warning,
+    Defect,
 }
 
 impl instrukt_core::interfaces::ProposalRecording for Recording {
@@ -271,8 +299,17 @@ impl instrukt_core::interfaces::ProposalRecording for Recording {
 /// Reports `summary`, fixed words, with its `cause` to the log under
 /// `event`, the cause as a field of its own, and as one line on the commit's
 /// standard error.
-fn report(stderr: &mut dyn Write, event: &'static str, summary: &'static str, cause: &str) {
-    tracing::warn!(event, cause, "{summary}");
+fn report(
+    stderr: &mut dyn Write,
+    severity: Severity,
+    event: &'static str,
+    summary: &'static str,
+    cause: &str,
+) {
+    match severity {
+        Severity::Warning => tracing::warn!(event, cause, "{summary}"),
+        Severity::Defect => tracing::error!(event, cause, "{summary}"),
+    }
     if let Err(error) = writeln!(stderr, "instrukt: {summary}: {cause}") {
         tracing::debug!(event = "knowledge_proposal_report_unwritten", error = %error);
     }
