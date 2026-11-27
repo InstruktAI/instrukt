@@ -31,7 +31,7 @@
       "UC-CL2": 2
     },
     "project/instrukt/spec/feature/configuration/roles-and-capabilities": {
-      "UC-RCAP1": 8,
+      "UC-RCAP1": 7,
       "UC-RCAP2": 9
     },
     "project/instrukt/spec/feature/docs/pending-documentation": {
@@ -84,9 +84,6 @@
       "UC-IN1": 2,
       "UC-IN2": 2,
       "UC-IN4": 2
-    },
-    "project/instrukt/spec/feature/runner/conversation-links": {
-      "UC-CL2": 8
     },
     "project/instrukt/spec/feature/runner/event-activation": {
       "UC-EA2": 3
@@ -164,14 +161,12 @@
       "UC-PSR7": 2
     },
     "project/instrukt/spec/feature/runner/session-continuity": {
-      "UC-SS1": 3,
       "UC-SS10": 3,
       "UC-SS13": 5,
-      "UC-SS17": 8,
+      "UC-SS17": 7,
       "UC-SS18": 2,
       "UC-SS20": 2,
-      "UC-SS3": 20,
-      "UC-SS5": 2
+      "UC-SS3": 19
     },
     "project/instrukt/spec/feature/runner/single-ingress-webhook-termination": {
       "UC-SIT-4": 2
@@ -181,7 +176,7 @@
       "UC-TT4": 4
     },
     "project/instrukt/spec/feature/runner/work-dispatch": {
-      "UC-RD1": 28,
+      "UC-RD1": 27,
       "UC-RD2": 2
     },
     "project/instrukt/spec/feature/specs/binding-reservation": {
@@ -196,27 +191,23 @@
       "UC-AP3": 2
     },
     "project/instrukt/spec/feature/work/dependencies-and-holds": {
-      "UC-DH1": 6,
+      "UC-DH1": 5,
       "UC-DH3": 5
     },
     "project/instrukt/spec/feature/work/eval-report": {
-      "UC-ER1": 4
+      "UC-ER1": 3
     },
     "project/instrukt/spec/feature/work/github-apps": {
       "UC-GA1": 8
     },
     "project/instrukt/spec/feature/work/github-record": {
       "UC-GR1": 4,
-      "UC-GR10": 3,
-      "UC-GR3": 2,
       "UC-GR5": 9,
       "UC-GR6": 2,
-      "UC-GR7": 3,
-      "UC-GR8": 6,
-      "UC-GR9": 3
+      "UC-GR8": 4
     },
     "project/instrukt/spec/feature/work/todos": {
-      "UC-TD2": 4,
+      "UC-TD2": 2,
       "UC-TD7": 2,
       "UC-TD8": 2
     },
@@ -229,8 +220,7 @@
       "UC-IG4": 4
     },
     "project/instrukt/spec/feature/workflow/preparation": {
-      "UC-PR1": 5,
-      "UC-PR2": 3
+      "UC-PR2": 2
     }
   }
 }

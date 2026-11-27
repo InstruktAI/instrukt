@@ -3,7 +3,7 @@
 //! it is written, reloaded or withdrawn by that name, under whichever service
 //! manager present holds it. Nothing records what was written, and anything
 //! under another name is never read or touched
-//! (`project/instrukt/policy/checks-and-guards`).
+//! (`project/instrukt/spec/feature/runner/module-installation`).
 use super::{Disposition, Report, Request, ResourceKind};
 use crate::install::{Scheduler, systemd_assignments};
 use crate::process::Invocation;

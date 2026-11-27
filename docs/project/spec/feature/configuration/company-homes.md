@@ -167,8 +167,8 @@ there. A missing prerequisite withholds the connector and is reported to the
 operator. `instrukt config validate --company <name>` reports local
 prerequisites. `instrukt events status` reports the runner's
 admission findings, including provider permission checks
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters, never discovered by the running runner):
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked at
+entry rather than discovered by the running runner):
 
 - a valid `role` (default `company-agent`) that is configured in `agents.yaml`
   or declared by a delivered published procedure on that computer, together with

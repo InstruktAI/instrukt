@@ -91,8 +91,8 @@ pub const SERVICE_FLAG: &str = "--service";
 /// A runner invocation could not run.
 #[derive(Debug, thiserror::Error)]
 pub enum RunnerError {
-    #[error(transparent)]
-    Links(#[from] crate::links::LinkError),
+    #[error("async runtime unavailable: {0}")]
+    AsyncRuntime(std::io::Error),
     #[error(transparent)]
     History(#[from] crate::history::HistoryError),
     #[error("conversations: {0}")]
@@ -369,10 +369,10 @@ pub fn run(
     let mut readers: Option<consumers::ConsumerWorkers> = None;
     let mut handover_pending = false;
     let mut history = crate::history::Readers::default();
-    // The relay serves links and, while a company declares a connector and
-    // conversations are on, the connector destination; the connections take
-    // the intake. Both report their unexpected end to this loop at once.
-    let (supervise, supervision) = std::sync::mpsc::sync_channel::<()>(8);
+    // The relay serves connected company conversations while a company
+    // declares a connector; the connections take the intake. Unexpected task
+    // exits wake this supervision loop at once.
+    let (supervise, mut supervision) = tokio::sync::mpsc::channel::<()>(8);
     if let Some(company) = &cx.wiring.company
         && let Err(error) = company.maintain_read_back(cx.home, clock())
     {
@@ -381,9 +381,9 @@ pub fn run(
     // The company is hosted when the admitted generation declares a
     // connector: its connections start first, building each connector kind
     // once; a setting a kind refuses stops the runner here. The relay then
-    // serves its conversations beside links.
+    // serves its company conversations.
     let company = cx.wiring.company.as_ref();
-    let (arrive, arrivals) = std::sync::mpsc::sync_channel::<()>(1);
+    let (arrive, arrivals) = tokio::sync::mpsc::channel::<()>(1);
     let mut connections = match company {
         Some(company) => Some(
             company
@@ -399,31 +399,34 @@ pub fn run(
         ),
         None => None,
     };
-    let destinations = company.map(|company| crate::links::Destinations {
+    let rt = instrukt_outside::runtime::runtime().map_err(RunnerError::AsyncRuntime)?;
+    let destinations = company.map(|company| crate::relay::Destinations {
         company: Arc::clone(company),
-        arrivals: Arc::new(std::sync::Mutex::new(arrivals)),
+        arrivals: Arc::new(tokio::sync::Mutex::new(arrivals)),
     });
-    // The relay retries T3 inside its own thread; it is started again here
-    // only when its thread ended.
-    let supervise_relay = |relay: &mut Option<crate::links::Worker>| {
-        if let Some(current) = relay.as_mut() {
-            match current.check() {
-                Ok(()) => return,
-                Err(error) => {
-                    crate::links::record_failure(cx.home, &error);
-                    *relay = None;
-                }
+    // The relay retries T3 inside its own async task; it is started again here
+    // only when its task ended.
+    let supervise_relay = |relay: &mut Option<crate::relay::Worker>| {
+        let Some(destinations) = destinations.clone() else {
+            return;
+        };
+        if let Some(current) = relay.as_ref() {
+            if current.is_running() {
+                return;
             }
+            tracing::warn!(
+                event = "conversation_relay_restarting",
+                "the conversation relay ended unexpectedly; starting it again"
+            );
+            *relay = None;
         }
-        match crate::links::Worker::start(
-            cx.home,
-            cx.env,
-            current.clone(),
-            destinations.clone(),
-            Some(supervise.clone()),
-        ) {
+        match crate::relay::Worker::start(cx.home, cx.env, current.clone(), destinations.clone()) {
             Ok(worker) => *relay = Some(worker),
-            Err(error) => crate::links::record_failure(cx.home, &error),
+            Err(error) => {
+                let cause = format!("conversation relay could not start: {error}");
+                tracing::error!(event = "conversation_source_failed", error = %cause);
+                destinations.company.relay_state(cx.home, Some(&cause));
+            }
         }
     };
     let mut relay = None;
@@ -548,39 +551,66 @@ pub fn run(
                 skipped = true;
             }
         }
-        // Wait for the interval, an activation wake-up, or a supervised
-        // worker's end, which is observed within a second.
-        // The interval passes in real time, or on the operator's clock when
-        // that has moved past it since the wake began.
-        let until = std::time::Instant::now() + interval;
+        // Wait for the interval (in real time, or on a file-overridden clock),
+        // an activation wake-up, or a supervised worker's end.
+        enum WaitEvent {
+            Wake,
+            Supervise,
+            RetryRelay,
+            ClockCheck,
+        }
+        let deadline = tokio::time::Instant::now() + interval;
         let interval_on_clock =
             jiff::SignedDuration::try_from(interval).unwrap_or(jiff::SignedDuration::MAX);
-        while std::time::Instant::now() < until
-            && clock().duration_since(woke_at) < interval_on_clock
+        let file_clock = cx
+            .env
+            .get("INSTRUKT_NOW")
+            .is_some_and(|value| value.starts_with('@'));
+        let mut wakeups_open = platform.is_some();
+        while clock().duration_since(woke_at) < interval_on_clock
+            && tokio::time::Instant::now() < deadline
         {
-            // Supervision runs each second, independently of the wake-up.
-            if supervision.try_recv().is_ok() || relay.is_none() {
-                supervise_relay(&mut relay);
-                if let Some(connections) = &mut connections {
-                    connections.check();
+            let retry_relay = company.is_some() && relay.is_none();
+            let event = rt.block_on(async {
+                tokio::select! {
+                    () = tokio::time::sleep_until(deadline) => WaitEvent::Wake,
+                    () = async {
+                        match relay.as_mut() {
+                            Some(worker) => worker.exited().await,
+                            None => std::future::pending().await,
+                        }
+                    }, if relay.is_some() => WaitEvent::RetryRelay,
+                    Some(()) = supervision.recv() => WaitEvent::Supervise,
+                    woken = async {
+                        match platform.as_mut() {
+                            Some(platform) => platform.wakeups.recv().await,
+                            None => std::future::pending().await,
+                        }
+                    }, if wakeups_open => match woken {
+                        Some(()) => WaitEvent::Wake,
+                        None => {
+                            wakeups_open = false;
+                            WaitEvent::ClockCheck
+                        }
+                    },
+                    () = tokio::time::sleep(Duration::from_secs(1)), if file_clock => {
+                        WaitEvent::ClockCheck
+                    }
+                    () = tokio::time::sleep(Duration::from_secs(1)), if retry_relay => {
+                        WaitEvent::RetryRelay
+                    }
                 }
-            }
-            let slice = (until - std::time::Instant::now()).min(Duration::from_secs(1));
-            let woken = platform.as_ref().and_then(|platform| {
-                platform
-                    .wakeups
-                    .lock()
-                    .ok()
-                    .map(|receiver| receiver.recv_timeout(slice))
             });
-            match woken {
-                Some(Ok(())) => break,
-                Some(Err(std::sync::mpsc::RecvTimeoutError::Timeout)) => {}
-                // No platform, or its wake-ups are gone: the interval alone
-                // wakes the loop.
-                Some(Err(std::sync::mpsc::RecvTimeoutError::Disconnected)) | None => {
-                    std::thread::sleep(slice)
+            match event {
+                WaitEvent::Wake => break,
+                WaitEvent::Supervise => {
+                    supervise_relay(&mut relay);
+                    if let Some(connections) = &mut connections {
+                        connections.check();
+                    }
                 }
+                WaitEvent::RetryRelay => supervise_relay(&mut relay),
+                WaitEvent::ClockCheck => {}
             }
         }
     }
@@ -692,7 +722,7 @@ fn retain(
 struct EventPlatform {
     transport: ScopedTransport,
     runtime: ConsumerRuntime,
-    wakeups: std::sync::Mutex<std::sync::mpsc::Receiver<()>>,
+    wakeups: tokio::sync::mpsc::Receiver<()>,
 }
 
 /// The event platform of an admitted generation: none while no event
@@ -708,7 +738,7 @@ fn event_platform(
     }
     let transport = ScopedTransport::from_config(admitted.global(), cx.env, state)?;
     let computer = instrukt_core::machine::machine_id(cx.home)?;
-    let (wakeup, wakeups) = std::sync::mpsc::sync_channel(1);
+    let (wakeup, wakeups) = tokio::sync::mpsc::channel(1);
     let runtime = ConsumerRuntime::new(
         state.clone(),
         transport.clone(),
@@ -718,7 +748,7 @@ fn event_platform(
     Ok(Some(EventPlatform {
         transport,
         runtime,
-        wakeups: std::sync::Mutex::new(wakeups),
+        wakeups,
     }))
 }
 

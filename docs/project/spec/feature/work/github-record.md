@@ -260,14 +260,11 @@ approver comments on the todo's issue:
 A comment from anyone else changes no work record and is answered on the
 issue.
 
-An applied approval or request-changes decision wakes the todo's current
-claim-holding orchestrator if that session is alive, with the as-soon-as-possible
-intent. The notice carries the decision, gate, reason when given, attribution
-and bound evidence. The decision and pending attention commit before runtime
-I/O; failed observation or delivery retains its cause and retries under
-`project/instrukt/spec/feature/runner/session-continuity`. With no live
-orchestrator it is only a state update: next pickup or a deliberate start
-continues from it. No approval event or second stamp-driven wake is emitted.
+An applied approval or request-changes decision and its pending attention
+commit together. The notice carries the decision, gate, reason when given,
+attribution and bound evidence. Delivery targets the session holding the
+claim and retries as specified by
+`project/instrukt/spec/feature/runner/session-continuity`.
 Re-reading an already applied comment neither reapplies the decision nor
 creates another notice. The decision stamp retains its source comment
 identity in the record. Its confirmation reply is retained with acceptance and
@@ -388,16 +385,13 @@ version is followed by the artifact's next version as usual.
 
 ### UC-GR7: A todo whose claim moves to a developer's computer is current when work starts
 
-### UC-GR8: Continue preparation after a GitHub decision
+### UC-GR8: Record a GitHub approval decision
 
 ```gherkin
-Given a developer has a current reviewed approval gate on a todo's GitHub issue
+Given a todo has current approval-gate evidence
 When an authorized approver submits an admissible approval or request-changes comment
-Then the decision is recorded with GitHub attribution and current evidence
-And its live claim-holding orchestrator receives the decision as soon as its runtime permits
-But when there is no live orchestrator
-Then only the record changes and the next pickup or deliberate start continues from it
-And replaying that comment creates no second decision notice
+Then the decision records GitHub attribution and current evidence
+And replaying the comment creates no second decision or notice
 ```
 
 ### UC-GR9: Control a todo's hold from its GitHub issue

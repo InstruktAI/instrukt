@@ -298,10 +298,32 @@ pub struct FakeSlack {
     threads: Vec<std::thread::JoinHandle<()>>,
 }
 
-fn form(body: &str) -> std::collections::BTreeMap<String, String> {
-    form_urlencoded::parse(body.as_bytes())
-        .into_owned()
-        .collect()
+fn parse_args(query: &str, body: &str) -> std::collections::BTreeMap<String, String> {
+    let mut map: std::collections::BTreeMap<String, String> =
+        form_urlencoded::parse(query.as_bytes())
+            .into_owned()
+            .collect();
+    let trimmed = body.trim();
+    if trimmed.starts_with('{') {
+        if let Ok(Value::Object(obj)) = serde_json::from_str::<Value>(trimmed) {
+            for (k, v) in obj {
+                match v {
+                    Value::Null => {}
+                    Value::String(s) => {
+                        map.insert(k, s);
+                    }
+                    other => {
+                        map.insert(k, other.to_string());
+                    }
+                }
+            }
+        }
+    } else if !trimmed.is_empty() {
+        for (k, v) in form_urlencoded::parse(trimmed.as_bytes()).into_owned() {
+            map.insert(k, v);
+        }
+    }
+    map
 }
 
 fn ts(value: &Value) -> f64 {
@@ -335,7 +357,9 @@ impl FakeSlack {
                     let stop = Arc::clone(&stop);
                     let socket_url = socket_url.clone();
                     std::thread::spawn(move || {
-                        let method = request.url().trim_start_matches("/api/").to_owned();
+                        let url = request.url().to_owned();
+                        let (raw_path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
+                        let method = raw_path.trim_start_matches("/api/").to_owned();
                         let token = request
                             .headers()
                             .iter()
@@ -344,6 +368,7 @@ impl FakeSlack {
                             .unwrap_or_default();
                         let mut body = String::new();
                         request.as_reader().read_to_string(&mut body).unwrap();
+                        let args = parse_args(query, &body);
                         // Held reads answer only once released.
                         let mut counted = false;
                         while method.starts_with("conversations.")
@@ -352,21 +377,24 @@ impl FakeSlack {
                                 workspace.hold_reads
                                     || (workspace.hold_later_history_pages
                                         && method == "conversations.history"
-                                        && body
-                                            .split('&')
-                                            .any(|field| field.starts_with("cursor=")))
+                                        && args.contains_key("cursor"))
                                     || (method == "conversations.history"
                                         && workspace.hold_read_back_channel.as_ref().is_some_and(
                                             |channel| {
-                                                body == format!("channel={channel}&limit=200")
+                                                args.get("channel").map(String::as_str)
+                                                    == Some(channel.as_str())
+                                                    && args.get("limit").map(String::as_str)
+                                                        == Some("200")
+                                                    && !args.contains_key("cursor")
+                                                    && !args.contains_key("oldest")
+                                                    && !args.contains_key("latest")
                                             },
                                         ))
                                     || workspace.hold_reads_from.iter().any(|oldest| {
-                                        body.split('&').any(|field| {
-                                            field.strip_prefix("oldest=") == Some(oldest)
-                                        }) && body
-                                            .split('&')
-                                            .any(|field| field == "latest=9999999999.999999")
+                                        args.get("oldest").map(String::as_str)
+                                            == Some(oldest.as_str())
+                                            && args.get("latest").map(String::as_str)
+                                                == Some("9999999999.999999")
                                     })
                             }
                             && !stop.load(Ordering::Acquire)
@@ -405,7 +433,6 @@ impl FakeSlack {
                                     w.limit_lookup.take()
                                 }
                             } else if method == "conversations.history" {
-                                let args = form(&body);
                                 let channel = args.get("channel").unwrap();
                                 let cursor = args.get("cursor").cloned();
                                 w.history_pages.push((channel.clone(), cursor.clone()));
@@ -449,13 +476,21 @@ impl FakeSlack {
                             {
                                 std::thread::sleep(Duration::from_millis(20));
                             }
-                            let _ = request.respond(tiny_http::Response::from_string(
-                                json!({"ok": false, "error": "not_in_channel"}).to_string(),
-                            ));
+                            let _ = request.respond(
+                                tiny_http::Response::from_string(
+                                    json!({"ok": false, "error": "not_in_channel"}).to_string(),
+                                )
+                                .with_header(
+                                    tiny_http::Header::from_bytes(
+                                        "Content-Type",
+                                        "application/json",
+                                    )
+                                    .unwrap(),
+                                ),
+                            );
                             return;
                         }
-                        let answer =
-                            Self::answer(&workspace, &socket_url, &method, &token, &form(&body));
+                        let answer = Self::answer(&workspace, &socket_url, &method, &token, &args);
                         // A held post is accepted, and its answer waits: the
                         // poster may be gone by the time it is sent.
                         if method == "chat.postMessage"
@@ -474,11 +509,22 @@ impl FakeSlack {
                             } else {
                                 answer
                             };
-                            let _ = request
-                                .respond(tiny_http::Response::from_string(response.to_string()));
+                            let _ = request.respond(
+                                tiny_http::Response::from_string(response.to_string()).with_header(
+                                    tiny_http::Header::from_bytes(
+                                        "Content-Type",
+                                        "application/json",
+                                    )
+                                    .unwrap(),
+                                ),
+                            );
                             return;
                         }
-                        let mut response = tiny_http::Response::from_string(answer.to_string());
+                        let mut response = tiny_http::Response::from_string(answer.to_string())
+                            .with_header(
+                                tiny_http::Header::from_bytes("Content-Type", "application/json")
+                                    .unwrap(),
+                            );
                         if method == "auth.test" {
                             let workspace = workspace.lock().unwrap();
                             let scopes = workspace.scope_header.as_deref().unwrap_or(

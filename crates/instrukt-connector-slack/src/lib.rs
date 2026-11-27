@@ -15,12 +15,14 @@ use instrukt_connector::{
     Declaration, Declared, DirectMessageError, DirectMessageReceipt, Earlier, Field, Inbox,
     Incoming, Kind, Place, RefusalReason, Rule, SecretResolver, Sender, Status,
 };
-use instrukt_outside::{Attempted, Gate, Settings, Tried, Wait};
+use instrukt_outside::{Gate, Wait};
 use jiff::Timestamp;
 use serde_json::Value;
+use slack_morphism::SlackApiToken;
+
+use crate::_api::Client;
 
 use crate::_manifest::{MANIFEST, manifest_bot_scopes};
-use crate::_outside::{Answered, Finding, answer_view, scope_finding, token_key, transport_view};
 
 /// The target every log statement of the connector carries: the module the
 /// host and Slack shared before the cut, so the same settings select it.
@@ -173,11 +175,11 @@ fn unavailable_cause(method: &str, cause: Option<&str>) -> String {
     }
 }
 
-fn uri(text: &str) -> Option<tungstenite::http::Uri> {
+fn uri(text: &str) -> Option<http::Uri> {
     text.parse().ok()
 }
 
-fn loopback(uri: &tungstenite::http::Uri) -> bool {
+fn loopback(uri: &http::Uri) -> bool {
     matches!(
         uri.host(),
         Some("127.0.0.1" | "localhost" | "::1" | "[::1]")
@@ -227,7 +229,7 @@ impl SlackEndpoint {
 
     /// Whether a Socket Mode address Slack offered may be connected to:
     /// one of Slack's TLS hosts, or the local stand-in's loopback address.
-    fn admits_socket(&self, url: &str) -> bool {
+    pub(crate) fn admits_socket(&self, url: &str) -> bool {
         let Some(parsed) = uri(url) else {
             return false;
         };
@@ -247,9 +249,10 @@ pub struct SlackApi {
     company: String,
     connector: String,
     endpoint: SlackEndpoint,
-    app_token: String,
-    bot_token: String,
-    agent: ureq::Agent,
+    app_token: SlackApiToken,
+    bot_token: SlackApiToken,
+    client: Arc<Client>,
+    admission_client: reqwest::Client,
 }
 
 /// A Slack message time (`<seconds>.<micros>`) as microseconds.
@@ -266,240 +269,6 @@ fn ts_time(ts: &str) -> Option<Timestamp> {
 
 fn message_ts(m: &Value) -> Option<i64> {
     m.get("ts").and_then(Value::as_str).and_then(ts_micros)
-}
-
-impl SlackApi {
-    /// The Web API of `(company, connector)`, with its two tokens.
-    fn new(
-        company: &str,
-        connector: &str,
-        endpoint: &SlackEndpoint,
-        app_token: String,
-        bot_token: String,
-    ) -> Self {
-        Self {
-            company: company.to_owned(),
-            connector: connector.to_owned(),
-            endpoint: endpoint.clone(),
-            app_token,
-            bot_token,
-            agent: ureq::Agent::config_builder()
-                .timeout_global(Some(WEB_API_TIMEOUT))
-                .http_status_as_error(false)
-                .build()
-                .into(),
-        }
-    }
-
-    fn call(&self, method: &str, app: bool, form: &[(&str, &str)]) -> Result<Value, SlackError> {
-        self.call_within(method, app, form, None)
-    }
-
-    /// One Web API call, taking at most `timeout` when given.
-    fn call_within(
-        &self,
-        method: &str,
-        app: bool,
-        form: &[(&str, &str)],
-        timeout: Option<Duration>,
-    ) -> Result<Value, SlackError> {
-        self.call_with_headers(method, app, form, timeout, None)
-            .map(|(body, _)| body)
-    }
-
-    /// One Web API call through the outside gate: inside a wait it answers
-    /// without a request; otherwise Slack's answer is judged once, by
-    /// Slack's rules and admission's `finding` before HTTP's own.
-    fn call_with_headers(
-        &self,
-        method: &str,
-        app: bool,
-        form: &[(&str, &str)],
-        timeout: Option<Duration>,
-        finding: Option<Finding<'_>>,
-    ) -> Result<Answered, SlackError> {
-        let key = token_key(&self.company, &self.connector, app).item(method);
-        let gate = &self.endpoint.gate;
-        let answered = gate.attempt(&key, &Settings::default(), || {
-            self.request(method, app, form, timeout, finding)
-        });
-        match answered {
-            Attempted::Done(answered) => Ok(answered),
-            Attempted::Defect(error) => Err(error),
-            Attempted::Wait { wait, error } => Err(SlackError::Unavailable {
-                method: method.into(),
-                cause: error.map(|error| match error {
-                    SlackError::Api { cause, .. } => cause,
-                    other => other.to_string(),
-                }),
-                wait,
-            }),
-        }
-    }
-
-    /// One request through the connector's own client, judged.
-    fn request(
-        &self,
-        method: &str,
-        app: bool,
-        form: &[(&str, &str)],
-        timeout: Option<Duration>,
-        finding: Option<Finding<'_>>,
-    ) -> Tried<Answered, SlackError> {
-        let token = if app {
-            &self.app_token
-        } else {
-            &self.bot_token
-        };
-        let mut request = self
-            .agent
-            .post(format!("{}/{method}", self.endpoint.api))
-            .header("Authorization", format!("Bearer {token}"));
-        if let Some(timeout) = timeout {
-            request = request.config().timeout_global(Some(timeout)).build();
-        }
-        let sent = request.send_form(form.iter().copied());
-        let received_at = self.endpoint.gate.now();
-        let mut response = match sent {
-            Ok(response) => response,
-            Err(error) => return transport_view(method, None, received_at, &error),
-        };
-        let status = response.status().as_u16();
-        match response.body_mut().read_to_string() {
-            Ok(text) => answer_view(
-                method,
-                status,
-                response.headers(),
-                received_at,
-                &text,
-                finding,
-            ),
-            Err(error) => transport_view(
-                method,
-                Some((status, response.headers())),
-                received_at,
-                &error,
-            ),
-        }
-    }
-
-    /// The Socket Mode address for a new connection.
-    fn connection_url(&self) -> Result<String, SlackError> {
-        let body = self.call("apps.connections.open", true, &[])?;
-        let url = body
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| SlackError::Api {
-                method: "apps.connections.open".into(),
-                cause: "no url".into(),
-            })?;
-        if !self.endpoint.admits_socket(url) {
-            return Err(SlackError::Socket);
-        }
-        Ok(url.to_owned())
-    }
-
-    /// The bot's own user and bot ids, to mark the agent's own posts, and
-    /// the workspace the app is installed in.
-    fn identity(&self) -> Result<Me, SlackError> {
-        let body = self.call("auth.test", false, &[])?;
-        let field = |name: &str| {
-            body.get(name)
-                .and_then(Value::as_str)
-                .filter(|id| !id.is_empty())
-                .map(str::to_owned)
-                .ok_or_else(|| SlackError::Api {
-                    method: "auth.test".into(),
-                    cause: format!("no {name}"),
-                })
-        };
-        Ok(Me {
-            user: field("user_id")?,
-            team: field("team_id")?,
-            bot: body
-                .get("bot_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-        })
-    }
-
-    /// Slack's record of the person `user`.
-    fn user(&self, user: &str) -> Result<Value, SlackError> {
-        let body = self.call("users.info", false, &[("user", user)])?;
-        body.get("user").cloned().ok_or_else(|| SlackError::Api {
-            method: "users.info".into(),
-            cause: "no user".into(),
-        })
-    }
-
-    /// Set Slack's status line on a conversation's thread, or clear it with
-    /// an empty `status`.
-    fn status(&self, channel: &str, thread: &str, status: &str) -> Result<(), SlackError> {
-        self.call_within(
-            "assistant.threads.setStatus",
-            false,
-            &[
-                ("channel_id", channel),
-                ("thread_ts", thread),
-                ("status", status),
-            ],
-            Some(STATUS_TIMEOUT),
-        )
-        .map(drop)
-    }
-
-    /// Post an answer into a conversation as the agent wrote it, as Markdown
-    /// Slack renders (`markdown_text`): its thread in a channel, or the
-    /// direct-message channel.
-    pub fn answer(&self, conversation: &str, markdown: &str) -> Result<AnswerReceipt, SlackError> {
-        let (channel, thread) = split_conversation(conversation);
-        let mut form = vec![("channel", channel), ("markdown_text", markdown)];
-        if let Some(thread) = thread {
-            form.push(("thread_ts", thread));
-        }
-        self.call("chat.postMessage", false, &form).map(|post| {
-            let id = post.get("ts").and_then(Value::as_str);
-            AnswerReceipt {
-                message_id: id.map(str::to_owned),
-                posted_at: id.and_then(ts_time),
-            }
-        })
-    }
-
-    /// Post `text` into a conversation: its thread in a channel, or the
-    /// direct-message channel.
-    pub fn post(&self, conversation: &str, text: &str) -> Result<(), SlackError> {
-        let (channel, thread) = split_conversation(conversation);
-        let mut form = vec![("channel", channel), ("text", text)];
-        if let Some(thread) = thread {
-            form.push(("thread_ts", thread));
-        }
-        self.call("chat.postMessage", false, &form).map(drop)
-    }
-
-    /// Post a private direct message directly to a user's Slack ID using `chat.postMessage`
-    /// (`chat:write` scope only, never `conversations.open`), tagged with `instrukt_private`
-    /// metadata so it is excluded from every context read.
-    pub fn post_private_dm(
-        &self,
-        recipient: &str,
-        text: &str,
-    ) -> Result<DirectMessageReceipt, SlackError> {
-        const PRIVATE_METADATA: &str = r#"{"event_type":"instrukt_private","event_payload":{}}"#;
-        let form = [
-            ("channel", recipient),
-            ("text", text),
-            ("metadata", PRIVATE_METADATA),
-        ];
-        self.call("chat.postMessage", false, &form)
-            .map(|post| DirectMessageReceipt {
-                channel: post
-                    .get("channel")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned),
-                message_id: post.get("ts").and_then(Value::as_str).map(str::to_owned),
-            })
-    }
 }
 
 /// Whether `message` carries Slack metadata `event_type: "instrukt_private"`,
@@ -606,7 +375,7 @@ struct Names<'a> {
     known: &'a Mutex<HashMap<String, String>>,
 }
 impl Names<'_> {
-    fn of(&mut self, user: &str) -> String {
+    async fn of(&mut self, user: &str) -> String {
         if let Some(name) = self
             .known
             .lock()
@@ -618,6 +387,7 @@ impl Names<'_> {
         let found = self
             .api
             .user(user)
+            .await
             .ok()
             .and_then(|record| name(&record))
             .unwrap_or_else(|| user.to_owned());
@@ -630,6 +400,40 @@ impl Names<'_> {
             known.insert(user.to_owned(), name.to_owned());
         }
     }
+}
+
+/// Collects every distinct Slack user id referenced in `text` (`<@U...>` or
+/// `<@U...|label>`) and `earlier` (`user` field + mentions in `text`).
+fn referenced_users<'a>(text: &'a str, earlier: &'a [Value]) -> Vec<&'a str> {
+    let mut seen = std::collections::HashSet::new();
+    let mut users = Vec::new();
+    let mut push = |id: &'a str| {
+        if !id.is_empty() && seen.insert(id) {
+            users.push(id);
+        }
+    };
+    fn scan_mentions<'a>(mut rest: &'a str, push: &mut impl FnMut(&'a str)) {
+        while let Some(start) = rest.find("<@") {
+            let after = &rest[start + 2..];
+            let Some(end) = after.find('>') else {
+                break;
+            };
+            let inner = &after[..end];
+            let user = inner.split('|').next().unwrap_or(inner);
+            push(user);
+            rest = &after[end + 1..];
+        }
+    }
+    scan_mentions(text, &mut push);
+    for m in earlier {
+        if let Some(user) = m.get("user").and_then(Value::as_str) {
+            push(user);
+        }
+        if let Some(body) = m.get("text").and_then(Value::as_str) {
+            scan_mentions(body, &mut push);
+        }
+    }
+    users
 }
 
 fn written_mentions(text: &str, mut name: impl FnMut(&str) -> String) -> String {
@@ -723,7 +527,8 @@ impl Kind for SlackKind {
             &self.endpoint,
             token("app_token")?,
             token("bot_token")?,
-        );
+        )
+        .map_err(slack_failed)?;
         Ok(Box::new(Slack {
             api,
             context_messages: declared
@@ -752,19 +557,19 @@ impl Slack {
     fn cached_identity(&self) -> Option<Me> {
         let identities = self.identities.lock().ok()?;
         let (token, me) = identities.get(&self.identity_key())?;
-        (token == &self.api.bot_token).then(|| me.clone())
+        (token == &self.api.bot_token.token_value.0).then(|| me.clone())
     }
 
     /// The bot's identity in its workspace, asked of Slack once for these
     /// tokens.
-    fn me(&self) -> Result<Me, SlackError> {
+    async fn me(&self) -> Result<Me, SlackError> {
         if let Some(me) = self.cached_identity() {
             return Ok(me);
         }
         let key = self.identity_key();
-        let me = self.api.identity()?;
+        let me = self.api.identity().await?;
         if let Ok(mut identities) = self.identities.lock() {
-            identities.insert(key, (self.api.bot_token.clone(), me.clone()));
+            identities.insert(key, (self.api.bot_token.token_value.0.clone(), me.clone()));
         }
         Ok(me)
     }
@@ -834,32 +639,30 @@ fn own_message(message: &Value, me: &Me) -> bool {
         || message["user"].as_str() == Some(me.user.as_str())
 }
 
+mod _api;
 mod _manifest;
 mod _outside;
 mod _socket_mode;
 mod read_back;
 
+#[async_trait::async_trait]
 impl Connector for Slack {
-    fn check_permissions(&self) -> Result<(), ConnectorError> {
+    async fn check_permissions(&self) -> Result<(), ConnectorError> {
         let required = manifest_bot_scopes().map_err(|error| {
             failed(format!(
                 "the Slack app manifest names no bot scopes: {error}"
             ))
         })?;
-        let finding = |reported: Option<&str>| scope_finding(&required, reported);
-        self.api
-            .call_with_headers("auth.test", false, &[], None, Some(&finding))
-            .map(drop)
-            .map_err(slack_failed)
+        self.api.check_scopes(&required).await.map_err(slack_failed)
     }
 
-    fn read_back_page(
+    async fn read_back_page(
         &self,
         from: Timestamp,
         position: Option<String>,
         gaps: &[instrukt_connector::ReadBackGap],
     ) -> Result<instrukt_connector::ReadBackPage, instrukt_connector::ReadBackError> {
-        self.history_page(from, position, gaps)
+        self.history_page(from, position, gaps).await
     }
 
     fn limits(&self) -> instrukt_connector::Limits {
@@ -869,19 +672,23 @@ impl Connector for Slack {
         }
     }
 
-    fn listen(&self, inbox: &dyn Inbox, quit: &dyn Fn() -> bool) -> Result<(), ConnectorError> {
-        _socket_mode::session(&self.api, inbox, quit)
+    async fn listen(
+        &self,
+        inbox: Arc<dyn Inbox>,
+        shutdown: tokio::sync::watch::Receiver<bool>,
+    ) -> Result<(), ConnectorError> {
+        _socket_mode::session(&self.api, inbox, shutdown).await
     }
 
     /// Slack's record of the sender read now decides: one of the company's
     /// own, or not. Slack answering that it shows the app no such user is
     /// not one of the company's own; every other failure decides nothing.
-    fn admit(&self, sender: &str) -> Admission {
-        let me = match self.me() {
+    async fn admit(&self, sender: &str) -> Admission {
+        let me = match self.me().await {
             Ok(me) => me,
             Err(error) => return undecided(error, ""),
         };
-        match self.api.user(sender) {
+        match self.api.user(sender).await {
             Ok(record) => match admission(&record, &me) {
                 Some(admitted) => {
                     self.names().remember(sender, &admitted.name);
@@ -898,17 +705,19 @@ impl Connector for Slack {
         }
     }
 
-    fn capture(
+    async fn capture(
         &self,
         conversation: &str,
         message: &str,
         text: &str,
         excluded: &std::collections::HashSet<String>,
-        readable: &dyn Fn(instrukt_connector::ContextSnapshot),
+        readable: &(dyn Fn(instrukt_connector::ContextSnapshot) + Send + Sync),
     ) -> Result<Captured, ConnectorError> {
         let limit = usize::try_from(self.context_messages).unwrap_or(usize::MAX);
         let (messages, stopped_early, complete_from) =
-            read_context(self, conversation, message, excluded, limit).map_err(slack_failed)?;
+            read_context(self, conversation, message, excluded, limit)
+                .await
+                .map_err(slack_failed)?;
         let messages = Arc::new(messages);
         let cached_messages = Arc::clone(&messages);
         let names = Arc::clone(&self.names);
@@ -929,22 +738,36 @@ impl Connector for Slack {
             captured.accompanying.complete_from = complete_from;
             captured
         }));
-        let me = me.or_else(|| self.me().ok());
+        let me = match me {
+            Some(me) => Some(me),
+            None => self.me().await.ok(),
+        };
         let mut names = self.names();
-        let mut captured = render_context(text, &messages, limit, me.as_ref(), &mut |user| {
-            names.of(user)
+        for user in referenced_users(text, &messages) {
+            let _ = names.of(user).await;
+        }
+        let mut captured = cached_names(&self.names, |lookup| {
+            render_context(text, &messages, limit, me.as_ref(), lookup)
         });
         let (channel, thread) = split_conversation(conversation);
-        captured.display = self
+        let info = self
             .api
-            .call("conversations.info", false, &[("channel", channel)])
-            .ok()
-            .and_then(|info| {
+            .read("conversations.info", &[("channel", channel)])
+            .await
+            .ok();
+        captured.display = match info {
+            Some(info) => {
                 let info = &info["channel"];
                 if thread.is_none() {
-                    let user = info["user"].as_str()?;
-                    let name = names.of(user);
-                    (name != user).then_some(instrukt_connector::ConversationDisplay::Direct(name))
+                    match info["user"].as_str() {
+                        Some(user) => {
+                            let resolved = names.of(user).await;
+                            (resolved != user).then_some(
+                                instrukt_connector::ConversationDisplay::Direct(resolved),
+                            )
+                        }
+                        None => None,
+                    }
                 } else {
                     info["name"]
                         .as_str()
@@ -953,41 +776,57 @@ impl Connector for Slack {
                             instrukt_connector::ConversationDisplay::Channel(name.to_owned())
                         })
                 }
-            });
+            }
+            None => None,
+        };
         captured.accompanying.stopped_early = stopped_early;
         captured.accompanying.complete_from = complete_from;
         Ok(captured)
     }
 
-    fn answer(&self, conversation: &str, part: &str) -> Result<AnswerReceipt, AnswerError> {
+    async fn answer(&self, conversation: &str, part: &str) -> Result<AnswerReceipt, AnswerError> {
         self.api
             .answer(conversation, part)
+            .await
             .map_err(|error| AnswerError {
                 cause: error.to_string(),
             })
     }
 
-    fn turn_away(&self, conversation: &str, reason: RefusalReason) -> Result<(), ConnectorError> {
+    async fn turn_away(
+        &self,
+        conversation: &str,
+        reason: RefusalReason,
+    ) -> Result<(), ConnectorError> {
         let text = match reason {
             RefusalReason::NotOwn => TURN_AWAY,
             RefusalReason::NotAdmin => TURN_AWAY_NOT_ADMIN,
         };
-        self.api.post(conversation, text).map_err(slack_failed)
-    }
-
-    fn unavailable_notice(&self, conversation: &str, member: &str) -> Result<(), ConnectorError> {
         self.api
-            .post(conversation, &format!("<@{member}> {NOTICE}"))
+            .post(conversation, text)
+            .await
             .map_err(slack_failed)
     }
 
-    fn direct_message(
+    async fn unavailable_notice(
+        &self,
+        conversation: &str,
+        member: &str,
+    ) -> Result<(), ConnectorError> {
+        self.api
+            .post(conversation, &format!("<@{member}> {NOTICE}"))
+            .await
+            .map_err(slack_failed)
+    }
+
+    async fn direct_message(
         &self,
         recipient: &str,
         text: &str,
     ) -> Result<DirectMessageReceipt, DirectMessageError> {
         self.api
             .post_private_dm(recipient, text)
+            .await
             .map_err(|error| match error {
                 SlackError::Unavailable { .. } => DirectMessageError::Retryable(error.to_string()),
                 other => DirectMessageError::Final(other.to_string()),
@@ -1002,7 +841,7 @@ impl Connector for Slack {
 
     /// The two fixed texts, the agent's own message as it wrote it, or an
     /// empty status, which clears it.
-    fn status(&self, place: &Place, state: Option<&Status>) -> Result<(), ConnectorError> {
+    async fn status(&self, place: &Place, state: Option<&Status>) -> Result<(), ConnectorError> {
         let text = match state {
             Some(Status::Working) => WORKING,
             Some(Status::Unavailable) => UNAVAILABLE,
@@ -1011,6 +850,7 @@ impl Connector for Slack {
         };
         self.api
             .status(&place.0, &place.1, text)
+            .await
             .map_err(slack_failed)
     }
 }
@@ -1018,7 +858,7 @@ impl Connector for Slack {
 /// History is newest first. Replies are oldest first within a time range,
 /// so visit recent ranges first and split a full range before trusting its
 /// first page to contain the most recent replies.
-fn read_context(
+async fn read_context(
     slack: &Slack,
     conversation: &str,
     message: &str,
@@ -1071,7 +911,7 @@ fn read_context(
         if let Some(cursor) = &cursor {
             args.push(("cursor", cursor));
         }
-        let body = slack.api.call(method, false, &args)?;
+        let body = slack.api.read(method, &args).await?;
         let page = body
             .get("messages")
             .and_then(Value::as_array)
@@ -1290,8 +1130,14 @@ mod tests {
             SlackEndpoint::from_lookup(&set, system())
         };
         let unset = lookup(HashMap::new());
-        assert!(SlackEndpoint::from_lookup(&unset, system()).is_ok_and(|e| !e.local));
-        assert!(at("http://127.0.0.1:9/api").is_ok_and(|e| e.local));
+        assert_eq!(
+            SlackEndpoint::from_lookup(&unset, system()).unwrap().api,
+            super::SLACK_API
+        );
+        assert_eq!(
+            at("http://127.0.0.1:9/api").unwrap().api,
+            "http://127.0.0.1:9/api"
+        );
         for refused in [
             "http://example.com/api",
             "https://slack.example/api",
@@ -1300,13 +1146,14 @@ mod tests {
         ] {
             assert!(at(refused).is_err(), "{refused}");
         }
-        let slack = SlackEndpoint::from_lookup(&unset, system()).unwrap();
-        assert!(slack.admits_socket("wss://wss-primary.slack.com/link/?ticket=1"));
-        assert!(!slack.admits_socket("ws://wss-primary.slack.com/link"));
-        assert!(!slack.admits_socket("wss://evil.example/link"));
+        let prod = SlackEndpoint::from_lookup(&unset, system()).unwrap();
+        assert!(prod.admits_socket("wss://wss-primary.slack.com/link/?ticket=abc"));
+        assert!(!prod.admits_socket("ws://wss-primary.slack.com/link/?ticket=abc"));
+        assert!(!prod.admits_socket("wss://evil.example/link/?ticket=abc"));
+        assert!(!prod.admits_socket("ws://127.0.0.1:9000/link"));
         let local = at("http://127.0.0.1:9/api").unwrap();
-        assert!(local.admits_socket("ws://127.0.0.1:10/"));
-        assert!(!local.admits_socket("ws://example.com/"));
+        assert!(local.admits_socket("ws://127.0.0.1:9000/link"));
+        assert!(!local.admits_socket("wss://wss-primary.slack.com/link/?ticket=abc"));
     }
 
     #[test]
@@ -1338,19 +1185,20 @@ mod tests {
     #[test]
     fn receive_carries_the_declared_connector_name() {
         use crate::_socket_mode::receive;
-        let envelope = json!({
-            "type": "events_api",
-            "payload": {
-                "event": {
-                    "type": "app_mention",
-                    "channel": "C1",
-                    "user": "U1",
-                    "text": "<@UAGENT> hello",
-                    "ts": "1700000001.000100"
-                }
-            }
+        let event = json!({
+            "type": "app_mention",
+            "channel": "C1",
+            "user": "U1",
+            "text": "<@UAGENT> hello",
+            "ts": "1700000001.000100"
         });
-        let incoming = receive("assistant-two", &me(), &envelope).unwrap().unwrap();
+        let incoming = receive(
+            "assistant-two",
+            &me(),
+            serde_json::from_value(event).unwrap(),
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(incoming.connector, "assistant-two");
         assert_eq!(incoming.conversation, "C1/1700000001.000100");
         assert_eq!(incoming.sender, "U1");

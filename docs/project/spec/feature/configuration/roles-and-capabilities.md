@@ -54,7 +54,7 @@ conversions. The file
 overrides everything it names
 (`project/instrukt/spec/feature/configuration/agent-selection`), and a
 person's stated choices and restrictions are migrated, never discarded
-(`project/instrukt/policy/checks-and-guards`); the conversion takes no value
+(`project/instrukt/spec/feature/configuration/owned-files`); the conversion takes no value
 from the shipped defaults. A file that holds both entries is refused with its
 source intact, naming both, until one is removed. A file that names neither
 entry takes the new version and no other change.
@@ -80,7 +80,7 @@ mapping; a missing mapping is a defect, never an unclassified bypass.
 | Work records | `todo-read`, `todo-write`, `bug-report` | Todos and bugs: `todo-read` is `todo list|show`, `bugs list` and `bugs suppressions`; `todo-write` is create, update, freeze, unfreeze, remove, reactivate and known-issue suppression writes, and creation addresses the containing project; `bug-report` is `bugs report`, with or without `--approved`, and addresses the project the report names (`project/instrukt/spec/feature/work/todos`); at `own` that is the assignment's project. |
 | Evidence | `artifact-read`, `artifact-write`, `stamp` | Todo artifacts and stamps: `todo artifacts list|read|diff`, `write`, and `todo stamp`; flag-specific phase/attempt checks remain with work. |
 | Orchestration | `todo-orchestration`, `assignment-write`, `integration` | `todo work`; `todo attempt|bind` and attempt failure/no-start resolution; confirmed delivery via `todo deliver`. Native delegation is outside this catalog. |
-| Session observation and binding | `session-observe`, `history-read`, `standing-bind`, `conversation-link` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. `discuss open|close` manage the caller's conversation link; opening/final messages use native send. These do not add a general session messaging API. |
+| Session observation and binding | `session-observe`, `history-read`, `standing-bind` | `sessions list`, extracted history search/read, `events bind` reservation/binding/no-start resolution. These do not add a general session messaging API. |
 | Agent availability | `agents-read`, `agents-write` | Runtime/profile/model availability: `agents list|availability`, `agents status`. |
 | Configuration | `config-read`, `config-write`, `secrets-write` | `config get|show|validate|schema`, `config init|patch`, protected `secrets set|generate`; agents-file role/bundle edits are configuration writes. Secrets are never exposed by read grants. |
 | Repository | `repository-read`, `repository-write`, `code-commit` | `hooks status`; `init`, `hooks install|remove`; `repo commit` in the assigned authoring workspace. Raw git is outside this catalog. |

@@ -19,21 +19,9 @@ branch protection.
 
 ### Candidate and verification
 
-The finalized candidate is the shared `<slug>/work` branch head carrying an
-independent reviewer's `build_review` `approve` stamp bound to that exact commit
-SHA and `--finalize-ready` under
-`project/instrukt/spec/feature/workflow/delivery-cycle`. The integrator reads
-that branch and stamped commit; it does not inherit a shared todo worktree.
-
-The integrator merges finalized candidates into its own integration worktree
-and pushes the resulting commit to `integrate`. It may batch
-candidates according to its judgment. A merge conflict remains work for the
-integrator to resolve before there is a candidate to verify.
-
-The integrator receives reviewed todo or one-off worktree heads. Main has no
-independent authoring commits to discover: only the integrator merges
-candidates, and publication goes live atomically at that integration. A
-dependent todo waits for delivery of the contracts it requires.
+The finalized candidate is the workspace commit identified by the exact-SHA
+approval, verification disposition and `--finalize-ready` stamp defined in
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
@@ -87,16 +75,7 @@ project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
 
-| Observed result | Integrator obligation |
-| --- | --- |
-| Required CI checks are green for the candidate | Fast-forward the canonical branch to that exact commit and push it. |
-| Candidate CI is red | Read the failure and choose the remediation: return it to the responsible todo as findings, make a trivial fix, or isolate the offending member of a batch. |
-| Verification has not completed or its result belongs to another commit | Keep the candidate unpromoted. |
-| The canonical branch no longer admits the verified fast-forward | Reconcile a candidate against the current canonical branch and obtain verification for the resulting commit. |
-
-Any candidate altered by remediation is verified in its resulting form before
-promotion. The standing integrator drives this process; an automatic merge
-queue does not select, merge or discard candidates on its behalf.
+CI evidence applies to the exact commit reported in the result.
 
 ### Review coverage of a candidate
 
@@ -203,15 +182,8 @@ never from a candidate: a canonical head carrying no status and no check run
 means the project has no CI. A just-pushed candidate with nothing reported yet
 is pending, not evidence of a project without CI.
 
-For a project without CI the integrator runs the project's documented test
-command in the integration worktree against the candidate. Success supplies
-the local admission evidence for that exact commit; failure remains with the
-integrator for judgment under the same remediation routes. An unavailable or
-failing command does not establish a green candidate.
-
-This local check is the integration gate. Builders, reviewers and the pure
-workflow evaluator do not add suite execution to their steps. Project-owned
-hooks and CI retain their own checks.
+A `no_ci` result identifies the exact candidate and the absence of CI
+evidence. Local verification outcomes apply to the commit tested.
 
 ### A company home's candidate
 
@@ -330,9 +302,7 @@ But a dirty checkout or non-fast-forward history is reported and preserved for r
 
 ### UC-IG5: Build after preparation contracts are published (retired)
 
-Retired: preparation and build share one `<slug>/work` worktree under the
-unified `todo-orchestrator`, with no separate `<slug>/prepare` integration
-handoff before build.
+Repository todos share one `<slug>/work` worktree.
 
 ### UC-IG6: A developer gets failed dependency updates assessed without watching every bot PR
 

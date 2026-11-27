@@ -949,13 +949,21 @@ pub fn native_launch_contract(root: &Path, project: &str) -> Result<Value> {
 fn project_title(id: &str) -> Result<Option<String>> {
     let port = descriptor_port(Path::new(&std::env::var("T3CODE_HOME")?))?;
     let mut token = Token::scoped(&["orchestration:read"])?;
-    let snapshot: Value = serde_json::from_str(
-        &ureq::get(format!("http://127.0.0.1:{port}/api/projects"))
-            .header("Authorization", &format!("Bearer {}", token.secret))
-            .call()?
-            .body_mut()
-            .read_to_string()?,
-    )?;
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        follow_redirects: false,
+        ..Default::default()
+    })?;
+    let url = format!("http://127.0.0.1:{port}/api/projects");
+    let bearer = format!("Bearer {}", token.secret);
+    let body = instrukt_outside::runtime::block_on(async move {
+        let resp = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer)
+            .send()
+            .await?;
+        resp.error_for_status()?.text().await
+    })??;
+    let snapshot: Value = serde_json::from_str(&body)?;
     token.revoke()?;
     Ok(snapshot["projects"]
         .as_array()

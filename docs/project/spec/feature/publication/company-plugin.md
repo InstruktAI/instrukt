@@ -139,7 +139,7 @@ characters the name holds, each file that carries it stays valid in its
 format. A repository without a company identity has configuration's finding,
 and a rendering, a check and a validation refuse with it and write nothing,
 as a missing prerequisite is refused where it enters
-(`project/instrukt/policy/checks-and-guards`).
+(`sdlc/principle/design-fundamentals`, Fail Fast).
 
 ### The catalog entry
 

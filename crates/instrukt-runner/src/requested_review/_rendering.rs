@@ -1,16 +1,15 @@
 //! The requested reviewer's assignment
 //! (`project/instrukt/spec/feature/runner/requested-review`, The reviewer's
 //! assignment): one fixed wording rendered from the admitted coordinates, as
-//! a runner-authored `[Instrukt Assignment]` control envelope
-//! (`project/instrukt/spec/feature/runner/conversation-links`). It holds
-//! nothing the requester composed: no requester identity, no timestamp, no
-//! other envelope.
+//! a runner-authored `[Instrukt Assignment]` control frame. It holds nothing
+//! the requester composed: no requester identity, no timestamp, no other
+//! envelope.
 
 use instrukt_core::config::REVIEW_PROCEDURE;
 use instrukt_core::ids::ProjectSlug;
 
 use super::_admission::Coordinates;
-use crate::envelopes::Control;
+use crate::control::Control;
 
 /// A rendering and its SHA-256 digest: the same coordinates always render
 /// the same text.

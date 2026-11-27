@@ -474,7 +474,7 @@ fn a_bug_filed_as_ordinary_work_is_sent_to_the_front_door() {
         }
         let refused = project.todo(args).failure().code(1);
         insta::allow_duplicates! {
-            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: a bug is not created as ordinary work: report it through the bug front door, `instrukt bugs report '<description>'`, which puts the questions to face before anything is filed");
+            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: bug records are created by `instrukt bugs report '<description>'`");
         }
     }
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");

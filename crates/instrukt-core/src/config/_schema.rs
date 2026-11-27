@@ -489,10 +489,13 @@ fn check_shape(
     match shape {
         Shape::Runtimes => match value.as_mapping() {
             Some(entries) => {
-                let fields: Vec<_> = super::_runtime::ACTIONS
+                let mut fields: Vec<_> = super::_runtime::ACTIONS
                     .iter()
                     .map(|(name, _)| (*name, Field::NonEmptyStr))
                     .collect();
+                // Retain compatibility for existing machine overrides that still
+                // carry the retired `discuss` runtime action key.
+                fields.push(("discuss", Field::NonEmptyStr));
                 for (name, entry) in entries {
                     check_record(entry, &join(path, &key_text(name)), &[], &fields, out);
                 }

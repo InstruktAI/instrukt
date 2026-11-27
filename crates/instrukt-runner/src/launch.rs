@@ -68,7 +68,12 @@ pub fn prepare(
     {
         let capabilities = instrukt_core::config::Agents::load(home)?.capabilities(role)?;
         let resolved = capabilities.describe();
-        message.push_str(&format!("\n{}", crate::envelopes::Control::Assignment.frame(&format!("Resolved role capabilities: {resolved}\nAssignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply."))));
+        message.push_str(&format!(
+            "\n{}",
+            crate::control::Control::Assignment.frame(&format!(
+                "Resolved role capabilities: {resolved}\nAssignment scope: the fixed todo, home and workspace evidence supplied with this assignment. Object claims, phase and writer constraints apply."
+            ))
+        ));
     }
     Ok(Launch {
         procedure: entry.id.clone(),
@@ -150,7 +155,7 @@ pub fn compose(
         text.push_str(brief.trim_end());
         text.push('\n');
     }
-    crate::envelopes::Control::Assignment.frame(&text)
+    crate::control::Control::Assignment.frame(&text)
 }
 
 #[cfg(test)]
