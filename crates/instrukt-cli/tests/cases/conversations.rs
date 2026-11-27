@@ -5579,6 +5579,16 @@ fn commit_in_turn(
     c.env.git(worktree, ["rev-parse", "HEAD"]).trim().to_owned()
 }
 
+/// The heads of the `event` facts a session's delivered inputs `log` carry,
+/// read from each delivery's JSON event envelope, in delivery order.
+fn delivered_heads(log: &str, event: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|envelope| envelope["type"] == event)
+        .filter_map(|envelope| envelope["data"]["head"].as_str().map(str::to_owned))
+        .collect()
+}
+
 /// The fake runtime's threads started for the procedure whose semantic key
 /// names `procedure`.
 fn threads_of(c: &Company, procedure: &str) -> Vec<String> {
@@ -5752,12 +5762,18 @@ fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_per
             .success();
         c.runtime.set_status(thread, "completed");
     };
-    let handed_over = |c: &Company| -> String {
+    // The heads `runner.proposal_approved` delivered to the integrator.
+    let handed_over = |c: &Company| -> Vec<String> {
         threads_of(c, "integrate")
             .iter()
-            .map(|thread| c.runtime.input_log(thread))
-            .collect::<Vec<_>>()
-            .join("\n")
+            .flat_map(|thread| {
+                delivered_heads(&c.runtime.input_log(thread), "runner.proposal_approved")
+            })
+            .collect()
+    };
+    // The heads whose review requests reached a reviewer thread.
+    let asked_of = |c: &Company, thread: &str| -> Vec<String> {
+        delivered_heads(&c.runtime.input_log(thread), "runner.review_needed")
     };
     let pulls_at = |head: &str| -> Vec<serde_json::Value> {
         github
@@ -5785,7 +5801,7 @@ fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_per
     let reviewer_of = |head: &str| {
         reviewers
             .iter()
-            .find(|thread| c.runtime.input_log(thread).contains(head))
+            .find(|thread| asked_of(&c, thread) == [head])
             .unwrap()
             .clone()
     };
@@ -5803,7 +5819,7 @@ fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_per
     // verdict yet.
     push(&c, "knowledge/pricing", &a2);
     tick(&mut c, 3);
-    assert!(c.runtime.input_log(&ra).contains(&a2));
+    assert_eq!(asked_of(&c, &ra), [a1.as_str(), a2.as_str()]);
     assert!(handed_over(&c).is_empty());
     record(&c, &ra, &a2, "approve");
 
@@ -5811,19 +5827,12 @@ fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_per
     // is not handed over.
     push(&c, "knowledge/pricing", &a3);
     tick(&mut c, 4);
-    assert!(c.runtime.input_log(&ra).contains(&a3));
+    assert_eq!(asked_of(&c, &ra), [a1.as_str(), a2.as_str(), a3.as_str()]);
     assert!(handed_over(&c).is_empty());
     record(&c, &ra, &a3, "approve");
 
     // Tick 5: the exact approved head reaches the integrator, and nothing
     // else does.
     tick(&mut c, 5);
-    let handoff = handed_over(&c);
-    assert!(
-        handoff.contains(&a3),
-        "the integrator receives A3: {handoff}"
-    );
-    for other in [&a1, &a2, &b, &settings_head] {
-        assert!(!handoff.contains(other.as_str()));
-    }
+    assert_eq!(handed_over(&c), [a3.as_str()]);
 }
