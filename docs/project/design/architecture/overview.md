@@ -136,7 +136,7 @@ Deleting the home is not a lossless reset.
 | `state/index.yaml` | the global index at schema version 3, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts (`project/instrukt/spec/domain/publication`); project entries resolve to the committed project store; every loader brings a version 2 index forward without dropping an entry, each delivered entry's source digest computed from its published file, an entry whose file cannot be read kept without one and named; the next sync persists version 3 | each project's `sync` |
 | `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
 | `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
-| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, conversation links and directional relay positions, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | the work record from GitHub by pull-through (unreflected writes are lost); operational runner state, authoritative object bindings and generation history must be preserved |
 | `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
 | `state/reflection.lock` | the per-computer lock serializing GitHub reflection across requests; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; local writers release the writer lock before acquiring it and current-schema local readers take neither lock; older-state readers first take the locked migration path | taken again by the next reflection |
 | `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released before the withdrawal's reflection | taken again by the next withdrawal |
@@ -456,29 +456,6 @@ conditions it observes in executions and an agent's raise through
 the end of an attention episode wakes it once so it can rest
 (`project/instrukt/spec/feature/runner/fleet-attention`).
 
-### Conversation links
-
-The runner's conversation aggregate and identity-envelope vocabulary live in
-`project/instrukt/spec/feature/runner/conversation-links`, indexed by its domain
-spec. General reading discipline is `general/policy/message-identity-headers`.
-The runtime adapter supplies read-only native conversation changes and target input; work owns
-only the existing state database's file, migrations and writer boundary. No
-additional bounded context or process is introduced.
-
-An independent reader in long-lived `instrukt run` follows each linked T3
-thread through the adapter's read-only conversation source, with per-conversation
-fingerprints and native database change notifications. The reader uses no T3
-session token and owns per-link positions independently of history. Runner
-admission and delivery use
-recorded assignments and native identities. Native turn completion releases
-recorded conversational content to the peer in identity envelopes. Link and
-per-direction progress commit in the existing database, outside native network
-waits; ordinary startup resumes retained positions. Relay failure is visible in
-`instrukt events status` and logs. This reader has no scheduled tick path. Besides
-native notifications it reads again when the source asks its readers to
-(`project/instrukt/spec/feature/runner/history`).
-Redis remains transport only.
-
 ### Event platform
 
 ```mermaid
@@ -715,11 +692,8 @@ the gate adds no webhook, queue or process.
   (`project/instrukt/spec/feature/work/state-database`).
 - **A runtime provider's dynamic option descriptor or effort vocabulary diverges from instrukt's offline per-kind mapping:** offline configuration validation (`project/instrukt/spec/feature/configuration/agent-selection`) and pure adapter effort translation (`project/instrukt/spec/feature/runner/session-continuity`) do not query live provider option descriptors. When an ACP or SDK provider advertises a different option identifier or a wider effort set than the static per-kind mapping carries, native delegation receives an invalid-request option rejection or configuration rejects the effort value until the per-kind mapping is updated; provider-free T3 contract checks (`project/instrukt/spec/feature/runner/t3-contract`) do not exercise live provider option descriptors.
 - **A turn's commit becomes readable after the read its notification triggered:**
-  that read finds nothing new and ends successfully, no native notification
-  follows, and the link shows neither a failure nor a pending handover for the
-  turn. Each reader then reaches the turn on its own trigger. Link relay reads
-  again when the source asks its readers to
-  (`project/instrukt/spec/feature/runner/conversation-links`). History
+  that read finds nothing new and ends successfully, and no native notification
+  follows. Each reader then reaches the turn on its own trigger. History
   extraction reads again on the requests it follows
   (`project/instrukt/spec/feature/runner/history`). A company conversation
   with outstanding work reads again on the company relay's own retry

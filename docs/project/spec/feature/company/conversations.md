@@ -105,7 +105,7 @@ path is the same for every connector, whichever channel it speaks to
   own publishes `company-agent`'s as `general/procedure/company-assistance`. The
   procedure is instrukt's and the knowledge is the company's; neither repeats
   the other.
-- The session's opening input is the runner-authored assignment envelope,
+- The session's opening input is the runner-authored assignment prompt,
   followed by the first addressed message's input. The assignment is the
   loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
   it names the procedure, the connector's role with its resolved grants, the
@@ -121,7 +121,7 @@ path is the same for every connector, whichever channel it speaks to
   `instrukt:conversation:<company>:<connector>` serves all admitted direct
   messages and channel threads of that `(company, connector)` serially. Every
   incoming turn delivered to a company-scoped session is preceded by a sanitized
-  control notification header naming the connector, opaque conversation ID,
+  turn-context header naming the connector, opaque conversation ID,
   direct-message flag, connector-supplied thread identifier (when threaded) and
   display label (when available), and authoritative speaker metadata (provider
   ID, email, administrator flag, and sanitized display name on separate fields),
@@ -217,12 +217,14 @@ the state-database spec.
   turn. Messages of one conversation are delivered in the order they were
   written, as far as they have arrived; a later one waits until the session's
   current turn has finished.
-- The input is platform-framed with the registered envelopes of
-  `project/instrukt/spec/feature/runner/conversation-links`: a conversation
-  context envelope carrying the accompanying earlier messages as data, each
+- The input is platform-framed with the company conversation envelopes owned by
+  `instrukt-company` (`general/policy/message-identity-headers`): a conversation
+  context envelope (`[Instrukt Conversation Context (boundary)]`) carrying the
+  accompanying earlier messages as data, each
   with its speaker and time and with the agent's own earlier posts marked as
   its own, and saying so when the connector left earlier messages out,
-  followed by a member envelope carrying the addressed message's text as the
+  followed by a member envelope (`[Member (... · boundary)]`) carrying the
+  addressed message's text as the
   connector supplies it, with connector, conversation, member, `admin`,
   `direct`, and time in its opening.
   Both carry the delivery's boundary token, so a line inside them that looks
@@ -264,8 +266,8 @@ gives.
   addressed message finishes, the agent's conversational output of that turn is
   posted to the conversation exactly as the agent wrote it, in parts where the
   connector's message size limit requires, in order. No secret value is
-  searched for or replaced in it. Tool calls, tool results, thinking and
-  control input are not posted. A bare `NOOP` posts nothing.
+  searched for or replaced in it. Tool calls, tool results, and thinking are
+  not posted.
 - Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
   turn output (and suppresses relaying raw turn text to the connector's status
   line, showing only the generic working or unavailable state) so internal
@@ -291,9 +293,9 @@ gives.
   delivers them with full retry and recovery. Its own output is the queued
   reply's summary (company, connector, conversation, turn and piece count),
   never the reply text.
-- The turn relay `instrukt run` already hosts does this: the same durable
-  conversation source, completed-turn evidence and retained positions as
-  conversation links. The relay advances its position in the transaction
+- The connected-conversation relay that `instrukt run` hosts does this, reading
+  durable conversation-source completed-turn evidence with retained positions.
+  The relay advances its position in the transaction
   that retains the answers it reads. Posting settles each retained piece
   separately through the protocol below. Retained answers can post while
   the conversation source is unreadable.
@@ -343,7 +345,7 @@ gives.
   agent, posts no turn output. In such a turn the agent posts only an explicit
   reply queued through `instrukt company reply`, under the admission above.
 - From the admission of an addressed message until it is complete — its
-  answer posted, or its turn completed successfully with a bare `NOOP` or blank
+  answer posted, or its turn completed successfully with blank
   output — the connector shows the message's state where the provider supports
   it. The state shows that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
@@ -408,7 +410,7 @@ open nothing. It starts, if not already open:
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it
 waits behind is observed running; when its answer is posted; or when its turn
-completes successfully with a bare `NOOP` or blank output. An answer to another
+completes successfully with blank output. An answer to another
 person, a read showing an idle, archived or absent session, an empty read and a
 refused attempt end nothing. A person's interval is the earliest among their
 unanswered messages. While the relay cannot acquire the conversation source,
@@ -740,7 +742,6 @@ Then that change is not admitted and waits for a person
 - [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/company/slack-connector](slack-connector.md)
-- [project/instrukt/spec/feature/runner/conversation-links](../runner/conversation-links.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
 - [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)

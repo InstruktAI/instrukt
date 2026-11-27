@@ -8,13 +8,13 @@ visibility: public
 
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the runtime adapter, operational
-session inspection, event-source translation, conversation links and time
+session inspection, event-source translation and time
 eligibility, including anomaly reporting. It executes the enabled modules' work
 in one process, entered through `instrukt run` or `instrukt tick` and woken by
-the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
-relay and, through hosting the company context implements, that context's
-connectors (`project/instrukt/spec/domain/company`); scheduled `tick` does
-neither. It has no consumer daemon beside the runner;
+the OS scheduler. The long-lived `instrukt run` also hosts, through hosting the
+company context implements, that context's connectors and connected-conversation
+answer relay (`project/instrukt/spec/domain/company`); scheduled `tick` does
+not. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
 A separate opt-in loopback webhook receiver accepts signed external events,
@@ -73,15 +73,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
   captures each generation and fixed native launch identity. Exact-key ownership
   admits one starter or deliverer at a time.
 
-**Conversation link**
-: A runner-owned relationship between two agent threads in which the human
-  participates from either thread and finished conversational turns reach the
-  peer with their original authorship.
-
-**Relay position**
-: Per-link directional source-stream and completed-delivery progress, retained
-  across ordinary runner restarts.
-
 **Due task**
 : A prepared, authorized task whose recorded schedule makes it eligible for
   execution at the observed time.
@@ -133,8 +124,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the admission, rendering and start of requested
   reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
-  runtime capability translation, conversation-link membership, identity-envelope
-  vocabulary and deterministic turn-end relay;
+  runtime capability translation;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   container each company's sessions run in on a host, its state, its tools,
@@ -147,7 +137,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
   import progress (`project/instrukt/spec/feature/runner/history`); the
@@ -339,19 +329,6 @@ responsibility is distinct from its configured role class.
   proves an actor gone). The standing-agent and procedure-event-delivery contracts own continuing
   home/subject responsibility and eligible event delivery; routing itself resolves no session.
 
-#### Conversation link
-
-- **Root entity:** One link between two runtime-scoped native threads.
-- **Contains:** Its two members, active/closed state, opening positions and
-  per-direction pending handover and accepted-delivery evidence.
-- **Invariants:** Admission, attribution, closure and turn eligibility are
-  owned by `project/instrukt/spec/feature/runner/conversation-links`. T3
-  transcripts supply content; transport positions confer no speaker authority.
-- **Lifecycle:** Opening establishes both directions; the long-lived runner
-  follows native completions, resumes retained progress on startup and stops
-  both directions when a member closes the link. State remains runner-owned
-  in the existing state database.
-
 #### Event activation
 
 - **Root entity:** An event's activation of a subscribed responsibility.
@@ -412,10 +389,7 @@ A project-local subscribed procedure reaches only that project's origin.
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
 A scheduled-only computer reacts to retained instrukt events on its next wake,
-within stream retention. Conversation relay is a separate native-thread reader
-in `instrukt run`, governed by
-`project/instrukt/spec/feature/runner/conversation-links`. Redis is transport
-only; it owns no conversation turns or link decisions.
+within stream retention.
 One consumer's slow handler or unavailable Redis does not block unrelated readers
 or local work. SQLite writer-lock ownership is limited to local write sections;
 network waits and reactions run outside it.
@@ -613,9 +587,6 @@ related references.
   chosen, refusing a feature the chosen runtime cannot carry, and native
   delegation with record-backed attempts. Archive search and agent-owned
   session ending are retired goals.
-- **Conversation links** — `project/instrukt/spec/feature/runner/conversation-links`
-  — hold a three-way conversation across two agent threads and close it for
-  everyone; includes the runner-owned identity-envelope vocabulary.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`

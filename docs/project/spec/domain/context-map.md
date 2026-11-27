@@ -31,7 +31,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
@@ -194,10 +194,6 @@ node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
-Conversation-link relay and its identity-envelope vocabulary belong to runner
-under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
-shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
-additional contexts.
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
