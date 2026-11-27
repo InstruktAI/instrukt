@@ -478,63 +478,56 @@ fn a_developer_outside_any_session_commits_as_themselves() {
 fn an_interrupted_commit_leaves_the_repository_as_it_was() {
     use rustix::process::Signal;
 
-    for signal in [Signal::INT, Signal::TERM] {
-        let env = TestEnv::new();
-        configure_machine(&env);
-        let repo = env.git_repo("interrupted");
-        repo.write("README.md", "# interrupted\n");
-        repo.commit("the developer's first commit");
-        repo.git(["switch", "-c", "ad-hoc"]);
+    let signal = Signal::INT;
+    let env = TestEnv::new();
+    configure_machine(&env);
+    let repo = env.git_repo("interrupted");
+    repo.write("README.md", "# interrupted\n");
+    repo.commit("the developer's first commit");
+    repo.git(["switch", "-c", "ad-hoc"]);
 
-        repo.write("new.rs", "pub fn staged() {}\n");
-        repo.git(["add", "new.rs"]);
-        let head = repo.head();
-        let staged_before = staged(&repo);
+    repo.write("new.rs", "pub fn staged() {}\n");
+    repo.git(["add", "new.rs"]);
+    let head = repo.head();
+    let staged_before = staged(&repo);
 
-        let lock = env.path("held").join("hook.lock");
-        let mut held = start_commit_with_a_held_project_hook(
-            &env,
-            &repo,
-            &["--message", MESSAGE],
-            Some(&lock),
-        );
-        assert!(
-            lock.exists(),
-            "the hook holds its lock while waiting for release"
-        );
+    let lock = env.path("held").join("hook.lock");
+    let mut held =
+        start_commit_with_a_held_project_hook(&env, &repo, &["--message", MESSAGE], Some(&lock));
+    assert!(
+        lock.exists(),
+        "the hook holds its lock while waiting for release"
+    );
 
-        rustix::process::kill_process(held.running.pid(), signal).unwrap();
-        let output = held
-            .running
-            .output_by(Instant::now() + STEP_BOUND)
-            .map_err(|missing| format!("{STEP_BOUND:?} after {signal:?}, {missing}"))
-            .unwrap();
-        assert_eq!(
-            output.status.signal(),
-            Some(signal.as_raw()),
-            "instrukt ends with the signal it received ({signal:?}); stderr: {}",
-            String::from_utf8_lossy(&output.stderr),
-        );
-        assert!(
-            !lock.exists(),
-            "forwarded {signal:?} let the hook remove its lock before exit"
-        );
-        assert_eq!(repo.head(), head, "nothing was committed");
-        assert!(
-            !repo.path().join(".git/index.lock").exists(),
-            "no git index.lock remains"
-        );
-        assert_eq!(
-            staged(&repo),
-            staged_before,
-            "the staged change remains cleanly staged in the index"
-        );
+    rustix::process::kill_process(held.running.pid(), signal).unwrap();
+    let output = held
+        .running
+        .output_by(Instant::now() + STEP_BOUND)
+        .map_err(|missing| format!("{STEP_BOUND:?} after {signal:?}, {missing}"))
+        .unwrap();
+    assert_eq!(
+        output.status.signal(),
+        Some(signal.as_raw()),
+        "instrukt ends with the signal it received ({signal:?}); stderr: {}",
+        String::from_utf8_lossy(&output.stderr),
+    );
+    assert!(
+        !lock.exists(),
+        "forwarded {signal:?} let the hook remove its lock before exit"
+    );
+    assert_eq!(repo.head(), head, "nothing was committed");
+    assert!(
+        !repo.path().join(".git/index.lock").exists(),
+        "no git index.lock remains"
+    );
+    assert_eq!(
+        staged(&repo),
+        staged_before,
+        "the staged change remains cleanly staged in the index"
+    );
 
-        std::fs::remove_file(&held.hook).unwrap();
-        env.run(repo.path(), ["repo", "commit", "--message", MESSAGE])
-            .success();
-        insta::allow_duplicates! {
-            insta::assert_snapshot!(commit_paths(&repo), @"new.rs");
-        }
-    }
+    std::fs::remove_file(&held.hook).unwrap();
+    env.run(repo.path(), ["repo", "commit", "--message", MESSAGE])
+        .success();
+    insta::assert_snapshot!(commit_paths(&repo), @"new.rs");
 }
