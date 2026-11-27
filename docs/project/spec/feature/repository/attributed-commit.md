@@ -102,6 +102,19 @@ And the commit records whether a human was involved as the developer declared
 
 Retired: no agent authors direct commits on main. Worktree-head review precedes integration.
 
+<!-- planned:fix-interrupted-commit-git-locks -->
+### UC-RC4: An interrupted commit leaves the repository as it was
+
+```gherkin
+Given an agent committing a new file with `--only` while the project's hook runs
+When the commit is stopped by an interrupt or termination signal
+Then nothing is committed
+And git holds no lock in the repository
+And the new file is unknown to the index again, as it was before the commit
+And the agent's next commit succeeds
+```
+<!-- /planned:fix-interrupted-commit-git-locks -->
+
 ## Known caveats
 
 - T3's caller lookup supplies a native session without verified provider-agent

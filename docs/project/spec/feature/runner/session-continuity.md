@@ -536,6 +536,15 @@ instrukt has no reap recorded.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 
+<!-- planned:fix-interrupted-commit-git-locks -->
+On SIGINT or SIGTERM, instrukt first passes the signal it received to each
+group, as a terminal passes it to the job in its foreground, so a command such
+as git releases what it holds before it ends. Whatever has not ended 5 seconds
+after the signal is then stopped. From the signal on, only this stop starts
+commands: the undo an operation registered for its own effects runs, no other
+command begins, and instrukt then ends with the signal.
+<!-- /planned:fix-interrupted-commit-git-locks -->
+
 ### T3 command translation
 
 Commands run on the computer hosting T3 and instrukt. `start` has no
