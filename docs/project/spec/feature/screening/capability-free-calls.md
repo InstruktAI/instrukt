@@ -49,9 +49,14 @@ beyond the prompt, and asks only for an answer of the declared shape within its
 size bound.
 
 A call is refused, and returns no answer, when no endpoint is configured, when
-the answer does not have the declared shape, or when the model stopped before
-finishing its answer because the size bound ran out. An answer is never
-repaired, truncated or partly returned.
+the answer does not have the declared shape, when the model stopped before
+finishing its answer because the size bound ran out, or when the endpoint
+rejects the request as one it cannot serve, such as one too large for the
+model. An answer is never repaired, truncated or partly returned. A failure
+that is neither an unavailable endpoint nor one of these, such as a malformed
+request or a client or protocol failure, is a defect
+(`project/instrukt/policy/checks-and-guards`): the call fails and returns no
+answer.
 
 ### The endpoint
 
@@ -65,8 +70,9 @@ An endpoint that reports or shows that it cannot serve the request now is
 unavailable, not a refusal: it cannot be reached, does not answer in time,
 limits the rate, has exhausted its quota or spend limit, is overloaded, answers
 with a server error, rejects the configured key or does not know the configured
-model. The call waits and instrukt, not the caller, tries it again, and the
-operator can see that it waits and why
+model. The call is `waiting`, a state in which it returns no outcome yet: the
+outside gate (`project/instrukt/design/architecture/outside-gate`), not the
+caller, tries it again, and the operator can see that it waits and why
 (`project/instrukt/policy/checks-and-guards`). The caller receives the
 eventual outcome without asking again.
 

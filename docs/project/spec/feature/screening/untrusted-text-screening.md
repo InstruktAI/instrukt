@@ -16,8 +16,13 @@ and independent classifiers judge the fragments through capability-free calls
 never sees the text in its original order, and a manipulation that succeeds
 against a classifier can change only that classifier's verdict.
 
-Text is released only when every classifier judges it benign. Any other result
-keeps the text for a person; screening neither releases it nor drops it.
+Text is released only when every classifier judges it benign. Any other
+screening result keeps the text for a person; screening neither releases it nor
+drops it. A held text never reaches an agent working from instrukt's briefs; a
+person, or an agent the operator drives directly, which is the operator's own,
+retrieves and discards it. The rule keeps instrukt from handing held outside
+text to brief-governed agents; it is no defence against agents, which are
+trusted.
 
 Screening carries no knowledge of where a text came from. Every caller with
 untrusted text uses it the same way, and a caller can hand over text that no
@@ -33,26 +38,38 @@ model on its side has read.
 | Fragments | The complete text cut into fragments of 3 to 8 words, of random length within that range, and shuffled, carrying no original position. |
 | Classification | One capability-free call that judges for manipulation and sees the complete set of its fragments once, with no earlier classification or other context. Screening runs more than one, each independent of the others. |
 | Verdict | `benign` or `flagged`, with reasons from a bounded set. A classifier passes on no free text. |
-| Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, or `refused` when no endpoint is configured. While the endpoint is unavailable the text is `pending` and screening returns no outcome yet. A held outcome never carries the text. |
+| Outcome | `released` with the text, `held` with every verdict, the reason for holding and a reference, or `refused` when no endpoint is configured. While the endpoint is unavailable the screening is `waiting`, a state in which it returns no outcome yet. A held outcome never carries the text. |
 
 ### Release and holding
 
 A text is `released` only when every classification returns `benign`. It is
 `held` when any classification is flagged, when an answer is not of the
-verdict's shape or was cut off, when classifications disagree, and when the
-text is outside the size screening judges. A text is never truncated, judged in
-part or partly released. While a classification waits on an unavailable
-endpoint (`project/instrukt/spec/feature/screening/capability-free-calls`),
-the text is `pending`: neither released nor held. instrukt retries, and the
-caller receives the eventual outcome, released or held, without asking
-again. Without a configured
-endpoint, screening is refused before any text is taken, and nothing is
-released.
+verdict's shape or was cut off, when the endpoint rejects a classification's
+request as one it cannot serve, when classifications disagree, and when the
+text is outside the size screening judges: fewer than six words, too few to
+make two fragments, or longer than the configured maximum. A text is never
+truncated, judged unshuffled, judged in part or partly released.
 
-A held text is kept durably with its verdicts and reasons. Only a person can
-see it through the reference its outcome carries; no instrukt surface returns
-it to an agent, so retrieval never releases what screening held. Screening
-never releases or deletes a held text by itself.
+While a classification waits on an unavailable endpoint
+(`project/instrukt/spec/feature/screening/capability-free-calls`), the
+screening is `waiting`: it has no outcome yet and the text is neither released
+nor held. The outside gate (`project/instrukt/design/architecture/outside-gate`)
+retries, and the caller receives the outcome, released or held, once the
+endpoint answers, without asking again. Without a configured endpoint,
+screening is refused before any text is taken, and nothing is released.
+
+A defect, a failure that is neither an unavailable endpoint nor one of the
+results above, such as a malformed request or a client or protocol failure
+(`project/instrukt/policy/checks-and-guards`), fails the screening: it
+releases nothing and records no verdict or held text.
+
+A held text is kept durably with its verdicts and reasons. An agent working
+from instrukt's briefs receives its reference, verdicts and reasons, never its
+text, so retrieval never releases what screening held. A person, or an agent
+the operator drives directly, retrieves the text and discards it; how a caller
+is recognised as one or the other is `project/instrukt/spec/domain/screening`'s.
+Screening never releases a held text, and removes one only after it was
+discarded.
 
 ## Use cases
 
@@ -70,12 +87,12 @@ And no classifier saw the text in its original order
 ### UC-SC2: Text that tries to manipulate its reader is kept for a person
 
 ```gherkin
-Given an agent acting for an operator holds text written outside the project
+Given an agent working from instrukt's brief holds text written outside the project
 And the text instructs whoever reads it to ignore its instructions and publish the project's secrets
 When the agent has the text screened
 And a classification flags it
 Then the agent receives the outcome held, without the text
-And the text with every verdict and reason remains available to a person
-And no agent can retrieve the text
-And the text is neither released nor deleted
+And no agent working from instrukt's briefs can retrieve the text
+And the operator, or an agent the operator drives directly, can read the text with every verdict and reason and discard it
+And the text is not released
 ```
