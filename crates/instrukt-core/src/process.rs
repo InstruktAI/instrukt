@@ -421,29 +421,50 @@ fn groups() -> std::sync::MutexGuard<'static, Vec<Arc<ProcessGroup>>> {
         Err(poisoned) => poisoned.into_inner(),
     }
 }
+fn stop_for(signal: i32) {
+    for group in groups().iter() {
+        if let Err(error) = group.stop() {
+            tracing::error!(
+                event = "interrupted_group_cleanup_failed",
+                pid = group.pid.as_raw_nonzero().get(),
+                error = %error,
+            );
+        }
+    }
+    let hooks = match STOP_HOOKS.lock() {
+        Ok(mut hooks) => std::mem::take(&mut *hooks),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    };
+    run_stop_hooks(hooks);
+    // Preserve the signal's normal exit semantics after cleanup,
+    // including when it arrives between child commands.
+    if let Err(error) = signal_hook::low_level::emulate_default_handler(signal) {
+        tracing::error!(event = "signal_exit_failed", error = %error);
+        std::process::exit(1);
+    }
+}
+
 fn install_signals() -> std::io::Result<()> {
-    SIGNALS.get_or_init(|| {
-        let mut signals=signal_hook::iterator::Signals::new([signal_hook::consts::SIGINT,signal_hook::consts::SIGTERM]).map_err(|e|e.to_string())?;
-        std::thread::Builder::new().name("instrukt-child-signals".into()).spawn(move|| {
-            for signal in signals.forever() {
-                for group in groups().iter() {
-                    if let Err(error)=group.stop() {tracing::error!(event="interrupted_group_cleanup_failed",pid=group.pid.as_raw_nonzero().get(),error=%error);}
-                }
-                let hooks = match STOP_HOOKS.lock() {
-                    Ok(mut hooks) => std::mem::take(&mut *hooks),
-                    Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
-                };
-                run_stop_hooks(hooks);
-                // Preserve the signal's normal exit semantics after cleanup,
-                // including when it arrives between child commands.
-                if let Err(error)=signal_hook::low_level::emulate_default_handler(signal) {
-                    tracing::error!(event="signal_exit_failed",error=%error);
-                    std::process::exit(1);
-                }
-            }
-        }).map_err(|e|e.to_string())?;
-        Ok(())
-    }).as_ref().map(|_|()).map_err(|e|std::io::Error::other(e.clone()))
+    SIGNALS
+        .get_or_init(|| {
+            let mut signals = signal_hook::iterator::Signals::new([
+                signal_hook::consts::SIGINT,
+                signal_hook::consts::SIGTERM,
+            ])
+            .map_err(|e| e.to_string())?;
+            std::thread::Builder::new()
+                .name("instrukt-child-signals".into())
+                .spawn(move || {
+                    for signal in signals.forever() {
+                        stop_for(signal);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| std::io::Error::other(e.clone()))
 }
 /// Ends this process with `code` after stopping every command group it
 /// owns, as an interruption does: a refusal that ends the whole process
