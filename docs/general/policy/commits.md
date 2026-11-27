@@ -1,8 +1,6 @@
 ---
 eval: true
-description: 'Worktree-only authoring (main has one writer: the integrator), committing
-  via `instrukt repo commit` with Commitizen format and provenance, commit-first autonomy,
-  and author-decided post-commit independent review routing.'
+description: 'Worktree-only authoring (`main` is integrator-only), `instrukt repo commit` (Commitizen + provenance), commit-first autonomy, and review routing.'
 visibility: public
 ---
 

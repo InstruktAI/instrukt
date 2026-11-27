@@ -1,9 +1,9 @@
 ---
-description: 'Guidelines for AI agents to retrieve relevant documentation snippets on demand.'
+description: 'Read role help first, load each domain once at entry, filter discovery, follow closures, and check consolidated third-party docs first.'
 visibility: 'public'
 ---
 
-# Context Retrieval Policy — Policy
+# Context Retrieval — Policy
 
 ## Rules
 

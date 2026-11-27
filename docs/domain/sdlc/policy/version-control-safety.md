@@ -6,6 +6,10 @@ visibility: 'public'
 
 # Version Control Safety — Policy
 
+## Required reads
+
+- [general/policy/shared-machine-resources](../../../general/policy/shared-machine-resources.md)
+
 ## Rules
 
 - Dirty `main` is allowed. Agents may continue work in files required by the active task.

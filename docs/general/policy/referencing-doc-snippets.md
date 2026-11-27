@@ -1,5 +1,5 @@
 ---
-description: 'Policy for referencing documentation snippets in AI agent prompts.'
+description: 'Name snippets by id, never path, in Required reads, See Also, and briefs; references run upward only.'
 visibility: 'public'
 ---
 

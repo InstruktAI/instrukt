@@ -1,5 +1,5 @@
 ---
-description: 'Parallelize independent work with clear briefs, model and reasoning choices suited to each task, and reconciliation.'
+description: 'Parallelize independent work with clear briefs, model and reasoning choices per task, and reconciliation.'
 visibility: 'public'
 ---
 

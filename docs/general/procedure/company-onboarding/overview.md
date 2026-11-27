@@ -1,6 +1,6 @@
 ---
-description: Onboard a company — take the intake, have instrukt generate the company's repository and its home on this computer, write its knowledge, connect the messaging its people talk in and the services its work runs on, hand its reviewed knowledge to its repository's integrator, and prove that a person of the company asks its agent and is answered; also the routes for connecting or repairing an onboarded company's services and for turning on software building for an onboarded company.
-activation_trigger: Use when a company is to be onboarded, when an onboarded company's setup is to be brought in line with this procedure or a step of it is to be found, when an onboarded company's services are to be connected or repaired, or when software building is to be turned on for an onboarded company.
+description: 'Onboard a company end-to-end (repo, home, knowledge, messaging, services, live proof).'
+activation_trigger: 'Onboarding a company, bringing an onboarded setup in line or finding one of its steps, connecting or repairing its services, or enabling software building.'
 role: company-operator
 visibility: public
 ---

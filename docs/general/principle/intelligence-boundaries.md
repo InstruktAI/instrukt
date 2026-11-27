@@ -1,5 +1,5 @@
 ---
-description: 'Prose is not code: a reader judges it against intent and it is never tested. Code that grades free text substitutes automation for judgment, and the impulse to build a validator is the warning sign.'
+description: 'Prose is judged by intelligence, not validators; code grading free text substitutes automation for judgment, and the impulse to build a validator is the warning sign.'
 visibility: 'public'
 ---
 

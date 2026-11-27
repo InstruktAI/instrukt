@@ -1,5 +1,5 @@
 ---
-description: 'The partnership matures by consolidating lessons into the platform itself; evolution is visible in artifact diffs, not in announcements.'
+description: 'Consolidate lessons into platform artifacts; evolution shows in diffs, not announcements.'
 visibility: 'public'
 ---
 

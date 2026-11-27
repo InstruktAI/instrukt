@@ -1,7 +1,5 @@
 ---
-description: Incorporate activation events delivered as soon as the runtime permits
-  by rechecking affected assumptions and accounting for the current and newly supplied
-  work.
+description: 'Incorporate activation events delivered as soon as the runtime permits by rechecking affected assumptions and accounting for current and newly supplied work.'
 ---
 
 # Interruptible Event Handling — Procedure
