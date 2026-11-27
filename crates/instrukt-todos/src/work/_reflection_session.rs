@@ -234,11 +234,14 @@ impl<'w> ReflectionSession<'w> {
             })();
             match board_result {
                 Ok(board) => (board, None),
-                Err(WorkError::GitHub(gh_error)) if gh_error.is_reach() => {
-                    self.note(gh_error);
-                    (None, None)
-                }
                 Err(error) => {
+                    if let WorkError::GitHub(
+                        gh_error @ (GitHubError::RateLimited { .. }
+                        | GitHubError::App(github::AppError::RateLimited { .. })),
+                    ) = &error
+                    {
+                        self.note(gh_error.clone());
+                    }
                     tracing::warn!(event="work_board_setup_pending", error=%error);
                     (None, Some(error.to_string()))
                 }

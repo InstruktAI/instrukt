@@ -1,7 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1864
-expression: redact(&pending)
+assertion_line: 1906
+expression: "redact(&format!(\"{pending}---\\n{after_unauthorized}\"))"
 ---
 retry-views · bug · active
 identity: <id 1>
@@ -17,5 +17,24 @@ hold: none
 artifacts:
   input (1 version)
     <digest 1> by Test Developer at <time>
+stamps:
+  none
+---
+retry-views · bug · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 2
+intent:
+  Keep the cockpit retryable.
+reflection: pending: GitHub: GitHub refused the credentials (401)
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+  log (1 version)
+    <digest 2> by Test Developer at <time>
 stamps:
   none
