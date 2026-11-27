@@ -109,6 +109,19 @@ pub fn wait(what: &str, condition: impl FnMut() -> bool) {
     common::wait_until(what, Duration::from_secs(45), condition);
 }
 
+/// Waits until the runner has recorded `session` as its conversation's:
+/// its start is done and the turn under way. The assignment itself answers
+/// from the binding made before the start.
+pub fn wait_for_binding(env: &TestEnv, session: &str) {
+    let state = instrukt_core::home::Home::at_user_home(env.home().into());
+    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
+    wait("the session's recorded binding", || {
+        instrukt_company::conversations::conversation_binding(&state, &caller)
+            .unwrap()
+            .is_some()
+    });
+}
+
 /// The paths of the files process `pid` holds open, as the operating system
 /// names them. A listing that cannot be made fails the test; it is never
 /// taken as an empty one.

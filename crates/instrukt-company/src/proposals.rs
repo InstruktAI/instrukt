@@ -299,7 +299,7 @@ fn branch(root: &Path) -> Option<String> {
 /// The remote-tracking canonical branch, when the repository has fetched
 /// one.
 fn canonical(root: &Path) -> Result<Option<String>, String> {
-    let branch = instrukt_core::github::default_branch(root).map_err(|e| e.to_string())?;
+    let branch = git::default_branch(root, REMOTE).map_err(|e| e.to_string())?;
     let reference = format!("refs/remotes/{REMOTE}/{branch}");
     let exists = git::succeeds(
         root,

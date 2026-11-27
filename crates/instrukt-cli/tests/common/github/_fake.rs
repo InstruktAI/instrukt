@@ -668,6 +668,19 @@ impl FakeGitHub {
             .collect()
     }
 
+    /// Every pull request of `repo` as `GET /pulls/{n}` shows it, oldest
+    /// first.
+    pub fn pulls(&self, repo: &str) -> Vec<Value> {
+        let mut state = self.lock();
+        let base = state.base.clone();
+        let r = state.repo(repo);
+        let numbers: Vec<u64> = r.issues.keys().copied().collect();
+        numbers
+            .into_iter()
+            .filter_map(|n| r.pull_json(&base, repo, n))
+            .collect()
+    }
+
     /// An issue's comments, oldest first.
     pub fn comments(&self, repo: &str, number: u64) -> Vec<Value> {
         let mut state = self.lock();

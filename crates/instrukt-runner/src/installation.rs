@@ -5,6 +5,7 @@
 mod _demand;
 pub(crate) mod _launch;
 mod _package;
+mod _proposals;
 mod _redis;
 mod _services;
 use crate::install::{Scheduler, WakeUp};
@@ -514,6 +515,10 @@ fn admission_findings(request: &Request<'_>, report: &mut Report) {
             );
         }
     }
+    // The proposal pull-request credential is checked where it enters, on
+    // install and on its check alike, for every company home admitted for
+    // automatic review.
+    _proposals::readiness(request, &candidate, report);
     if !request.check {
         return;
     }
@@ -999,6 +1004,9 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
         ));
     }
     let mut report = Report::default();
+    if let Ok(candidate) = &candidate {
+        _proposals::findings(request, candidate, &mut report);
+    }
     let demand = _demand::read(request.home, request.cwd, &mut report)
         .map_err(|e| InstallationError::Demand(e.to_string()))?;
     let infrastructure = converge(&Request {
