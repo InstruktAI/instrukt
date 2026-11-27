@@ -50,10 +50,28 @@ meaning and the writes of the conversation tables.
   (`project/instrukt/spec/feature/runner/requested-review`, Requested review
   records).
 
+<!-- planned:runner-background-writes-isolated -->
+
+- **Runner background worker failures and Redis reachability stay outside it:**
+  per-worker failure files live under `state/runner-workers/` (beside
+  `state/computer-fleet.json`) and per-Redis reachability records live under
+  `state/redis-reachability/`, each isolated from `state/writer.lock`
+  (`project/instrukt/spec/domain/runner`, Runner background state).
+
+<!-- /planned:runner-background-writes-isolated -->
+
+<!-- planned-change:runner-background-writes-isolated -->
 
 - **No file stores:** the work record and the runner's state have no other
   home. Directories left by earlier builds (`state/work/`, `state/runner/`)
   are neither read nor migrated.
+
+<!-- change:runner-background-writes-isolated -->
+
+- **No legacy file stores:** directories left by earlier builds
+  (`state/work/`, `state/runner/`) are neither read nor migrated.
+
+<!-- /planned-change:runner-background-writes-isolated -->
 
 ### Writing
 
@@ -261,6 +279,18 @@ the todos a computer's worktrees and work branches name, and their records,
 are read without reading the rest of the record
 (`project/instrukt/spec/feature/runner/worktree-reclamation`). It changes no
 table, column or row.
+
+<!-- planned:runner-background-writes-isolated -->
+
+Version 41 drops `runner_workers` and `redis_reachability`, now that runner
+worker failures live in `state/runner-workers/` and per-Redis reachability
+records live in `state/redis-reachability/` outside this database and its
+writer lock (`project/instrukt/spec/domain/runner`). Every work, runner and
+conversation row in the remaining tables is kept; any active failure or
+reachability state is recorded again by the next worker pass or Redis
+operation.
+
+<!-- /planned:runner-background-writes-isolated -->
 
 ### Work tables
 
@@ -674,11 +704,25 @@ parking coordinates, outcomes, cursors, failures and confirmation booleans. The
 same normalization applies to in-progress parking records before consumption.
 Old open announcements get no final replay. The former recovery cursor is inert.
 
+<!-- planned-change:runner-background-writes-isolated -->
+
 **`runner_workers`** — current worker failures, deferred consumer source
 transitions and keyed-start findings. A keyed-start finding keeps its first
 observation on the operator clock and is cleared when reconciliation ends it.
 The process remembers which runtime keys it has notified during its lifetime. Each deferred transition retains its first reported time across
 retries. Completing the transition removes the row.
+
+<!-- change:runner-background-writes-isolated -->
+
+**Worker failures and Redis reachability** — not stored in this database
+(dropped in version 41). Runner worker failures, deferred consumer source
+transitions and keyed-start findings live in per-worker state files under
+`state/runner-workers/` (beside `state/computer-fleet.json`), and per-Redis
+reachability records live under `state/redis-reachability/`, outside
+`state/writer.lock` (`project/instrukt/spec/domain/runner`, Runner background
+state).
+
+<!-- /planned-change:runner-background-writes-isolated -->
 
 Redis itself owns stream payloads, group pending entries, transport progress,
 source-scoped ingress claims and dead letters. These are not alternate work
@@ -1134,6 +1178,8 @@ Seen identities retire after 30 days. Missed records within that period keep
 the written time and provider link. They carry no message text. The active
 page holds text only until intake and the scan checkpoint commit.
 
+<!-- planned-change:runner-background-writes-isolated -->
+
 **`runner_workers`** — one row per background worker of the runner: the history
 workers (extraction, query responder) and the readiness refresh (`readiness`,
 which keeps the runtime's provider snapshot current,
@@ -1145,6 +1191,10 @@ the history rows while history is on, `readiness` while the runner runs with a
 runtime that reports provider facts. The computer fleet's evaluation responder
 keeps its failure outside this database, in its own failure file
 (`project/instrukt/spec/domain/runner`).
+
+<!-- change:runner-background-writes-isolated -->
+
+<!-- /planned-change:runner-background-writes-isolated -->
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again

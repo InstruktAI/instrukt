@@ -125,6 +125,8 @@ work record's only copy, and GitHub shows it to people without holding it.
 Deleting the home is not a lossless reset.
 
 
+<!-- planned-change:runner-background-writes-isolated -->
+
 | Path | Holds | Re-created from |
 | --- | --- | --- |
 | `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
@@ -154,6 +156,41 @@ Deleting the home is not a lossless reset.
 | `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
 | `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
 
+<!-- change:runner-background-writes-isolated -->
+
+| Path | Holds | Re-created from |
+| --- | --- | --- |
+| `instrukt.yaml` | the global configuration layer (runtime choice, App public profiles and fallback identity, non-bot git authors, module switches, runner settings) | the user |
+| `agents.yaml` | the user's overrides of the shipped role map (class, scoped `can` bundles, model order/tier, App references) and provider-instance tier chains; optional | the user; the defaults are in the program (`project/instrukt/spec/feature/configuration/agent-selection`) |
+| `secrets.env` | one owner-only machine-local source for all instrukt secrets, read by every path | protected secrets commands; model-provider keys remain with T3 |
+| `companies/<name>/company.yaml`, `companies/<name>/secrets.env` | a company home: the company's own settings document and its own owner-only secrets, beside the checkout of the company's repository whose committed `instrukt.yaml` is that repository's project layer (`project/instrukt/spec/feature/configuration/company-homes`) | the user; the checkout from the company's repository |
+| `docs/general/`, `docs/<x>/`, `docs/project/<slug>/` | the published positions: snippets, `index.yaml` and `schema.yaml` when present, a domain's `workflow/` flavor files, and under `_compressed/` the compressed units the position's sources have, at each source's path relative to the position | the owning project's committed main, by `sync` |
+| `state/index.yaml` | the global index at schema version 3, every entry carrying its owning project, published-file location and source checkout provenance, and its lineage facts (`project/instrukt/spec/domain/publication`); project entries resolve to the committed project store; every loader brings a version 2 index forward without dropping an entry, each delivered entry's source digest computed from its published file, an entry whose file cannot be read kept without one and named; the next sync persists version 3 | each project's `sync` |
+| `state/publication/` | the ownership record (the one owner of each published position); per project, the commit last published and its checkout path; no record of the files a sync wrote outside the home | `sync` |
+| `state/hook-runs/<repository>/` | each hook section's last run outcome for one repository, shared by all its worktrees: the folder is named by a digest of the repository's git common directory, and each record names the repository's path; shown by `instrukt hooks status` | the next hook run |
+| `state/instrukt.db` | the state database (SQLite, WAL; `-wal` and `-shm` beside it): the local work record — todos and their status, artifacts and their reflection state, approvals, stamps, session bindings, pending and confirmed GitHub revisions, last known copies of the todos held elsewhere — and the runner's state — the event log with consumer cursors and handled marks, conditional-request validators, watched-ref observations, dispatched executions, authoritative object bindings and generation history, pending delivery targets and per-key locks, held task failures and the last wake-up; schema in `project/instrukt/spec/feature/work/state-database` | nothing for the work record (no other copy exists; must be preserved); operational runner state, authoritative object bindings and generation history must be preserved |
+| `state/writer.lock` | the per-computer writer lock (the database's write-isolation unit), held for each local state-database write transaction, including migration before an older-state read, and, while earlier history is moved out of the database, in one hold across the removal of the copied tables and the reclamation of their space, which is not a transaction and lasts as long as the freed space and the remaining data need; current-schema readers, network waits and reactions run outside it | taken again by the next writer |
+| `state/reflection.lock` | the per-computer lock serializing the runner's GitHub reflection passes; it briefly takes the writer lock for each local commit of what reflection learned, always in reflection → writer order; todo commands and current-schema local readers never acquire it; older-state readers first take the locked migration path | taken again by the next reflection |
+| `state/withdrawal.lock` | the per-computer lock a withdrawal command holds from before it records or resumes its intent (`withdrawal_intents`) until it closes it or returns, across its git and filesystem release and outside the writer lock, so a recorded intent no command holds is told apart from one in progress; an intent a refusal keeps stays recorded after the command releases the lock; taken before the writer lock and released when the withdrawal finishes | taken again by the next withdrawal |
+| `state/delivered-release.lock` | the per-computer lock work holds while it releases a delivered todo's worktree and work branch; taken without waiting and by no command (`project/instrukt/spec/feature/work/todos`) | taken again by the next release |
+| `state/company-generation/<key>/` | a company home adoption under way: the creation intent naming the owning organisation, the repository, the company's name and its GitHub administrator, written once its prerequisites are checked and before anything on GitHub is changed; the staging checkouts holding the new repository's root commit and the home's clone before it moves into place (`project/instrukt/spec/domain/repository`) | must be preserved while it exists: the next `instrukt init --company <key>` resumes it, and removes it once the home is in place |
+| `state/company-generation.lock` | the lock under which company home adoptions take turns, held for one run of `instrukt init --company` across its GitHub calls and git transfers | taken again by the next adoption |
+| `state/history.db` | the history store (SQLite, WAL; `-wal` and `-shm` beside it): retained conversations with their documents, their messages and the full-text index over titles and message text, and each source's extraction position; schema in `project/instrukt/spec/feature/runner/history` | must be preserved: only conversations still held by a source can be extracted again |
+| `state/history.lock` | the history store's write-isolation unit, held for each history write — a catch-up section, bringing a store of an earlier schema version forward and reclaiming the space that freed, which a reader that finds such a store does before it reads, or moving earlier history out of the state database. Once that move is recorded complete no history read or write takes the writer lock; the move alone takes it, to bring the state database to its current schema or create it and to remove the copied tables and reclaim their space | taken again by the next history write |
+| `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
+| `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
+| `state/computer-fleet.json` | the computer fleet's current failure on this computer, `{failure, since}`, written whole beside its previous version and renamed over it by `instrukt run`'s evaluation responder or `instrukt tick`'s fleet step while a failure lasts, removed on the next success or when no cluster connection is configured; readers take no lock; shown by `instrukt events status` as the worker `computer-fleet` (`project/instrukt/spec/domain/runner`) | nothing: the next attempt records the failure again |
+| `state/runner-workers/<id>.json` | per-worker current failure `{worker, failure, since}` for `history-extraction`, `history-search`, `readiness`, deferred consumer source transitions and keyed-start findings, written whole beside its previous version and renamed over it outside `state/writer.lock`, removed on recovery or shutdown; readers take no lock; shown by `instrukt events status` (`project/instrukt/spec/domain/runner`) | nothing: the next failing pass records the failure again |
+| `state/redis-reachability/<source>.json`, `<source>.lock` | each logical Redis source's last observed reachability `{reachable}` so loss and return are logged once per transition; unchanged reads take no lock and write nothing; transitions serialize on `<source>.lock` outside `state/writer.lock` (`project/instrukt/spec/domain/runner`) | nothing: the next Redis command observes reachability again (at most one repeated transition log) |
+| `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
+| `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
+| `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
+| `state/blueprint/<project>/<sha>/` | the latest complete graph and the one before it, per remote-main revision | the next push or pull |
+| `git/<host>/<owner>/<repo>/` | ingested external repositories with their `index.md` and `history.md` | a fresh clone |
+| `state/machine-id` | this computer's id, created once; the holder of its claims | re-created on first use (deleting it orphans this computer's live claims until they are released) |
+
+<!-- /planned-change:runner-background-writes-isolated -->
+
 
 `state/requested-review.db` holds the requested reviews
 `instrukt review start` admitted, and `state/requested-review.lock` is its
@@ -161,6 +198,8 @@ write-isolation unit, taken only by that command
 (`project/instrukt/spec/feature/runner/requested-review`, Requested review
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
+
+<!-- planned-change:runner-background-writes-isolated -->
 
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
@@ -176,6 +215,24 @@ upgrade of an older database, it takes no writer lock
 (`project/instrukt/spec/domain/runner`). Installation keeps no record of the units it wrote and the runner
 service publishes no identity: both converge by name
 (`project/instrukt/spec/feature/runner/module-installation`).
+
+<!-- change:runner-background-writes-isolated -->
+
+The state directory is resolved to its canonical location once, and every path and
+lock above derives from it, so a home reached through a link keeps one authority;
+a link at the database file itself is refused
+(`project/instrukt/spec/feature/work/state-database`). The state database also holds
+the read-back cursor of each connector (`connector_read_back`) and each conversation
+message's no-work interval. Runner background worker failures (`history-extraction`,
+`history-search`, `readiness`, deferred consumer source transitions and keyed-start
+findings) live in per-worker state files under `state/runner-workers/` beside
+`state/computer-fleet.json`, and per-Redis reachability records live under
+`state/redis-reachability/`, none of them in the state database or under
+`state/writer.lock` (`project/instrukt/spec/domain/runner`). Installation keeps no
+record of the units it wrote and the runner service publishes no identity: both
+converge by name (`project/instrukt/spec/feature/runner/module-installation`).
+
+<!-- /planned-change:runner-background-writes-isolated -->
 
 A project carries `instrukt.yaml` (the project layer) and documentation in
 three positions:
