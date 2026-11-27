@@ -31,6 +31,20 @@ pub fn run(
         }
         Ok(_) => Ok(None),
     };
+    struct UnwiredBackupStanding;
+    impl instrukt_core::interfaces::HomeBackupStanding for UnwiredBackupStanding {
+        fn standing(
+            &self,
+            _home: &instrukt_core::home::Home,
+            _now: jiff::Timestamp,
+        ) -> Result<
+            instrukt_core::interfaces::BackupStanding,
+            instrukt_core::interfaces::BackupStandingError,
+        > {
+            Ok(instrukt_core::interfaces::BackupStanding::Unconfigured)
+        }
+    }
+    let backup = UnwiredBackupStanding;
     let report =
         instrukt_core::publication::status::inspect(&instrukt_core::publication::status::Request {
             home: &ctx.home,
@@ -40,6 +54,8 @@ pub fn run(
             caller_error,
             env: &env,
             instructions,
+            backup: &backup,
+            now: ctx.clock.now(),
         });
     if args.json {
         ctx.out.json(&report)?;
