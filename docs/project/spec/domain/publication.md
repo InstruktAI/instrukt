@@ -652,6 +652,9 @@ This context emits no events.
 - **work** — Customer / Supplier. Publication supplies the current fingerprint
   and its per-published-commit association; stamp behavior belongs to
   `project/instrukt/spec/domain/work`.
+- **work (evaluation report)** — Customer / Supplier. Publication supplies the
+  projects a home publishes and their checkout paths from its existing state,
+  read by the evaluation report (`project/instrukt/spec/feature/work/eval-report`).
 - **runner** — Customer / Supplier, both ways. Publication supplies project
   checkout paths beside published commits in its existing state
   (`project/instrukt/spec/domain/runner`); the selected runtime's adapter

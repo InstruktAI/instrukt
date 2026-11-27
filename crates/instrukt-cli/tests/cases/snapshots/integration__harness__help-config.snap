@@ -9,11 +9,11 @@ Usage: instrukt config <COMMAND>
 Commands:
   get       Print the value at a dotted path, or the whole configuration, interpolated. Reads the
             effective configuration (the global layer with the project layer applied) unless
-            --global
+            --global. With --agents, reads the effective agent selection literally
   show      Inspect machine-local configuration
   schema    Show what the addressed document can declare, from the types validation reads
-  patch     Apply a merge patch (YAML mapping) to the project layer, or the global layer with
-            --global, if it is still at --revision
+  patch     Apply a merge patch (YAML mapping) to the project layer, the global layer with --global,
+            or the agents file with --agents, if it is still at --revision
   init      Create the layer with the current schema version and defaults, or migrate an existing
             older one. With --company, also append each ignore line the home's .gitignore lacks —
             /company.yaml, /secrets.env, /projects/ and /.instrukt/ — keeping every other line, in a

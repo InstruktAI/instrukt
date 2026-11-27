@@ -1,8 +1,6 @@
 ---
-activation_trigger: Use when a non-trivial architectural or design decision has just been made
-  and needs a durable record.
-description: Author an Architectural Decision Record capturing what was chosen, why,
-  and what follows.
+activation_trigger: 'After a non-trivial architectural or design decision needing a durable record.'
+description: 'Author an ADR recording a contestable decision, rationale, and impact.'
 visibility: public
 ---
 

@@ -1,5 +1,5 @@
 ---
-description: 'Agents are trusted by default. A guardrail earns its place only where restoring state cannot repair the harm — interference and contract violation. Everything else is direction, carried by briefs.'
+description: 'Trust by default; guardrails gate only unrepairable harm (interference, contract violation; rest is brief direction), tools stay neutral facts, and on a guardrail refusal stop, tell someone, and read its door.'
 visibility: 'public'
 ---
 

@@ -6,6 +6,7 @@ use instrukt_core::ids::SessionRef;
 use instrukt_core::process::{Limit, Look};
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
 use jiff::Timestamp;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::runtime::{Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread};
@@ -205,6 +206,7 @@ fn native_identity(
     adapter: &dyn RuntimeAdapter,
     request: &RuntimeStart,
     generation: u64,
+    existing_worktree: Option<&Path>,
 ) -> Result<crate::runtime::NativeLaunch, SessionsError> {
     use sha2::{Digest, Sha256};
     // JSON preserves component boundaries, including exact home and checkout scope.
@@ -224,7 +226,7 @@ fn native_identity(
         thread_id: command_id.clone(),
         command_id,
         project_id: String::new(),
-        existing_worktree: None,
+        existing_worktree: existing_worktree.map(Path::to_path_buf),
     })
 }
 
@@ -368,11 +370,10 @@ fn start_with_work(
             return succeed_claimed(
                 assignment.invocation,
                 adapter,
-                &input.key,
                 assignment.now,
                 work,
                 guard,
-                Some(assignment.request),
+                Some((assignment.request, assignment.existing_worktree)),
             );
         }
     }
@@ -399,7 +400,6 @@ fn start_with_work(
             return succeed_claimed(
                 assignment.invocation,
                 adapter,
-                &input.key,
                 assignment.now,
                 work,
                 guard,
@@ -443,6 +443,7 @@ fn start_with_work(
             adapter,
             &input,
             generation,
+            assignment.existing_worktree,
         )?);
     }
     input = adapter.resolve_launch(&input, None)?;
@@ -655,6 +656,7 @@ pub fn succeed(
                     invocation,
                     project: assignment.project,
                     request: source,
+                    existing_worktree: None,
                     now,
                 },
                 &thread,
@@ -674,11 +676,10 @@ pub fn succeed(
     let result = succeed_claimed(
         invocation,
         adapter,
-        key,
         now,
         assignment.bindings,
         &guard,
-        Some(assignment.request),
+        Some((assignment.request, assignment.worktree_path)),
     );
     note(
         &guard.state,
@@ -690,23 +691,24 @@ pub fn succeed(
     result
 }
 /// Succeeds the generation of `key` under the `guard` its caller already
-/// holds, from `replacement`, after confirmed native terminal presence.
+/// holds, from `replacement` and its optional `existing_worktree`, after
+/// confirmed native terminal presence.
 pub(crate) fn succeed_owned(
     guard: &KeyGuard,
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
     replacement: &RuntimeStart,
+    existing_worktree: Option<&Path>,
     now: Timestamp,
 ) -> Result<Thread, SessionsError> {
     let key = &replacement.key;
     let result = succeed_claimed(
         invocation,
         adapter,
-        key,
         now,
         None,
         guard,
-        Some(replacement),
+        Some((replacement, existing_worktree)),
     );
     note(
         &guard.state,
@@ -720,12 +722,14 @@ pub(crate) fn succeed_owned(
 fn succeed_claimed(
     invocation: &RuntimeInvocation,
     adapter: &dyn RuntimeAdapter,
-    key: &str,
     now: Timestamp,
     work: Option<&dyn crate::interfaces::SessionBindings>,
     guard: &KeyGuard,
-    replacement_request: Option<&RuntimeStart>,
+    replacement: Option<(&RuntimeStart, Option<&Path>)>,
 ) -> Result<Thread, SessionsError> {
+    let key = guard.key.as_str();
+    let replacement_request = replacement.map(|(request, _)| request);
+    let replacement_existing_worktree = replacement.and_then(|(_, worktree)| worktree);
     let recorded = record(&guard.state, &guard.runtime, key)?;
     let session = recorded
         .bound
@@ -782,6 +786,7 @@ fn succeed_claimed(
                     .request
                     .as_ref()
                     .ok_or_else(|| SessionsError::Refused("missing request".into()))?,
+                existing_worktree: None,
                 now,
             },
             guard,
@@ -821,12 +826,15 @@ fn succeed_claimed(
         request.brief = conversation_assignment_prefix(&request.brief)
             .ok_or_else(|| SessionsError::Refused("missing conversation assignment".into()))?;
     }
+    let is_review_replacement = replacement_request.is_some() && kind(key) == "review";
     if let Some(replacement) = replacement_request {
         request.title = replacement.title.clone();
-        // A requested reviewer's successor opens with the ask that starts
-        // it, not the rendering its predecessor opened with.
+        // A requested reviewer's successor opens with the replacement ask's
+        // rendering and admitted worktree placement rather than inheriting its
+        // predecessor's.
         if kind(key) == "review" {
             request.brief = replacement.brief.clone();
+            request.worktree = None;
         }
     }
     request.launch_modes = None;
@@ -836,56 +844,62 @@ fn succeed_claimed(
         .ok_or_else(|| SessionsError::Refused("generation exhausted".into()))?;
     // A successor never inherits the retired generation's project: it
     // resolves its checkout's own project afresh.
-    let mut native = native_identity(invocation.home(), adapter, &request, generation)?;
-    let retained_path = guard
-        .state
-        .read(|conn, path| {
-            conn.query_row(
-                "SELECT worktree FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",
-                params![guard.runtime, key],
-                |r| r.get::<_, Option<String>>(0),
-            )
-            .map_err(state::sql(path))
-        })?
-        .flatten()
-        .map(Into::into);
-    // A worktree is kept only when it is a registered worktree of the
-    // checkout on its branch; a misplaced thread's worktree belongs to another
-    // repository and is left untouched.
-    let candidate: Option<std::path::PathBuf> = thread.worktree.clone().or(retained_path);
-    let mut dropped = None;
-    native.existing_worktree = match candidate {
-        Some(path) => {
-            let branch = match &request.worktree {
-                Some(worktree) => Some(worktree.branch.clone()),
-                None => instrukt_core::git::run(&path, ["branch", "--show-current"])
-                    .ok()
-                    .map(|branch| branch.trim().to_owned()),
-            };
-            let registered = match &branch {
-                Some(branch) => registered_worktree(&request.checkout, &path, branch)?,
-                None => false,
-            };
-            if registered {
-                Some(path)
-            } else {
-                dropped = Some(path);
-                None
+    let mut native = native_identity(invocation.home(), adapter, &request, generation, None)?;
+    native.existing_worktree = if is_review_replacement {
+        replacement_existing_worktree.map(Path::to_path_buf)
+    } else {
+        let retained_path = guard
+            .state
+            .read(|conn, path| {
+                conn.query_row(
+                    "SELECT worktree FROM runtime_bindings WHERE runtime=?1 AND semantic_key=?2",
+                    params![guard.runtime, key],
+                    |r| r.get::<_, Option<String>>(0),
+                )
+                .map_err(state::sql(path))
+            })?
+            .flatten()
+            .map(Into::into);
+        // A worktree is kept only when it is a registered worktree of the
+        // checkout on its branch; a misplaced thread's worktree belongs to another
+        // repository and is left untouched.
+        let candidate: Option<std::path::PathBuf> = thread.worktree.clone().or(retained_path);
+        let mut dropped = None;
+        let existing = match candidate {
+            Some(path) => {
+                let branch = match &request.worktree {
+                    Some(worktree) => Some(worktree.branch.clone()),
+                    None => instrukt_core::git::run(&path, ["branch", "--show-current"])
+                        .ok()
+                        .map(|branch| branch.trim().to_owned()),
+                };
+                let registered = match &branch {
+                    Some(branch) => registered_worktree(&request.checkout, &path, branch)?,
+                    None => false,
+                };
+                if registered {
+                    Some(path)
+                } else {
+                    dropped = Some(path);
+                    None
+                }
             }
+            None => None,
+        };
+        if let Some(path) = &dropped
+            && kind(key) == "todo"
+            && request.worktree.is_none()
+        {
+            return Err(SessionsError::Refused(format!(
+                "`{key}` has no captured worktree request and its worktree {} is not a registered worktree of {}",
+                path.display(),
+                request.checkout.display()
+            )));
         }
-        None => None,
+        existing
     };
-    if let Some(path) = &dropped
-        && kind(key) == "todo"
+    if kind(key) != "review"
         && request.worktree.is_none()
-    {
-        return Err(SessionsError::Refused(format!(
-            "`{key}` has no captured worktree request and its worktree {} is not a registered worktree of {}",
-            path.display(),
-            request.checkout.display()
-        )));
-    }
-    if request.worktree.is_none()
         && let Some(path) = native.existing_worktree.as_ref()
     {
         let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
@@ -920,6 +934,7 @@ fn succeed_claimed(
             invocation,
             project: recorded.project.as_deref(),
             request: &request,
+            existing_worktree: None,
             now,
         },
         guard,
@@ -1295,6 +1310,7 @@ pub fn retry(
                 .request
                 .as_ref()
                 .ok_or_else(|| SessionsError::Refused("missing request".into()))?,
+            existing_worktree: None,
             now,
         },
     )
@@ -1346,6 +1362,7 @@ pub fn followup(
                 invocation: assignment.invocation,
                 project: assignment.project,
                 request: assignment.request,
+                existing_worktree: None,
                 now: assignment.now,
             },
             &thread,

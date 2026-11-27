@@ -34,7 +34,7 @@ runtime (`project/instrukt/spec/feature/runtime/adapter`; how global
 | Standing agents (`modules.events`) | `start_or_wake`, `send`, `read_state`, and the delivery/continuation capabilities required by the subscription. Steering is optional; missing steering is a supported degradation, not a validation finding. |
 | Todo pickup (`modules.todos`) | Keyed `start`, `send`, `read_state`, `caller_identity`, and the workspace capabilities declared by the workflow's typed `requires` (`project/instrukt/spec/feature/workflow/workflow-definition`). |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state`, and start/recovery evidence. |
-| Requested review | Keyed `start` in the project's registered checkout, idempotent `dispatch_send`, and `read_state` reporting whether a turn is in progress (`project/instrukt/spec/feature/runner/requested-review`). |
+| Requested review | Keyed `start` in the candidate's worktree (attaching a linked worktree as an existing worktree of the project's registered checkout, or in the registered checkout when the candidate lives there), idempotent `dispatch_send`, and `read_state` reporting whether a turn is in progress (`project/instrukt/spec/feature/runner/requested-review`). |
 | History extraction (`modules.history`) | Optional cold text source (`project/instrukt/spec/feature/runner/history`); an unsupported runtime reports extraction unavailable without blocking configuration. |
 | Thread retention | Optional thread archiving (`finished_threads` and `archive`, `project/instrukt/spec/feature/runner/thread-retention`). |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent (`project/instrukt/spec/feature/runner/anomaly-notification`). |

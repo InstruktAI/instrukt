@@ -1,0 +1,8 @@
+---
+source: crates/instrukt-cli/tests/cases/eval-report.rs
+expression: printed
+---
+limitation: Computer dddddddddddddddd: answering after the wait ends; last seen 2030-01-14 08:00 UTC.
+demo: 2 evaluation windows
+lists: 1 evaluation window
+report: [TMP]/elsewhere/report.html

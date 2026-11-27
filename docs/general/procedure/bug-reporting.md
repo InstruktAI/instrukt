@@ -1,6 +1,6 @@
 ---
-description: Report a defect of the system you work through — instrukt, its runtime, the platform — through the front door `instrukt bugs report`, facing its questions before anything is filed, and keep the report out of any conversation you serve.
-activation_trigger: Use when instrukt, its runtime or the platform you work through behaves against what its contract says, and you have an occurrence in hand.
+description: 'File instrukt/runtime/platform defects via `instrukt bugs report`, answering its questions first and keeping reports out of served conversations.'
+activation_trigger: 'When instrukt, its runtime, or the platform violates its contract with an occurrence in hand.'
 visibility: public
 ---
 

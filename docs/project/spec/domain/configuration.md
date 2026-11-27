@@ -125,7 +125,8 @@ be absent outside that runtime and does not change runtime selection.
 - **Published contracts** — `instrukt config get [<path>] [--global]`,
   `instrukt config patch --revision <rev> [--global]`,
   `instrukt config init [--global]`, `instrukt config validate [--global]`,
-  each also addressing a company home with `--company <name>`;
+  each also addressing a company home with `--company <name>`, and `get` and
+  `patch` addressing the agents file with `--agents`;
   the migration operation every entry path invokes before refusal or skip; the
   configuration schema type the editor schema of `instrukt.yaml` is generated
   from (`project/instrukt/spec/feature/publication/editor-schemas`); the runtime selection and adapter caller-identity lookup used by

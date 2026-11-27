@@ -116,6 +116,32 @@ Native agent-operation prose is supplied by configuration and rendered through `
   (`project/instrukt/spec/domain/company`) holds an approving verdict, and the
   company's standing integrator is woken to integrate that exact head.
 
+**Computer fleet**
+: The computers that share one cluster Redis, each named by its instrukt
+  computer identity. The identity belongs to an instrukt home, so two homes on
+  one machine are two computers of the computer fleet. It is not a project's
+  fleet, its active todos and the sessions working them, which fleet attention
+  concerns (`project/instrukt/spec/feature/runner/fleet-attention`).
+
+**Fleet membership record**
+: The computer fleet's one record of its members in cluster Redis: per member,
+  its computer identity and when it was last seen.
+
+**Fleet member**
+: A computer of the computer fleet whose runner, `instrukt run` or
+  `instrukt tick`, keeps its entry on the fleet membership record; it stays a
+  member while it is offline.
+
+**Fleet query**
+: The runner's bounded request/reply over cluster Redis between computers of
+  the computer fleet: one request to each computer asked, all answers awaited
+  together under one deadline, and for every computer asked either its answer
+  or why there is none.
+
+**Query kind**
+: One consumer's requests and answers on the fleet query, travelling apart from
+  every other kind's: merged history search, and the evaluation report's
+  computer answers.
 
 ## Ownership boundary
 
@@ -196,6 +222,21 @@ contract work calls inside its record transactions, and the raise through
 (`project/instrukt/spec/feature/runner/fleet-attention`). Each underlying fact
 stays with its owner: work passes the facts of its own record changes, and the
 runner decides which of them are conditions and appends their events.
+
+The runner also owns the fleet query and the fleet membership record: how a
+request reaches each computer asked and its answer comes back, the deadline,
+what the query observes when a computer has no answer, the responders and the
+tick drain that carry each query kind's requests on the computers that kind's
+owner says answer, and who is on the record and when each member was last seen
+(Fleet query and membership, below). Its published contracts there are the
+fleet query and the membership read it offers its in-process consumers, and the
+evaluation-answer interface it declares for work, implemented by work and wired
+by the CLI. It does not own what a kind's requests and answers mean, which
+computers answer a kind, or how a consumer words a missing answer: for merged
+history search these are history's
+(`project/instrukt/spec/feature/runner/history`), and for the evaluation
+report, with which computers a report covers and how their answers pool,
+work's (`project/instrukt/spec/feature/work/eval-report`).
 
 
 The runner also owns worktree reclamation: that and when the disk todo
@@ -464,6 +505,114 @@ project or pass, as worktree reclamation reports what stays owed
 Retention runs where the runner already runs: the window adds no wake-up
 demand (`project/instrukt/spec/feature/runner/module-installation`).
 
+### Fleet query and membership
+
+The fleet query carries a request of one query kind to each computer a consumer
+asks, over the cluster connection configured on the asking computer, and waits
+for all their answers together. A consumer asks with a deadline of at most 120
+seconds; the wait ends when every computer asked has answered or the deadline
+passes, whichever comes first. For the evaluation kind, the connection that
+carries the wait does not time out before the deadline, whatever the cluster
+connection's own timeout. Each kind travels on its own per-computer queue, so
+a computer meets only the requests of the kinds it answers, and a build that
+does not know a kind never takes one of its requests. A request lives 120
+seconds; a computer that finds it expired leaves it unanswered. Each request
+names a reply place of its own, random and of the kind's form, and a computer
+answers only to such a place; a request it cannot read, of a form it does not
+know or naming another place is left unanswered and logged on that computer.
+Cluster Redis holds requests and answers for their lifetime and keeps nothing
+of a kind's data beyond it.
+
+A query that cannot start tells its consumer so, for the whole query and
+before any computer is asked: no cluster connection is configured on the
+asking computer, or the configured one cannot be used. Once started, the
+consumer receives, for every computer asked, the answer as it arrived or what
+the query observed instead:
+
+- **The store could not be reached** when the query began.
+- **The request could not be delivered:** the store refused it, or failed
+  while it was sent.
+- **The store failed while the answer was awaited.**
+- **No answer before the wait ended.**
+
+The asking computer is never asked through the store: a consumer that covers it
+reads its own part locally. Reading an answer is the consumer's, and so is the
+wording a consumer gives each of these outcomes; an answer the consumer cannot
+read is the consumer's own reason.
+
+The runner hosts each kind's answering on the computers that kind's owner says
+answer:
+
+- **History kind:** the long-lived `instrukt run`, on history's responder, as
+  `project/instrukt/spec/feature/runner/history` states.
+- **Evaluation kind:** wherever `project/instrukt/spec/feature/work/eval-report`
+  says a computer answers. `instrukt run` answers on a responder of its own,
+  apart from history's, so neither kind's answer waits for the other's.
+  `instrukt tick` answers, before the rest of its wake, every unexpired request
+  waiting for it when it starts, so a computer woken by the minute wake-up
+  answers within the request's life. The answer is work's: the runner obtains
+  it through the evaluation-answer interface and returns it as work gave it.
+  Answering writes no report.
+
+Every runner invocation on a computer with a cluster connection configured
+keeps that computer's entry on the fleet membership record: `instrukt tick`
+on each invocation that is not refused for a running `instrukt run`, and
+`instrukt run` when its evaluation responder starts and at least once a minute
+while it runs. A computer writes only its own entry. A member that stops
+running stays on the record with when it was last seen; nothing removes an
+entry. A consumer reads the whole record. An entry that names no computer
+identity, or whose last-seen time cannot be read, is returned as such and
+never fails the read. A read tells the store being unreachable apart from the
+store refusing the read.
+
+A responder or membership write that cannot reach the cluster store retries:
+`instrukt run`'s responder in its own thread, and `instrukt tick` at its next
+wake, running the rest of its wake meanwhile
+(`project/instrukt/design/architecture/outside-gate`). While the failure lasts it is
+recorded, with when it began, in the computer fleet's failure file
+`state/computer-fleet.json`; a changed failure keeps the time it began, the
+next success removes the file, a configured cluster connection that cannot be
+used is recorded the same way, and the file is removed when no cluster
+connection is configured. A failure to write or remove the file is logged and
+leaves what the writer has recorded as it was, so the next outcome writes it
+again; it is never taken as a recorded success. `instrukt events status`
+reports the file as it reports the runner's other workers, under the name
+`computer-fleet`, and reports a file it cannot read as that worker's failure. The file is written whole beside its previous
+version and renamed over it, by `instrukt run`'s responder or by
+`instrukt tick`'s fleet step, which the runner lock never lets run at once;
+readers take no lock. It is current state the runner owns for this home, and
+losing it costs nothing: the next attempt records the failure again.
+
+The evaluation kind's uses of the cluster store — `instrukt run`'s evaluation
+responder, `instrukt tick`'s fleet step, membership writes and the evaluation
+report's asking — write nothing into the state database: the transport they
+use keeps no reachability record there, and whether the store can be reached
+shows in the failure file instead. The one exception is an answer read from a
+state database older than this build's schema, which first brings it to the
+current schema once under the writer lock, as every read of an older database
+does (`project/instrukt/spec/feature/work/state-database`). Beyond that they
+never wait on, or hold, the writer lock that work commands wait on
+(`sdlc/policy/state-storage`, Write isolation). Event transport and merged
+history search keep each Redis's one reachability record in the state
+database, logging its loss and return once per transition
+(`project/instrukt/spec/feature/runner/event-transport`).
+Whether the cluster user permits the fleet query is checked where the
+connection enters, at installation
+(`project/instrukt/spec/feature/runner/module-installation`).
+
+The fleet membership record is durable state (`sdlc/policy/state-storage`):
+
+| Aspect | Declaration |
+| --- | --- |
+| Nature | Authoritative: the only record of which computers have been fleet members and when each was last seen. |
+| Owner | The runner; each computer's runner writes its own entry and no other. |
+| Loss cost | A member running `instrukt run` writes its entry again within a minute; a member that only ticks writes it again at its next tick, whenever its scheduling runs it. A member that is not running is missing from reports covering the whole computer fleet until it runs again. No evaluation data, stated intent or external effect is lost. |
+| Medium | One hash in cluster Redis, the only store the computer fleet shares, one field per member; each write sets one field in one command. |
+| Write isolation | Writers set separate fields and wait on no one; the record shares the cluster store with requests and answers but no key. |
+| Scope | The cluster. |
+| Durability | As the cluster store persists its data: instrukt's own Redis persists it, an operator-supplied one as its operator configures. |
+| Bound and retirement | One entry of a few dozen bytes per computer identity that ever ran a runner with a cluster connection; a re-created identity adds an entry. Entries are not retired. |
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -594,7 +743,7 @@ related references.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
-- **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
+- **Company containers** — [project/instrukt/spec/feature/company/company-containers](../feature/company/company-containers.md)
   — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
@@ -662,6 +811,14 @@ Fleet attention adds these crossings
 | runner → work | Customer / Supplier | The fleet-attention contract, called inside work's transaction for each change it makes on this computer to a todo's status, hold or attempts, with that change's facts |
 | work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an episode |
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
+
+The evaluation report across computers adds these crossings
+(`project/instrukt/spec/feature/work/eval-report`):
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
+| work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
 
 For automatic review the runner asks its suppliers and derives none of their
 answers: work says whether a pull request is a todo's, whether a commit carries

@@ -1,8 +1,6 @@
 ---
 eval: true
-description: 'The enforceable rules of doc-driven development: functionality authors
-  its contract first, behavioral deltas stay reflected, and current versus pending
-  truth remains explicit.'
+description: 'Doc-driven development: contract first, deltas reflected, current vs pending explicit; directive text anywhere is contract (owning snippet + independent review).'
 visibility: public
 ---
 

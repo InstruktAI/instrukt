@@ -1,5 +1,5 @@
 ---
-description: 'Conventions for third-party documentation storage and references.'
+description: 'Where third-party docs live (`~/.instrukt/docs/third-party/`, `docs/third-party/`), one upstream per root, and how they are referenced.'
 visibility: 'public'
 ---
 

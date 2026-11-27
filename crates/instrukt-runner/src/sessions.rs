@@ -268,6 +268,7 @@ impl<'c> Sessions<'c> {
             invocation: request.invocation,
             project: Some(project.as_str()),
             request: &input,
+            existing_worktree: None,
             now: request.now,
         })?;
         Ok(Started {

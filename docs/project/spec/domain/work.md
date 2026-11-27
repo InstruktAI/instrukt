@@ -143,14 +143,16 @@ runner owns dispatch, and the configured runtime owns conversations.
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
-  published eval provenance; workflow and runner record evidence through
+  published eval provenance, and the projects a home publishes with their
+  checkout paths, which the evaluation report reads; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub is the required surface reflection writes to and people's controls
   are read from, and holds no copy of the record; the project's git remote
   receives the published work branch; the runner supplies the event-log
-  append the finalize-ready stamp uses, and the fleet-attention contract its
-  status, hold and attempt changes call. Standing-agent event delivery
-  is optional and is not the work record.
+  append the finalize-ready stamp uses, the fleet-attention contract its
+  status, hold and attempt changes call, and the fleet query and fleet
+  membership record the evaluation report covers other computers through.
+  Standing-agent event delivery is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
 The GitHub boundary also answers for adding a company
@@ -371,6 +373,21 @@ owning design snippet or decision record is declared.
   migrations (`project/instrukt/spec/feature/runner/history`). History reaches
   the state database only to move earlier history out of it, through work's
   open, its migrations and its space reclamation.
+- **Publication → work (evaluation report)** — customer-supplier. The
+  evaluation report reads the projects this home publishes and their checkout
+  paths from publication state, on the asking computer and on each answering
+  one.
+- **Runner → work (fleet evaluation)** — customer-supplier. The evaluation
+  report on the asking computer reads the fleet membership record and sends
+  its request to the computers it covers through the runner's fleet query,
+  receiving each answer or why there is none
+  (`project/instrukt/spec/domain/runner`).
+- **Work → runner (fleet evaluation)** — customer-supplier. Work answers an
+  evaluation request from this computer's own record and publication state
+  through the evaluation-answer interface the runner declares and the CLI
+  wires; the runner returns the answer unread. What an answer holds, which
+  computers a report covers and how answers pool are work's
+  (`project/instrukt/spec/feature/work/eval-report`).
 - **Work → docs** — customer-supplier. Work supplies pending todo-slug existence
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence

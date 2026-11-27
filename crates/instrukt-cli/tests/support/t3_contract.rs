@@ -36,6 +36,8 @@ use tungstenite::{Message, client::IntoClientRequest};
 pub const TEST: &str = "t3_contract::a_release_and_its_fake_are_checked_without_a_model_account";
 pub const VERSION: &str = include_str!("../../../instrukt-runner/t3.version");
 const BOUND: Duration = Duration::from_secs(20);
+const REAL_WORKER_TIMEOUT: Duration = Duration::from_secs(180);
+const FAKE_WORKER_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub fn download(env: &TestEnv, version: &str) -> Result<PathBuf> {
     ensure!(
@@ -105,13 +107,56 @@ pub fn download(env: &TestEnv, version: &str) -> Result<PathBuf> {
     Ok(binary)
 }
 
-pub fn worker(env: &TestEnv, stage: &str, root: &Path) -> Result<()> {
+/// Stages the already-verified release bundle inside `env`'s disposable home so
+/// a second worker satisfies the installed-T3 isolation check without
+/// re-downloading or duplicating the archive's disk footprint.
+pub fn stage_binary(release_binary: &Path, env: &TestEnv) -> Result<()> {
+    let release_dir = release_binary.parent().context("release directory")?;
+    let dir_name = release_dir.file_name().context("release directory name")?;
+    let binary_name = release_binary.file_name().context("release binary name")?;
+    let dest_dir = env.home().join(dir_name);
+    link_tree(release_dir, &dest_dir)?;
+    fs::remove_file(env.path("runtime-bin/t3"))?;
+    std::os::unix::fs::symlink(dest_dir.join(binary_name), env.path("runtime-bin/t3"))?;
+    Ok(())
+}
+
+fn link_tree(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = destination.join(entry.file_name());
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            link_tree(&src, &dst)?;
+        } else if kind.is_symlink() {
+            std::os::unix::fs::symlink(fs::read_link(&src)?, &dst)?;
+        } else {
+            fs::hard_link(&src, &dst)?;
+        }
+    }
+    Ok(())
+}
+
+fn worker_timeout(stage: &str) -> Duration {
+    match stage {
+        "fake" => FAKE_WORKER_TIMEOUT,
+        _ => REAL_WORKER_TIMEOUT,
+    }
+}
+
+pub fn worker_command(env: &TestEnv, stage: &str, root: &Path) -> Result<Command> {
     let mut command = env.command(&std::env::current_exe()?, root);
     command
         .args(["--exact", TEST, "--nocapture"])
         .env("T3_CONTRACT_STAGE", stage)
         .env("T3_CONTRACT_ROOT", root);
-    let output = process::output(&mut command, None, Duration::from_secs(100))?;
+    Ok(command)
+}
+
+pub fn run_worker(mut command: Command, stage: &str) -> Result<()> {
+    let output = process::output(&mut command, None, worker_timeout(stage))?;
     // Worker diagnostics identify operations, never credentials or conversation text.
     ensure!(
         output.status.success(),
@@ -120,6 +165,10 @@ pub fn worker(env: &TestEnv, stage: &str, root: &Path) -> Result<()> {
         String::from_utf8_lossy(&output.stderr)
     );
     Ok(())
+}
+
+pub fn worker(env: &TestEnv, stage: &str, root: &Path) -> Result<()> {
+    run_worker(worker_command(env, stage, root)?, stage)
 }
 
 pub fn cli(args: &[&str], input: Option<&str>) -> Result<String> {
@@ -1233,12 +1282,17 @@ pub fn real(root: &Path) -> Result<()> {
         again["loaded"] == 0,
         "unchanged history extraction loaded again"
     );
-    let links = overlay_links(root)?;
     fs::write(
         root.join("real.json"),
-        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"overlay_links":links,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects})
+        json!({"adapter":result,"fixture":shown,"readiness":readiness,"configured":configured,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects})
             .to_string(),
     )?;
+    Ok(())
+}
+
+pub fn overlay(root: &Path) -> Result<()> {
+    let links = overlay_links(root)?;
+    fs::write(root.join("overlay.json"), links.to_string())?;
     Ok(())
 }
 

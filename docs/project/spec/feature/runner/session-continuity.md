@@ -33,7 +33,7 @@ creates no replacement session identity.
 | Primitive | Input and result | Released consumer |
 | --- | --- | --- |
 | `start_or_wake` | Execution checkout, exact procedure/home[/subject] responsibility, stable generation key and assignment facts; returns the existing or newly started session and runtime acceptance, separately from event input consumption. | Event activation of a standing procedure. |
-| `start` | Project or company home, durable start key, opening brief and optional todo-worktree placement on the derived phase branch; returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences and conversation sessions. |
+| `start` | Project or company home, durable start key, opening brief and optional worktree placement (creating a todo worktree on the derived phase branch or attaching an existing linked worktree); returns the session and, when requested, its worktree path. | Runner pickup of a todo orchestrator, scheduled task occurrences, conversation sessions and requested reviews. |
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
@@ -171,7 +171,7 @@ adapter verb templates.
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
-| Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
+| Requested review (no module switch) | Keyed `start` in the candidate's worktree (attaching a linked worktree as an existing worktree of the project's registered checkout, or in the registered checkout when the candidate lives there); `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
 
@@ -336,8 +336,9 @@ without captured modes supplies its actual pair through
 `orchestration.getThreadProjection`.
 
 Native placement uses `root`, `worktree` with the captured base/branch, or
-`existing_worktree` with the retained verified absolute path/branch for a
-successor. T3 owns preparation and release; a launch reply can precede completed
+`existing_worktree` with the verified absolute path and branch (for a
+successor's retained worktree or an initial launch into an existing linked
+worktree). T3 owns preparation and release; a launch reply can precede completed
 workspace preparation. Observe placement on later passes before accepting usable
 worktree delivery, preserving base ancestry verification and never resending the
 opening brief just because placement is preparing.
@@ -547,6 +548,7 @@ instruction prose is a separate configuration surface.
 | --- | --- |
 | Plain start | Authenticated `orchestration.launchThread` supplies fixed command/thread IDs, captured project/model/options/modes, title and opening message. Native acceptance and execution remain separate. |
 | Todo orchestrator start | Native `worktree` carries the captured remote base and `<slug>/work` branch. A successor attaches its verified retained `existing_worktree`; native shared children inherit that workspace. |
+| Existing linked-worktree start | An initial launch targeting an existing linked worktree (such as a requested review) attaches it via `existing_worktree` with its verified absolute path and branch. |
 | Send | `t3 thread send <id> -`, no `--wait`. A busy thread receives the text as its next turn under the shared waiting-slot rule. |
 | State | `t3 thread show --json --messages 0 <id>`. Decode runtime status and available pending-input, archive, project and worktree metadata. |
 | Conversation | `t3 thread show --json --messages 100 <id>`. Return recent messages and their runtime attribution; this is no full archive or search, and no evidence that a turn completed: completion comes only from the conversation source. |

@@ -667,6 +667,7 @@ fn start(
         invocation,
         project: None,
         request: &request,
+        existing_worktree: None,
         now,
     });
     delivery.check_source(adapter, state, c)?;

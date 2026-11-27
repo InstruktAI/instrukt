@@ -53,6 +53,7 @@ pub fn store_sign_in_return(
     let payload = serde_json::to_string(entry).map_err(|error| TransportError::Redis {
         source_id: "cluster".into(),
         kind: format!("serialize sign-in return failed: {error}"),
+        class: crate::transport::RedisFailure::Reply,
     })?;
     let script = redis::Script::new(
         r#"

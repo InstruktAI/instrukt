@@ -62,7 +62,19 @@ impl T3 {
                 serde_json::json!({"type":"worktree", "baseRef":worktree.from, "branch":worktree.branch})
             }
             (None, Some(path)) => {
-                serde_json::json!({"type":"existing_worktree","worktreePath":path})
+                let branch = instrukt_core::git::run(path, ["branch", "--show-current"])
+                    .map_err(|e| failure("launch", e.to_string()))?;
+                let branch = branch.trim();
+                if branch.is_empty() {
+                    return Err(failure(
+                        "launch",
+                        format!(
+                            "existing worktree {} has no checked-out branch",
+                            path.display()
+                        ),
+                    ));
+                }
+                serde_json::json!({"type":"existing_worktree","worktreePath":path,"branch":branch})
             }
             (None, None) => serde_json::json!({"type":"root"}),
         };

@@ -12,7 +12,7 @@ use std::path::Path;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION, SHIPPED_AGENTS};
 use serde_yaml_ng::Value;
 
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
@@ -543,4 +543,92 @@ fn an_operators_agent_learns_from_the_program_what_a_company_home_can_declare() 
     // A key a company home cannot declare names the keys it can declare there.
     let unknown = schema(&["board"]).failure();
     insta::assert_snapshot!("company-schema-undeclarable-key", stderr(&env, &unknown));
+}
+
+// Smoke/wiring: `config get|patch --agents` reaches the real CLI in a bound
+// agent session without pre-patch entry convergence or caller-load migration.
+#[test]
+fn config_agents_cli_wiring_reads_and_patches_a_v3_copy_in_a_bound_session() {
+    let yaml = |text: &str| serde_yaml_ng::from_str::<Value>(text).unwrap();
+    let handler = crate::fixtures::handler::Handler::activate(None, |_| {});
+    let mut full = yaml(SHIPPED_AGENTS);
+    full["schema_version"] = Value::from(3_u64);
+    let (other_role, reversed_order) = full["roles"]
+        .as_mapping()
+        .unwrap()
+        .iter()
+        .find_map(|(name, entry)| {
+            let role = name.as_str()?;
+            if matches!(role, "builder" | "plan-reviewer") {
+                return None;
+            }
+            let order = entry.get("order")?.as_sequence()?;
+            if order.len() < 2 {
+                return None;
+            }
+            let mut reversed = order.clone();
+            reversed.reverse();
+            Some((role.to_owned(), reversed))
+        })
+        .expect("shipped agents defines a multi-profile role besides builder and plan-reviewer");
+    full["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order.clone());
+    let agents_path = handler.computer.env.instrukt_home().join("agents.yaml");
+    std::fs::write(&agents_path, serde_yaml_ng::to_string(&full).unwrap()).unwrap();
+
+    let agents_rev = stdout(
+        &handler
+            .call(&["config", "get", "--agents", "--revision"])
+            .assert()
+            .success(),
+    );
+    let plan_reviewer_before = stdout(
+        &handler
+            .call(&["config", "get", "--agents", "roles.plan-reviewer", "--json"])
+            .assert()
+            .success(),
+    );
+    let patched = handler
+        .call(&[
+            "config",
+            "patch",
+            "--agents",
+            "--revision",
+            agents_rev.trim(),
+            "--yaml",
+            "roles: {builder: {order: [antigravity]}}\nprofiles: {codex: {standard: [{model: 'gpt-{project}', effort: high}]}}\n",
+        ])
+        .assert()
+        .success();
+    assert!(
+        patched.get_output().stdout.is_empty(),
+        "an agents patch prints nothing"
+    );
+
+    let mut expected_stored = yaml(
+        "schema_version: 4\nroles: {builder: {order: [antigravity]}}\nprofiles: {codex: {standard: [{model: 'gpt-{project}', effort: high}]}}\n",
+    );
+    expected_stored["roles"][other_role.as_str()] = yaml("{}");
+    expected_stored["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order);
+    assert_eq!(
+        yaml(&std::fs::read_to_string(&agents_path).unwrap()),
+        expected_stored
+    );
+    assert_eq!(
+        stdout(
+            &handler
+                .call(&["config", "get", "--agents", "roles.plan-reviewer", "--json"])
+                .assert()
+                .success(),
+        ),
+        plan_reviewer_before
+    );
+    insta::assert_snapshot!(
+        stdout(
+            &handler
+                .call(&["config", "get", "--agents", "profiles.codex.standard.0.model"])
+                .assert()
+                .success(),
+        ),
+        @"gpt-{project}\n"
+    );
 }

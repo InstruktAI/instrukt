@@ -2,6 +2,44 @@
 
 ## 0.1.0
 
+### Ephemeral project working directories move under `.instrukt/`
+
+All instrukt-owned ephemeral project working directories now live under the
+single gitignored `.instrukt/` namespace instead of top-level repository
+folders:
+
+- task workspaces: `.instrukt/workspace/<slug>/`
+- project scratchpads and default `instrukt eval report` output:
+  `.instrukt/scratchpad/` (`.instrukt/scratchpad/eval/index.html`)
+- persistent integration worktree: `.instrukt/trees/_integration/`
+
+Adopting repositories require only `.instrukt/` in `.gitignore`, which
+`instrukt init` already writes. Any in-flight `withdrawal_intents` row
+recorded before upgrading finishes against its stored `workspace_path` without
+manual intervention.
+
+For an existing checkout that still holds untracked instrukt-created root
+directories, move them in this order (run `git worktree list` to check
+whether an integration worktree exists):
+
+1. Verify each candidate root directory is not tracked by git before moving it:
+   `git ls-files <dir>` must print nothing. Leave any tracked project directory
+   untouched.
+2. Relocate an existing integration worktree:
+   `mkdir -p .instrukt/trees && git worktree move trees/_integration .instrukt/trees/_integration && rmdir trees`.
+   If left in place, the standing integrator also relocates an existing
+   `integrate` worktree with `git worktree move` on its next wake.
+3. Relocate existing task workspaces so recurring tasks retain checkpoints and
+   ranked lists:
+   `mkdir -p .instrukt/workspace && mv workspace/* .instrukt/workspace/ && rmdir workspace`.
+4. Relocate any active shared scratchpads:
+   `mkdir -p .instrukt/scratchpad && mv scratchpad/* .instrukt/scratchpad/ && rmdir scratchpad`
+   (or remove disposable `scratchpad/eval/index.html` and `rmdir` the empty
+   directories).
+5. Once every checkout on the machine has moved its root directories, remove
+   any manual `/workspace/`, `/scratchpad/`, or `/trees/` lines added to
+   `.gitignore`, keeping `.instrukt/`.
+
 ### Retired discussion links, control wrappers, bare NOOP suppression, and proxy review recording
 
 The following legacy surfaces have been retired:
@@ -790,3 +828,36 @@ the record:
     instrukt todo artifacts diff <address> <name> <digest> <digest>
 
 A version the command reports GitHub no longer serves stays without content.
+
+### Evaluation reports cover the computer fleet; a shared cluster Redis grants the fleet query
+
+`instrukt eval report` now covers every computer that shares this computer's
+cluster Redis, unless `--computer` narrows it. Each computer's `instrukt run`
+or `instrukt tick` keeps its entry on the fleet membership record and answers
+evaluation requests over that cluster connection. The cluster Redis user
+therefore needs the fleet query's permissions. A computer without
+`redis.cluster.url` is unaffected and still reports on itself alone.
+
+Where the cluster Redis is instrukt's own, the next `instrukt install`
+rewrites its access list with these permissions and restarts it. Nothing else
+is needed.
+
+Where the cluster Redis is supplied by an operator, its access list is not
+instrukt's to change. Before installing the new build on any computer that
+configures `redis.cluster.url` there, in this order:
+
+1. Grant the cluster Redis user these commands on instrukt's keys: `HSET` and
+   `HGETALL` on `instrukt:fleet:members`; `RPUSH`, `BLPOP`, `LPOP`, `LLEN` and
+   `EXPIRE` on `instrukt:eval:requests:*` and `instrukt:eval:reply:*`; and
+   `MULTI` and `EXEC`. A user already scoped to `~instrukt:*` needs only the
+   commands added, for example
+   `ACL SETUSER <user> +hset +hgetall +lpop +llen +rpush +blpop +expire +multi +exec`.
+2. On each such computer, run `instrukt install --check`. While any of these
+   permissions is still denied, it reports a `fleet Redis` finding telling you
+   to grant the fleet query's permissions to the cluster Redis user, then run
+   `instrukt install`.
+3. Run `instrukt install`.
+
+Until a computer's user is granted these permissions, reports covering it list
+it among their limitations, and its runner records the denial in its
+`computer-fleet` worker state.

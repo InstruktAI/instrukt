@@ -5,15 +5,15 @@ expanded:
   - general/principle/attunement
   - general/principle/calibration
   - general/principle/grounding
-  - general/principle/trust-and-guardrails
-  - general/concept/lineage-vs-authorship
   - general/policy/leadership
   - general/policy/human-contract
   - general/policy/context-retrieval
-  - general/policy/conflict-resolution
   - general/policy/message-identity-headers
-  - general/policy/shared-machine-resources
 listed:
+  - general/principle/trust-and-guardrails
+  - general/concept/lineage-vs-authorship
+  - general/policy/conflict-resolution
+  - general/policy/shared-machine-resources
   - general/principle/evolution
   - general/principle/continuity
   - general/principle/intelligence-boundaries
