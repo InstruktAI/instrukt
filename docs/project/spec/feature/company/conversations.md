@@ -335,14 +335,28 @@ the state-database spec.
   - **Fail-closed point-of-use verification:** Every consumer reading active
     speaker (`project/instrukt/spec/feature/runner/mcp-access`,
     `project/instrukt/spec/feature/configuration/configuration-editing`, and
-    knowledge-proposal recording) verifies against the runtime adapter's live
-    state and turn correlation at the moment of the call that the recorded
-    addressed turn is currently running in that session. When the session is
-    idle, failed, gone, unobservable, or running a different turn (such as a
-    direct operator or technical company-owner turn, or an adjacent turn under
-    `session_scope: company`), speaker lookup fails closed and yields no
-    addressed member speaker rather than inheriting a prior speaker's identity,
-    administrator status, or credentials.
+    knowledge-proposal recording under `project/instrukt/spec/domain/company`)
+    verifies against the runtime adapter's live state and turn correlation at
+    the moment of the call, distinguishing three outcomes:
+    1. **Verified active addressed turn:** when live state and turn correlation
+       confirm the recorded addressed turn is currently running in that session,
+       speaker lookup yields that turn's recorded member speaker.
+    2. **Fail-closed refusal / lookup error:** when the session is `idle`,
+       `failed`, `gone`, or `unobservable` (runtime or durable state cannot
+       answer), or when live turn correlation shows an unmatched addressed or
+       adjacent turn (including an adjacent-turn mismatch under
+       `session_scope: company`), speaker lookup fails closed with a
+       refusal/lookup error — never falling through to no speaker or the
+       company's service-account `login`, refusing admin-DM configuration
+       access, and preserving retry and `unestablished` audit recording when
+       the runtime or state store does not answer
+       (`project/instrukt/spec/domain/company`).
+    3. **Confirmed running direct operator or technical company-owner turn:**
+       when live state confirms a running turn in a bound conversation session
+       started directly by an operator or technical company owner (with no
+       addressed company-member turn), speaker lookup yields no addressed
+       member speaker — never inheriting a prior member's identity,
+       administrator status, admin-DM authority, or member credentials.
   - **Lifecycle across reply and turn exit:** Queuing an explicit reply via
     `instrukt company reply` does not clear the turn's active-speaker record,
     so subsequent tool calls, MCP requests, admin-DM patches, and knowledge

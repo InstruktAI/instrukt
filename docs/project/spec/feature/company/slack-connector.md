@@ -44,17 +44,21 @@ connectors:
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
 <!-- change:thin-live-runtime-boundary -->
-A Slack connector is declared under `connectors.<name>` in a company home
-(`project/instrukt/spec/feature/configuration/configuration-editing` owns the
-declaration schema and `instrukt config schema --company <name> connectors.slack`
-shows its fields and defaults). Multiple named Slack apps may be declared in
-one company home with `kind: slack` (omitted when `<name>` is `slack`).
+A Slack connector is declared under `connectors.<name>` in a company home.
+The company context and this Slack connector publish the Slack kind's
+declaration data (`project/instrukt/spec/domain/company`),
+`project/instrukt/spec/feature/configuration/layered-configuration` validates
+the `connectors:` map and owns the common-field schema and defaults, and
+`instrukt config schema --company <name> connectors.slack` prints the published
+declaration and setup (`project/instrukt/spec/feature/configuration/configuration-editing`).
+Multiple named Slack apps may be declared in one company home with `kind: slack`
+(omitted when `<name>` is `slack`).
 
 | Field | Contract |
 | --- | --- |
 | `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. |
 | `kind` | Optional registered connector kind (`slack`); defaults to `<name>` when omitted. |
-| `role`, `admit`, `session_scope` | Common connector settings owned by `project/instrukt/spec/feature/company/conversations` and `project/instrukt/spec/feature/configuration/layered-configuration`. |
+| `role`, `admit`, `session_scope` | Common connector settings whose behavioral semantics are owned by `project/instrukt/spec/feature/company/conversations` and whose configuration-layer schema and defaults are owned by `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | Positive whole number capping how many earlier messages accompany an addressed message. |
