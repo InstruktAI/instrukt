@@ -31,7 +31,7 @@ use super::_render::{PlannedFile, RenderFinding, RenderFindingKind, company_home
 use super::_source::{Committed, EntryIndex};
 use super::_units::{LEGEND, Unit, frame};
 use super::PublicationError;
-use crate::config::{CONFIG_FILE_NAME, RootDocument, classify_root};
+use crate::config::{CONFIG_FILE_NAME, CompanyName, RootDocument, classify_root};
 use crate::docs::{
     self, CompanyFrontmatter, CompanyPath, CompanyReference, CompanyText, company_paths,
 };
@@ -54,65 +54,6 @@ const SKILL_FILE: &str = "SKILL.md";
 /// The folder of the skill that holds each document carried as a file of
 /// its own, at its path relative to `docs/`.
 const REFERENCES: &str = "references";
-
-/// The name people write a company by: one line of text that is not blank.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct CompanyName(String);
-
-impl CompanyName {
-    /// `text` as a company's name, or why it is none.
-    pub fn parse(text: &str) -> Result<Self, CompanyNameError> {
-        if text.contains(['\n', '\r']) {
-            Err(CompanyNameError::MoreThanOneLine)
-        } else if text.trim().is_empty() {
-            Err(CompanyNameError::Blank)
-        } else {
-            Ok(Self(text.to_owned()))
-        }
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::str::FromStr for CompanyName {
-    type Err = CompanyNameError;
-
-    fn from_str(text: &str) -> Result<Self, Self::Err> {
-        Self::parse(text)
-    }
-}
-
-impl std::fmt::Display for CompanyName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl serde::Serialize for CompanyName {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.0)
-    }
-}
-
-impl<'de> serde::Deserialize<'de> for CompanyName {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Self::parse(&text).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Why a text is no company's name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum CompanyNameError {
-    #[error("a company's name is the one line people write the company by; this one is blank")]
-    Blank,
-    #[error(
-        "a company's name is the one line people write the company by; this one holds a line break"
-    )]
-    MoreThanOneLine,
-}
 
 /// A company document's visibility: the closed set of two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -50,9 +50,7 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
-pub use _plugin::{
-    CompanyName, CompanyNameError, PluginDrift, PluginFinding, PluginPlan, PluginVersion,
-};
+pub use _plugin::{PluginDrift, PluginFinding, PluginPlan, PluginVersion};
 pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
@@ -62,7 +60,7 @@ pub use _sync::{
 };
 pub use _units::{UnitFinding, UnitFindingKind, UnitWork, UnitsOutcome, UnitsReport};
 
-use crate::config::ConfigError;
+use crate::config::{CompanyName, ConfigError};
 use crate::docs::DocsError;
 use crate::fsx::FsError;
 use crate::git::GitError;

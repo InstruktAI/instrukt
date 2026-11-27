@@ -624,6 +624,7 @@ pub(crate) fn judge(
         LayerKind::Project => {
             required_modules(value, &effective, &mut found);
             event_transport(&effective, &mut found);
+            found.extend(super::_identity::findings(value));
         }
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);

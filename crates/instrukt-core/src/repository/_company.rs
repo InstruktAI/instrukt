@@ -18,13 +18,14 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::config::CompanyName;
 use crate::config::{self, Configuration, Env, Generation, GenerationFacts, GenerationRequest};
 use crate::fsx::{LockGuard, atomic_write};
 use crate::git;
 use crate::home::Home;
 use crate::ids::{CommitSha, GitHubLogin, GitHubOrganisation, ProjectSlug};
 use crate::interfaces::{AccountKind, CompanyRepositories, CoreWiring, Creation, GitHubAccounts};
-use crate::publication::{self, CompanyName, RepositoryView};
+use crate::publication::{self, RepositoryView};
 
 use super::_error::RepositoryError;
 use super::_hooks::{self, HooksReport};
@@ -420,7 +421,7 @@ fn compose_root(
         source,
     })?;
     git::run(skeleton, ["init", "--quiet", "--initial-branch", MAIN])?;
-    config::write_skeleton(skeleton, key)?;
+    config::write_skeleton(skeleton, key, &intent.name)?;
     publication::refresh_editor_schemas(home.root(), skeleton)?;
     // The skeleton's knowledge index selects nothing yet.
     atomic_write(

@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
+use instrukt_core::config::CompanyName;
 use instrukt_core::docs::{
     self, DomainRequest, GetRequest, IndexRequest, Taxonomy, ValidationRequest,
 };
 use instrukt_core::git;
 use instrukt_core::ids::{ProjectSlug, TodoSlug};
 use instrukt_core::publication::{
-    self, CompanyName, PlannedFile, RepositoryView, UnitWork, UnitsOutcome, UnitsReport,
+    self, PlannedFile, RepositoryView, UnitWork, UnitsOutcome, UnitsReport,
 };
 
 use crate::context::Ctx;

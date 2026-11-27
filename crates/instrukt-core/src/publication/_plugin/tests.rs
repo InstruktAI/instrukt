@@ -41,16 +41,6 @@ fn a_path_names_its_file_from_the_folder_of_the_file_that_holds_it() {
 }
 
 #[test]
-fn a_company_name_is_one_line_that_is_not_blank() {
-    assert_eq!(name().as_str(), "Acme");
-    assert_eq!(CompanyName::parse("  "), Err(CompanyNameError::Blank));
-    assert_eq!(
-        CompanyName::parse("Acme\nInc"),
-        Err(CompanyNameError::MoreThanOneLine)
-    );
-}
-
-#[test]
 fn a_projects_repository_renders_no_plugin() {
     let tree = Committed::of(&[
         (CONFIG_FILE_NAME, "schema_version: 6\nproject: demo\n"),
