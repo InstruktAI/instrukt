@@ -5,7 +5,7 @@
 //! covered by one row, decided by comparing identifiers and trees; no
 //! content is judged.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use instrukt_core::git;
 use instrukt_core::ids::{CommitSha, TodoSlug};
@@ -23,6 +23,9 @@ pub enum CoveringKind {
     MergeOfCanonical,
     /// One delivery's documentation fold, reproduced from its parent.
     DocumentationFold,
+    /// A rendering of a company repository's agent material, reproduced
+    /// from its parent.
+    AgentMaterialRendering,
     /// A revert of the failing delivery, reproduced.
     Revert,
     /// A commit its author exempted.
@@ -36,6 +39,7 @@ impl CoveringKind {
             CoveringKind::MergeOfApprovedHead => "merge_of_approved_head",
             CoveringKind::MergeOfCanonical => "merge_of_canonical",
             CoveringKind::DocumentationFold => "documentation_fold",
+            CoveringKind::AgentMaterialRendering => "agent_material_rendering",
             CoveringKind::Revert => "revert",
             CoveringKind::Exempted => "exempted",
         }
@@ -195,6 +199,14 @@ fn derive(
                 items.push(item(&commit, CoveringKind::DocumentationFold, reference));
                 continue;
             }
+            if let Some(reference) = rendering(root, &commit, &parent)? {
+                items.push(item(
+                    &commit,
+                    CoveringKind::AgentMaterialRendering,
+                    reference,
+                ));
+                continue;
+            }
             if let Some(reference) = revert(root, &commit, &parent, &based, evidence)? {
                 items.push(item(&commit, CoveringKind::Revert, reference));
                 continue;
@@ -259,14 +271,64 @@ fn fold(
     if !contains(root, head.as_str(), parent.as_str())? {
         return Ok(None);
     }
-    let scratch = instrukt_core::fsx::temp_dir(tempfile::Builder::new().prefix("instrukt-fold-"))
-        .map_err(|e| e.to_string())?;
+    let reproduced = reproduced_from_parent(root, commit, parent, |tree_dir| {
+        let Ok(outcome) = instrukt_core::docs::fold(tree_dir, &todo) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            outcome.written.into_iter().chain(outcome.removed).collect(),
+        ))
+    })?;
+    Ok(reproduced.then(|| format!("fold of {todo} reproduced from {parent}")))
+}
+
+/// Whether `commit` is exactly the rendering of the agent material of a
+/// company repository, reproduced from `parent`'s tree through
+/// publication's one operation; a parent that is no company repository by
+/// the rule rendering decides by, or whose rendering finds anything, covers
+/// nothing.
+fn rendering(
+    root: &Path,
+    commit: &CommitSha,
+    parent: &CommitSha,
+) -> Result<Option<String>, String> {
+    let reproduced = reproduced_from_parent(root, commit, parent, |tree_dir| {
+        use instrukt_core::publication;
+        if !publication::is_company_repository(tree_dir).is_ok_and(|company| company) {
+            return Ok(None);
+        }
+        let Ok(material) = publication::plan_agent_material(tree_dir) else {
+            return Ok(None);
+        };
+        if material.has_findings() {
+            return Ok(None);
+        }
+        Ok(publication::write_agent_material(tree_dir, &material).ok())
+    })?;
+    Ok(reproduced.then(|| format!("rendering of the agent material reproduced from {parent}")))
+}
+
+/// Whether `commit` is exactly what `reproduce` makes of `parent`'s tree.
+///
+/// The tree is checked out into a scratch repository of its own, whose
+/// index holds exactly the parent's tree, so the project's index and working
+/// trees are never entered; the directory is removed on every way out.
+/// `reproduce` changes that tree and returns the paths it wrote or removed
+/// (`None`: it reproduces nothing). The commit is reproduced when the set
+/// is not empty and equals the files the commit changes against `parent`,
+/// each written file's blob equals the commit's, and each removed file is
+/// absent from the commit. Trees are compared; no content is judged.
+fn reproduced_from_parent(
+    root: &Path,
+    commit: &CommitSha,
+    parent: &CommitSha,
+    reproduce: impl FnOnce(&Path) -> Result<Option<Vec<PathBuf>>, String>,
+) -> Result<bool, String> {
+    let scratch =
+        instrukt_core::fsx::temp_dir(tempfile::Builder::new().prefix("instrukt-reproduce-"))
+            .map_err(|e| e.to_string())?;
     let tree_dir = scratch.path().join("tree");
     instrukt_core::fsx::create_dir_all(&tree_dir).map_err(|e| e.to_string())?;
-    // A repository of its own whose index holds exactly the parent's tree:
-    // the fold lists its test files through git, and the project's index
-    // and working trees are never entered. The directory is removed when
-    // `scratch` drops, on every way out.
     git::run(&tree_dir, ["init", "-q"]).map_err(|e| e.to_string())?;
     git::check_out_tree(
         root,
@@ -275,8 +337,8 @@ fn fold(
         &tree_dir,
     )
     .map_err(|e| e.to_string())?;
-    let Ok(outcome) = instrukt_core::docs::fold(&tree_dir, &todo) else {
-        return Ok(None);
+    let Some(touched) = reproduce(&tree_dir)? else {
+        return Ok(false);
     };
     let changed = git::run(
         root,
@@ -291,46 +353,43 @@ fn fold(
     .map_err(|e| e.to_string())?;
     let mut changed: Vec<String> = changed.lines().map(str::to_owned).collect();
     changed.sort();
-    let relative = |path: &Path| -> String {
-        path.strip_prefix(&tree_dir)
-            .unwrap_or(path)
-            .to_string_lossy()
-            .into_owned()
-    };
-    let mut folded: Vec<String> = outcome
-        .written
+    let mut reproduced: Vec<String> = touched
         .iter()
-        .chain(outcome.removed.iter())
-        .map(|path| relative(path))
+        .map(|path| {
+            path.strip_prefix(&tree_dir)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
-    folded.sort();
-    folded.dedup();
-    if folded.is_empty() || folded != changed {
-        return Ok(None);
+    reproduced.sort();
+    reproduced.dedup();
+    if reproduced.is_empty() || reproduced != changed {
+        return Ok(false);
     }
-    for written in &outcome.written {
-        let path = relative(written);
-        let blob =
-            git::run(&tree_dir, ["hash-object", path.as_str()]).map_err(|e| e.to_string())?;
-        let committed = git::run_output(root, ["rev-parse", &format!("{commit}:{path}")])
-            .map_err(|e| e.to_string())?;
-        if !committed.status.success()
-            || String::from_utf8_lossy(&committed.stdout).trim() != blob.trim()
-        {
-            return Ok(None);
+    for path in &reproduced {
+        if tree_dir.join(path).exists() {
+            let blob =
+                git::run(&tree_dir, ["hash-object", path.as_str()]).map_err(|e| e.to_string())?;
+            let committed = git::run_output(root, ["rev-parse", &format!("{commit}:{path}")])
+                .map_err(|e| e.to_string())?;
+            if !committed.status.success()
+                || String::from_utf8_lossy(&committed.stdout).trim() != blob.trim()
+            {
+                return Ok(false);
+            }
+        } else {
+            // `git diff --name-only` lists a deleted path and a modified one
+            // alike: each path the reproduction removes must be absent from
+            // the commit.
+            let present = git::run_output(root, ["cat-file", "-e", &format!("{commit}:{path}")])
+                .map_err(|e| e.to_string())?;
+            if present.status.success() {
+                return Ok(false);
+            }
         }
     }
-    // `git diff --name-only` lists a deleted path and a modified one
-    // alike: each path the fold removes must be absent from the commit.
-    for removed in &outcome.removed {
-        let path = relative(removed);
-        let present = git::run_output(root, ["cat-file", "-e", &format!("{commit}:{path}")])
-            .map_err(|e| e.to_string())?;
-        if present.status.success() {
-            return Ok(None);
-        }
-    }
-    Ok(Some(format!("fold of {todo} reproduced from {parent}")))
+    Ok(true)
 }
 
 /// Whether `commit` reverts the failing delivery: the canonical head `based`
@@ -696,6 +755,123 @@ mod tests {
         assert_eq!(
             coverage(repo.path(), &stray, "main", &Evidence::default()),
             Coverage::Uncovered(stray)
+        );
+    }
+
+    const COMPANY_LAYER: &str =
+        "schema_version: 6\nproject: company-acme\ncompany_repository: true\ncompany_name: Acme\n";
+
+    /// A repository whose `main` holds the layer `layer` and a company
+    /// index selecting one document, and an `integrate` branch whose
+    /// approved head changes that document; returns the approved head.
+    fn knowledge(repo: &Repo, layer: &str) -> (CommitSha, Evidence) {
+        repo.commit("instrukt.yaml", layer, "the layer");
+        repo.commit("docs/index.yaml", "expanded: [company.md]\n", "the index");
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let approved = repo.commit(
+            "docs/company.md",
+            "---\ndescription: Who Acme is.\n---\n\n# Acme\n",
+            "docs: who Acme is",
+        );
+        let evidence = Evidence {
+            approved: BTreeMap::from([(approved.to_string(), "verdict".into())]),
+            ..Evidence::default()
+        };
+        (approved, evidence)
+    }
+
+    /// Renders the agent material into the working tree, as the integrator
+    /// does, then lets `alter` change it before everything is committed.
+    fn render_and_commit(repo: &Repo, alter: impl FnOnce(&Path)) -> CommitSha {
+        let material = instrukt_core::publication::plan_agent_material(repo.path()).unwrap();
+        assert!(!material.has_findings());
+        instrukt_core::publication::write_agent_material(repo.path(), &material).unwrap();
+        alter(repo.path());
+        repo.git(&["add", "-A"]);
+        repo.git(&["commit", "-qm", "chore: render the agent material"]);
+        repo.head()
+    }
+
+    #[test]
+    fn a_reproduced_rendering_of_a_company_repositorys_agent_material_is_covered() {
+        let repo = Repo::new();
+        let (approved, evidence) = knowledge(&repo, COMPANY_LAYER);
+        let rendering = render_and_commit(&repo, |_| {});
+        let coverage = coverage(repo.path(), &rendering, "main", &evidence);
+        assert_eq!(
+            kinds(&coverage),
+            [
+                CoveringKind::AgentMaterialRendering,
+                CoveringKind::ApprovedHead
+            ]
+        );
+        let Coverage::Covered(items) = coverage else {
+            unreachable!()
+        };
+        assert_eq!(items[0].kind.as_str(), "agent_material_rendering");
+        assert_eq!(
+            items[0].reference,
+            format!("rendering of the agent material reproduced from {approved}")
+        );
+    }
+
+    #[test]
+    fn a_commit_of_the_rendered_paths_with_other_content_is_uncovered() {
+        let repo = Repo::new();
+        let (_, evidence) = knowledge(&repo, COMPANY_LAYER);
+        let rendering = render_and_commit(&repo, |root| {
+            for path in ["AGENTS.md", "skills/acme/SKILL.md"] {
+                let mut text = std::fs::read_to_string(root.join(path)).unwrap();
+                text.push_str("\nNot what the rendering writes.\n");
+                std::fs::write(root.join(path), text).unwrap();
+            }
+        });
+        assert_eq!(
+            coverage(repo.path(), &rendering, "main", &evidence),
+            Coverage::Uncovered(rendering)
+        );
+    }
+
+    #[test]
+    fn a_rendering_commit_that_also_changes_a_document_is_uncovered() {
+        let repo = Repo::new();
+        let (_, evidence) = knowledge(&repo, COMPANY_LAYER);
+        let rendering = render_and_commit(&repo, |root| {
+            std::fs::write(
+                root.join("docs/company.md"),
+                "---\ndescription: Who Acme is.\n---\n\n# Acme Bicycles\n",
+            )
+            .unwrap();
+        });
+        assert_eq!(
+            coverage(repo.path(), &rendering, "main", &evidence),
+            Coverage::Uncovered(rendering)
+        );
+    }
+
+    #[test]
+    fn the_same_rendering_in_a_project_repository_is_uncovered() {
+        let repo = Repo::new();
+        repo.commit(
+            "instrukt.yaml",
+            "schema_version: 6\nproject: demo\n",
+            "the layer",
+        );
+        repo.commit("docs/project/index.yaml", "expanded: []\n", "the index");
+        repo.git(&["checkout", "-qb", "integrate"]);
+        let approved = repo.commit("a.txt", "a", "change a");
+        let evidence = Evidence {
+            approved: BTreeMap::from([(approved.to_string(), "verdict".into())]),
+            ..Evidence::default()
+        };
+        let rendering = render_and_commit(&repo, |_| {});
+        assert_ne!(
+            rendering, approved,
+            "the project's rendering changes AGENTS.md"
+        );
+        assert_eq!(
+            coverage(repo.path(), &rendering, "main", &evidence),
+            Coverage::Uncovered(rendering)
         );
     }
 }
