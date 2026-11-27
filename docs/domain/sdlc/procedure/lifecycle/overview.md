@@ -195,13 +195,12 @@ off for the todo's kind, the work waits for a deliberate start, also when you
 are continuing from your own preparation: present what preparation produced,
 record `instrukt todo stamp <slug> --work-ready` (it places the dispatch hold,
 shown as the `hold` label on the todo's issue), release your claim
-(`instrukt todo update <slug> --unclaim`) and stop. Releasing that hold starts
-the work. People release it on GitHub by removing the `hold` label, and the
-runner then resumes you. When a person tells you in your own conversation to
-start, releasing it yourself is the same act: run
-`instrukt todo update <slug> --release`, reclaim with
-`instrukt todo work <slug>` from `<slug>/work` and continue with the `builder`
-round. Once the todo has had a `builder` round, later rounds are not held back.
+(`instrukt todo update <slug> --unclaim`) and stop. Releasing that hold —
+removing the `hold` label on the issue, or
+`instrukt todo update <slug> --release` — starts the work, and the runner then
+resumes you. When the start is given to you in your own conversation, release
+the hold yourself, reclaim with `instrukt todo work <slug>` from `<slug>/work`
+and continue with the `builder` round. Once the todo has had a `builder` round, later rounds are not held back.
 <!-- /planned:fix-autostart-prepare-work-boundary -->
 
 ## Preconditions

@@ -272,9 +272,9 @@ refused first `builder` reservation names its door: the orchestrator records
 dispatch hold, then releases its claim and stops. Every todo of that kind stops
 there once. The todo shows as held and waiting on a person, its issue carries
 the `hold` label (`project/instrukt/spec/feature/work/github-record`), and the
-runner does not dispatch it. A collaborator removing the `hold` label from the
-issue starts its work deliberately; an agent releasing the hold on a person's
-direction is the same act. The runner then resumes the todo's recorded
+runner does not dispatch it. Releasing that hold — a collaborator removing the
+`hold` label from the issue, or `instrukt todo update <slug> --release` —
+starts its work deliberately, and the runner resumes the todo's recorded
 orchestrator on its next wake. A `builder` reservation for a todo that has had
 no `builder` round is admitted only when the todo carries a `--work-ready`
 stamp and no standing dispatch hold.
