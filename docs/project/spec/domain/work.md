@@ -170,8 +170,10 @@ core imports nothing of this crate.
 <!-- planned:company-home-integration -->
 For a company's knowledge proposals the GitHub boundary also answers whether
 any pull request of the repository, open or closed, has a commit as its head,
-and opens a pull request for a branch into the canonical branch as the
-identity its caller names.
+and opens a pull request for a branch into the canonical branch under the
+proposal pull-request credential, the identity the `company-agent` role
+selects (`project/instrukt/spec/feature/work/github-apps`, Company
+repositories).
 
 - **Idempotency:** it opens one only after answering that no open pull
   request of that branch exists. A crash between the two leaves GitHub as the
@@ -401,8 +403,7 @@ owning design snippet or decision record is declared.
 - **Work → runner (knowledge proposals)** — customer-supplier. Through its
   GitHub boundary work answers the readiness of the proposal pull-request
   credential and whether any pull request has a commit as its head, and opens
-  a proposal's pull request as the identity the runner names; the runner
-  decides when.
+  a proposal's pull request under that credential; the runner decides when.
 <!-- /planned:company-home-integration -->
 
 

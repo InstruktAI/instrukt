@@ -165,7 +165,7 @@ home's candidate).
 | --- | --- | --- |
 | company → repository | Customer / Supplier | The proposal recording the `post-commit` hook run invokes, through an interface core declares and the CLI wires |
 | company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
-| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch as the identity the caller names |
+| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
 | configuration → runner | Customer / Supplier | A company repository's company identity, whose finding withholds the home's event responses |
 | runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
 | configuration → publication | Customer / Supplier | The company identity a company repository's committed project layer declares, with its finding |
