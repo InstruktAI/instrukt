@@ -2048,9 +2048,10 @@ fn is_own_app_bot<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::evidence::{HoldRecord, HoldSource};
-    use instrukt_core::ids::ProjectSlug;
+    use super::{HOLD_LABEL, TodoId, TodoRecord, is_own_app_bot, output_labels_drifted};
+    use crate::evidence::{Actor, HoldRecord, HoldSource, TodoStatus};
+    use instrukt_core::github;
+    use instrukt_core::ids::{ProjectSlug, TodoSlug};
     use instrukt_runner::interfaces::{CatchUp, TodoKind};
     use serde_json::json;
 
