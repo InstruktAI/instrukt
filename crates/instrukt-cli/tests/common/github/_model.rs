@@ -62,6 +62,15 @@ pub(super) struct State {
     pub(super) active_token: Option<String>,
     /// Each App's installation permissions a test set, by App id.
     pub(super) installation_permissions: BTreeMap<u64, Value>,
+    /// The account type GitHub shows for a login a test named
+    /// (`Organization`, `User`); any other login shows as a user, or a bot
+    /// for a `[bot]` login.
+    pub(super) accounts: BTreeMap<String, String>,
+    /// The organisations the project App is installed on.
+    pub(super) org_installations: std::collections::BTreeSet<String>,
+    /// Where a created repository's bare remote is initialised, as
+    /// `<remotes>/<owner>/<name>.git`.
+    pub(super) remotes: Option<std::path::PathBuf>,
 }
 
 impl State {
@@ -83,6 +92,9 @@ impl State {
             tokens: BTreeMap::new(),
             active_token: None,
             installation_permissions: BTreeMap::new(),
+            accounts: BTreeMap::new(),
+            org_installations: std::collections::BTreeSet::new(),
+            remotes: None,
         }
     }
 
@@ -198,6 +210,10 @@ pub(super) struct Repo {
     pub(super) comments: BTreeMap<u64, Comment>,
     pub(super) labels: BTreeMap<String, Label>,
     pub(super) branches: BTreeMap<String, String>,
+    /// The repository's default branch.
+    pub(super) default_branch: String,
+    /// Each collaborator added, with the permission they were given.
+    pub(super) collaborators: BTreeMap<String, String>,
     /// A bare repository whose branches GitHub serves, as when pushes to it
     /// reach GitHub; `branches` answers for the ones it does not hold.
     pub(super) branch_source: Option<std::path::PathBuf>,
@@ -358,6 +374,8 @@ impl Repo {
             comments: BTreeMap::new(),
             labels: BTreeMap::new(),
             branches: BTreeMap::new(),
+            default_branch: "main".to_owned(),
+            collaborators: BTreeMap::new(),
             branch_source: None,
             statuses: BTreeMap::new(),
             check_runs: BTreeMap::new(),
@@ -376,7 +394,7 @@ impl Repo {
             "fork": false,
             "node_id":format!("R_{}",self.id),
             "owner": actor(&self.owner),
-            "default_branch": "main",
+            "default_branch": self.default_branch,
             "private": !self.public,
             "visibility": if self.public { "public" } else { "private" },
         })

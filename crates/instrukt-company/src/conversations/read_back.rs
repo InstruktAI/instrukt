@@ -16,7 +16,11 @@ use instrukt_core::{
 use instrukt_runner::state::{self, RunnerState, StateError};
 use jiff::{SignedDuration, Timestamp};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashSet, path::PathBuf, time::Duration};
+use std::{
+    collections::HashSet,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 const ANSWERING_BOUND: SignedDuration = SignedDuration::from_hours(24);
 const REPORTING_PERIOD: SignedDuration = SignedDuration::from_hours(30 * 24);
@@ -162,7 +166,6 @@ struct Progress {
     position: Option<String>,
     page: Option<String>,
     retry_at: Option<i64>,
-    failure: Option<String>,
 }
 
 struct ScanWindow {
@@ -291,9 +294,35 @@ pub(crate) fn maintain_at_start(home: &Home, now: Timestamp) -> Result<(), Conne
 }
 
 fn failed(error: impl std::fmt::Display) -> ConnectorError {
-    ConnectorError {
-        cause: error.to_string(),
-    }
+    ConnectorError::new(error.to_string())
+}
+
+/// Where one scan left the connector's read-back.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Scanned {
+    /// It read what it could; `catch_up` asks for a fresh window at once.
+    Done { catch_up: bool },
+    /// The read waits for the outside gate's wait of its last read, whose
+    /// moment `until` is stored. A live pause the service named no moment
+    /// for runs out at `pause` on the monotonic source; otherwise the wait
+    /// lasts until the host clock reaches `until`.
+    Waiting {
+        until: Timestamp,
+        pause: Option<Instant>,
+    },
+}
+
+/// The stored moment a read still waits for: one the host clock has not
+/// reached, unless it is the pause `waited_out` that this process already
+/// waited out on the monotonic source.
+fn stored_wait(
+    retry_at: Option<i64>,
+    now: Timestamp,
+    waited_out: Option<Timestamp>,
+) -> Option<i64> {
+    retry_at
+        .filter(|at| micros(now) < *at)
+        .filter(|at| waited_out.is_none_or(|out| micros(out) != *at))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -308,9 +337,11 @@ pub(crate) fn scan(
     clock: &dyn Fn() -> Timestamp,
     quit: &dyn Fn() -> bool,
     nudge: &dyn Fn(),
-) -> Result<bool, ConnectorError> {
+    waited_out: Option<Timestamp>,
+) -> Result<Scanned, ConnectorError> {
+    let done = |catch_up| Scanned::Done { catch_up };
     let Some(mut conn) = open(home, true).map_err(failed)? else {
-        return Ok(false);
+        return Ok(done(false));
     };
     let requested = clock();
     observed(&conn, home, company, key, requested).map_err(failed)?;
@@ -346,23 +377,21 @@ pub(crate) fn scan(
         .map_err(sql)?;
     tx.commit().map_err(sql)?;
     if opened == 0 && !remains {
-        return Ok(false);
+        return Ok(done(false));
     }
 
     while !quit() {
         let progress = conn.query_row(
-            "SELECT started,lower_bound,position,page,retry_at,failure FROM scans WHERE company=?1 AND connector=?2",
+            "SELECT started,lower_bound,position,page,retry_at FROM scans WHERE company=?1 AND connector=?2",
             [owner, key],
             |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
-                page: row.get(3)?, retry_at: row.get(4)?, failure: row.get(5)? }),
+                page: row.get(3)?, retry_at: row.get(4)? }),
         ).map_err(sql)?;
-        if progress.retry_at.is_some_and(|at| micros(clock()) < at) {
-            return Err(failed(
-                progress
-                    .failure
-                    .as_deref()
-                    .unwrap_or("waiting to retry read-back"),
-            ));
+        if let Some(at) = stored_wait(progress.retry_at, clock(), waited_out) {
+            return Ok(Scanned::Waiting {
+                until: Timestamp::from_microsecond(at).map_err(failed)?,
+                pause: None,
+            });
         }
         let window = ScanWindow {
             from: Timestamp::from_microsecond(progress.lower).map_err(failed)?,
@@ -387,17 +416,18 @@ pub(crate) fn scan(
                         page
                     }
                     Err(error) => {
-                        let retry = error.retry_after.map(|seconds| {
-                            let delay = SignedDuration::from_secs(
-                                i64::try_from(seconds).unwrap_or(i64::MAX),
-                            );
-                            micros(clock().checked_add(delay).unwrap_or(Timestamp::MAX))
-                        });
+                        let retry = error.wait.as_ref().map(|wait| micros(wait.at()));
                         conn.execute(
                             "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
-                            params![owner, key, retry, error.cause],
+                            params![owner, key, retry, error.to_string()],
                         ).map_err(sql)?;
-                        return Err(failed(error));
+                        return match error.wait {
+                            Some(wait) => Ok(Scanned::Waiting {
+                                until: wait.at(),
+                                pause: (!wait.named()).then(|| wait.until()),
+                            }),
+                            None => Err(failed(error)),
+                        };
                     }
                 }
             }
@@ -431,10 +461,10 @@ pub(crate) fn scan(
         if page.next.is_none() {
             // A resumed window can end before the most recent connection.
             // Take a fresh window once its earlier coverage is durable.
-            return Ok(window.started < requested);
+            return Ok(done(window.started < requested));
         }
     }
-    Ok(false)
+    Ok(done(false))
 }
 
 fn channel(item: &Incoming) -> &str {
@@ -774,4 +804,31 @@ pub(super) fn channel_gaps(home: &Home, now: Timestamp) -> Result<Vec<ChannelGap
         })
     })
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{micros, stored_wait};
+    use jiff::{SignedDuration, Timestamp};
+
+    #[test]
+    fn a_stored_moment_holds_until_the_host_clock_reaches_it() {
+        let now: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
+        let at = now + SignedDuration::from_secs(120);
+        assert_eq!(stored_wait(Some(micros(at)), now, None), Some(micros(at)));
+        assert_eq!(stored_wait(Some(micros(at)), at, None), None);
+        assert_eq!(stored_wait(None, now, None), None);
+    }
+
+    #[test]
+    fn a_pause_waited_out_on_the_monotonic_source_no_longer_holds() {
+        let now: Timestamp = "2026-11-20T10:00:00Z".parse().unwrap();
+        let at = now + SignedDuration::from_secs(2);
+        assert_eq!(stored_wait(Some(micros(at)), now, Some(at)), None);
+        let other = now + SignedDuration::from_secs(1);
+        assert_eq!(
+            stored_wait(Some(micros(at)), now, Some(other)),
+            Some(micros(at))
+        );
+    }
 }

@@ -25,8 +25,8 @@ in code before implementation or finalization; tasks enforce configured
 
 ### Approval gates (Invariant 3)
 
-- `approvals.prd` (default `human`, or `peer`): enforced in code on `builder`,
-  `fixer`, and `finalizer` attempt reservations and on `--finalize-ready` for
+- `approvals.prd` (default `human`, or `peer`): enforced in code on `builder`
+  and `finalizer` attempt reservations and on `--finalize-ready` for
   `kind: feature` and any todo with a `prd` artifact.
 - `approvals.task` (default `human`, or `peer`): enforced in code before the
   runner dispatches `Lane::TaskRun` (`task-runner`) and when recording
@@ -92,7 +92,7 @@ Then the derivation's independent review can start
 ```gherkin
 Given a developer has a feature todo with a reviewed PRD
 When no eligible PRD approval is recorded
-Then reserving a builder, fixer, or finalizer attempt is refused
+Then reserving a builder or finalizer attempt is refused
 When an eligible PRD approval is stamped for the current PRD
 Then builder reservation succeeds immediately in the same worktree
 ```

@@ -3078,7 +3078,7 @@ fn an_owned_service_keeps_the_runner_running_for_a_companys_conversations() {
     assert_eq!(state(&c), ServiceState::Running);
     // Removing the company's last declared connector ends the known demand,
     // but while that home stays unreadable nothing is withdrawn.
-    let document = c.env.instrukt_home().join("companies/acme/instrukt.yaml");
+    let document = c.env.instrukt_home().join("companies/acme/company.yaml");
     let mut settings: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(&document).unwrap()).unwrap();
     settings.as_mapping_mut().unwrap().remove("connectors");

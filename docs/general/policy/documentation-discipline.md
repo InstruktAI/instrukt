@@ -35,13 +35,23 @@ restart, then check the logs` is directive. One string reaching a human and an
 - **A snippet without `delivered_by` is the current contract; staleness is a
   defect.** If code changes and a current snippet does not, the change updates it
   or marks it pending. Pending state and its clearing on delivery are
-  `sdlc/principle/documentation-first-development`; the carriers
+  `general/principle/documentation-first-development`; the carriers
   are `general/procedure/doc-snippet-authoring`.
 - **A limit found is recorded with its contract.** A limit of a current contract
   that investigation or review uncovers is recorded by the session that found it,
   in the owning snippet: a spec's `Known caveats`, or a design's `Failure modes`
   when it is how the system fails. What each section holds is defined in
   `general/spec/snippet-authoring-schema`.
+- **A behavior correction removes what steered the behavior.** A change that
+  corrects what agents did traces every text that led them there — the
+  snippets their load path reached, the help and prompts of the command they
+  ran, the briefs and runtime values they received — and rewrites or removes
+  each statement that steers otherwise. A corrected rule added beside a
+  competing one corrects nothing. A steering statement that lives in code is
+  named in the change and carried by the todo that delivers its code
+  (`sdlc/policy/process-change-authority`). The commit body names the
+  occurrence, so review can follow the path the agent read
+  (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene).
 
 ### Doc-driven delivery
 
@@ -120,7 +130,7 @@ restart, then check the logs` is directive. One string reaching a human and an
 ## Rationale
 
 Documentation leads and code catches up
-(`sdlc/principle/documentation-first-development`); this policy
+(`general/principle/documentation-first-development`); this policy
 is that disposition's rule layer.
 
 Reader identity cannot classify a surface that one string serves to both humans
@@ -130,6 +140,12 @@ reviewer resolves the same case the same way.
 A limit known only to the session that found it is rediscovered by every later
 reader, often only after relying on the capability. Recorded with its contract,
 it is in front of the reader at the moment of relying on it.
+
+An agent that meets two answers acts on whichever its load path reaches at the
+moment of acting, so a correction placed beside the text that steered it leaves
+that text winning there. Checked only against its own wording, such a
+correction passes review while the occurrence it targets recurs; following the
+path the agent read is the check that finds the competing text.
 
 A decision the human makes with one agent reaches every other agent through the
 document that agent writes. Handed on as a message instead, it arrives without
@@ -167,7 +183,3 @@ doc-hygiene worktree-head review catches self-reviewed and stale snippets.
 ## Exceptions
 
 - Trivial implementation-internal changes with no contract change touch no docs.
-
-## See Also
-
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md) — owns whether work executes in context or through a todo.

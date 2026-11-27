@@ -97,6 +97,7 @@ configured approval gate.
 
 The questions, each with the sources it names:
 
+<!-- planned-change:work-placement-by-slug -->
 | Question | What the filer faces |
 | --- | --- |
 | Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
@@ -106,6 +107,17 @@ The questions, each with the sources it names:
 | Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
 | Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
 | Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
+<!-- change:work-placement-by-slug -->
+| Question | What the filer faces |
+| --- | --- |
+| Bug or change | Which current contract does the behaviour break? A failure shows that something happened, not that it is wrong. Where no current contract states otherwise it is not a bug: file a change with `instrukt todo create <slug> <content> --kind change --approved` only when the behaviour is wanted, and otherwise file nothing. A report whose premise is that nothing followed up first establishes whether the sanctioned recovery was attempted. |
+| Validity | Has the intended outcome converged? A todo enters the lifecycle once its outcome has converged (`sdlc/policy/todo-creation-discipline`); contracts still to be written or reviewed are preparation work and never delay filing. An outcome still forming is not filed through this door yet. |
+| Fix in context or file | Is the repair settled work the filer already holds authority for: the approach known, the edit bounded, needing neither a plan, a builder nor a handoff, with authority from an explicit execution request, a bounded brief, or a completed human conversation in which every active participant agreed the outcome and the human released the edit (`sdlc/policy/todo-creation-discipline`)? Then it is made in context and nothing is filed. Human presence alone supplies no authority, and a change whose correctness is contested belongs in the lifecycle. A company's agent never holds repair authority: for it the answer is always to report. |
+| Evidence | An occurrence or a dangerous path in hand (`sdlc/concept/defect-evidence`). The report puts the observations and their addresses first, and keeps any causal account apart from them: each transition with its evidence, the alternatives checked and what remains unknown, or that the cause is not established. |
+| Duplication | Already reported, already being fixed, or a triaged known issue? In the owning project: `instrukt todo list --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt bugs suppressions --project <slug>` (`project/instrukt/spec/feature/work/known-issue-suppression`). |
+| Ordering and dependency | Downstream of, or dependent on, work already in flight? Route it to that work under `sdlc/policy/todo-creation-discipline` instead of filing. |
+| Owning project | The project that owns the defect, named with `--project`. A symptom that stops once the observing project's own configuration matches an instrukt default is that project's to fix, there. |
+<!-- /planned-change:work-placement-by-slug -->
 
 The output ends with the approved form:
 `instrukt bugs report --approved '<description>' [--slug <slug>] [--body <text>] [--project <slug>] [--human-involved true|false]`.
@@ -186,7 +198,7 @@ orchestrator's native evidence, not a recorded fact.
 Reservation commits before native delegation. An outstanding same-role retry
 returns the same attempt and inputs. Changed inputs or a second workspace/child
 role refuse while that attempt is outstanding. Claim, hold, and configured
-`approvals.prd` checks apply (`builder`, `fixer`, and `finalizer` reservations
+`approvals.prd` checks apply (`builder` and `finalizer` reservations
 require PRD approval when configured). Every new repository attempt captures the
 current shared `<slug>/work` head. Whether the reserved round starts a fresh
 worker or continues the role's prior session, and the order of the
@@ -219,7 +231,7 @@ listings supply no such evidence. A workspace mismatch stays a visible binding
 gap; resolve that assignment before admitting work.
 
 `todo-orchestrator` coordinates only. Preparation roles (`intaker`, `architect`,
-`planner`, reviewers) and delivery roles (`builder`, `fixer`, `build-reviewer`,
+`planner`, reviewers) and delivery roles (`builder`, `build-reviewer`,
 `verifier`, `deferrer`, `finalizer`) operate serially in `<slug>/work`, with one
 outstanding workspace-role attempt at a time (`task-preparer` runs without a
 worktree on `kind: task`). Completion stamps release writing
@@ -451,6 +463,16 @@ When that role's further round is assigned to the same worker
 Then the further round is recorded on that worker's conversation, where its earlier context lives
 And each round's evidence is attributed to its own round
 And the earlier round's record stays as it was
+```
+
+### UC-TD14: A worker bound in one role is not bound to another
+
+```gherkin
+Given a developer's todo whose worker is bound to an attempt of one role
+When the orchestrator binds that worker's session to a reserved attempt of another role
+Then the binding is refused, naming the attempt that session holds and that the reserved attempt binds a new session
+And the reserved attempt stays outstanding and unbound
+And that worker's instrukt commands still run in the role it holds
 ```
 
 ## Known caveats

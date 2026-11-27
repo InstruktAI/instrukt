@@ -453,6 +453,8 @@ mod tests {
         let fingerprints = vec![EvalFingerprint {
             fingerprint: "A".into(),
             snippets: 1,
+            prose: None,
+            units: None,
             project: slug("flows"),
             commit: CommitSha::parse(&"c".repeat(40)).unwrap(),
             recorded_at: Some(at(0)),

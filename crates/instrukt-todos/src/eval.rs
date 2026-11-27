@@ -751,6 +751,8 @@ mod tests {
         EvalFingerprint {
             fingerprint: fingerprint.into(),
             snippets: 1,
+            prose: None,
+            units: None,
             project: ProjectSlug::parse("flows").unwrap(),
             commit: CommitSha::parse(&fill.to_string().repeat(40)).unwrap(),
             recorded_at: recorded.map(at),

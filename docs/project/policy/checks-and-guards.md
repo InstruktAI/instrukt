@@ -24,10 +24,23 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
   nothing because it remembers having written it.
 - A part that depends on a service outside instrukt — the runtime, Slack, Redis,
   the network, a model provider — retries until it returns and reports its state
-  to the operator, except for the best-effort unavailable notices governed by
+  to the operator; a part whose caller's wait is bounded retries within that
+  bound and then gives its caller the wait, a bound of nothing being a single
+  try. The exceptions are the best-effort unavailable notices governed by
   `project/instrukt/spec/feature/company/conversations` and dead-letter
   announcements governed by `project/instrukt/spec/feature/runner/event-consumers`. Any other failure of a
   part is a defect to fix in the code.
+- A part designed or changed meets the rule above through the outside gate
+  (`project/instrukt/design/architecture/outside-gate`): it talks to its service
+  through the best existing client for it — an SDK, a protocol client, a
+  command-line program — and never replaces a fitting client with hand-written
+  requests to suit the outside gate; it brings that client's outcome to the
+  outside gate, which alone judges the failure, decides the wait and reports it,
+  so the part keeps no backoff schedule, `Retry-After` reading or rate-limit
+  memory of its own; it keeps exactly one retry layer, a client that retries by
+  itself being configured not to or brought through the outside gate as a
+  single try; and it states its own settings for its calls, which the outside
+  gate honours.
 - A person writing to a company's agent may be told about their request and about
   their own world — a service of theirs that is unreachable, the assistant being
   unavailable for a while — and never about instrukt's internals. What instrukt
@@ -50,6 +63,13 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
 - A check on a place only instrukt writes protects nothing a person owns and fails
   exactly where installations differ.
 - An outside service can leave at any moment; a defect cannot be retried away.
+- One mechanism makes the judgment once: parts that each read their service's
+  answers and pick their own pauses drift apart, retry what is not theirs to
+  retry and report the same outage in as many places.
+- The client best fitted to a service already knows its protocol; rebuilding it
+  to fit a retry mechanism trades proven handling for new defects.
+- Two retry layers multiply each other's tries and hide the outage from the
+  report.
 - A person can act on what belongs to their world and on nothing else.
 - Discarding a record is safe exactly when what rebuilds it survives.
 

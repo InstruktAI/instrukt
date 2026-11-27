@@ -62,14 +62,17 @@ but never claims that doctrine's general or domain namespace.
 
 - instrukt validates what a docs repository publishes: the snippet format,
   each position's `index.yaml` and `schema.yaml`, the workflow format and its
-  roles. A repository that does not fit — including one written for a newer
+  roles, and the structure of its compressed units
+  (`project/instrukt/spec/feature/publication/compressed-units`). A repository that does not fit — including one written for a newer
   instrukt — is refused at sync with its findings, and the previous
   publication stays.
 - Docs name instrukt's commands; an agent reads a command's contract from the
   installed binary with `instrukt <command> -h`. instrukt reads a docs
   repository only through its declared formats — frontmatter, required reads,
-  `index.yaml`, `schema.yaml`, configured-value directives and workflow files
-  — never through its prose.
+  `index.yaml`, `schema.yaml`, configured-value directives, workflow files
+  and the frontmatter of its compressed units
+  (`project/instrukt/spec/feature/publication/compressed-units`) — never
+  through its prose.
 - Published documentation runs nothing on the computer that reads or publishes
   it (`project/instrukt/spec/feature/docs/progressive-retrieval`).
 - A project that needs a domain no adopted repository publishes on the computer

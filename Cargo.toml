@@ -9,6 +9,7 @@ members = [
     "crates/instrukt-connector",
     "crates/instrukt-company",
     "crates/instrukt-connector-slack",
+    "crates/instrukt-outside",
 ]
 
 [workspace.package]
@@ -30,6 +31,7 @@ instrukt-todos = { path = "crates/instrukt-todos", version = "0.1.0" }
 instrukt-connector = { path = "crates/instrukt-connector", version = "0.1.0" }
 instrukt-company = { path = "crates/instrukt-company", version = "0.1.0" }
 instrukt-connector-slack = { path = "crates/instrukt-connector-slack", version = "0.1.0" }
+instrukt-outside = { path = "crates/instrukt-outside", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"
@@ -39,6 +41,7 @@ url = "2"
 clap = { version = "4", features = ["derive", "wrap_help"] }
 hex = "0.4"
 hmac = "=0.12.1"
+httpdate = "=1.0.3"
 form_urlencoded = "=1.2.3"
 dotenvy = "=0.15.7"
 indexmap = { version = "2", features = ["serde"] }

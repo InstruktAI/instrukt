@@ -42,10 +42,11 @@ build-review-fix loops.
 - Work is iterative by default; rigor comes from explicit loops, not from
   assuming one-pass implementation.
 
-- Implementation workers (`builder`, `fixer`) consume prepare artifacts; they
+- The implementation worker (`builder`) consumes prepare artifacts, in build
+  and in remediation rounds alike; it
   never rewrite them. A finding is resolved by changing code, or — when it
   reveals the intent or plan itself is wrong — by kicking back to
-  `todo-orchestrator`. A builder or fixer never edits a prepare artifact to make
+  `todo-orchestrator`. A builder never edits a prepare artifact to make
   a finding pass; `todo-orchestrator` routes those edits to `intaker` or
   `planner` on the same `<slug>/work` worktree.
 

@@ -403,7 +403,7 @@ fn stage_committed_forms(
         if rel == config::CONFIG_FILE_NAME
             && !matches!(
                 config::classify_root(Some(&bytes)),
-                RootDocument::ProjectLayer(_)
+                RootDocument::ProjectLayer { .. }
             )
         {
             continue;

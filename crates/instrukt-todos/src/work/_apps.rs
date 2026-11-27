@@ -73,15 +73,17 @@ impl Deferrals {
     }
 }
 #[derive(Clone, Copy)]
-enum Method {
+pub(super) enum Method {
     Get,
     Post,
+    Patch,
+    Put,
 }
 
 /// One invocation's work-owned GitHub capabilities. The CLI shares this object
 /// between work, repository and runner; no credential or key is persisted.
 pub struct GitHubAccess {
-    home: Home,
+    pub(super) home: Home,
     state: Mutex<Option<Apps>>,
 }
 impl GitHubAccess {
@@ -91,7 +93,7 @@ impl GitHubAccess {
             state: Mutex::new(None),
         }
     }
-    fn with_apps<T>(
+    pub(super) fn with_apps<T>(
         &self,
         action: impl FnOnce(&mut Apps) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
@@ -266,6 +268,7 @@ fn permissions(operation: Operation) -> Value {
         Operation::Observe => json!({"checks":"read","statuses":"read","contents":"read"}),
         Operation::ReviewObserve => json!({"pull_requests":"read"}),
         Operation::ReviewPublish => json!({"pull_requests":"write","statuses":"write"}),
+        Operation::CompanyRepository => json!({"administration":"write"}),
     }
 }
 
@@ -401,7 +404,7 @@ impl IdentitySettings {
         &self.apps[name]
     }
 }
-struct Apps {
+pub(super) struct Apps {
     home: Home,
     api: String,
     identity: IdentitySettings,
@@ -417,22 +420,10 @@ impl Apps {
         let config = Configuration::load_global(home)
             .map_err(|_| setup("cannot read machine-global configuration"))?;
         let identity = IdentitySettings::read(&config, home)?;
-        let api = config
-            .github_api_url()
-            .map_err(|_| setup("cannot read github.api_url"))?
-            .to_owned();
-        let url = url::Url::parse(&api).map_err(|_| setup("invalid github.api_url"))?;
-        if url.scheme() != "https"
-            && !(url.scheme() == "http"
-                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
-        {
-            return Err(setup(
-                "github.api_url requires HTTPS (HTTP only on loopback)",
-            ));
-        }
+        let api = api_base(&config)?;
         Ok(Self {
             home: home.clone(),
-            api: api.trim_end_matches('/').into(),
+            api,
             identity,
             agent: agent(),
             auth_deferrals: Default::default(),
@@ -442,10 +433,10 @@ impl Apps {
             credentials: Default::default(),
         })
     }
-    fn selected(&self, role: Option<&str>) -> &App {
+    pub(super) fn selected(&self, role: Option<&str>) -> &App {
         self.identity.selected(role)
     }
-    fn issue(
+    pub(super) fn issue(
         &mut self,
         repository: &str,
         role: Option<&str>,
@@ -511,15 +502,19 @@ impl Apps {
             }
             self.verified_apps.insert(app.app_id);
         }
+        // A company repository's credential is the installation's on the
+        // organisation named in `repository`. It is requested without a
+        // repository restriction, so it reaches every repository available
+        // to that installation.
+        let organisation = op == Operation::CompanyRepository;
+        let installation_endpoint = if organisation {
+            format!("/orgs/{repository}/installation")
+        } else {
+            format!("/repos/{repository}/installation")
+        };
         let installation = match self.installations.get(&(repository.into(), app.app_id)) {
             Some(installation) => installation.clone(),
-            None => self.request(
-                Method::Get,
-                &format!("/repos/{repository}/installation"),
-                &jwt,
-                None,
-                clock,
-            )?,
+            None => self.request(Method::Get, &installation_endpoint, &jwt, None, clock)?,
         };
         if !installation["suspended_at"].is_null() || !installation["suspended_by"].is_null() {
             return Err(setup("repository installation is suspended"));
@@ -532,12 +527,13 @@ impl Apps {
             .ok_or_else(|| setup("repository installation does not match selected App"))?;
         let permissions = permissions(op);
         check_permissions(&installation["permissions"], &permissions)?;
-        let (_, repo) = repository
-            .split_once('/')
-            .ok_or_else(|| setup("invalid repository"))?;
-        let token_request = if op == Operation::Board {
+        let unscoped = op == Operation::Board || organisation;
+        let token_request = if unscoped {
             json!({"permissions": permissions})
         } else {
+            let (_, repo) = repository
+                .split_once('/')
+                .ok_or_else(|| setup("invalid repository"))?;
             json!({"repositories": [repo], "permissions": permissions})
         };
         let response = self.request(
@@ -557,7 +553,7 @@ impl Apps {
             .as_str()
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| setup("issuance returned no installation credential"))?;
-        if op != Operation::Board {
+        if !unscoped {
             let repos = self.request(
                 Method::Get,
                 "/installation/repositories?per_page=100",
@@ -627,40 +623,18 @@ impl Apps {
         body: Option<&Value>,
         clock: Clock,
     ) -> Result<Value, AppError> {
-        if bearer.is_empty() {
-            return Err(setup("authenticated App capability is unavailable"));
-        }
-        let url = match (endpoint, self.api.strip_suffix("/api/v3")) {
-            ("/graphql", Some(host)) => format!("{host}/api/graphql"),
-            _ => format!("{}{endpoint}", self.api),
-        };
-        let mut response = match method {
-            Method::Post => headers(self.agent.post(&url), bearer)
-                .header("Content-Type", "application/json")
-                .send(body.map(Value::to_string).unwrap_or_default()),
-            Method::Get => headers(self.agent.get(&url), bearer).call(),
-        }
-        .map_err(|_| AppError::Unreachable)?;
-        let received = clock.now();
-        let status = response.status().as_u16();
-        let limits = super::_github::Limits::read(response.headers());
-        if limits.refusal_throttles(status) {
-            return Err(AppError::RateLimited {
-                until: limits.until(received),
-            });
-        }
+        let Answer {
+            status,
+            body: answer,
+            limits,
+            received,
+        } = self.send(method, endpoint, bearer, body, clock)?;
         if !(200..300).contains(&status) {
             return Err(AppError::Refused {
                 operation: endpoint.split('?').next().unwrap_or(endpoint).into(),
                 status,
             });
         }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|_| AppError::Unreachable)?;
-        let answer: Value =
-            serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))?;
         // GraphQL reports throttling, primary or secondary, in a successful
         // answer's `errors`; its retry boundary is the headers' to name, or
         // GitHub's minute for a secondary limit that names no delay.
@@ -672,8 +646,94 @@ impl Apps {
         }
         Ok(answer)
     }
+    /// One App API request answered with any status but a throttling one:
+    /// the status and the body as JSON (`null` when empty, or when a refusal
+    /// carries no JSON). Unreachable and throttled answers are errors.
+    pub(super) fn send(
+        &self,
+        method: Method,
+        endpoint: &str,
+        bearer: &str,
+        body: Option<&Value>,
+        clock: Clock,
+    ) -> Result<Answer, AppError> {
+        if bearer.is_empty() {
+            return Err(setup("authenticated App capability is unavailable"));
+        }
+        let url = match (endpoint, self.api.strip_suffix("/api/v3")) {
+            ("/graphql", Some(host)) => format!("{host}/api/graphql"),
+            _ => format!("{}{endpoint}", self.api),
+        };
+        let payload = body.map(Value::to_string).unwrap_or_default();
+        let mut response = match method {
+            Method::Post => headers(self.agent.post(&url), bearer)
+                .header("Content-Type", "application/json")
+                .send(payload),
+            Method::Patch => headers(self.agent.patch(&url), bearer)
+                .header("Content-Type", "application/json")
+                .send(payload),
+            Method::Put => headers(self.agent.put(&url), bearer)
+                .header("Content-Type", "application/json")
+                .send(payload),
+            Method::Get => headers(self.agent.get(&url), bearer).call(),
+        }
+        .map_err(|_| AppError::Unreachable)?;
+        let received = clock.now();
+        let status = response.status().as_u16();
+        let limits = super::_github::Limits::read(response.headers());
+        if limits.refusal_throttles(status) {
+            return Err(AppError::RateLimited {
+                until: limits.until(received),
+            });
+        }
+        let text = response
+            .body_mut()
+            .read_to_string()
+            .map_err(|_| AppError::Unreachable)?;
+        let body = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            match serde_json::from_str(&text) {
+                Ok(body) => body,
+                Err(_) if !(200..300).contains(&status) => Value::Null,
+                Err(_) => return Err(setup("unreadable App API response")),
+            }
+        };
+        Ok(Answer {
+            status,
+            body,
+            limits,
+            received,
+        })
+    }
 }
-fn agent() -> ureq::Agent {
+
+/// One App API answer [`Apps::send`] received.
+pub(super) struct Answer {
+    pub(super) status: u16,
+    pub(super) body: Value,
+    limits: super::_github::Limits,
+    received: Timestamp,
+}
+/// The GitHub API address `config` declares, without a trailing `/`: HTTPS,
+/// or HTTP on loopback only.
+pub(super) fn api_base(config: &Configuration) -> Result<String, AppError> {
+    let api = config
+        .github_api_url()
+        .map_err(|_| setup("cannot read github.api_url"))?;
+    let url = url::Url::parse(api).map_err(|_| setup("invalid github.api_url"))?;
+    if url.scheme() != "https"
+        && !(url.scheme() == "http"
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
+    {
+        return Err(setup(
+            "github.api_url requires HTTPS (HTTP only on loopback)",
+        ));
+    }
+    Ok(api.trim_end_matches('/').into())
+}
+
+pub(super) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .timeout_global(Some(Duration::from_secs(30)))

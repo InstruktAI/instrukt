@@ -29,6 +29,12 @@ check documentation before committing, and it changes nothing.
   manifest (`orchestrator`, `requires`, `roles`) is validated against the
   workflow schema, rather than snippet taxonomy and frontmatter.
 
+`docs/_compressed/`, where a repository keeps its compressed units, is one of
+the skipped directories: a unit is no snippet, and validation reports nothing
+about it. A unit's structure is checked by `instrukt docs units`, by the
+renderings and by sync
+(`project/instrukt/spec/feature/publication/compressed-units`).
+
 ### Checks
 
 | Family | A finding when |
@@ -37,7 +43,7 @@ check documentation before committing, and it changes nothing.
 | Frontmatter | `description` is missing; `visibility` is not `public` or `internal`; a procedure-only field sits on another type; `subscriptions` and `activation_trigger` both appear; `parameters` appears without an explicit or subscription-default role or is malformed; obsolete `dispatch` appears; an `adr` lacks `date` or `number`; `eval` is not a boolean |
 | Procedures | a non-subscribed workflow or project procedure has a `role` absent from its `workflow/workflow.yaml` role list; two procedures declare the same `role`; an entry procedure requires a procedure of its own group folder that carries no root frontmatter |
 | Structure | the H1 is missing, not first, or does not end with `— <Type>`; a required H2 section of the effective schema is missing; an H2 outside it appears; `See Also` is not last (`project/instrukt/spec/feature/docs/snippet-schema`) |
-| References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a `general` or domain snippet requiring a project snippet |
+| References | `## Required reads` not at H2; a Required reads entry that is not one snippet id, a same-repository link whose text is one snippet id, or one bare domain name; an id that resolves to no snippet; a bare name that is neither `general` nor a domain of the validated repository or published on the computer, or names a domain without `index.yaml`; a See Also entry starting with an id that resolves to no snippet; a reference link in Required reads or See Also whose text is not one snippet id, whose target is missing, outside the working tree or not that id's file, or whose id belongs to another repository; a snippet referenced by path (`@…`, or a path to a snippet file) outside code and these reference links; a Required reads entry, an id or a bare domain name, or a See Also entry, opening with an id or carrying a linked id, that names a position its snippet may not reference: from `general` anything but `general`, from a domain another domain or a project, from a project another project (`general/policy/referencing-doc-snippets`); the finding names the reference and the positions its snippet may reference |
 | Required-reads hygiene | a required read already implied by the closure of another required read of the same snippet; the finding names the read that implies it |
 | Position index | as `project/instrukt/spec/feature/docs/position-index` lists |
 | Schema | a `schema.yaml` finding as `project/instrukt/spec/feature/docs/snippet-schema` lists |
@@ -193,13 +199,16 @@ When they validate without `--no-todo-lookup` against a home whose state databas
 Then validation succeeds without taking the writer lock or modifying the state database
 ```
 
+### UC-SV8: A developer learns where a reference points away from the generic (retired)
+
 ## Known caveats
 
 - Validation does not judge prose: a citation that no longer holds, a restated
   rule or a misleading description passes.
 - A present `## Required reads` that is not the first H2 is a validation finding.
 - A same-repository reference written as a plain id is valid; authoring uses the clickable form.
-- A prose citation is not resolved: only Required reads and See Also entries are.
+- A prose citation is neither resolved nor checked for direction: only Required reads and See Also entries are.
+- Validation judges the validated repository's own snippets. A reference against the direction inside a domain another repository publishes is reported where that repository is validated or synced, and never fails this repository's run.
 - Two required reads whose closures overlap are not redundant; a read is reported only when it lies in another read's closure.
 - Mermaid syntax validation is outside the first build.
 

@@ -114,8 +114,9 @@ owned by the runner contract, independently of configuration shape validation.
 Ambiguous startup retains its key and selected inputs for recovery. Chain
 fallback after invocation requires rejection proven before creation or explicit
 no-start resolution under `project/instrukt/spec/feature/runner/session-continuity`.
-Native delegation uses the same resolved selection through configured runtime
-instructions where its native operation supports the options.
+Runner starts pass the same resolved selection, effort and options included,
+to the runtime's native launch. Native delegation uses it through configured
+runtime instructions where its native operation supports the options.
 
 ### Configuration skill and ACP
 
@@ -168,9 +169,10 @@ Retired: readiness and quota are parts of the prose contract above.
 ## Known caveats
 
 - `t3 thread start` has no effort/options flag. Until upstream supports it,
-  instrukt's own starts receive effort only from the T3 project default.
-  Native delegation and the T3 server can carry options; instrukt builds no
-  workaround for the host CLI. The upstream request is
+  an agent-driven host-CLI start receives effort only from the T3 project
+  default. instrukt's own starts use T3's native launch and native delegation,
+  which both carry the resolved effort/options; instrukt builds no workaround
+  for the host CLI. The upstream request is
   [pingdotgg/t3code#29863](https://github.com/pingdotgg/t3code/issues/29863).
 - Mandatory conversion of a version-one agents file preserves user choices and
   refuses conflicting retired effort fields with the source intact until they

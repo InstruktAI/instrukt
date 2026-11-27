@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
 expression: "stdout(&env, &with_third_party)"
 ---
 # instrukt docs index: snippet ids with their descriptions
-# Filter with --domain <acme|beta|gamma> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
+# Filter with --domain <acme|beta|gamma|general> (repeatable), --areas <principle|concept|policy|procedure|design|spec|adr>, --third-party, --target <slug>, --project <slug>
 # Source of project demo: [TMP]/demo/docs/project/ — published commit [SHA] — remote none
 
 acme/principle/care: Why care matters.
@@ -15,6 +15,7 @@ acme/procedure/start: Starts a session.
 acme/procedure/work: How the work is done.
 project/demo/design/y: How y is built.
 beta/spec/thing: What a thing is.
+general/spec/ground: What every domain stands on.
 project/demo/spec/feature/x: The x feature.
 
 # Third-party documentation (not part of the taxonomy)

@@ -318,7 +318,7 @@ impl Company {
         let company_path = home.company_dir(&slug);
         std::fs::create_dir_all(&company_path).unwrap();
         company.env.place_company_project(COMPANY);
-        let config = company_path.join("instrukt.yaml");
+        let config = company_path.join("company.yaml");
         let identity = format!("schema_version: {COMPANY_SCHEMA_VERSION}\ncompany: {COMPANY}\n");
         std::fs::write(&config, &identity).unwrap();
         let source = SecretSource::Company(slug);

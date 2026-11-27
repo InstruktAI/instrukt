@@ -54,6 +54,13 @@ ruling to every testing instruction below. Author or change tests only where per
 the integration gate; project-owned hooks and CI retain their own checks. When no tests apply, report `N/A`
 with the governing contract.
 
+**Remediation round.** When your brief names a findings artifact
+(`review-findings`, `verification-findings`, or the failure an integrate
+kickback returned), this round adjudicates and remediates those findings under
+`sdlc/procedure/lifecycle/fix-review-findings` in place of the task steps below,
+and releases with `instrukt todo stamp {slug} --build-complete`, an
+evidence-only rejection pass included.
+
 1. Read `input` to confirm the checked intent and scope constraints. For a
    feature, also read `prd`; for a bug, read `diagnosis` when present. Derived artifacts
    carry no authority to widen the recorded intent.

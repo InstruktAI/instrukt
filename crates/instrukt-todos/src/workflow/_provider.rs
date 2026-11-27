@@ -30,9 +30,8 @@ pub(crate) const DRIFT_ARTIFACTS: [&str; 3] = [
 
 /// Writer and authoring/analysis roles whose sessions cannot independently
 /// approve a build (`setup` is retained for legacy and test-flavor records).
-const WRITER_ROLES: [&str; 11] = [
+const WRITER_ROLES: [&str; 10] = [
     "builder",
-    "fixer",
     "setup",
     "finalizer",
     "intaker",

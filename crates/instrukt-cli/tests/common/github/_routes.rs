@@ -31,7 +31,11 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
     }
     if let Some(login) = path.strip_prefix("/users/") {
         return if method == "GET" {
-            Reply::ok(actor(login))
+            let mut account = actor(login);
+            if let Some(kind) = state.accounts.get(login) {
+                account["type"] = kind.as_str().into();
+            }
+            Reply::ok(account)
         } else {
             Reply::not_found()
         };
@@ -140,6 +144,16 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         );
         return Reply::created(view);
     }
+    if let ("GET", ["orgs", org, "installation"]) = (method, segs.as_slice()) {
+        return if state.org_installations.contains(*org) {
+            Reply::ok(json!({"id":1,"app_id":1,"permissions":state.installation_permissions(1)}))
+        } else {
+            Reply::not_found()
+        };
+    }
+    if let ("POST", ["orgs", org, "repos"]) = (method, segs.as_slice()) {
+        return create_repo(state, org, &input);
+    }
     let ["repos", owner, name, rest @ ..] = segs.as_slice() else {
         return Reply::not_found();
     };
@@ -160,6 +174,20 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
             Reply::ok(json!({"id":id,"app_id":id,"permissions":state.installation_permissions(id)}))
         }
         ("GET", []) => Reply::ok(state.repo(&full).json()),
+        ("PATCH", []) => {
+            if let Some(branch) = input["default_branch"].as_str() {
+                state.repo(&full).default_branch = branch.to_owned();
+            }
+            Reply::ok(state.repo(&full).json())
+        }
+        ("PUT", ["collaborators", invited]) => {
+            let permission = input["permission"].as_str().unwrap_or("push").to_owned();
+            state
+                .repo(&full)
+                .collaborators
+                .insert((*invited).to_owned(), permission.clone());
+            Reply::created(json!({"invitee": actor(invited), "permissions": permission}))
+        }
         ("GET", ["collaborators", login, "permission"]) => {
             let allowed = state.repo(&full).comments.values().any(|c| {
                 c.login == *login
@@ -382,6 +410,39 @@ pub(super) fn route(state: &mut State, method: &str, path: &str, query: &str, bo
         }
         _ => Reply::not_found(),
     }
+}
+
+/// `POST /orgs/{org}/repos`: a private repository, empty, its bare remote
+/// initialised where the test serves remotes; a name the organisation
+/// already holds is GitHub's 422.
+fn create_repo(state: &mut State, org: &str, input: &Value) -> Reply {
+    let Some(name) = input["name"].as_str() else {
+        return Reply::invalid("name is missing");
+    };
+    let full = format!("{org}/{name}");
+    if state.repos.contains_key(&full) {
+        return Reply::json(
+            422,
+            json!({"message":"Repository creation failed.","errors":[{"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account"}]}),
+        );
+    }
+    let id = state.next_id();
+    let mut repo = Repo::new(id, org, name);
+    // GitHub creates a public repository unless `private` is true.
+    repo.public = input["private"] != true;
+    let body = repo.json();
+    state.repos.insert(full, repo);
+    if let Some(remotes) = &state.remotes {
+        let remote = remotes.join(org).join(format!("{name}.git"));
+        std::fs::create_dir_all(&remote).unwrap();
+        let initialised = std::process::Command::new("git")
+            .args(["init", "--bare", "--quiet", "--initial-branch=main"])
+            .arg(&remote)
+            .status()
+            .unwrap();
+        assert!(initialised.success());
+    }
+    Reply::created(body)
 }
 
 fn string_list(value: &Value) -> Vec<String> {

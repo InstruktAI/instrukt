@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/config/_github_org.rs
+expression: "findings[0].message"
+---
+GitHub cannot be asked whether `homes` is an organisation (todos: unreachable); github.org names the GitHub organisation that owns this computer's company repositories, so nothing was written; try again once GitHub answers

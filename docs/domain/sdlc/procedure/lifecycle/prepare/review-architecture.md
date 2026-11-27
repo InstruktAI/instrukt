@@ -17,7 +17,7 @@ parameters:
 - [sdlc/principle/architectural-defaults](../../../principle/architectural-defaults.md)
 - [sdlc/policy/state-storage](../../../policy/state-storage.md)
 - [sdlc/procedure/lifecycle/work/review-build](../work/review-build.md)
-- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
+- [general/policy/command-contract-read](../../../../../general/policy/command-contract-read.md)
 
 ## Goal
 

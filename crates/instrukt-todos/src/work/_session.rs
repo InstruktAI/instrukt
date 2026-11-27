@@ -1033,6 +1033,19 @@ impl<'w> Session<'w> {
                 (base.record.slug != mine.slug).then(|| (mine.id.clone(), base.record.slug.clone()))
             })
             .collect();
+        // The sessions the change newly records on bindings, relative to
+        // each row as this command read it.
+        let recorded: Vec<(&SessionRef, &str)> = changed
+            .iter()
+            .flat_map(|&index| {
+                let mine = &self.items[index].record;
+                let base = self
+                    .bases
+                    .get(&mine.id)
+                    .map(|base| base.record.bindings.as_slice());
+                super::_assignment::newly_recorded(&mine.bindings, base)
+            })
+            .collect();
         let result = self.store.write(|tx, path, project| {
             let mut rows = Vec::new();
             for &index in changed {
@@ -1055,6 +1068,10 @@ impl<'w> Session<'w> {
                     }
                 }
             }
+            // A session the change records on a binding must still resolve
+            // to one assignment, judged against every binding this
+            // transaction holds (`roles-and-capabilities`).
+            super::_assignment::admit_recorded(tx, path, &recorded)?;
             let ids: Vec<TodoId> = referenced.iter().map(|(id, _, _)| id.clone()).collect();
             let now = _store::referenced(tx, path, project, &ids)?;
             for (id, slug, status) in &referenced {

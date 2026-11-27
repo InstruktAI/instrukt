@@ -289,18 +289,23 @@ fn continuation(pending: &[Request]) -> Result<Option<String>, ReadBackError> {
 fn failed(error: impl std::fmt::Display) -> ReadBackError {
     ReadBackError {
         cause: error.to_string(),
-        retry_after: None,
+        wait: None,
     }
 }
 
+/// A Slack failure of a read, with the outside gate's wait when Slack was
+/// unavailable.
 fn web_error(error: SlackError) -> ReadBackError {
-    let retry_after = match &error {
-        SlackError::Limited { seconds, .. } => Some(*seconds),
-        _ => None,
-    };
-    ReadBackError {
-        cause: error.to_string(),
-        retry_after,
+    match error {
+        SlackError::Unavailable {
+            method,
+            cause,
+            wait,
+        } => ReadBackError {
+            cause: super::unavailable_cause(&method, cause.as_deref()),
+            wait: Some(wait),
+        },
+        other => failed(other),
     }
 }
 

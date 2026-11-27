@@ -11,8 +11,8 @@ interruptible: false
 
 ## Required reads
 
-- [general/procedure/event-handling/overview](event-handling/overview.md)
-- [sdlc/policy/todo-creation-discipline](../../domain/sdlc/policy/todo-creation-discipline.md)
+- [general/procedure/event-handling/overview](../../../general/procedure/event-handling/overview.md)
+- [sdlc/policy/todo-creation-discipline](../policy/todo-creation-discipline.md)
 
 ## Goal
 

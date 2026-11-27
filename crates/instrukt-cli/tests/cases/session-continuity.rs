@@ -323,7 +323,7 @@ fn a_busy_parents_native_result_uses_no_instrukt_waiting_slot() {
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS16
 #[test]
 fn native_failure_or_input_wait_never_becomes_instrukt_completion() {
-    for state in ["failed", "waiting"] {
+    for state in ["failed", "needs-input"] {
         let (crew, child) = pending_builder();
         crew.runtime.open_session("lead-1");
         crew.runtime.set_status(
@@ -1523,8 +1523,17 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     let p = Tracked::new(true);
     change(&p, "parser");
     let fake = FakeT3::create(&p.env);
-    fake.prepare_worktree_until_read(2);
-    p.tick();
+    fake.prepare_worktree();
+    std::thread::scope(|scope| {
+        let pickup = scope.spawn(|| p.tick());
+        common::wait_until(
+            "the pickup reads its launched thread while T3 still prepares the worktree",
+            std::time::Duration::from_secs(45),
+            || fake.read_while_preparing("s1"),
+        );
+        fake.finish_preparation("s1");
+        pickup.join().unwrap();
+    });
     assert_eq!(p.rt.started_count(), 1);
     let native = format!("t3:{}", fake.native_id("s1"));
     let shown: serde_json::Value = serde_json::from_slice(
