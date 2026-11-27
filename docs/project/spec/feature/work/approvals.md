@@ -81,6 +81,7 @@ rows of the state database's `stamps` table with `fact` `approval` or
 (`project/instrukt/spec/feature/work/state-database`). Approval stamps distinguish human decisions from peer judgments and retain
 the source attribution above even when an agent records the decision.
 
+<!-- planned-change:commands-never-touch-github -->
 Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
 [--session <runtime:id>]` and `instrukt todo stamp <slug> --task-approved
 --by human|peer [--session <runtime:id>]`. A peer approval states its reason
@@ -89,6 +90,17 @@ session and is refused without either. Session statements retain the
 observed source session; GitHub approvals arrive by pull with GitHub attribution.
 Carry retains the earlier attribution and evidence under the current independent
 reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
+<!-- change:commands-never-touch-github -->
+Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
+[--session <runtime:id>]` and `instrukt todo stamp <slug> --task-approved
+--by human|peer [--session <runtime:id>]`. A peer approval states its reason
+with `--reason <text>`, the CLI's one justification flag; it requires the peer
+session and is refused without either. Session statements retain the
+observed source session; GitHub approvals arrive through the runner's
+reflection pass with GitHub attribution.
+Carry retains the earlier attribution and evidence under the current independent
+reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
+<!-- /planned-change:commands-never-touch-github -->
 
 ## Use cases
 

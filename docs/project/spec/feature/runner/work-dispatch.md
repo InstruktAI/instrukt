@@ -89,6 +89,7 @@ session for a todo, the runner commits a claim on it in that record; the
 claim needs no answer from GitHub, so an unreachable GitHub delays the
 claim's reflection and never the session.
 
+<!-- planned-change:commands-never-touch-github -->
 A claim is held by a computer, identified by the id created once in
 `~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
 deleting it orphans this computer's live claims until they are released. On that
@@ -109,6 +110,27 @@ it, leaving its reflection to the next flush that acquires it
 lock only briefly for each local commit of what it learned. Lock order is always
 reflection → writer; the local transaction releases the writer lock before a
 flush acquires the reflection lock. Local readers take neither lock.
+<!-- change:commands-never-touch-github -->
+A claim is held by a computer, identified by the id created once in
+`~/.instrukt/state/machine-id`. Like the rest of the home it is re-creatable;
+deleting it orphans this computer's live claims until they are released. On that
+computer the holder is a session bound to the todo, or the session that claimed
+it through `instrukt todo work`; any other caller is refused as "claimed
+elsewhere". After the claim, `instrukt todo update <slug> --unclaim` releases
+it. The dispatcher records the handoff and retains conversations needed for
+later rounds or human questions. The runtime owns session ending and cleanup;
+which finished threads are archived, and when, is the runner's thread
+retention (`project/instrukt/spec/feature/runner/thread-retention`).
+Every tick is the single path that talks to GitHub for the work record: it
+reads inbound human controls from the issues of this computer's live todos
+before pickup and flushes pending work-record reflection after pickup,
+serializing both under the per-computer reflection lock
+(`project/instrukt/spec/feature/work/github-record`). Todo commands never
+read GitHub, never flush reflection and never acquire the reflection lock.
+Reflection holds that lock across GitHub requests and takes the writer lock
+only briefly for each local commit of what it learned. Lock order is always
+reflection → writer. Local readers take neither lock.
+<!-- /planned-change:commands-never-touch-github -->
 
 ### Enablement and infrastructure
 

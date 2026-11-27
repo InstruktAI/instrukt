@@ -72,6 +72,7 @@ meaning and the writes of the conversation tables.
   instead): it alone would put one database under two lock domains
   (`general/principle/trust-and-guardrails`: interference is a harm restoring state
   cannot repair).
+<!-- planned-change:commands-never-touch-github -->
 - A separate per-computer reflection lock
   `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
   across GitHub requests and takes the writer lock only briefly for each local
@@ -94,6 +95,28 @@ meaning and the writes of the conversation tables.
   while the writer lock is held, and it is released before the withdrawal's
   reflection acquires the reflection lock. A withdrawal's git and filesystem
   work runs under it and outside the writer lock.
+<!-- change:commands-never-touch-github -->
+- A separate per-computer reflection lock
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. Only the
+  runner's reflection pass acquires it, waiting for a bounded time and holding
+  it across GitHub requests while taking the writer lock only briefly for each
+  local transaction that records what reflection learned; a tick whose wait
+  runs out reflects nothing that run, and the next tick tries again. Commands
+  that write the record take only the writer lock, mark reflection pending and
+  return without touching GitHub or the reflection lock. Lock order is always
+  reflection → writer. Current-schema local readers take neither lock. Readers
+  of an older database enter the same migration path under the writer lock
+  before consuming it, except status inspection and documentation reads.
+- A withdrawal holds the per-computer withdrawal lock
+  `~/.instrukt/state/withdrawal.lock` from before it records its intent
+  (`withdrawal_intents`) until it has committed or abandoned it, or returned
+  with the intent kept by a refusal. The lock tells a withdrawal in progress
+  from a recorded intent no command is acting on; it is never requested
+  while the writer lock is held, and it is released once the withdrawal ends;
+  the runner's next reflection pass reflects the withdrawal to GitHub. A
+  withdrawal's git and filesystem work runs under it and outside the writer
+  lock.
+<!-- /planned-change:commands-never-touch-github -->
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -525,6 +548,7 @@ was. After any other returned failure — a marker left, an unsettled outcome, o
 an ineffective attempt following another release — the row keeps what it
 records, for the withdrawal run again to recognize what happened.
 
+<!-- planned-change:commands-never-touch-github -->
 A withdrawal interrupted while the row exists is completed by running
 `instrukt todo remove <slug>` again, which continues from the row before reading
 GitHub: an action that arrived there meanwhile, such as a hold label, stays
@@ -560,6 +584,44 @@ not descend from `branch_head`, is recorded as deleted with the commit the row
 holds and a recreated branch is left as it is; a branch that moved on to a
 descendant of `branch_head` is recorded at, and deleted against, the commit it
 moved to. What the row names as released stays released.
+<!-- change:commands-never-touch-github -->
+A withdrawal interrupted while the row exists is completed by running
+`instrukt todo remove <slug>` again, which continues from the row without
+touching GitHub: any action that arrived on the issue meanwhile, such as a hold
+label, stays outstanding until the runner's first reflection read after the
+withdrawal commits. It first records
+what the interrupted command did without recording it, and what became of the
+resources since: while the row records the branch `pending`, a marker records
+the branch deleted at the marker's commit, and whatever branch carries its name
+now is left as it is; each worktree is recognized by its git directory, never
+at the project's primary checkout nor where git reports it prunable, and acted
+on only at its path or where its stage says the withdrawal's own moves can have
+put it: being moved, its staging location or inside a directory that took that
+location; staged, where it was staged; being moved back, where it was staged or
+inside a directory that took its path. Found at its path, its stage records it
+not moved, even when it was staged and someone moved it back there, and it is
+read and checked there as a worktree the withdrawal has not moved; found
+anywhere else there, its stage records it staged at that place, and it is never
+taken for released. Until the withdrawal tries to remove a worktree, that is in
+every stage but staged, git keeps its git directory for it alone, so the
+withdrawal also reads every other worktree git lists: one listed elsewhere with
+its git directory was moved there by someone else, even while the withdrawal was
+moving it or moving it back, and is left where it is, never moved back, and
+leaves the withdrawal. One not staged that git lists nowhere is released only
+once git no longer keeps its git directory; a staged one is released once git
+lists it neither where it was staged nor at its path and nothing is where it
+was staged, whatever git lists elsewhere. Removing a worktree lets git give its
+git directory, which git names after the worktree's directory name, to the next
+worktree added under that name, wherever it is, so a checkout git lists with
+that git directory anywhere but its path or where it was staged, even of the
+same commit, is never taken for a staged worktree. The workspace at `workspace_path` is released when
+the row records it present and it is gone. A workspace at `workspace_path` holding
+files refuses the withdrawal and is named, whatever the row records of it. Without a marker, a branch absent, or recreated at a commit that does
+not descend from `branch_head`, is recorded as deleted with the commit the row
+holds and a recreated branch is left as it is; a branch that moved on to a
+descendant of `branch_head` is recorded at, and deleted against, the commit it
+moved to. What the row names as released stays released.
+<!-- /planned-change:commands-never-touch-github -->
 
 Each worktree is released through git's own worktree commands. It is read
 again and checked at its path; a clean worktree still the todo's is moved with
