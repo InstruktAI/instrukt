@@ -171,16 +171,16 @@ once, deduplicated, while preserving the existing restoration obligation.
   gate.
 
 
-- **Execute settled code work in context.** When the approach is known,
-  the edit is bounded, and the work needs neither a plan, a builder, nor a
-  handoff, make the change in a short-lived one-off worktree only when an explicit execution request, a
-  bounded brief, or a completed human conversation in which every active
-  participant agreed the outcome and the human released the edit supplies
-  authority. Human presence alone supplies none. Importance does not decide
-  this boundary; remaining judgment does. A small change whose correctness is
-  genuinely contested still belongs in the lifecycle. A `change` todo created
-  despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/overview`).
+- **Fix bounded findings in context.** An agent that finds a
+  documentation-only change, or a bounded code change of about five minutes
+  (approach known, edit bounded, needing neither a plan, a builder nor a
+  handoff), makes it itself at once in a short-lived one-off worktree and files
+  nothing; finding it supplies the authority. Importance does not decide this
+  boundary; remaining judgment does. A change whose correctness is genuinely
+  contested still belongs in the lifecycle. A company's agent never holds repair
+  authority and reports instead. A `change` todo created despite meeting these
+  criteria may still take the in-context path at prepare entry
+  (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite
