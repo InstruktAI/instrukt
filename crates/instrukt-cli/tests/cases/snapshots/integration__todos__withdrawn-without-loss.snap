@@ -1,11 +1,10 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
-assertion_line: 110
 expression: "redact(&format!(\"{}---\\n{}---\\n{withdrawn}---\\n{shown}\",\nString::from_utf8_lossy(&uncommitted.get_output().stderr),\nString::from_utf8_lossy(&busy.get_output().stderr),)).replace(base.trim_end_matches('/'),\n\"[TMP]\")"
 ---
 instrukt: the worktree [TMP]/demo-nested-lists holds uncommitted changes; commit or discard them, then withdraw again
 ---
-instrukt: the workspace [TMP]/demo/workspace/nested-lists still holds files; keep or remove them, then withdraw again
+instrukt: the workspace [TMP]/demo/.instrukt/workspace/nested-lists still holds files; keep or remove them, then withdraw again
 ---
 withdrew nested-lists (<id 1>); recoverable until <time> with `instrukt todo reactivate <id 1>`
 reflection: pending: not yet reflected

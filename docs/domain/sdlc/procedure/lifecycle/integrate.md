@@ -44,7 +44,8 @@ failure interpretation, promotion and recovery.
 - One standing integrator session is recorded per subscribing procedure and
   project; the runner starts or wakes that session.
 - The integrator operates in the persistent integration worktree at
-  `trees/_integration/`, separately from the project checkout and todo worktrees.
+  `.instrukt/trees/_integration/`, separately from the project checkout and todo
+  worktrees.
 - Every todo candidate — and every ad hoc candidate that owes independent review
   under `general/policy/commits` — MUST carry an independent reviewer's `APPROVE`
   stamp (or digest-bound review report for ad hoc branches) bound to that
@@ -105,6 +106,9 @@ or promote whatever commit now occupies the integration branch.
 
 1. Fetch current remote main and candidate branches. Inspect the integration
    worktree before reuse; preserve any unique edits or an in-flight candidate.
+   If `git worktree list` already lists a worktree on the `integrate` branch at
+   another path, relocate it to `.instrukt/trees/_integration/` with
+   `git worktree move` rather than creating a second worktree.
 2. Compose from accepted upstream main in the integration worktree. Merge the
    finalized `<slug>/work` branch or ready one-off branch.
    Where `general/policy/commits` requires independent review, match independent

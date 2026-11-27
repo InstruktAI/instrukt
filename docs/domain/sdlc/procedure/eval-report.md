@@ -21,7 +21,7 @@ those outcomes to the process-document set and models used.
 1. Establish the project and requested time range from the conversation. Run
    `instrukt eval report`, using `--since <date>` when a range was requested
    and `--out <path>` when a destination is needed. The default destination is
-   the project's `scratchpad/eval/index.html`.
+   the project's `.instrukt/scratchpad/eval/index.html`.
 2. Open the generated HTML in the available browser, or serve it through the
    available HTML-serving capability and open its address. Give the human the
    file path or served address that actually shows the report.

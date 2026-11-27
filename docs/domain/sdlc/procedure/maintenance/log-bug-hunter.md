@@ -33,7 +33,7 @@ the todos module as a todo of kind `bug`. The bug lifecycle owns diagnosis and i
 
 ## Steps
 
-Each firing writes its replacement checkpoint to `{project_root}/workspace/{slug}/checkpoint.json` and records that output reference in the task's `log` under `run-task`. The outcome stamp records success or error separately. Retained known-issue
+Each firing writes its replacement checkpoint to `{project_root}/.instrukt/workspace/{slug}/checkpoint.json` and records that output reference in the task's `log` under `run-task`. The outcome stamp records success or error separately. Retained known-issue
 suppressions are consulted before filing; the scan checkpoint is not their store.
 
 1. Establish the scan window for this project.

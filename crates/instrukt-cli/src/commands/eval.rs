@@ -35,7 +35,7 @@ struct ReportArgs {
     #[arg(long, value_parser = since)]
     since: Option<Timestamp>,
     /// Where to write the HTML; defaults to the project's
-    /// `scratchpad/eval/index.html`.
+    /// `.instrukt/scratchpad/eval/index.html`.
     #[arg(long)]
     out: Option<PathBuf>,
 }
@@ -105,7 +105,7 @@ fn report(args: ReportArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let out = match args.out {
         Some(path) if path.is_absolute() => path,
         Some(path) => ctx.cwd.join(path),
-        None => root.join("scratchpad/eval/index.html"),
+        None => root.join(".instrukt/scratchpad/eval/index.html"),
     };
     write(&out, &eval::render_html(&report))?;
     tracing::info!(

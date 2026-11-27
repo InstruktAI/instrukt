@@ -200,7 +200,7 @@ fact, owned by `project/instrukt/spec/feature/work/dependencies-and-holds`.
 `instrukt todo remove <slug>` withdraws work from default reads while retaining
 its identity, state, artifacts and versions during a fixed seven-day recovery
 window. Working resources (worktree, branch and workspace) are released
-immediately. A todo's workspace is `<project>/workspace/<slug>/`, the
+immediately. A todo's workspace is `<project>/.instrukt/workspace/<slug>/`, the
 directory run-task writes to; an empty workspace is removed. Withdrawal never
 deletes a worktree holding uncommitted changes or a workspace holding files:
 it is refused and names that location. The withdrawal records what it is about to

@@ -19,8 +19,9 @@ report uses recorded evidence rather than a separate eval log. There is only
 something to evaluate where work passes through the record.
 
 `--since <date>` selects the history range. `--out <path>` selects the HTML
-destination, defaulting to the current project’s `scratchpad/eval/index.html`.
-With no recorded work, the report says so.
+destination, defaulting to the current project’s
+`.instrukt/scratchpad/eval/index.html`. With no recorded work, the report says
+so.
 
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is

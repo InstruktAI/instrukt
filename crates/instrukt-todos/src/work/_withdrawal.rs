@@ -435,7 +435,7 @@ fn settled(path: &Path, found: &Path) -> WorktreeStage {
     }
 }
 
-/// The todo's workspace `<project>/workspace/<slug>/` as it is now.
+/// The todo's workspace `<project>/.instrukt/workspace/<slug>/` as it is now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum WorkspaceNow {
     /// There is no workspace directory.
@@ -448,7 +448,7 @@ enum WorkspaceNow {
 
 /// Where the todo's workspace is in the checkout at `root`.
 fn workspace_path(root: &Path, slug: &TodoSlug) -> PathBuf {
-    root.join("workspace").join(slug.as_str())
+    root.join(".instrukt").join("workspace").join(slug.as_str())
 }
 
 /// The workspace at `workspace` as it is now. Something other than a
@@ -1720,7 +1720,7 @@ mod tests {
             branch: Some("depth/work".to_owned()),
             branch_head: Some(head),
             worktrees: Vec::new(),
-            workspace_path: PathBuf::from("/project/workspace/depth"),
+            workspace_path: PathBuf::from("/project/.instrukt/workspace/depth"),
             workspace: WorkspaceRelease::Absent,
             branch_state: BranchRelease::Pending,
             started_at: "2026-11-23T09:00:00Z".parse().unwrap(),
@@ -1743,6 +1743,15 @@ mod tests {
     }
 
     #[test]
+    fn workspace_path_lives_under_dot_instrukt_workspace() {
+        let slug = TodoSlug::parse("depth").unwrap();
+        assert_eq!(
+            workspace_path(Path::new("/project"), &slug),
+            PathBuf::from("/project/.instrukt/workspace/depth")
+        );
+    }
+
+    #[test]
     fn a_workspace_recorded_present_and_gone_is_released() {
         assert_eq!(
             workspace_step(WorkspaceRelease::Present, WorkspaceNow::Absent),
@@ -1752,7 +1761,7 @@ mod tests {
 
     #[test]
     fn an_empty_workspace_recorded_present_is_removed() {
-        let path = PathBuf::from("/project/workspace/depth");
+        let path = PathBuf::from("/project/.instrukt/workspace/depth");
         assert_eq!(
             workspace_step(WorkspaceRelease::Present, WorkspaceNow::Empty(path.clone())),
             WorkspaceStep::Remove(path)
@@ -1761,7 +1770,7 @@ mod tests {
 
     #[test]
     fn a_workspace_recorded_absent_is_never_taken_for_released() {
-        let path = PathBuf::from("/project/workspace/depth");
+        let path = PathBuf::from("/project/.instrukt/workspace/depth");
         assert_eq!(
             workspace_step(WorkspaceRelease::Absent, WorkspaceNow::Empty(path)),
             WorkspaceStep::Nothing
@@ -1770,7 +1779,7 @@ mod tests {
 
     #[test]
     fn files_in_the_workspace_refuse_whatever_the_intent_recorded_of_it() {
-        let path = PathBuf::from("/project/workspace/depth");
+        let path = PathBuf::from("/project/.instrukt/workspace/depth");
         assert_eq!(
             workspace_step(
                 WorkspaceRelease::Released,
