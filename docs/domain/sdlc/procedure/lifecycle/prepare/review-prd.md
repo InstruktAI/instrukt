@@ -15,7 +15,7 @@ parameters:
 - [sdlc/procedure/lifecycle/review](../review.md)
 - [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 - [sdlc/policy/definition-of-ready](../../../policy/definition-of-ready.md)
-- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
+- [general/policy/command-contract-read](../../../../../general/policy/command-contract-read.md)
 
 ## Goal
 
@@ -42,12 +42,14 @@ Apply these configured action values to the identified assignment and session.
 
 1. Discover the todo's artifacts, then read the `input`, the drafted `prd`, and
    any `log` or deferral material that bears on product intent. Load the relevant
-   product and domain snippets. Inspect the current `input` version and its
-   intent-checked stamp. Take a current check as given. If no current check
-   exists and you are the first recipient other than its author, read the
-   originating conversation with the configured runtime conversation read instruction
-   and compare outcome-level substance. Confirm fidelity and record
-   `instrukt todo stamp {slug} --intent-checked` for that input version.
+   product and domain snippets. Check whether the current `input` digest has
+   an intent-checked stamp that names the human's actual originating conversation
+   (`sdlc/policy/todo-creation-discipline`). If you are the first non-author
+   recipient and the input has no valid check, read the human's originating
+   conversation with the configured runtime instruction, tracing past any
+   relaying or splitting session (`general/policy/human-contract`). Compare
+   outcome-level substance. Confirm fidelity and record
+   `instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
    Clarification returns to the author for a new version; a mistaken
    interpretation returns to the human. If the originating conversation is permanently
    unavailable, return the intent to the human in the responsible thread; a new `input`

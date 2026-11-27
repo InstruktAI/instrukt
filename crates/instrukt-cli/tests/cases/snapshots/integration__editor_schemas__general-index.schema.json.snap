@@ -11,14 +11,14 @@ expression: "String::from_utf8(bytes).unwrap()"
       "items": {
         "$ref": "#/$defs/SnippetId"
       },
-      "description": "Rendered in full, each with its closure; may name any domain's ids."
+      "description": "Rendered in full, each with its closure; `general` ids only."
     },
     "listed": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/SnippetId"
       },
-      "description": "Rendered as one listing line each; may name any domain's ids."
+      "description": "Rendered as one listing line each; `general` ids only."
     },
     "agents": {
       "type": "object",

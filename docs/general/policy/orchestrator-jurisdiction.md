@@ -1,5 +1,5 @@
 ---
-description: 'What an orchestrator writes: the process state of its slug, what its entry procedure assigns it, and human-directed ad-hoc process changes under process-change authority; every other change reaches the repository through the worker session it dispatches.'
+description: 'What an orchestrator writes directly (slug process state, writes its entry procedure assigns, human-directed process changes) vs. delegates.'
 visibility: 'public'
 ---
 

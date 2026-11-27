@@ -28,8 +28,6 @@ mod company_plugin;
 mod compressed_units;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
-#[path = "cases/conversation-links.rs"]
-mod conversation_links;
 #[path = "cases/conversations.rs"]
 mod conversations;
 #[path = "cases/delivery-cycle.rs"]

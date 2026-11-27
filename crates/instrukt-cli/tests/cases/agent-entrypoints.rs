@@ -176,7 +176,7 @@ fn ci_catches_instructions_a_commit_left_stale() {
 }
 
 /// A project publishing `sdlc` with a description, a triggered procedure
-/// and a snippet the general owner's index selects.
+/// and a policy.
 fn engineering(env: &TestEnv) -> Repo {
     let repo = env.git_repo("engineering");
     repo.write("instrukt.yaml", &layer("engineering"))
@@ -202,15 +202,15 @@ fn engineering(env: &TestEnv) -> Repo {
 }
 
 /// The owner of `docs/general/`: its index selects a general snippet (with
-/// its closure), an sdlc snippet and another general snippet in full, lists
-/// one, maps an agent policy to `agents`, and it has a triggered procedure.
+/// its closure) and another general snippet in full, lists one, maps an
+/// agent policy to `agents`, and it has a triggered procedure.
 fn general_owner(env: &TestEnv, agents: &str) -> Repo {
     let repo = env.git_repo("platform");
     repo.write("instrukt.yaml", &layer("platform"))
         .write(
             "docs/general/index.yaml",
             &format!(
-                "expanded:\n  - general/policy/care\n  - sdlc/policy/tests\n  - general/policy/kind\n\
+                "expanded:\n  - general/policy/care\n  - general/policy/kind\n\
                  listed:\n  - general/policy/style\n{agents}"
             ),
         )
@@ -308,61 +308,6 @@ fn a_policy_mapped_to_one_runtime_reaches_only_that_runtime() {
     assert_eq!(
         std::fs::read(home.join(".claude/CLAUDE.md")).unwrap(),
         claude
-    );
-}
-
-#[test]
-fn a_global_file_keeping_a_reference_is_written_and_named() {
-    let env = TestEnv::new();
-    let home = env.home();
-    // Two Claude instances, each in a home of its own.
-    let second = env.path("claude-second");
-    crate::fixtures::t3::FakeT3::create(&env);
-    common::t3_readiness::configure(
-        &env,
-        vec![
-            common::t3_readiness::provider("claudeAgent", "claudeAgent", true),
-            common::t3_readiness::provider("claude-second", "claudeAgent", true),
-        ],
-        serde_json::json!({"claude-second": {"driver":"claudeAgent","config":{"homePath":second}}}),
-    );
-    // Another project publishes `ops`; its published snippet then reads as
-    // an earlier release left it, with a visible reference validation
-    // refuses today.
-    let ops = env.git_repo("ops");
-    ops.write("instrukt.yaml", &layer("ops"))
-        .write("docs/domain/ops/index.yaml", "description: Operations\n")
-        .write(
-            "docs/domain/ops/policy/house.md",
-            &snippet("policy", "House", "", &[]),
-        );
-    ops.commit("ops");
-    env.run(ops.path(), ["sync"]).success();
-    let published = env.instrukt_home().join("docs/ops/policy/house.md");
-    let text = std::fs::read_to_string(&published).unwrap();
-    std::fs::write(
-        &published,
-        text.replace("House: Rules.", "Read it (@notes/house.md) first."),
-    )
-    .unwrap();
-    env.run(engineering(&env).path(), ["sync"]).success();
-    let platform = general_owner(&env, "");
-    platform
-        .write(
-            "docs/general/index.yaml",
-            "expanded:\n  - general/policy/care\n  - ops/policy/house\n",
-        )
-        .commit("select ops");
-
-    let synced = env.run(platform.path(), ["sync"]).success();
-
-    insta::assert_snapshot!(
-        "sync_keeping_a_reference",
-        stdout(&env, &synced).replace(&platform.head(), "[SHA]")
-    );
-    insta::assert_snapshot!(
-        "global_file_keeping_a_reference",
-        std::fs::read_to_string(home.join(".claude/CLAUDE.md")).unwrap()
     );
 }
 
@@ -686,7 +631,7 @@ fn every_configured_agent_runtime_starts_with_the_doctrine_in_its_home() {
         )
         .write(
             "docs/general/index.yaml",
-            "expanded:\n  - general/policy/care\n  - sdlc/policy/tests\n  - general/policy/kind\n  - general/policy/later\n\
+            "expanded:\n  - general/policy/care\n  - general/policy/kind\n  - general/policy/later\n\
              listed:\n  - general/policy/style\n",
         )
         .commit("later");

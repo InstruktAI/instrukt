@@ -73,17 +73,14 @@ meaning and the writes of the conversation tables.
   (`general/principle/trust-and-guardrails`: interference is a harm restoring state
   cannot repair).
 - A separate per-computer reflection lock
-  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
-  across GitHub requests and takes the writer lock only briefly for each local
-  transaction that records what reflection learned. A command that writes the
-  record takes it only when it is free and never waits for it: finding it
-  held, the command returns once its local write is committed, with that
-  write's reflection pending. Each runner tick's reflection pass waits for the
-  lock for a bounded time and reflects what is pending; a tick whose wait runs
-  out reflects nothing that run, and the next tick tries again.
-  Lock order is always reflection → writer; a local writer releases the writer
-  lock before trying the reflection lock. Current-schema local readers take
-  neither lock. Readers
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. Only the
+  runner's reflection pass acquires it, waiting for a bounded time and holding
+  it across GitHub requests while taking the writer lock only briefly for each
+  local transaction that records what reflection learned; a tick whose wait
+  runs out reflects nothing that run, and the next tick tries again. Commands
+  that write the record take only the writer lock, mark reflection pending and
+  return without touching GitHub or the reflection lock. Lock order is always
+  reflection → writer. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except status inspection and documentation reads.
 - A withdrawal holds the per-computer withdrawal lock
@@ -91,9 +88,10 @@ meaning and the writes of the conversation tables.
   (`withdrawal_intents`) until it has committed or abandoned it, or returned
   with the intent kept by a refusal. The lock tells a withdrawal in progress
   from a recorded intent no command is acting on; it is never requested
-  while the writer lock is held, and it is released before the withdrawal's
-  reflection acquires the reflection lock. A withdrawal's git and filesystem
-  work runs under it and outside the writer lock.
+  while the writer lock is held, and it is released once the withdrawal ends;
+  the runner's next reflection pass reflects the withdrawal to GitHub. A
+  withdrawal's git and filesystem work runs under it and outside the writer
+  lock.
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -355,38 +353,23 @@ is the row with `released_at IS NULL`; at most one per todo.
 | `runtime`, `semantic_key`, `display_title` | Selected runtime, stable assignment identity and independently mutable display title. Native child keys are assignment facts, not adapter lookup entries. |
 | `session` | Scoped native identity from `todo bind`, or `NULL` while unresolved. |
 | `worktree`, `branch`, `base_head` | The todo's single shared `<slug>/work` worktree, branch, and captured starting head (`NULL` for worktree-less `kind: task` assignments; legacy prepare rows remain readable for history). Retained after release. |
-| `completion_sequence`, `completed_head` | Releasing stamp and its exact shared head; read-only roles retain their captured head. `NULL` until completion. |
+| `completion_sequence`, `completed_head` | Releasing stamp and its exact workspace head, where applicable. `NULL` until completion. |
 | `failure_reason`, `failure_head`, `failure_workspace`, `failed_at` | Failure evidence and current shared head, not a recovery source branch. |
 | `released_at` | Completion, verdict, disposition or confirmed failure release time; `NULL` while outstanding. |
 | `evidence` | Rendered assignment, native task identity, matching placement and any no-start proof; deliberate driver entry retains its supplied native placement/source evidence; runner-owned task acceptance retains its own claim and task-start stamp transaction. |
 
-One todo has one work-phase workspace binding owned by its orchestrator and
-at most one outstanding workspace-role attempt. All its children inherit that
-workspace and commit directly on its todo branch. Reserving the next role
-captures the current shared head. An unresolved native start blocks admission.
-The orchestrator coordinates work and keeps the workspace clean between roles.
+A repository todo has one recorded work-phase workspace and at most one open
+workspace or child attempt. The claim holder reserves and binds the attempt.
+Reservation captures the workspace's current head. An unresolved reservation
+occupies the same slot as a bound attempt.
 
-| Role | Evidence and release in the same record transaction |
-| --- | --- |
-| Setup | `--role-complete` at the clean shared todo head after setup. |
-| Builder/fixer, including plan reconciliation | `--build-complete` at the clean shared todo head. |
-| Build reviewer | Verdict bound to the complete findings and current captured shared head. |
-| Verifier | `--verification` disposition bound to the complete `verification-findings` and current captured shared head. |
-| Deferrer | `--deferrals-processed` covering the current dispositions artifact at the captured clean head. |
-| Finalizer | `--role-complete` at the clean, published shared candidate; readiness is a later record-only write against the retained binding. |
-| Failed attempt | Record-only `todo attempt --failed --reason` after native stop evidence and a clean shared tree; no completion stamp. |
-
-The stamp or failure, release, new revision and reflection obligation commit
-together. A retry reads that retained outcome. Git refs have no per-role advance
-intent: every commit is already on the checked-out todo branch. Missing or stale
-evidence leaves the attempt outstanding; native idleness supplies no release.
-Dirty or conflicted work remains in the same workspace for recovery within that
-attempt. A released failure permits a successor at the current shared head.
-Failure creates neither a different starting base nor setup/build completion.
-The original build base remains fixed. Native child lifetime remains runtime-owned. Preparation doc writers release
-with `--role-complete` bound to required artifacts and exact authored local-main
-commits; preparation reviewers release with their verdict stamps. Direct commit
-review is still owed before preparation release.
+An attempt's completion stamp, release, new todo revision and reflection
+obligation commit in one transaction. The stamp resolves to the caller's own
+bound attempt. A workspace attempt requires a clean worktree on its recorded
+branch. A matching retry returns the retained outcome. Failure stores its own
+release evidence from the matching stopped session. Both paths retain the
+attempt's starting coordinates and the original build base. Git refs already
+point to the commits recorded by the attempt.
 
 **`reflections`** — what this computer knows of each item's GitHub
 reflection. Key: `todo_id`.
@@ -456,19 +439,23 @@ with its claim as it was, or unclaimed when it had none. A change of the todo's
 record committed while the row exists is refused, naming its doors:
 `instrukt todo remove <slug>`, which completes the withdrawal, or the command
 run again once it has ended. What reflection learns of its own receipts is
-still kept while the row exists. A read of the issue while the row exists
-answers no `/instrukt` command and applies no label action it finds there:
-each stays outstanding, and the first read after the withdrawal commits gives
-it the outcome a withdrawn todo gives. An answer to a command, or a label
+still kept while the row exists. A runner reflection read of the issue while
+the row exists answers no `/instrukt` command and applies no label action it
+finds there: each stays outstanding. An answer to a command, or a label
 action recorded as ignored, is recorded only while the todo's live record is
 still the one it was decided on and no row exists, in the transaction that
 records it; one decided on a record that changed before it was recorded, such
 as an active record the withdrawal committed over meanwhile, is not recorded
 and stays outstanding. A read position never moves past a command or label
 action left outstanding. Whenever one is left outstanding this way, and when
-the row is removed, the issue's stored `ETag` is dropped, so the next read
-finds it again rather than being told nothing changed, even when the issue has
-not changed again since.
+the row is removed, the issue's stored `ETag` is dropped. Once the withdrawal
+commits, the todo is withdrawn and the runner stops reading its issue
+(`project/instrukt/spec/feature/work/github-record`, Reading GitHub), so
+actions that arrived meanwhile do not change the withdrawn record; if a refusal
+removes the row and leaves the todo live, or if the todo is later reactivated,
+the dropped `ETag` ensures the runner's next reflection read finds anything
+still outstanding rather than being told nothing changed, even when the issue
+has not changed again since.
 Dispatch admission refuses while the row exists, in the same read that
 confirms the reservation, claim and status. The row is updated as each step
 whose outcome must be recognized
@@ -526,9 +513,12 @@ an ineffective attempt following another release — the row keeps what it
 records, for the withdrawal run again to recognize what happened.
 
 A withdrawal interrupted while the row exists is completed by running
-`instrukt todo remove <slug>` again, which continues from the row before reading
-GitHub: an action that arrived there meanwhile, such as a hold label, stays
-outstanding until the first read of the issue after the withdrawal commits. It first records
+`instrukt todo remove <slug>` again, which continues from the row without
+touching GitHub: any action that arrived on the issue meanwhile, such as a hold
+label, does not block or change the withdrawal; once the withdrawal commits the
+runner stops reading the withdrawn todo's issue, and if a refusal leaves the
+todo live or the todo is later reactivated, the runner's next reflection read
+picks up what stayed outstanding. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name
@@ -791,29 +781,6 @@ retry revalidates the claim and never revives or starts an orchestrator. A known
 absent claimant records `no-live-claim`; observation failure stays pending.
 Replayed decision intake reuses the decision and its attention record. These
 rows are local runtime delivery bookkeeping, not reflected approval evidence.
-
-**`conversation_links`** — runner-owned links between two runtime-scoped native
-threads, with active/closed state, member references and the opening positions.
-An active member belongs to at most one link. Closure updates the whole link;
-it preserves delivery evidence rather than deleting progress.
-
-**`conversation_relay_positions`** — one record per link and source direction,
-retaining the source stream position, completed-turn delivery position, fixed
-native target, pending range/content identity, native acceptance receipts (or
-explicit empty-content dispositions) and
-last stream/handover failure. The source observation position is distinct from
-accepted delivery progress. Link creation initializes both directions; target
-acceptance or a recorded empty disposition advances delivery. Source occurrence
-times are attribution, never cursors. Pending evidence survives runner restart.
-Pending handovers distinguish native turns, opening contributions and final
-contributions. Existing native handovers migrate to the native origin before
-consumption. A final contribution's acceptance receipt commits with whole-link
-closure; management receipts do not advance the native completed-turn position.
-
-These tables realize the runner's contract in
-`project/instrukt/spec/feature/runner/conversation-links`; work owns their file,
-migration and writer boundary, not the relay decision. Native stream and send
-operations run outside local writer transactions.
 
 **MCP sign-in tables** — what signing in to a company's MCP servers keeps,
 under `project/instrukt/spec/feature/runner/mcp-access`. A person is their
@@ -1134,8 +1101,8 @@ canonical state directory. Status reads existing records without creating
 the store or touching its sidecars.
 
 Each connector keeps one active window with its start and lower bound, the
-provider position, the current fetched page until processed, and any
-provider retry time. Restarts resume those records. Only completion advances
+provider position, the current fetched page until processed, and the moment
+of any wait the outside gate gave its last read. Restarts resume those records. Only completion advances
 coverage to the window's start less the overlap. Page identities are kept by
 provider channel and message ID. A page with new addressed messages writes
 them in one live-intake transaction. This transaction reconciles previously

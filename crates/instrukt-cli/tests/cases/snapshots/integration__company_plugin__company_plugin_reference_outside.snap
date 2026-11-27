@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/cases/company-plugin.rs
 expression: printed(&refused)
 ---
-plugins/acme: docs/systems.md references `../notes/erp.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
+skills/acme: docs/systems.md references `../notes/erp.md`, outside the home's `docs/` folder; a company's documents are read only from there; nothing is rendered until it is fixed
 instrukt: the findings above left the plugin and its catalog as they were; fix them and run `instrukt docs plugin` again

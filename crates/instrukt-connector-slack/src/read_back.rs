@@ -75,7 +75,7 @@ fn starting_requests(gaps: &[ReadBackGap]) -> Vec<Request> {
 }
 
 impl Slack {
-    pub(super) fn history_page(
+    pub(super) async fn history_page(
         &self,
         from: Timestamp,
         position: Option<String>,
@@ -131,15 +131,15 @@ impl Slack {
         if !request.cursor.is_empty() {
             form.push(("cursor", &request.cursor));
         }
-        let me = self.me().map_err(web_error)?;
-        let body = match self.api.call(method, false, &form) {
+        let me = self.me().await.map_err(web_error)?;
+        let body = match self.api.read(method, &form).await {
             Err(SlackError::Api { cause, .. })
                 if !request.cursor.is_empty() && cause == "invalid_cursor" =>
             {
                 // Slack can expire a cursor while the runner is absent. Only
                 // that listing starts over; the saved scan window still holds.
                 form.pop();
-                self.api.call(method, false, &form)
+                self.api.read(method, &form).await
             }
             result => result,
         };
@@ -289,18 +289,23 @@ fn continuation(pending: &[Request]) -> Result<Option<String>, ReadBackError> {
 fn failed(error: impl std::fmt::Display) -> ReadBackError {
     ReadBackError {
         cause: error.to_string(),
-        retry_after: None,
+        wait: None,
     }
 }
 
+/// A Slack failure of a read, with the outside gate's wait when Slack was
+/// unavailable.
 fn web_error(error: SlackError) -> ReadBackError {
-    let retry_after = match &error {
-        SlackError::Limited { seconds, .. } => Some(*seconds),
-        _ => None,
-    };
-    ReadBackError {
-        cause: error.to_string(),
-        retry_after,
+    match error {
+        SlackError::Unavailable {
+            method,
+            cause,
+            wait,
+        } => ReadBackError {
+            cause: super::unavailable_cause(&method, cause.as_deref()),
+            wait: Some(wait),
+        },
+        other => failed(other),
     }
 }
 

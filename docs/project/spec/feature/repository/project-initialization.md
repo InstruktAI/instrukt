@@ -62,6 +62,11 @@ the sync of the project that owns `docs/general/` writes them whole
 - Run again on an adopted repository, it changes nothing.
 - Init installs no git filter and writes no `.gitattributes` line;
   documentation references are snippet ids that the CLI resolves when read.
+- In a repository whose project layer declares `company_repository`
+  (`project/instrukt/spec/feature/configuration/layered-configuration`),
+  init writes no `docs/project/`, no project index and no project schema:
+  the repository's documentation is the company's knowledge. Every other
+  part is established as in any repository.
 
 ### The project schema
 
@@ -91,6 +96,38 @@ In a repository whose working tree holds `docs/general/` or any
 
 The report claims nothing and writes nothing; ownership is taken by the sync
 (`project/instrukt/spec/feature/publication/project-publication`).
+
+### Adding a company
+
+`instrukt init --company <key>` adds a company to the computer by its key,
+from any working directory: what it creates, checks out or refuses is
+`project/instrukt/spec/feature/configuration/company-homes` (Generation), and
+who may run it is
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
+
+| Flag | Contract |
+| --- | --- |
+| `--company <key>` | The company's key, under the grammar of a project slug. With it, the working directory is not read. |
+| `--name <name>` | The name people write the company by. Needed only when the company's repository is created; without it, a creation is refused naming the flag, and nothing is created. |
+| `--admin <login>` | The company's GitHub administrator, a GitHub personal account. Needed only when the company's repository is created, under the same refusal. |
+| `--human-involved <true\|false>` | Whether a human was involved, declared for the root commit of a created repository as `instrukt repo commit` declares it; `false` when omitted (`general/policy/human-involvement-recording`). |
+
+- It reports whether the repository was created or checked out by contract,
+  the repository, the home, and each part of the home it made ready. Where the
+  repository was checked out by contract, it reports that `--name` and
+  `--admin` were not used and that nothing on GitHub changed.
+- It reports what keeps automatic review from the home on this computer, as
+  configuration validation names it, without failing.
+- Where the repository it checked out holds no project layer, it reports that
+  neither publication nor automatic review applies to the home, and that once
+  the repository's default branch holds a project layer declaring it a
+  company's repository, `instrukt sync` in the home publishes it. It does not
+  fail.
+- A command interrupted while creating the repository is completed by running
+  it again with the same key: the organisation, the repository, the name and
+  the administrator come from the creation it recorded, and flags given again
+  are not used.
+- `--company` excludes `--slug`; `--name` and `--admin` need `--company`.
 
 ## Use cases
 

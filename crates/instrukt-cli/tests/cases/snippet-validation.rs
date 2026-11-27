@@ -325,8 +325,7 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             )
             .replace(
                 "# Sample — Policy\n",
-                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- acme/principle/missing\n\
-                 - project/demo/design/shape\n",
+                "# Sample — Policy\n\n## Rules\n\n## Required reads\n\n- acme/principle/missing\n",
             ),
         )
         // Pending
@@ -367,9 +366,83 @@ fn every_broken_snippet_is_reported_in_one_run_with_its_file_and_what_is_wrong()
             "docs/domain/acme/principle/session.md",
             &snippet("principle", "", "\n<!-- @config: runtime.session_id -->\n"),
         );
+    // References against the direction, beside upward ones that pass.
+    repo.write(
+        "docs/general/index.yaml",
+        "expanded: [general/principle/base]\nlisted: [general/concept/down]\n",
+    )
+    .write(
+        "docs/general/principle/base.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
+        "docs/domain/ops/index.yaml",
+        "description: The ops way.\nexpanded: [ops/principle/far]\n",
+    )
+    .write(
+        "docs/domain/ops/principle/far.md",
+        &snippet("principle", "", ""),
+    )
+    // Against the direction: general -> a domain snippet and a domain by
+    // name; a domain -> a project snippet and another domain's snippet,
+    // linked, under See Also; the project -> another project.
+    .write(
+        "docs/general/concept/down.md",
+        &referring(
+            "concept",
+            "- ops/principle/far\n- acme\n",
+            "- general/principle/base\n",
+        ),
+    )
+    .write(
+        "docs/domain/acme/concept/across.md",
+        &referring(
+            "concept",
+            "- project/demo/design/shape\n",
+            "- [ops/principle/far](../../ops/principle/far.md)\n",
+        ),
+    )
+    .write(
+        "docs/project/concept/elsewhere.md",
+        &referring(
+            "concept",
+            "- project/other/design/shape\n",
+            "- general/principle/base\n",
+        ),
+    )
+    // Upward: a domain -> general and itself; the project -> itself,
+    // general and a domain.
+    .write(
+        "docs/domain/acme/concept/fine.md",
+        &referring(
+            "concept",
+            "- general\n- acme/principle/care\n",
+            "- general/principle/base\n",
+        ),
+    )
+    .write(
+        "docs/project/concept/home.md",
+        &referring(
+            "concept",
+            "- project/demo/design/shape\n- general/principle/base\n- ops/principle/far\n",
+            "- [project/demo/design/retired](../design/retired.md)\n",
+        ),
+    );
     let run = validate(&env, &repo, &[]);
     assert!(!run.success, "{}", run.err);
     insta::assert_snapshot!(run.out);
+}
+
+/// A snippet of `taxonomy` whose Required reads are `reads` and whose
+/// See Also lists `see_also`.
+fn referring(taxonomy: &str, reads: &str, see_also: &str) -> String {
+    let title = format!(
+        "# Sample — {}{}\n",
+        taxonomy[..1].to_uppercase(),
+        &taxonomy[1..]
+    );
+    snippet(taxonomy, "", &format!("\n## See also\n\n{see_also}"))
+        .replace(&title, &format!("{title}\n## Required reads\n\n{reads}"))
 }
 
 // spec: project/instrukt/spec/feature/docs/snippet-validation UC-SV1
@@ -462,7 +535,7 @@ fn references_to_domains_published_elsewhere_resolve_through_the_home() {
     std::fs::create_dir_all(&home_docs).unwrap();
     std::fs::write(home_docs.join("stewardship.md"), "published elsewhere\n").unwrap();
     repo.write(
-        "docs/domain/acme/concept/borrowing.md",
+        "docs/project/concept/borrowing.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
             "# Sample — Concept\n\n## Required reads\n\n- general/principle/stewardship\n\
@@ -617,7 +690,7 @@ fn a_publisher_learns_everything_their_indexes_cannot_say_in_one_run() {
     )
     .write(
         "docs/general/index.yaml",
-        "expanded: [general/policy/top, general/spec/coming, nowhere/policy/x]\n\
+        "expanded: [general/policy/top, general/spec/coming, general/policy/absent, acme/policy/rules]\n\
          listed: [general/principle/root, not an id]\n\
          agents:\n  claude: [general/policy/top]\n  cursor: [general/policy/top]\n  1invalid: [general/policy/top]\n\
          bundles: [x]\n",
@@ -658,9 +731,23 @@ fn an_operator_validating_a_companys_repository_is_told_nothing_about_its_index(
     // what it is would fail to read it.
     const NOT_TEXT: &[u8] = &[0xff, 0xfe, 0x00, 0x9f];
     let env = TestEnv::new();
+    // A clone of a generated company repository: its committed project layer
+    // declares it a company's, and its documents are the company's own.
     let clone = env.git_repo("acme-company");
-    std::fs::create_dir_all(clone.path().join("docs")).unwrap();
+    clone
+        .write(
+            "instrukt.yaml",
+            &format!(
+                "schema_version: {}\nproject: company-acme\ncompany_repository: true\n",
+                instrukt_core::config::PROJECT_SCHEMA_VERSION
+            ),
+        )
+        .write(
+            "docs/about.md",
+            "# About Acme\n\nAcme builds bicycles to order.\n",
+        );
     std::fs::write(clone.path().join("docs/index.yaml"), NOT_TEXT).unwrap();
+    clone.commit("the company's repository");
     let company = validate(&env, &clone, &[]);
     assert!(company.success, "{}{}", company.out, company.err);
     insta::assert_snapshot!("company_index_left_alone", company.out);
@@ -708,10 +795,14 @@ fn required_domain_tree(repo: &Repo, overview_reads: &str) {
         "description: Operations.\nexpanded: [ops/concept/operations]\n",
     )
     .write(
+        "docs/domain/ops/principle/base.md",
+        &snippet("principle", "", ""),
+    )
+    .write(
         "docs/domain/ops/concept/operations.md",
         &snippet("concept", "", "").replace(
             "# Sample — Concept\n",
-            "# Sample — Concept\n\n## Required reads\n\n- acme/principle/care\n",
+            "# Sample — Concept\n\n## Required reads\n\n- ops/principle/base\n",
         ),
     )
     .write(

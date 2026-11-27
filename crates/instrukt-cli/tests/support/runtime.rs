@@ -86,6 +86,15 @@ impl FakeRuntime {
     pub fn opening(&self, id: &str) -> String {
         self.fake.message(id, 0)
     }
+    pub fn folder(&self, id: &str) -> std::path::PathBuf {
+        self.fake.folder(id)
+    }
+    pub fn worktree(&self, id: &str) -> Option<std::path::PathBuf> {
+        self.fake.worktree_if_present(id)
+    }
+    pub fn branch(&self, id: &str) -> Option<String> {
+        self.fake.branch(id)
+    }
     pub fn started_count(&self) -> usize {
         self.fake.threads().len()
     }

@@ -1,5 +1,5 @@
 ---
-description: Reviews, approvals and drift judgments bind the evidence they assessed and route changed work to its owning derivation layer.
+description: Reviews, approvals and drift judgments bind the evidence they assessed and show whether it is current.
 ---
 # Artifact Currency — Spec
 
@@ -19,20 +19,10 @@ digest match the current target and findings. A verdict stamp binds both in
 the same write and is refused when either binding is missing. Rewriting the
 target or findings requires a current review before progression.
 
-A build verdict binds the reviewed commit and findings digest. Its binding
-distinguishes:
-
-| Evidence | Interpretation |
-| --- | --- |
-| The reviewed commit is the current worktree head and findings are unchanged | Current. |
-| Only clean upstream merges separate the reviewed head from the current head, with unchanged findings | Current. |
-| The todo's changes or the findings changed | Stale; another review is owed. |
-| Target or findings bindings are missing | Unbound; supplies no current verdict. |
-| Repository evidence cannot determine whether the todo's changes are unchanged | Undetermined; preserve the verdict while reporting the evidence gap. |
-
-Both approval and changes-requested verdicts must have current bindings to
-route the work. An undetermined binding is neither an approval nor a
-revocation. These are facts for the configured flow, not hidden phase changes.
+A build verdict is current when it binds the exact current commit and the
+current `review-findings` digest. The ledger distinguishes an exact binding,
+a changed commit, changed findings and an unavailable target. Every change to
+the candidate SHA requires a verdict at the new SHA for handoff.
 
 A verification disposition binds the exact candidate commit and the findings
 digest (`project/instrukt/spec/feature/work/stamps`). Only the latest
@@ -46,9 +36,7 @@ new head and report.
 
 The provider compares recorded artifact provenance with current code,
 upstream artifact digests, owned and referenced snippets, and dependency
-artifacts. Obtaining current repository evidence is an orchestrator command;
-the pure evaluator receives its result. Artifact age is not a drift trigger
-in the shipped flow.
+artifacts.
 
 An artifact declares its grounding in its own content:
 
@@ -84,42 +72,24 @@ fresh. A path missing from the current head is incomplete provenance if it
 existed at the recorded head or its prior absence cannot be established.
 An unresolved snippet is also incomplete provenance.
 
-Each tracked artifact has one effective drift classification: fresh, pending
-analysis, cosmetic or substantive. Where evidence classes disagree,
-substantive takes precedence over pending, then cosmetic, then fresh. A
-pending classification requests agent analysis. A classification stamp records
-the artifact, verdict, reason and evidence it assessed.
-
-Cosmetic and fresh evidence permit continuation. The factual ledger surfaces
-pending and substantive drift classifications per artifact so `todo-orchestrator`
-routes `drift-analyzer` (for pending drift) or re-derivation (for substantive
-drift) in prose before building; code enforces only the three hard integrity
-invariants (`approvals.prd` is revoked automatically when `prd` has substantive
-drift).
+Each tracked artifact has one effective drift classification: fresh, pending,
+cosmetic or substantive. Where evidence classes disagree, substantive takes
+precedence over pending, then cosmetic, then fresh. A classification stamp
+records the artifact, verdict, reason and evidence it assessed.
 
 ### Substantive settlement
 
-The substantive classification invalidates reviews according to the owning
-artifact, and retains a re-derivation obligation until that artifact is
-rewritten against current grounding.
+A substantive judgment marks dependent review evidence stale. Rewriting the
+artifact captures current grounding and clears its re-derivation marker.
 
-| Owning artifact | Derivation owed | Reviews invalidated |
-| --- | --- | --- |
-| Product requirements | Intake re-derives the product requirements from current input and grounding. | Product requirements, architecture and implementation plan. |
-| Architecture | Architecture re-derives its design snippets and `architecture` artifact. | Architecture and implementation plan. |
-| Diagnosis | Diagnosis is settled against its current content before planning continues. | Implementation plan. |
-| Implementation plan | Planning re-derives the implementation plan. | Implementation plan. |
+| Owning artifact | Reviews invalidated |
+| --- | --- |
+| Product requirements | Product requirements, architecture and implementation plan. |
+| Architecture | Architecture and implementation plan. |
+| Implementation plan | Implementation plan. |
 
-Substantive product-requirements drift invalidates `prd` review and approval
-in the factual ledger and revokes PRD approval in code until `prd` is rewritten
-and re-approved. Re-reviewing an unchanged artifact does not discharge its
-re-derivation obligation. A rewrite captures current provenance and clears
-the artifact's drift classification and re-derivation marker; `todo-orchestrator`
-reads these facts from the ledger before advancing dependent artifacts.
-
-An approval of an earlier product-requirements digest does not approve the
-rewritten artifact by digest coincidence or by the writer's identity. Approval
-carry follows the preparation contract in
+Substantive PRD drift revokes PRD approval until a rewrite and current
+approval. Approval carry follows
 `project/instrukt/spec/feature/workflow/preparation`.
 
 ### Cosmetic settlement with incomplete provenance
@@ -130,11 +100,8 @@ classification records the reviewed artifact and current evidence, including
 which provenance is unavailable. An unresolved reference is evidence of that
 condition, not an empty digest treated as an equality match.
 
-When that evidence is unchanged, the provider recognizes the cosmetic stamp
-as settled and continuation is possible. It does not repeatedly dispatch an
-analyzer solely because the same provenance remains unavailable. Changes to
-the artifact, evidence or unresolved-reference condition require a new
-assessment; cosmetic settlement is not a timeless waiver.
+The ledger treats the cosmetic judgment as current while the artifact and
+assessed evidence, including unresolved references, remain unchanged.
 
 ## Use cases
 

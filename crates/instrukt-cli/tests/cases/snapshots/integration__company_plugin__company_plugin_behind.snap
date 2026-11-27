@@ -2,5 +2,5 @@
 source: crates/instrukt-cli/tests/cases/company-plugin.rs
 expression: printed(&behind)
 ---
-plugins/acme/skills/acme/SKILL.md: differs from its rendering; `instrukt docs plugin` writes it
-plugins/acme/.claude-plugin/plugin.json: differs from its rendering; `instrukt docs plugin` writes it
+skills/acme/SKILL.md: differs from its rendering; `instrukt docs plugin` writes it
+.claude-plugin/marketplace.json: differs from its rendering; `instrukt docs plugin` writes it

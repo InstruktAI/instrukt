@@ -7,6 +7,7 @@
 mod _conversation;
 mod _eligibility;
 mod _observation;
+mod _proposals;
 mod _requests;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,11 +22,9 @@ use crate::interfaces::{AutomaticReview, ProjectRef};
 use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
+pub use _proposals::ProposalReports;
 pub(crate) use _requests::live;
-pub use _requests::{
-    Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
-    turn_opening_with,
-};
+pub use _requests::{Disposition, Request, Standing, observed_red, requests};
 
 /// A review answer could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -54,6 +53,15 @@ pub(crate) struct ReviewPass<'a> {
     /// The operator's clock, read again where publication's credential is
     /// issued: the pass's own requests come first.
     pub clock: &'a dyn Fn() -> Timestamp,
+    /// The company the runner hosts, whose lookups answer a company home's
+    /// knowledge proposals; none carries none.
+    pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
+    /// What this process already raised of knowledge proposals.
+    pub reports: &'a ProposalReports,
+    /// The project's configuration and the environment anomalies are raised
+    /// through.
+    pub config: &'a instrukt_core::config::Configuration,
+    pub env: &'a instrukt_core::config::Env,
 }
 
 /// The remote the project's checkout is fetched from.
@@ -64,6 +72,22 @@ const REMOTE: &str = "origin";
 /// requests, One review per commit).
 pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
     let project = &pass.project.slug;
+    // A company home's knowledge proposals are opened before the listing,
+    // so a pull request opened in this pass is listed and reviewed in it;
+    // their pruning fetch stands in for the pass's own.
+    let proposals = pass.company.filter(|_| {
+        instrukt_core::publication::is_company_repository(&pass.project.root).unwrap_or_else(
+            |error| {
+                tracing::warn!(event = "proposal_home_unknown", project = %project, error = %error);
+                false
+            },
+        )
+    });
+    let mut fetched = false;
+    if let Some(company) = proposals {
+        _proposals::open(pass, company)?;
+        fetched = true;
+    }
     let mut interval = None;
     let listed = _observation::open_pulls(
         pass.home,
@@ -97,6 +121,11 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         .iter()
         .flat_map(|(head, at)| at.iter().map(move |pull| (pull.number, head.clone())))
         .collect();
+    if let Some(company) = proposals {
+        let pulls: Vec<&_eligibility::Eligible> = heads.values().flatten().collect();
+        _proposals::hand_off(pass, company, &pulls);
+        _proposals::report(pass, company);
+    }
     if let Err(error) = pass.port.publish(
         project,
         pass.repository,
@@ -116,7 +145,6 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         None => None,
     };
     let mut owed = BTreeSet::new();
-    let mut fetched = false;
     for (head, mut at_head) in heads {
         if pass.port.carries_verdict(project, &head)? {
             continue;

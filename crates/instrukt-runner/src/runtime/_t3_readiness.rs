@@ -1072,21 +1072,41 @@ pub(super) fn fetch_live_projects(
         .map_err(|_| ExecutionRootCause::MalformedMetadata)?;
     origin.set_path("/api/projects");
     origin.set_query(None);
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .into();
-    let text = agent
-        .get(origin.as_str())
-        .header("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|error| {
-            tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            ExecutionRootCause::Unreachable
-        })?
-        .body_mut()
-        .read_to_string()
-        .map_err(|_| ExecutionRootCause::Unreachable)?;
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        request_timeout: TIMEOUT,
+        follow_redirects: false,
+        ..Default::default()
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
+    let url = origin.as_str().to_owned();
+    let bearer = format!("Bearer {token}");
+    let text = instrukt_outside::runtime::block_on(async {
+        let response = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+            .send()
+            .await
+            .map_err(|error| error.without_url().to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+        response
+            .text()
+            .await
+            .map_err(|error| error.without_url().to_string())
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
     live_projects(&text)
 }
 
@@ -1270,18 +1290,18 @@ pub(super) fn resolve_launch(
                         "; native caught project-default escalation uses managed ceiling",
                     );
                 }
-                let instance = &request
+                let selection = request
                     .selection
                     .as_ref()
-                    .ok_or_else(|| launch_error("missing model selection"))?
-                    .instance;
+                    .ok_or_else(|| launch_error("missing model selection"))?;
                 let providers = config["providers"]
                     .as_array()
                     .ok_or_else(|| launch_error("missing providers"))?;
                 let provider = providers
                     .iter()
-                    .find(|p| p["instanceId"].as_str() == Some(instance.as_str()))
+                    .find(|p| p["instanceId"].as_str() == Some(selection.instance.as_str()))
                     .ok_or_else(|| launch_error("selected native provider instance missing"))?;
+                super::_t3_options::admit(provider, selection)?;
                 if let Some(value) = provider.get("supportedRuntimeModes") {
                     let supported: Vec<LaunchRuntimeMode> =
                         serde_json::from_value(value.clone())

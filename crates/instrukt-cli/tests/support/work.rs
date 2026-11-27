@@ -86,6 +86,71 @@ impl Project {
         }
         self.ok(["create", slug, intent, "--kind", kind, "--approved"])
     }
+
+    /// Publishes the project once so `instrukt tick` sees it, without
+    /// contacting GitHub.
+    pub fn ensure_synced(&self) {
+        ensure_synced(&self.env, &self.repo);
+    }
+
+    /// Runs `instrukt tick` and asserts success, driving inbound control
+    /// reads and outbound GitHub reflection.
+    pub fn tick(&self) {
+        self.ensure_synced();
+        self.env.run(self.repo.path(), ["tick"]).success();
+    }
+
+    /// Builds an unspawned `instrukt tick` process after ensuring the project
+    /// is published, for concurrency tests that pause reflection in flight.
+    pub fn tick_command(&self) -> std::process::Command {
+        self.ensure_synced();
+        let mut command = self.env.instrukt_process(self.repo.path());
+        command.arg("tick");
+        command
+    }
+}
+
+fn ensure_synced(env: &TestEnv, repo: &Repo) {
+    if !env
+        .instrukt_home()
+        .join("state/publication/demo.yaml")
+        .exists()
+    {
+        if !env.instrukt_home().join("docs/domain/sdlc").exists()
+            && !repo.read("instrukt.yaml").contains("workflow:")
+        {
+            let docs = env.git_repo("sdlc-docs");
+            docs.write(
+                "instrukt.yaml",
+                &format!("schema_version: {PROJECT_SCHEMA_VERSION}\nproject: sdlc-docs\n"),
+            );
+            docs.write(
+                "docs/domain/sdlc/workflow/workflow.yaml",
+                "orchestrator: todo-lead\nrequires: []\nroles:\n  - todo-lead\n",
+            );
+            docs.write(
+                "docs/domain/sdlc/procedure/todo-lead.md",
+                "---\ndescription: Minimal sdlc orchestrator for test sync.\nrole: todo-lead\nparameters:\n  - name: slug\n    required: true\n---\n\n# Todo Lead — Procedure\n\n## Goal\n\nRun.\n\n## Preconditions\n\nNone.\n\n## Steps\n\n1. Run.\n\n## Outputs\n\nDone.\n\n## Recovery\n\nRetry.\n",
+            );
+            docs.commit("publish minimal sdlc workflow");
+            let published = env.run(docs.path(), ["sync"]);
+            let output = published.get_output();
+            assert!(
+                output.status.success(),
+                "sdlc docs sync failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let run = env.run(repo.path(), ["sync"]);
+        let output = run.get_output();
+        assert!(
+            output.status.success(),
+            "sync failed: {}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 /// A computer of the developer team reflecting the project to `github`:
@@ -116,6 +181,11 @@ impl Computer {
         S: AsRef<OsStr>,
     {
         stdout(&self.todo(args).success())
+    }
+
+    pub fn tick(&self) {
+        ensure_synced(&self.env, &self.repo);
+        self.env.run(self.repo.path(), ["tick"]).success();
     }
 }
 

@@ -97,9 +97,8 @@ missing `url` or `description`.
 
 ### Whose declarations a call sees
 
-The command takes its caller from the selected runtime's caller identity, as
-`instrukt discuss` does
-(`project/instrukt/spec/feature/runner/conversation-links`), and reads the
+The command takes its caller from the selected runtime's caller identity
+(`project/instrukt/spec/feature/runner/session-continuity`), and reads the
 runner's recorded assignment for that session.
 
 | Caller | Declarations |
@@ -265,7 +264,7 @@ running an external IdP (such as Keycloak or Okta):
   in the company home's `secrets.env` under a `${NAME}` reference (never in the
   repository, state database, or cluster Redis), records a stable 128-bit
   `issuer_id` and public JWK Set in `company_issuers`, and enables `issuer:` in
-  the company home's `instrukt.yaml`.
+  the company home's `company.yaml`.
 - Cluster Redis holds derived public issuer metadata rebuilt idempotently from
   authoritative `company_issuers` + `ingress.url` without rotating keys on
   ingress receiver startup, when `ingress.url` changes, or via

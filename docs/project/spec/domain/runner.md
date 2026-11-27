@@ -8,13 +8,13 @@ visibility: public
 
 The runner bounded context connects eligible work, received events and due
 times to agent sessions. It owns dispatch, the runtime adapter, operational
-session inspection, event-source translation, conversation links and time
+session inspection, event-source translation and time
 eligibility, including anomaly reporting. It executes the enabled modules' work
 in one process, entered through `instrukt run` or `instrukt tick` and woken by
-the OS scheduler. The long-lived `instrukt run` also hosts turn-end conversation
-relay and, through hosting the company context implements, that context's
-connectors (`project/instrukt/spec/domain/company`); scheduled `tick` does
-neither. It has no consumer daemon beside the runner;
+the OS scheduler. The long-lived `instrukt run` also hosts, through hosting the
+company context implements, that context's connectors and connected-conversation
+answer relay (`project/instrukt/spec/domain/company`); scheduled `tick` does
+not. It has no consumer daemon beside the runner;
 with a company's connector declared, an owned service keeps `instrukt run`
 itself running.
 A separate opt-in loopback webhook receiver accepts signed external events,
@@ -73,15 +73,6 @@ Native agent-operation prose is supplied by configuration and rendered through `
   captures each generation and fixed native launch identity. Exact-key ownership
   admits one starter or deliverer at a time.
 
-**Conversation link**
-: A runner-owned relationship between two agent threads in which the human
-  participates from either thread and finished conversational turns reach the
-  peer with their original authorship.
-
-**Relay position**
-: Per-link directional source-stream and completed-delivery progress, retained
-  across ordinary runner restarts.
-
 **Due task**
 : A prepared, authorized task whose recorded schedule makes it eligible for
   execution at the observed time.
@@ -119,6 +110,12 @@ Native agent-operation prose is supplied by configuration and rendered through `
   on it. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
 
+**Proposal handoff**
+: The runner's fact `runner.proposal_approved`: in a company home, an open
+  pull request whose current head is an admitted proposal
+  (`project/instrukt/spec/domain/company`) holds an approving verdict, and the
+  company's standing integrator is woken to integrate that exact head.
+
 
 ## Ownership boundary
 
@@ -127,8 +124,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   module-aware runner execution; todo dispatch policy; procedure
   activation from events; the admission, rendering and start of requested
   reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
-  runtime capability translation, conversation-link membership, identity-envelope
-  vocabulary and deterministic turn-end relay;
+  runtime capability translation;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
   container each company's sessions run in on a host, its state, its tools,
@@ -141,7 +137,7 @@ Native agent-operation prose is supplied by configuration and rendered through `
   meaning and writes of its tables in the state database (the
   event log, consumer cursors and handled marks, request validators,
   watched-ref observations, executions, authoritative object bindings and generation history, pending delivery targets and per-key locks,
-  conversation links and directional relay positions, held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
+  held task failures and the last wake-up, MCP client registrations, signed-in logins and their generations, and pending sign-ins and their waiting calls), whose schema is published in
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
   import progress (`project/instrukt/spec/feature/runner/history`); the
@@ -219,6 +215,60 @@ whether a todo has reached a terminal outcome, owned by work, or the window's
 admitted value and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/thread-retention`).
 
+The runner also owns carrying a company's knowledge proposals to review and
+integration, and what of them reaches the operator, in a company home
+admitted for automatic review. Its review observation's fetch of a company
+home prunes remote-tracking branches the remote no longer holds. On each
+review observation's tick it considers only the heads of the home's
+remote-tracking branches, never a branch that exists only on the computer,
+and asks the company context's proposal lookups
+(`project/instrukt/spec/domain/company`):
+
+- **Opens pull requests.** For each such head that is an admitted proposal,
+  is not contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, the runner has work's GitHub
+  boundary open a pull request for its branch, as the identity the
+  `company-agent` role selects. The pull request is then reviewed as every
+  eligible pull request is.
+- **Hands off.** When an open pull request's current head is an admitted
+  proposal, holds an approving verdict that work answers is current and covers
+  the canonical branch, and is not contained in the remote-tracking canonical
+  branch, the runner emits `runner.proposal_approved`.
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's snapshot
+  lookups each time it runs. The runner raises each as an anomaly through
+  `project/instrukt/spec/feature/runner/anomaly-notification` as that
+  contract stands, once per running process.
+
+Opening proposal pull requests, and nothing else, needs the proposal
+pull-request credential, whose readiness work answers as it answers automatic
+review's: met, unmet with a finding, or GitHub cannot be asked
+(`project/instrukt/spec/domain/work`). It is asked as automatic review's is:
+
+- **At entry.** `instrukt install` and `instrukt install --check` ask it for
+  each company home admitted for automatic review, beside automatic review's
+  readiness, and report an unmet answer or one GitHub cannot give as a finding
+  with its repair door
+  (`project/instrukt/spec/feature/runner/module-installation`).
+- **On each pass.** The review observation of a company home asks it once.
+  - **Met:** pull requests are opened as above.
+  - **Unmet:** only the opening of proposal pull requests is withheld, with a
+    warning naming the finding and its door.
+  - **GitHub cannot be asked:** only the opening is withheld for that pass,
+    the source's cause is recorded and a warning is logged, as for automatic
+    review's readiness; the next tick asks again.
+
+Automatic review of the home's other pull requests, the handoff of heads
+already approved and CI observation never wait on this credential. An opening
+GitHub or the runtime cannot answer falls under
+`project/instrukt/spec/feature/runner/pull-request-review`, Availability: a
+warning is logged and the next tick tries again. An opening GitHub refuses
+while the credential is met is a defect of the part: a warning carries GitHub's
+answer, as the review pass warns of its own failures. Neither writes any
+state. The verdict is work's,
+and what the integrator does with the head is workflow's integrator's.
+
 `runner.autostart` is a boolean or a map `{<kind>: bool}`, available in both
 configuration layers and controlling todos only. `runner.notify` is global-only.
 Project-layer `events.watch: [{remote, ref}]` selects refs checked each tick.
@@ -246,10 +296,10 @@ responsibility is distinct from its configured role class.
 - **Invariants:** Execution follows the enabled modules. Todo pickup mode
   controls todos only; event activation remains independently switchable.
   One process handles those enabled responsibilities. It runs only with the
-  prerequisites it admitted at its start or at a later wake; a part that depends
-  on a service outside instrukt retries inside itself until that service returns
-  (`project/instrukt/policy/checks-and-guards`: a prerequisite is gated, an
-  outside failure is retried).
+  prerequisites it admitted at its start or at a later wake
+  (`sdlc/principle/design-fundamentals`, Fail Fast); a long-lived runner part
+  that depends on a service outside instrukt retries transient outages until
+  that service returns (`project/instrukt/design/architecture/outside-gate`).
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation
@@ -277,19 +327,6 @@ responsibility is distinct from its configured role class.
   (`project/instrukt/spec/feature/runner/session-continuity`: only absence
   proves an actor gone). The standing-agent and procedure-event-delivery contracts own continuing
   home/subject responsibility and eligible event delivery; routing itself resolves no session.
-
-#### Conversation link
-
-- **Root entity:** One link between two runtime-scoped native threads.
-- **Contains:** Its two members, active/closed state, opening positions and
-  per-direction pending handover and accepted-delivery evidence.
-- **Invariants:** Admission, attribution, closure and turn eligibility are
-  owned by `project/instrukt/spec/feature/runner/conversation-links`. T3
-  transcripts supply content; transport positions confer no speaker authority.
-- **Lifecycle:** Opening establishes both directions; the long-lived runner
-  follows native completions, resumes retained progress on startup and stops
-  both directions when a member closes the link. State remains runner-owned
-  in the existing state database.
 
 #### Event activation
 
@@ -351,10 +388,7 @@ A project-local subscribed procedure reaches only that project's origin.
 `instrukt run` hosts independent event readers. `instrukt tick` gives each a
 bounded pending-then-new drain, retaining Redis groups between invocations.
 A scheduled-only computer reacts to retained instrukt events on its next wake,
-within stream retention. Conversation relay is a separate native-thread reader
-in `instrukt run`, governed by
-`project/instrukt/spec/feature/runner/conversation-links`. Redis is transport
-only; it owns no conversation turns or link decisions.
+within stream retention.
 One consumer's slow handler or unavailable Redis does not block unrelated readers
 or local work. SQLite writer-lock ownership is limited to local write sections;
 network waits and reactions run outside it.
@@ -461,7 +495,7 @@ ticks are caught by the next state read. Signed native and GitHub requests also 
 
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
-| `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `general/procedure/upstream-watch` |
+| `runner.upstream_changed` | A watched upstream ref changes | Project, remote, ref, observed revision | Project, remote, ref, revision | `sdlc/procedure/upstream-watch` |
 | `runner.ci_completed` | The integrate candidate's CI result completes, or the project has no CI | Project, candidate SHA, CI result (`success`, `failure` or `no_ci`) | Project, candidate SHA, CI result | Workflow's subscribed integrator |
 | `runner.dependency_failing` | A check run on a current configured dependency-update head fails | Project, branch, head SHA, check run ID/name/conclusion | Project, branch, head, run ID and conclusion | Workflow's subscribed integrator, assessing and deduplicating bug work under its procedure |
 | `runner.main_failing` | The CI of remote canonical main's head commit completes red; a red result on a commit that is no longer the head is not observed, as the head's own CI covers the combined state | Project, failing head commit | Project, head commit: a commit's red result is reported once, and a new head is observed afresh | Workflow's subscribed integrator, woken to restore the canonical branch (revert first, repair as separate work); the event authorizes nothing by itself |
@@ -474,6 +508,15 @@ in data.
 | Event | Emitted when | Payload | Idempotency key | Consumer |
 | --- | --- | --- | --- | --- |
 | `runner.review_needed` | On a project that opted in to automatic review, a commit is owed a review and has no live request: it is the current head of an eligible pull request with no recognised verdict, or workflow finds that the active integration candidate owes one | Project, the exact commit, the pinned base commit its review starts from, and the request's number for that commit; for a pull request also its number, head branch and base branch | Project, commit, request number | The procedure subscribed to it under its own published declaration; the runner guarantees the subject, the data and the placement (`project/instrukt/spec/feature/runner/pull-request-review`) |
+
+`runner.proposal_approved` is a state: a newer head of the same pull request
+takes the place of an older one that delivery has not selected for handover.
+Its subject is the pull request, `pull_request:<project>/<number>`; the head
+commit stays in data.
+
+| Event | Emitted when | Payload | Idempotency key | Consumer |
+| --- | --- | --- | --- | --- |
+| `runner.proposal_approved` | In a company home admitted for automatic review, an open pull request's current head is an admitted proposal, holds an approving verdict work answers is current and covers the canonical branch, and is not contained in the remote-tracking canonical branch | Project, the pull request's number, head branch and base branch, the exact head commit and the pinned base its verdict was admitted against | Project, head commit | Workflow's subscribed integrator, which composes that exact head into a candidate; the event authorizes nothing by itself |
 
 Fleet attention's conditions are occurrences with a todo subject in their
 project origin; which facts count, and from what point, is
@@ -543,9 +586,6 @@ related references.
   chosen, refusing a feature the chosen runtime cannot carry, and native
   delegation with record-backed attempts. Archive search and agent-owned
   session ending are retired goals.
-- **Conversation links** — `project/instrukt/spec/feature/runner/conversation-links`
-  — hold a three-way conversation across two agent threads and close it for
-  everyone; includes the runner-owned identity-envelope vocabulary.
 - **Event activation** — `project/instrukt/spec/feature/runner/event-activation`
   — learn about upstream changes before deciding to reconcile a fork.
 - **Task timing** — `project/instrukt/spec/feature/runner/task-timing`
@@ -605,6 +645,14 @@ related references.
 | company → runner | Customer / Supplier | Conversation hosting in `instrukt run` and the conversation assignment lookup, declared by runner and implemented by company (`project/instrukt/spec/domain/company`); a connector's direct message to one person, which MCP sign-in sends its links through |
 | runner → company | Customer / Supplier | Runtime adapter, native conversation source and turn relay, keyed start, identity envelopes and the state database handle |
 | runner → workflow | Published language | `runner.ci_completed` wakes the integrator to assess candidates; `runner.main_failing` wakes it to restore a failing canonical branch; `runner.dependency_failing` wakes it to assess failed dependency updates |
+
+Carrying a company's knowledge proposals adds these crossings:
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work → runner | Customer / Supplier | Through its GitHub boundary, the proposal pull-request credential's readiness (met, unmet with a finding, or GitHub cannot be asked), whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
+| runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
 
 Fleet attention adds these crossings
 (`project/instrukt/spec/feature/runner/fleet-attention`):

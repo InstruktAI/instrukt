@@ -293,18 +293,20 @@ elif command=='start':
     if (root/'queued-start').exists(): t['status']='queued'
     # With `prepare-worktree`, a native launch into a new worktree answers
     # while T3 still prepares it: the thread is `preparing` on the requested
-    # branch with no worktree path, and the worktree is created and recorded
-    # on the thread's state read whose ordinal, counted from the launch, the
-    # flag names.
+    # branch with no worktree path. T3 prepares on its own schedule, not the
+    # observer's: however often the thread is read, the worktree is created
+    # and recorded only when T3 finishes (`fixture-finish-preparation`).
     preparing=root/'prepare-worktree'
     if '--worktree' in flags and launch and launch['workspaceStrategy']['type']=='worktree' and preparing.exists():
         t['status']='preparing'; t['branch']=flags.get('--branch',flags['--worktree'])
-        pending={'ordinal':int(preparing.read_text()),'reads':0,'folder':str(root/'worktrees'/id),'base':flags['--worktree'],'branch':flags.get('--branch')}
+        pending={'folder':str(root/'worktrees'/id),'base':flags['--worktree'],'branch':flags.get('--branch')}
         (root/(launch['threadId']+'.preparing')).write_text(json.dumps(pending)); preparing.unlink()
     elif '--worktree' in flags:
         create_worktree(t,root/'worktrees'/id,flags['--worktree'],flags.get('--branch'))
     if launch:
         t['runtimeMode']=launch['runtimeMode'];t['interactionMode']=launch['interactionMode'];t['createdBy']='user';t['commandId']=launch['commandId']
+        # T3 keeps a launch's model selection on its thread as given, options included.
+        t['modelSelection']=launch['modelSelection']
         if 'initialMessage' not in launch: t['messages']=[];t['status']='idle';t['latestRunId']=None;t['activeRunId']=None
         if launch['workspaceStrategy']['type']=='existing_worktree':
             t['worktreePath']=launch['workspaceStrategy']['worktreePath'];t['branch']=launch['workspaceStrategy'].get('branch')
@@ -397,13 +399,10 @@ elif command=='show':
             pass
     while held.exists(): time.sleep(0.02)
     t=find(operands[0]); limit=int(flags.get('--messages',100))
-    preparing=root/(t['threadId']+'.preparing')
-    if preparing.exists():
-        pending=json.loads(preparing.read_text()); pending['reads']+=1
-        if pending['reads']>=pending['ordinal']:
-            create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
-            t['status']='running'; save(t); preparing.unlink()
-        else: preparing.write_text(json.dumps(pending))
+    # A read of a thread T3 still prepares answers it as it is and records
+    # that it was seen preparing; it never advances the preparation.
+    if (root/(t['threadId']+'.preparing')).exists():
+        (root/(t['threadId']+'.read-while-preparing')).touch()
     with state_lock(): sync_inputs()
     if limit==0 and (root/'busy-before-entry').exists():
         counter=root/'entry-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
@@ -417,6 +416,15 @@ elif command=='show':
         counter=root/'asap-checks'; count=int(counter.read_text())+1 if counter.exists() else 1; counter.write_text(str(count))
         if count>=2:
             t['status']='running'; save(t); (root/'busy-after-idle-read').unlink(); counter.unlink()
+elif command=='fixture-finish-preparation':
+    # A fixture control, not a T3 command: T3 finishes preparing the new
+    # worktree of a thread launched under `prepare-worktree`, records it on
+    # the thread and runs the thread's opening.
+    pending_file=root/(operands[0]+'.preparing')
+    pending=json.loads(pending_file.read_text())
+    t=find(operands[0])
+    create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
+    t['status']='running'; save(t); pending_file.unlink()
 else: sys.exit(2)
 "###;
 
@@ -660,6 +668,11 @@ impl FakeT3 {
     pub fn model(&self, id: &str) -> String {
         self.read(id)["model"].as_str().unwrap().to_owned()
     }
+    /// The native options a thread was launched with: T3's list of option
+    /// `id` and `value`, `null` when its launch sent none.
+    pub fn options(&self, id: &str) -> serde_json::Value {
+        self.read(id)["modelSelection"]["options"].clone()
+    }
     pub fn native_id(&self, id: &str) -> String {
         std::fs::read_to_string(self.state.join(format!("{id}.alias")))
             .unwrap_or_else(|_| id.to_owned())
@@ -694,10 +707,29 @@ impl FakeT3 {
         }
     }
     /// The next native launch into a new worktree answers while T3 is still
-    /// preparing that worktree; T3 records the worktree on the launched
-    /// thread's `read`th state read, counted from the launch.
-    pub fn prepare_worktree_until_read(&self, read: usize) {
-        std::fs::write(self.state.join("prepare-worktree"), read.to_string()).unwrap();
+    /// preparing that worktree. T3 keeps preparing however often the thread
+    /// is read, until [`FakeT3::finish_preparation`].
+    pub fn prepare_worktree(&self) {
+        self.flag("prepare-worktree", true);
+    }
+    /// Whether thread `id` has been read while T3 was still preparing its
+    /// worktree.
+    pub fn read_while_preparing(&self, id: &str) -> bool {
+        let id = self.native_id(id);
+        self.state
+            .join(format!("{id}.read-while-preparing"))
+            .exists()
+    }
+    /// T3 finishes preparing thread `id`'s new worktree: it creates the
+    /// worktree, records it on the thread and runs the thread's opening.
+    pub fn finish_preparation(&self, id: &str) {
+        let id = self.native_id(id);
+        let status = std::process::Command::new(&self.script)
+            .envs(&self.environment)
+            .args(["thread", "fixture-finish-preparation", &id])
+            .status()
+            .unwrap();
+        assert!(status.success(), "T3 could not finish preparing {id}");
     }
     /// Whether a start has been held by the `hold-start` flag.
     pub fn start_held(&self) -> bool {
@@ -1024,6 +1056,16 @@ impl FakeT3 {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
         self.read(id)["worktreePath"].as_str().unwrap().into()
+    }
+    pub fn worktree_if_present(&self, id: &str) -> Option<PathBuf> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["worktreePath"].as_str().map(Into::into)
+    }
+    pub fn branch(&self, id: &str) -> Option<String> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["branch"].as_str().map(ToOwned::to_owned)
     }
     pub fn worktree_base(&self, id: &str) -> String {
         let resolved = self.native_id(id);

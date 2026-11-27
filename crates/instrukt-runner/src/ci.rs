@@ -564,43 +564,252 @@ pub(crate) enum Fetched {
     Fresh { etag: Option<String>, body: String },
 }
 
-/// One conditional `GET` of a GitHub API `url` under `token`. `cached` is the
-/// answer the caller keeps for `url`; a `304` is `Unchanged` only when one
-/// was sent. An `X-Poll-Interval` header raises `interval` whether or not the
-/// answer is usable. Where answers are kept is the caller's.
+fn ci_gate() -> &'static instrukt_outside::Gate {
+    static GATE: std::sync::OnceLock<instrukt_outside::Gate> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        instrukt_outside::Gate::new(
+            std::sync::Arc::new(Timestamp::now),
+            std::sync::Arc::new(std::time::Instant::now),
+            instrukt_outside::Report::log(),
+        )
+    })
+}
+
+fn apply_poll_headers(headers: &http::HeaderMap, now: Timestamp, interval: &mut Option<i64>) {
+    let poll_secs = headers
+        .get("X-Poll-Interval")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok());
+    let retry_secs = instrukt_outside::http::retry_after(headers, now).map(|n| match n {
+        instrukt_outside::Named::After { delay, .. } => {
+            i64::try_from(delay.as_secs()).unwrap_or(i64::MAX)
+        }
+        instrukt_outside::Named::At(at) => (at.as_second() - now.as_second()).max(0),
+    });
+    for secs in poll_secs.into_iter().chain(retry_secs) {
+        *interval = Some(interval.map_or(secs, |known| known.max(secs)));
+    }
+}
+
+/// One conditional `GET` of a GitHub API `url` under `token`, executed through
+/// [`octocrab::Octocrab`] and [`instrukt_outside::Gate`]. `cached` is the
+/// answer the caller keeps for `url`; a `304` is `Unchanged` only when one was
+/// sent. `X-Poll-Interval` and `Retry-After` (parsed via
+/// [`instrukt_outside::http::retry_after`]) raise `interval` whether or not the
+/// answer is usable.
 pub(crate) fn conditional_get(
     url: &str,
     token: &str,
     cached: Option<&Cached>,
     interval: &mut Option<i64>,
 ) -> Result<Fetched, CiError> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
-        .timeout_global(Some(REQUEST_TIMEOUT))
-        .build()
-        .into();
-    let mut request = agent
-        .get(url)
-        .header("Accept", "application/vnd.github+json")
-        .header("User-Agent", "instrukt");
-    request = request.header("Authorization", &format!("Bearer {token}"));
-    if let Some(cached) = cached {
-        request = request.header("If-None-Match", &cached.etag);
-    }
-    let mut response = request.call().map_err(|err| CiError::Request {
+    let req_err = |msg: String| CiError::Request {
         url: url.to_owned(),
-        message: err.to_string(),
-    })?;
-    if let Some(secs) = response
-        .headers()
-        .get("X-Poll-Interval")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.trim().parse::<i64>().ok())
-    {
-        *interval = Some(interval.map_or(secs, |known| known.max(secs)));
-    }
-    let status = response.status().as_u16();
+        message: msg,
+    };
+    let uri: http::Uri = url
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| req_err(e.to_string()))?;
+    let (Some(scheme), Some(authority)) = (uri.scheme_str(), uri.authority()) else {
+        return Err(req_err("GitHub URL is missing scheme or host".to_owned()));
+    };
+    let origin = format!("{scheme}://{authority}");
+    let route = uri
+        .path_and_query()
+        .map_or("/", http::uri::PathAndQuery::as_str)
+        .to_owned();
+    let crab = {
+        let _guard = instrukt_outside::runtime::runtime()
+            .map_err(|e| req_err(e.to_string()))?
+            .enter();
+        let mut builder = octocrab::Octocrab::builder()
+            .base_uri(&origin)
+            .map_err(|e| req_err(e.to_string()))?
+            .set_connect_timeout(Some(Duration::from_secs(10)))
+            .set_read_timeout(Some(REQUEST_TIMEOUT))
+            .set_write_timeout(Some(REQUEST_TIMEOUT))
+            .add_header(http::header::USER_AGENT, "instrukt".to_owned())
+            .add_header(
+                http::header::ACCEPT,
+                "application/vnd.github+json".to_owned(),
+            );
+        if !token.is_empty() {
+            if http::HeaderValue::from_str(&format!("Bearer {token}")).is_err() {
+                return Err(CiError::Status {
+                    url: url.to_owned(),
+                    status: 401,
+                });
+            }
+            builder = builder.personal_token(token.to_owned());
+        }
+        builder.build().map_err(|e| req_err(e.to_string()))?
+    };
+    let headers = cached.and_then(|entry| {
+        let mut map = http::HeaderMap::new();
+        if let Ok(tag) = entry.etag.parse::<octocrab::etag::EntityTag>()
+            && octocrab::etag::EntityTag::insert_if_none_match_header(&mut map, tag).is_ok()
+        {
+            return Some(map);
+        }
+        map.insert(
+            http::header::IF_NONE_MATCH,
+            http::HeaderValue::from_str(&entry.etag).ok()?,
+        );
+        Some(map)
+    });
+    let key = instrukt_outside::Key::new("github-ci", [origin.as_str()]).item(route.as_str());
+    let url_owned = url.to_owned();
+    let attempted = instrukt_outside::runtime::block_on(ci_gate().attempt_async(
+        &key,
+        &instrukt_outside::Settings::default(),
+        || async move {
+            let outcome = tokio::time::timeout(REQUEST_TIMEOUT, async move {
+                let resp = match crab._get_with_headers(route, headers).await {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        return instrukt_outside::Tried::Unavailable(
+                            instrukt_outside::Unavailable {
+                                reason: instrukt_outside::Reason::Unreachable,
+                                extent: instrukt_outside::Extent::Scope,
+                                named: None,
+                            },
+                            (
+                                CiError::Request {
+                                    url: url_owned.clone(),
+                                    message: e.to_string(),
+                                },
+                                None,
+                            ),
+                        );
+                    }
+                };
+                let now = Timestamp::now();
+                let status = resp.status().as_u16();
+                let resp_headers = resp.headers().clone();
+                let rate_limited = status == 429
+                    || (status == 403
+                        && (resp_headers.contains_key(http::header::RETRY_AFTER)
+                            || resp_headers
+                                .get("x-ratelimit-remaining")
+                                .and_then(|v| v.to_str().ok())
+                                == Some("0")));
+                if rate_limited {
+                    let named = instrukt_outside::http::retry_after(&resp_headers, now);
+                    return instrukt_outside::Tried::Unavailable(
+                        instrukt_outside::Unavailable {
+                            reason: instrukt_outside::Reason::RateLimited,
+                            extent: instrukt_outside::Extent::Key,
+                            named,
+                        },
+                        (
+                            CiError::Status {
+                                url: url_owned.clone(),
+                                status,
+                            },
+                            Some(resp_headers),
+                        ),
+                    );
+                }
+                if status >= 500 {
+                    let named = instrukt_outside::http::retry_after(&resp_headers, now);
+                    return instrukt_outside::Tried::Unavailable(
+                        instrukt_outside::Unavailable {
+                            reason: instrukt_outside::Reason::Unavailable {
+                                status: Some(status),
+                            },
+                            extent: instrukt_outside::Extent::Scope,
+                            named,
+                        },
+                        (
+                            CiError::Status {
+                                url: url_owned.clone(),
+                                status,
+                            },
+                            Some(resp_headers),
+                        ),
+                    );
+                }
+                let etag = octocrab::etag::EntityTag::extract_from_response(&resp)
+                    .map(|t| t.to_string())
+                    .or_else(|| {
+                        resp_headers
+                            .get(http::header::ETAG)
+                            .and_then(|v| v.to_str().ok())
+                            .map(str::to_owned)
+                    });
+                let body = if status == 304 || !(200..300).contains(&status) {
+                    String::new()
+                } else {
+                    match crab.body_to_string(resp).await {
+                        Ok(body) => body,
+                        Err(e) => {
+                            return instrukt_outside::Tried::Defect((
+                                CiError::Body {
+                                    url: url_owned.clone(),
+                                    message: e.to_string(),
+                                },
+                                Some(resp_headers),
+                            ));
+                        }
+                    }
+                };
+                instrukt_outside::Tried::Done((status, resp_headers, etag, body))
+            })
+            .await;
+            match outcome {
+                Ok(tried) => tried,
+                Err(_) => instrukt_outside::Tried::Unavailable(
+                    instrukt_outside::Unavailable {
+                        reason: instrukt_outside::Reason::TimedOut,
+                        extent: instrukt_outside::Extent::Scope,
+                        named: None,
+                    },
+                    (
+                        CiError::Request {
+                            url: url.to_owned(),
+                            message: "request timed out".to_owned(),
+                        },
+                        None,
+                    ),
+                ),
+            }
+        },
+    ))
+    .map_err(|e| req_err(e.to_string()))?;
+
+    let now = Timestamp::now();
+    let (status, resp_headers, etag, body) = match attempted {
+        instrukt_outside::Attempted::Done(answer) => answer,
+        instrukt_outside::Attempted::Defect((err, headers))
+        | instrukt_outside::Attempted::Wait {
+            error: Some((err, headers)),
+            ..
+        } => {
+            if let Some(resp_headers) = headers {
+                apply_poll_headers(&resp_headers, now, interval);
+            }
+            return Err(err);
+        }
+        instrukt_outside::Attempted::Wait { wait, error: None } => {
+            let secs = (wait.at().as_second() - now.as_second()).max(0);
+            if secs > 0 {
+                *interval = Some(interval.map_or(secs, |known| known.max(secs)));
+            }
+            return Err(if wait.reason() == instrukt_outside::Reason::RateLimited {
+                CiError::Status {
+                    url: url.to_owned(),
+                    status: 429,
+                }
+            } else {
+                CiError::Request {
+                    url: url.to_owned(),
+                    message: wait.to_string(),
+                }
+            });
+        }
+    };
+
+    apply_poll_headers(&resp_headers, now, interval);
     if status == 304
         && let Some(cached) = cached
     {
@@ -614,18 +823,6 @@ pub(crate) fn conditional_get(
             status,
         });
     }
-    let etag = response
-        .headers()
-        .get("ETag")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    let body = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|err| CiError::Body {
-            url: url.to_owned(),
-            message: err.to_string(),
-        })?;
     Ok(Fetched::Fresh { etag, body })
 }
 

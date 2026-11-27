@@ -47,8 +47,8 @@ admitted with thread retention withheld, as
 `project/instrukt/spec/feature/configuration/layered-configuration` decides.
 No part
 of the runner reads those files on its own
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters; nothing running handles a missing one).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter; nothing running handles a missing one).
 
 Company connections and the conversation relay follow the admitted generation
 as it changes. Adding a connector starts it, changing its settings or tokens
@@ -67,8 +67,8 @@ measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
-defect is fixed in the code).
+(`project/instrukt/design/architecture/outside-gate`: transient outside outages
+are retried while code defects are fixed in code).
 
 | Capability | Runner responsibility |
 | --- | --- |
@@ -99,16 +99,15 @@ it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup;
 which finished threads are archived, and when, is the runner's thread
 retention (`project/instrukt/spec/feature/runner/thread-retention`).
-Every tick also reads GitHub for what people did on the issues of the todos in
-this computer's record (`project/instrukt/spec/feature/work/github-record`).
-Every tick flushes pending work-record reflection under the
-per-computer reflection lock. A command that writes the record flushes under
-that lock when it is free and never waits on it when another process holds
-it, leaving its reflection to the next flush that acquires it
-(`project/instrukt/spec/feature/work/github-record`). Reflection holds that lock across GitHub requests and takes the writer
-lock only briefly for each local commit of what it learned. Lock order is always
-reflection → writer; the local transaction releases the writer lock before a
-flush acquires the reflection lock. Local readers take neither lock.
+Every tick is the single path that talks to GitHub for the work record: it
+reads inbound human controls from the issues of this computer's live todos
+before pickup and flushes pending work-record reflection after pickup,
+serializing both under the per-computer reflection lock
+(`project/instrukt/spec/feature/work/github-record`). Todo commands never
+read GitHub, never flush reflection and never acquire the reflection lock.
+Reflection holds that lock across GitHub requests and takes the writer lock
+only briefly for each local commit of what it learned. Lock order is always
+reflection → writer. Local readers take neither lock.
 
 ### Enablement and infrastructure
 
@@ -169,8 +168,13 @@ current in the background (`project/instrukt/spec/feature/runner/session-continu
 to check installation, enablement, login, reported models and quota windows; a
 failed or slow refresh never refuses a start, and the runtime's own refusal at
 the start is the signal. Runner
-starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options. T3 CLI starts pass `--provider` and `--model`;
-effort/options cannot be expressed there and remain explicit start evidence.
+starts and native assignment facts carry the resolved profile, kind, provider instance, model, effort and options.
+A runner start hands them to T3's native launch with its effort translated to
+the provider's native option, exactly as native delegation does; a start whose
+options the selected model does not accept is refused before creation with the
+reason (`project/instrukt/spec/feature/runner/session-continuity`). An
+agent-driven `t3 thread start` passes `--provider` and `--model`; effort/options
+have no flag there and remain explicit start evidence.
 A rejection proven before creation permits the next chain entry; ambiguous
 starts and failed sends preserve the original request for recovery. Exhaustion before a new runtime invocation retires that freshly reserved unbound attempt, retaining its no-start evidence; an uncertain existing request is never retired by absence. Exhaustion
 releases the runner's own claim and reports an anomaly, setting no hold.
@@ -278,7 +282,9 @@ And the developer sees in status that the project's event responses are not admi
   safe worktree removal first or the runtime's existing-worktree start where
   available (T3 MCP); T3's CLI cannot bind it. Waking a settled retained thread
   uses its existing workspace.
-- T3 host CLI cannot express effort/options; native delegation receives them as resolved facts.
+- T3's host CLI cannot express effort/options, so an agent-driven `t3 thread
+  start` runs at T3's default effort; runner starts and native delegation
+  receive them as resolved facts.
 
 ## See Also
 

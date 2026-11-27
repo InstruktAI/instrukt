@@ -17,7 +17,7 @@ use crate::wiring::{work_evidence, work_ports};
 
 #[derive(Debug, clap::Args)]
 pub struct FlowArgs {
-    /// The todo to pick up and inspect current facts for.
+    /// The todo's slug.
     slug: TodoSlug,
     /// Native recorded-workspace evidence as JSON, from a file or - for stdin.
     #[arg(long)]
@@ -29,7 +29,7 @@ pub struct FlowArgs {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum FlowCommand {
-    /// Pick up an active todo and print its factual ledger.
+    /// Record an execution claim and show the todo's ledger.
     Work(FlowArgs),
 }
 

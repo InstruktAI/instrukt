@@ -96,14 +96,14 @@ classify() {
     # What the Graphify contract test runs: the CLI and its harness, the
     # engine and its pin (instrukt-blueprint), module installation and the
     # generation the runner drives, and the crates those build on.
-    crates/instrukt-cli/* | crates/instrukt-blueprint/* | crates/instrukt-runner/* | crates/instrukt-core/* | crates/instrukt-connector/*)
+    crates/instrukt-cli/* | crates/instrukt-blueprint/* | crates/instrukt-runner/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/*)
         graphify=true ;;
     esac
     case $1 in
     # What the T3 contract test runs: the CLI and its harness, the T3 adapter
     # and its pin (instrukt-runner), the crates it builds on (instrukt-blueprint
     # among them), and dispatch.
-    crates/instrukt-cli/* | crates/instrukt-runner/* | crates/instrukt-blueprint/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-todos/*)
+    crates/instrukt-cli/* | crates/instrukt-runner/* | crates/instrukt-blueprint/* | crates/instrukt-core/* | crates/instrukt-connector/* | crates/instrukt-outside/* | crates/instrukt-todos/*)
         t3=true ;;
     esac
     case $1 in

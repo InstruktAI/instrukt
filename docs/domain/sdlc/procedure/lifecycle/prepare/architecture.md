@@ -16,7 +16,7 @@ parameters:
 - [sdlc/principle/architectural-defaults](../../../principle/architectural-defaults.md)
 - [sdlc/policy/preparation-artifact-quality](../../../policy/preparation-artifact-quality.md)
 - [sdlc/policy/state-storage](../../../policy/state-storage.md)
-- [sdlc/policy/command-contract-read](../../../policy/command-contract-read.md)
+- [general/policy/command-contract-read](../../../../../general/policy/command-contract-read.md)
 
 ## Goal
 

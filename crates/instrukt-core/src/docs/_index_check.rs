@@ -5,8 +5,8 @@
 //! Every `index.yaml` below the repository's `docs/` is read as YAML and
 //! checked key by key, so one run reports every finding of every index
 //! rather than the first parse error: the keys its position allows, the
-//! shape of each value, the ids it names (delivered, of its own position
-//! unless it is `general`'s), the agent CLIs `agents` maps, and the listed
+//! shape of each value, the ids it names (delivered, of its own position,
+//! `general`'s included), the agent CLIs `agents` maps, and the listed
 //! ids the expanded ones already bring in. An `index.yaml` anywhere but a
 //! position's root is a finding, reported from its path without reading it;
 //! a domain without one is a notice. Whether an `index.yaml` is a
@@ -339,11 +339,11 @@ impl Index<'_, '_> {
         ids
     }
 
-    /// Whether this position's index may name `id`: `general`'s any
-    /// domain's, every other one only its own position's.
+    /// Whether this position's index may name `id`: every index, `general`'s
+    /// included, names only its own position's snippets.
     fn own(&self, id: &SnippetId) -> bool {
         match self.position {
-            Position::General => !id.is_project(),
+            Position::General => id.domain().is_some_and(|d| d.as_str() == GENERAL),
             Position::Domain(domain) => id.domain().as_ref() == Some(domain),
             Position::Project => {
                 let prefix = self.corpus.project().map(|slug| format!("project/{slug}/"));

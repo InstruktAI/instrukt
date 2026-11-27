@@ -1,8 +1,6 @@
 ---
-activation_trigger: Use when an external Git repository must come local (clone or pull) before
-  analysis can start.
-description: Ingest Git repositories for analysis. Clone or pull into a checkout root,
-  produce durable index and history artifacts, and reuse prior work across requests.
+activation_trigger: 'When an external Git repo must come local (clone or pull) before analysis.'
+description: 'Clone or pull external Git repos into a checkout root with reusable index and history artifacts.'
 visibility: public
 ---
 

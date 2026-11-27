@@ -70,7 +70,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         return;
     }
     let version = release::VERSION.trim();
-    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"readiness translation":"not verified","version":"not verified","auth session issue/revoke":"not verified","thread list/show":"not verified","thread send":"not verified","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior"}});
+    let mut manifest = json!({"version":version,"instrukt_revision":option_env!("GITHUB_SHA"),"upstream_sha":std::env::var("T3_CONTRACT_UPSTREAM_SHA").ok(),"outcome":"failure","operation":"fixture prerequisites","exclusions":["provider execution and successful CLI start","ready-thread consumption and completed-turn relay","provider-generated assistant/reasoning/tool/diff/subagent payloads","authenticated provider quota/account behavior","worktree launch with an opening model turn"],"fake_operations":{"readiness translation":"not verified","version":"not verified","auth session issue/revoke":"not verified","thread list/show":"not verified","thread send":"not verified","thread start":"provider-dependent success path unverified","consume/finish":"provider-entry/completion fixture control, not live verified","fault flags":"fault injection, not vendor behavior","worktree preparation":"fixture control: a new-worktree launch answers preparing and T3 finishes only at the test's explicit step, never on reads; completed preparation is not live verified"}});
     let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut env = TestEnv::new();
         manifest["operation"] = json!("release acquisition/checksum");
@@ -173,7 +173,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         assert_eq!(real["projects"], emulated["projects"]);
         manifest["projects"] = real["projects"].clone();
         manifest["fake_operations"]["project add/snapshot"] = json!(
-            "compared check, ensure, duplicate refusal, reuse and ancestor-only pending launch"
+            "compared check, ensure with the title T3 gives a root and a company home's repository-name title, duplicate refusal, reuse and ancestor-only pending launch"
         );
         manifest["operation"] = json!("WebSocket queued dispatch, replay, and required fields");
         assert_eq!(real["native_launch"], emulated["native_launch"]);

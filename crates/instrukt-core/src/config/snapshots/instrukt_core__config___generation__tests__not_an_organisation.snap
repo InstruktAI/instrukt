@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/config/_generation.rs
+expression: personal.unwrap_err().to_string()
+---
+github.org names `ana`, a personal GitHub account; adding a company needs the GitHub organisation that owns this computer's company repositories, so give github.org an organisation's login; no repository and no home was created

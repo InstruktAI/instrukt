@@ -2,15 +2,16 @@
 //! "Agent selection and intent checks"; `task-timing`, "Task and
 //! schedule"), against the interfaces work and workflow implement.
 //!
-//! Per project with `todos` on, each tick: flush and pull reflection,
-//! purge expired retained records, then — for the kinds
-//! `runner.autostart` enables — take work's pickup candidates in order and
-//! ask workflow for each one's assignment. A lane is dispatched into the
+//! Per project with `todos` on, each tick: purge expired retained records,
+//! start a reflection pass, read inbound GitHub controls before pickup,
+//! then — for the kinds `runner.autostart` enables — take work's pickup
+//! candidates in order and ask workflow for each one's assignment, and
+//! finish the reflection pass after pickup. A lane is dispatched into the
 //! procedure declaring the lane flow's orchestrator role; a due task into
 //! the procedure declaring `task-runner`. Before a session starts the
-//! runner records and reflects its claim; an unreflected claim stays local
-//! and pending and nothing starts. An exhausted agent order releases the
-//! runner's claim through work's command contract and is an anomaly.
+//! runner records its claim locally (reflected after pickup). An exhausted
+//! agent order releases the runner's claim through work's command contract
+//! and is an anomaly.
 
 use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
@@ -102,16 +103,30 @@ pub fn dispatch_project(
             tracing::warn!(event = "retention_purge_failed", project = %project.slug, error = %err)
         }
     }
-    // Pickup runs before the reflection pass: a claim this runner left
-    // without a session is offered once more (`claimed_here`) and
-    // dispatched.
-    let dispatched = pickup(cx, config, work, workflow.as_ref(), project);
-    match work.reflection.sync_reflection(project) {
-        Ok(report) => {
-            tracing::debug!(event = "reflection_synced", project = %project.slug, pending = report.pending.len())
-        }
+    let mut pass = match work.reflection.begin_pass(project) {
+        Ok(pass) => Some(pass),
         Err(err) => {
-            tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err)
+            tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err);
+            None
+        }
+    };
+    if let Some(pass) = pass.as_mut()
+        && let Err(err) = pass.pull_inbound()
+    {
+        tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err);
+    }
+    // Pickup runs after inbound control reads and before outbound reflection:
+    // freshly pulled holds and approvals take effect on this tick, and a claim
+    // or hold pickup commits reflects on the same tick.
+    let dispatched = pickup(cx, config, work, workflow.as_ref(), project);
+    if let Some(pass) = pass {
+        match pass.sync_reflection() {
+            Ok(report) => {
+                tracing::debug!(event = "reflection_synced", project = %project.slug, pending = report.pending.len())
+            }
+            Err(err) => {
+                tracing::warn!(event = "reflection_failed", project = %project.slug, error = %err)
+            }
         }
     }
     dispatched

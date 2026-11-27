@@ -117,7 +117,7 @@ discover whether anything changed. Time-based task due logic belongs to
 
 When a watched upstream ref changes, its subscribed standing agent is activated.
 
-The shipped `general/procedure/upstream-watch` subscribes a standing agent to
+The shipped `sdlc/procedure/upstream-watch` subscribes a standing agent to
 `runner.upstream_changed` and owns assessment, admission, routing and reporting
 of the upstream response, including preservation of local modifications for a
 fork reconciliation.

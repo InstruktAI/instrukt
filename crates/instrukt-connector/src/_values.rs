@@ -2,6 +2,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use instrukt_outside::Wait;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -92,11 +93,22 @@ pub enum ReadBackCoverage {
     ChannelCovered(String),
 }
 
+/// Why a page could not be read; `wait` is the outside gate's wait when the
+/// provider was unavailable.
 #[derive(Debug, thiserror::Error)]
-#[error("{cause}")]
+#[error("{}", rendered(cause, wait.as_ref()))]
 pub struct ReadBackError {
     pub cause: String,
-    pub retry_after: Option<u64>,
+    pub wait: Option<Wait>,
+}
+
+/// A cause followed by the outside gate's rendering of its wait, when it has
+/// one: what a recorded cause shows the operator.
+fn rendered(cause: &str, wait: Option<&Wait>) -> String {
+    match wait {
+        Some(wait) => format!("{cause}; {wait}"),
+        None => cause.to_owned(),
+    }
 }
 
 /// The sender of an admitted message, as the provider gave them when it was
@@ -111,12 +123,32 @@ pub struct Sender {
 /// The clock a kind keeps its provider's waits by.
 pub type Clock = Arc<dyn Fn() -> Timestamp + Send + Sync>;
 
-/// Why a connector could not do what it was asked; the cause is kept where
-/// the work it concerns is recorded.
+/// Why a connector could not do what it was asked; its rendering is kept
+/// where the work it concerns is recorded. `wait` is the outside gate's wait
+/// when the provider was unavailable, which the host paces by.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("{cause}")]
+#[error("{}", rendered(cause, wait.as_ref()))]
 pub struct ConnectorError {
     pub cause: String,
+    pub wait: Option<Wait>,
+}
+
+impl ConnectorError {
+    /// A failure without a wait.
+    pub fn new(cause: impl Into<String>) -> Self {
+        Self {
+            cause: cause.into(),
+            wait: None,
+        }
+    }
+
+    /// The provider is unavailable until `wait`.
+    pub fn waiting(cause: impl Into<String>, wait: Wait) -> Self {
+        Self {
+            cause: cause.into(),
+            wait: Some(wait),
+        }
+    }
 }
 
 /// Evidence returned by one successful provider post; neither field is required.
@@ -157,8 +189,9 @@ pub enum Admission {
     Admitted(Sender),
     /// Not one of the company's own: they receive the fixed reply.
     NotOwn,
-    /// Nothing is decided yet; the message waits, with this cause.
-    Undecided(String),
+    /// Nothing is decided yet; the message waits, with this cause and the
+    /// outside gate's wait when the provider was unavailable.
+    Undecided { cause: String, wait: Option<Wait> },
 }
 
 /// Why an addressed message was refused without starting or waking a session.

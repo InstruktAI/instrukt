@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/dependencies-and-holds.rs
+assertion_line: 378
 expression: "redact(&format!(\"{filed}---\\n{}\", rendered(&docs)))"
 ---
 created nested-lists (change) with identity <id 1>
@@ -7,7 +8,7 @@ documentation to commit: docs/project/spec/feature/depth.md
 documentation to commit: docs/project/spec/feature/lists.md
 documentation to commit: docs/project/spec/feature/lists.list-depth.md
 documentation to commit: docs/project/spec/feature/lists.nested-lists.md
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 == project/spec/feature/depth.md
 ---

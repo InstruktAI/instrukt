@@ -167,20 +167,6 @@ fn replacing_a_deleted_task_updates_the_work_binding_and_claim_atomically() {
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS1
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS5
-#[test]
-fn native_discussion_directs_agents_to_the_membership_commands() {
-    let p = Tracked::new(false);
-    let out = p
-        .env
-        .run(p.repo.path(), ["config", "get", "runtime.discuss"])
-        .success();
-    insta::assert_snapshot!(
-        "native-discussion-instruction",
-        String::from_utf8_lossy(&out.get_output().stdout)
-    );
-    assert_eq!(p.rt.calls().len(), 0);
-}
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS6
 #[test]
 fn an_unset_runtime_is_the_compiled_one() {
@@ -1523,8 +1509,17 @@ fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_
     let p = Tracked::new(true);
     change(&p, "parser");
     let fake = FakeT3::create(&p.env);
-    fake.prepare_worktree_until_read(2);
-    p.tick();
+    fake.prepare_worktree();
+    std::thread::scope(|scope| {
+        let pickup = scope.spawn(|| p.tick());
+        common::wait_until(
+            "the pickup reads its launched thread while T3 still prepares the worktree",
+            std::time::Duration::from_secs(45),
+            || fake.read_while_preparing("s1"),
+        );
+        fake.finish_preparation("s1");
+        pickup.join().unwrap();
+    });
     assert_eq!(p.rt.started_count(), 1);
     let native = format!("t3:{}", fake.native_id("s1"));
     let shown: serde_json::Value = serde_json::from_slice(
@@ -1634,7 +1629,7 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     c.slack.direct("D30", "USTEVEN", "Who signs it off?");
     let successor = c.wait_for_new_session(&before);
     assert_eq!(c.runtime.project_id(&successor), own);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait("the work reaches the successor", || {
         c.runtime.message_count(&successor) == 2
     });

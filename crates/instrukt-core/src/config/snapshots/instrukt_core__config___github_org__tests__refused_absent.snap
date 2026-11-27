@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-core/src/config/_github_org.rs
+expression: "findings[0].message"
+---
+`nobody` is no GitHub account; github.org names the GitHub organisation that owns this computer's company repositories, so give it the login of a GitHub organisation

@@ -258,6 +258,14 @@ pub fn run_hook(
     {
         tracing::warn!(event = "committed_index_not_settled", error = %error);
     }
+    // Knowledge proposals live on branches, so the recording comes before
+    // the early return for a checkout away from main. It decides everything
+    // and never fails the commit.
+    if hook == Hook::PostCommit
+        && let Some(recording) = &wiring.proposal_recording
+    {
+        recording.record(home, &root, invocation.env, &mut std::io::stderr());
+    }
     if hook == Hook::PostCheckout && !is_primary(&root)? {
         tracing::debug!(event = "hook_checkout_in_linked_worktree", root = %root.display());
         return Ok(());
@@ -403,7 +411,7 @@ fn stage_committed_forms(
         if rel == config::CONFIG_FILE_NAME
             && !matches!(
                 config::classify_root(Some(&bytes)),
-                RootDocument::ProjectLayer(_)
+                RootDocument::ProjectLayer { .. }
             )
         {
             continue;

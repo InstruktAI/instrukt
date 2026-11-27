@@ -8,6 +8,7 @@ use std::time::Instant;
 use serde_yaml_ng::{Mapping, Value};
 use sha2::{Digest, Sha256};
 
+use super::_company_document::{self, CompanyDocument};
 use super::_error::{ConfigError, FindingKind, Findings};
 use super::_merge::merge_patch;
 use super::_schema::LayerKind;
@@ -19,9 +20,10 @@ use crate::ids::ProjectSlug;
 
 /// How long a layer write waits for another writer of the same document;
 /// writes hold the lock for one read-modify-write only.
-const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+pub(super) const WRITE_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// The file name of both configuration layers.
+/// The file name of both configuration layers (and, in a home made before
+/// `company.yaml`, of its company's settings document).
 pub const CONFIG_FILE_NAME: &str = "instrukt.yaml";
 
 /// One addressable layer document.
@@ -31,7 +33,7 @@ pub enum Layer {
     Global,
     /// The `instrukt.yaml` at the root of the repository at this path.
     Project(PathBuf),
-    /// The `instrukt.yaml` of the company home of this name
+    /// The `company.yaml` of the company home of this name
     /// (`~/.instrukt/companies/<name>/`); a document of its own, no layer.
     Company(ProjectSlug),
 }
@@ -55,13 +57,32 @@ impl Layer {
         }
     }
 
-    /// The document's path.
+    /// The document's canonical path: for a company, its `company.yaml`,
+    /// which a home made before keeps as a root `instrukt.yaml` until
+    /// converted. Reads go through [`read_layer`]; this path keys the
+    /// document's write lock and names it where it is absent.
     pub fn path(&self, home: &Home) -> PathBuf {
         match self {
             Layer::Global => home.global_config(),
             Layer::Project(root) => root.join(CONFIG_FILE_NAME),
-            Layer::Company(name) => home.company_dir(name).join(CONFIG_FILE_NAME),
+            Layer::Company(name) => home
+                .company_dir(name)
+                .join(_company_document::COMPANY_DOCUMENT),
         }
+    }
+
+    /// The path a finding or error names for the document: where it stands
+    /// (a company's legacy `instrukt.yaml` until converted, `company.yaml`
+    /// of two present), otherwise [`Layer::path`]. Nothing is converted.
+    pub fn located(&self, home: &Home) -> PathBuf {
+        if let Layer::Company(name) = self {
+            match _company_document::resolve(home, name) {
+                Ok(CompanyDocument::Present(path) | CompanyDocument::Legacy(path)) => return path,
+                Ok(CompanyDocument::Both { company, .. }) => return company,
+                Ok(CompanyDocument::Absent) | Err(_) => {}
+            }
+        }
+        self.path(home)
     }
 
     pub(crate) fn init_door(&self) -> String {
@@ -120,6 +141,34 @@ pub(crate) fn read(path: &Path) -> Result<Option<Document>, ConfigError> {
     };
     let value = parse(path, &bytes)?;
     Ok(Some(Document { bytes, value }))
+}
+
+/// Reads `layer`'s document where it stands, with the path it was read
+/// from: a company's resolved document (its legacy `instrukt.yaml` until
+/// converted; both present refused), the project layer unless its file
+/// holds a company's settings, the machine's layer. `None` when there is
+/// none. Nothing is converted; the paths that persist a conversion run
+/// [`converted`](super::_company_document::converted) first.
+pub(crate) fn read_layer(
+    home: &Home,
+    layer: &Layer,
+) -> Result<Option<(PathBuf, Document)>, ConfigError> {
+    let path = match layer {
+        Layer::Company(name) => match _company_document::resolve(home, name)? {
+            CompanyDocument::Present(path) | CompanyDocument::Legacy(path) => path,
+            CompanyDocument::Both { company, legacy } => {
+                return Err(ConfigError::BothCompanyDocuments { company, legacy });
+            }
+            CompanyDocument::Absent => return Ok(None),
+        },
+        Layer::Global | Layer::Project(_) => layer.path(home),
+    };
+    Ok(read(&path)?
+        .filter(|document| {
+            !(matches!(layer, Layer::Project(_))
+                && _company_document::declares_company(&document.value))
+        })
+        .map(|document| (path, document)))
 }
 
 fn parse(path: &Path, bytes: &[u8]) -> Result<Value, ConfigError> {
@@ -182,7 +231,7 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
 /// committed; [`migrate`] (the `config` writing verbs and the pre-commit
 /// hook) and [`patch`] are the paths that write it
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
-fn persists_conversion(home: &Home, layer: &Layer) -> bool {
+pub(super) fn persists_conversion(home: &Home, layer: &Layer) -> bool {
     !home.is_inspection() && matches!(layer, Layer::Global | Layer::Company(_))
 }
 
@@ -193,9 +242,8 @@ pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, C
         return Ok(inspect_layer(home, layer)?.value);
     }
     migrate_if_needed(home, layer)?;
-    let path = layer.path(home);
-    match read(&path)? {
-        Some(doc) => {
+    match read_layer(home, layer)? {
+        Some((path, doc)) => {
             require_usable(layer, &path, &doc.value)?;
             Ok(Some(doc.value))
         }
@@ -207,8 +255,9 @@ pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), Config
     if !persists_conversion(home, layer) {
         return Ok(());
     }
-    if read(&layer.path(home))?
-        .is_some_and(|doc| matches!(version(&doc.value, layer.kind()), Version::Older(_)))
+    _company_document::converted(home, layer)?;
+    if read_layer(home, layer)?
+        .is_some_and(|(_, doc)| matches!(version(&doc.value, layer.kind()), Version::Older(_)))
     {
         migrate(home, layer)?;
     }
@@ -225,6 +274,12 @@ pub struct LayerInspection {
     pub(crate) value: Option<Value>,
 }
 impl LayerInspection {
+    /// The document as a read command uses it: converted to its kind's
+    /// current version in memory; `None` when absent.
+    pub fn value(&self) -> Option<&Value> {
+        self.value.as_ref()
+    }
+
     pub fn module_setting(&self, module: super::Module) -> Result<Option<bool>, ConfigError> {
         match self
             .value
@@ -277,8 +332,10 @@ pub fn unloadable_machine_layer(home: &Home) -> Option<ConfigError> {
 
 /// A current in-memory view, retaining the on-disk version and migration notice.
 pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, ConfigError> {
-    let path = layer.path(home);
-    let document = read(&path)?;
+    let (path, document) = match read_layer(home, layer)? {
+        Some((path, document)) => (path, Some(document)),
+        None => (layer.path(home), None),
+    };
     let mut view = LayerInspection {
         path: path.clone(),
         present: document.is_some(),
@@ -326,16 +383,15 @@ pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
     } else {
         inspect_layer(home, layer)?;
     }
-    let path = layer.path(home);
-    match read(&path)? {
-        Some(doc) => {
+    match read_layer(home, layer)? {
+        Some((path, doc)) => {
             if persists {
                 require_usable(layer, &path, &doc.value)?;
             }
             Ok(Revision::of(&doc.bytes))
         }
         None => Err(ConfigError::NoLayer {
-            path,
+            path: layer.path(home),
             door: layer.init_door(),
         }),
     }
@@ -367,12 +423,12 @@ pub fn patch(
     if matches!(layer, Layer::Project(_)) {
         migrate_if_needed(home, &Layer::Global)?;
     }
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
-    let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    let Some(mut doc) = read(&path)? else {
+    let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
+    let Some((path, mut doc)) = read_layer(home, layer)? else {
         return Err(ConfigError::NoLayer {
-            path,
+            path: layer.path(home),
             door: layer.init_door(),
         });
     };
@@ -460,7 +516,7 @@ fn refused_findings(
 /// The document `doc` of `layer` at `path` as it stands, converted to its
 /// kind's current version in memory when older, and the document `patch` makes of
 /// it.
-fn patched(
+pub(super) fn patched(
     layer: &Layer,
     path: &Path,
     doc: &Document,
@@ -491,8 +547,7 @@ pub fn review_switch(
     let Layer::Project(root) = layer else {
         return Ok(None);
     };
-    let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(None);
     };
     if &Revision::of(&doc.bytes) != expected {
@@ -524,7 +579,7 @@ pub fn review_target(home: &Home, layer: &Layer) -> Result<Option<String>, Confi
     super::_review::repository(root, &value, global.as_ref())
 }
 
-fn elapsed_ms(started: Instant) -> u64 {
+pub(super) fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
@@ -557,8 +612,7 @@ pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
         migrate(home, layer)?;
         return Ok(());
     }
-    let path = layer.path(home);
-    let Some(doc) = read(&path)? else {
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(());
     };
     match version(&doc.value, layer.kind()) {
@@ -602,10 +656,10 @@ pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u
 /// `init`, the `config` writing verbs, the pre-commit hook and, for the
 /// machine's layer, [`bring_current`] run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
+    _company_document::converted(home, layer)?;
     let started = Instant::now();
-    let path = layer.path(home);
-    let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    let Some(doc) = read(&path)? else {
+    let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
+    let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(MigrationOutcome::Absent);
     };
     let current = layer.kind().current_schema_version();
@@ -652,7 +706,9 @@ pub fn init(
             path: dir.clone(),
             source,
         })?;
-        ignore_local_material(&dir)?;
+        _company_document::ignore_local_material(&dir)?;
+        _company_document::convert(home, name)?;
+        return _company_document::init_company(home, layer, name, started);
     }
     if path.exists() {
         return match migrate(home, layer)? {
@@ -677,12 +733,6 @@ pub fn init(
             Value::String(slug.to_string()),
         );
     }
-    if let Layer::Company(name) = layer {
-        doc.insert(
-            Value::String("company".to_owned()),
-            Value::String(name.to_string()),
-        );
-    }
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
     if path.exists() {
         return Ok(InitOutcome::AlreadyCurrent);
@@ -696,46 +746,6 @@ pub fn init(
         duration_ms = elapsed_ms(started),
     );
     Ok(InitOutcome::Created)
-}
-
-/// What a company home keeps on the computer and its repository ignores:
-/// the settings document, the secrets file, the other checkouts and
-/// instrukt's local state, as the home's `.gitignore` lines
-/// (`project/instrukt/spec/feature/configuration/company-homes`).
-pub(crate) const COMPANY_IGNORED: [&str; 4] = [
-    "/instrukt.yaml",
-    "/secrets.env",
-    "/projects/",
-    "/.instrukt/",
-];
-
-/// Appends each line of [`COMPANY_IGNORED`] the `.gitignore` of the company
-/// home at `dir` lacks, keeping every other line as it is.
-fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
-    let path = dir.join(".gitignore");
-    let current = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(source) => return Err(ConfigError::Read { path, source }),
-    };
-    let present: std::collections::BTreeSet<&str> = current.lines().map(str::trim).collect();
-    let missing: Vec<&str> = COMPANY_IGNORED
-        .into_iter()
-        .filter(|line| !present.contains(line))
-        .collect();
-    if missing.is_empty() {
-        return Ok(());
-    }
-    let mut text = current.clone();
-    if !text.is_empty() && !text.ends_with('\n') {
-        text.push('\n');
-    }
-    for line in missing {
-        text.push_str(line);
-        text.push('\n');
-    }
-    atomic_write(&path, text.as_bytes())?;
-    Ok(())
 }
 
 /// The primary worktree's folder name, normalized to a slug.
@@ -771,7 +781,7 @@ pub(crate) fn normalize_slug(text: &str) -> String {
 /// Writes `value` at `path`, keeping the editor-schema modeline its
 /// previous bytes `before` open with, if any
 /// (`docs/project/spec/feature/publication/editor-schemas.md`).
-fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
+pub(super) fn write(path: &Path, before: &[u8], value: &Value) -> Result<Revision, ConfigError> {
     let bytes = render(path, before, value)?;
     atomic_write(path, &bytes)?;
     Ok(Revision::of(&bytes))
@@ -804,13 +814,16 @@ fn render(path: &Path, before: &[u8], value: &Value) -> Result<Vec<u8>, ConfigEr
     Ok(bytes)
 }
 
-/// The lock serializing writers of the document at `path`. It lives in the
-/// home, never beside a project's document.
-fn lock_path(home: &Home, path: &Path) -> PathBuf {
+/// The lock serializing writers of the document at `path`, keyed by its
+/// folder and its own file name, so a company's `company.yaml` and the
+/// project layer beside it never share one. It lives in the home, never
+/// beside a project's document.
+pub(super) fn lock_path(home: &Home, path: &Path) -> PathBuf {
     let canonical = path
         .parent()
         .and_then(|dir| dir.canonicalize().ok())
-        .map(|dir| dir.join(CONFIG_FILE_NAME))
+        .zip(path.file_name())
+        .map(|(dir, name)| dir.join(name))
         .unwrap_or_else(|| path.to_path_buf());
     let digest = Sha256::digest(canonical.to_string_lossy().as_bytes());
     home.locks_dir()

@@ -67,8 +67,8 @@ default to **intermediate**.
 - **Advanced** — full vocabulary. Make the call; note significant trade-offs briefly. Architectural implications carry their reasoning.
 - **Expert** — maximum density, architecture level. No teaching of known mechanisms; intent and consequence still stated. Blockers, hard trade-offs, and gaps in the steward's own domain knowledge are stated without preamble.
 
-Expertise and attunement govern **language only** — density and vocabulary.
-They never decide whether the steward leads, whether orientation comes first,
+Expertise governs **language only** — density and vocabulary.
+It never decides whether the steward leads, whether orientation comes first,
 or whether a safety gate applies. Knowing a domain is not knowing what this
 agent is about to do in it.
 
@@ -220,9 +220,12 @@ its consequence in the human's register and stops.
 
 ### Safety gates
 
+This section owns safety gates; other snippets cite it.
+
 Material, hard-to-reverse exposure of human-owned assets needs authorization of
-the exposure, never approval of the mechanism (`general/policy/human-contract`).
-The gate composes on top of every mode.
+the exposure, never approval of the mechanism. Safety gates are
+stewardship-independent and protect human-owned exposure, not technical
+territory. The gate composes on top of every mode.
 
 ## Rationale
 

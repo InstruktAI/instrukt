@@ -383,6 +383,53 @@ impl FakeGitHub {
         issue.updated_at = now;
     }
 
+    /// Makes `login` show on GitHub as an account of `kind`
+    /// (`Organization` or `User`).
+    pub fn set_account(&self, login: &str, kind: &str) -> &Self {
+        self.lock()
+            .accounts
+            .insert(login.to_owned(), kind.to_owned());
+        self
+    }
+
+    /// Installs the project App on the organisation `org`, with the
+    /// permissions its installation holds
+    /// ([`Self::set_installation_permissions`]).
+    pub fn install_on_org(&self, org: &str) -> &Self {
+        self.lock().org_installations.insert(org.to_owned());
+        self
+    }
+
+    /// Initialises the bare remote of each repository created from now on
+    /// as `<remotes>/<owner>/<name>.git`.
+    pub fn serve_remotes(&self, remotes: &std::path::Path) -> &Self {
+        self.lock().remotes = Some(remotes.to_path_buf());
+        self
+    }
+
+    /// The collaborators added to `repo`, each with the permission given.
+    pub fn collaborators(&self, repo: &str) -> Vec<(String, String)> {
+        self.lock()
+            .repos
+            .get(repo)
+            .map(|repo| repo.collaborators.clone().into_iter().collect())
+            .unwrap_or_default()
+    }
+
+    /// Whether `repo` is private; `None` for a repository the fake does not
+    /// hold.
+    pub fn is_private(&self, repo: &str) -> Option<bool> {
+        self.lock().repos.get(repo).map(|repo| !repo.public)
+    }
+
+    /// The default branch of `repo`.
+    pub fn default_branch(&self, repo: &str) -> Option<String> {
+        self.lock()
+            .repos
+            .get(repo)
+            .map(|repo| repo.default_branch.clone())
+    }
+
     /// What App `app_id`'s installation may do, as GitHub answers it for
     /// the installation and for every credential requested from it.
     pub fn set_installation_permissions(&self, app_id: u64, permissions: Value) -> &Self {
@@ -618,6 +665,19 @@ impl FakeGitHub {
         numbers
             .into_iter()
             .filter_map(|n| r.issue_json(&base, repo, n))
+            .collect()
+    }
+
+    /// Every pull request of `repo` as `GET /pulls/{n}` shows it, oldest
+    /// first.
+    pub fn pulls(&self, repo: &str) -> Vec<Value> {
+        let mut state = self.lock();
+        let base = state.base.clone();
+        let r = state.repo(repo);
+        let numbers: Vec<u64> = r.issues.keys().copied().collect();
+        numbers
+            .into_iter()
+            .filter_map(|n| r.pull_json(&base, repo, n))
             .collect()
     }
 

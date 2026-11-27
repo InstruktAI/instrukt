@@ -1,0 +1,22 @@
+[package]
+name = "instrukt-outside"
+description = "instrukt's outside gate: judges an outside service's failure temporary or a defect, decides the wait and reports it once."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+backon.workspace = true
+http.workspace = true
+httpdate.workspace = true
+jiff.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

@@ -43,6 +43,12 @@ everything a forced one did.
 - **Configuration first.** Before publishing, sync brings both configuration
   layers to the current schema version before any refusal or publication
   (`project/instrukt/spec/domain/configuration`).
+- **A company's repository publishes no knowledge.** In a company's
+  repository (`project/instrukt/spec/feature/publication/agent-entrypoints`,
+  What makes a repository a company home), the company's index and documents
+  are no position, and a sync publishes no position from it: it writes
+  nothing under `~/.instrukt/docs/` and no entry into the global index, and
+  records the checkout and its published commit as it does for every project.
 
 ### Convergence
 

@@ -1,0 +1,6 @@
+---
+source: crates/instrukt-cli/tests/cases/pending-documentation.rs
+expression: "stderr(&env, &refused)"
+---
+instrukt: [TMP]/demo/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
+instrukt: the configured value `build-it` cannot be resolved: todo worktree is missing and its integration is unconfirmed; no main-checkout fallback

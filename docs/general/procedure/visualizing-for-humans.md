@@ -1,6 +1,6 @@
 ---
-description: Produce the right visual form when a human needs to see something — a table, Mermaid, or, exceptionally, a live canvas — and deliver it rendered, inline for a one-off answer and as a served scratchpad page for material that keeps changing.
-activation_trigger: Use when the human asks to see, draw, sketch, map, diagram, or visualize something — architecture, a flow, a sequence, a state machine, a decision, ownership, a timeline — or when a picture would land better than prose. Also activate before starting any canvas, whiteboard, or drawing server.
+description: 'Pick the cheapest visual (table, Mermaid; canvas only exceptionally); inline for one-offs, a served scratchpad page for changing material.'
+activation_trigger: 'Human asks to see/draw/sketch/map/diagram/visualize (architecture, flow, sequence, state, ownership, timeline), a picture beats prose, or before starting any canvas/whiteboard/drawing server.'
 ---
 
 # Visualizing for Humans — Procedure

@@ -19,7 +19,7 @@ pub(super) struct Reply {
 }
 
 impl Reply {
-    fn json(status: u16, body: Value) -> Self {
+    pub(super) fn json(status: u16, body: Value) -> Self {
         Self {
             status,
             body: Some(body),
@@ -64,6 +64,24 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     let (path, query) = match url.split_once('?') {
         Some((path, query)) => (path.to_owned(), query.to_owned()),
         None => (url.clone(), String::new()),
+    };
+    let invalid_api_version = {
+        let api_versions: Vec<&str> = request
+            .headers()
+            .iter()
+            .filter(|h| {
+                h.field
+                    .as_str()
+                    .as_str()
+                    .eq_ignore_ascii_case("x-github-api-version")
+            })
+            .map(|h| h.value.as_str())
+            .collect();
+        (api_versions.len() > 1
+            || api_versions
+                .first()
+                .is_some_and(|v| !matches!(*v, "2022-11-28" | "2026-03-10")))
+        .then(|| api_versions.join(","))
     };
     let headers: BTreeMap<String, String> = request
         .headers()
@@ -117,22 +135,36 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     let jwt_endpoint = path == "/app"
         || path.starts_with("/app/installations/")
         || path.ends_with("/installation");
+    // An App's record and an account's record are public: GitHub answers
+    // them without a credential.
     let public_app = path.starts_with("/apps/");
-    let mut reply =
-        if jwt_endpoint && jwt.is_none() || (!jwt_endpoint && !public_app && token.is_none()) {
-            Reply::json(401, json!({"message":"Bad credentials"}))
-        } else if public_app && jwt.is_none() {
-            Reply::not_found()
-        } else {
-            match canned {
-                Some(canned) => Reply {
-                    status: canned.response.status,
-                    body: Some(canned.response.body),
-                    headers: canned.response.headers,
-                },
-                None => route(&mut guard, &method, &path, &query, &body),
-            }
-        };
+    let public_account = method == "GET" && path.starts_with("/users/");
+    let mut reply = if let Some(given) = invalid_api_version {
+        Reply::json(
+            400,
+            json!({
+                "message": "Bad Request",
+                "errors": format!(
+                    "The version you specified in the \"X-GitHub-API-Version\" request header, \"{given}\", is not a supported version.",
+                )
+            }),
+        )
+    } else if jwt_endpoint && jwt.is_none()
+        || (!jwt_endpoint && !public_app && !public_account && token.is_none())
+    {
+        Reply::json(401, json!({"message":"Bad credentials"}))
+    } else if public_app && jwt.is_none() {
+        Reply::not_found()
+    } else {
+        match canned {
+            Some(canned) => Reply {
+                status: canned.response.status,
+                body: Some(canned.response.body),
+                headers: canned.response.headers,
+            },
+            None => route(&mut guard, &method, &path, &query, &body),
+        }
+    };
     guard.active_token = previous_token;
     guard.login = previous_login;
     if let Some(seconds) = guard.poll_interval {

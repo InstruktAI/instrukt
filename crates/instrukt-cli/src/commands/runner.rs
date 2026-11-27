@@ -38,11 +38,13 @@ pub fn run_run(args: RunArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)?;
     let tz = TimeZone::system();
     let wiring = wiring::runner_wiring(ctx)?;
+    let reports = instrukt_runner::review::ProposalReports::default();
     let cx = RunnerContext {
         home: &ctx.home,
         env: &env,
         tz: &tz,
         wiring: &wiring,
+        reports: &reports,
     };
     let clock = ctx.clock.clone();
     runner::run(&cx, move || clock.now(), RUN_INTERVAL, args.service)?;
@@ -59,11 +61,13 @@ pub fn run_tick(_args: TickArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)?;
     let tz = TimeZone::system();
     let wiring = wiring::runner_wiring(ctx)?;
+    let reports = instrukt_runner::review::ProposalReports::default();
     let cx = RunnerContext {
         home: &ctx.home,
         env: &env,
         tz: &tz,
         wiring: &wiring,
+        reports: &reports,
     };
     let clock = ctx.clock.clone();
     match runner::tick(&cx, &move || clock.now())? {
@@ -329,12 +333,6 @@ where
 /// `modules.events` are off: in the caller's effective configuration and
 /// in every published project's.
 fn require_runner_modules(ctx: &Ctx, command: &str) -> anyhow::Result<()> {
-    if instrukt_runner::links::status(&ctx.home)?
-        .iter()
-        .any(|link| link.active)
-    {
-        return Ok(());
-    }
     let config = Configuration::load_at(&ctx.home, &ctx.cwd)?;
     if command == "run" && instrukt_runner::history::enabled(&ctx.home)? {
         return Ok(());

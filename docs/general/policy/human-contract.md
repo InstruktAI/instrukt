@@ -38,6 +38,12 @@ description: How an agent understands what the human wants, what it decides on i
   reads the conversation and checks the record against it. It confirms the
   record, rewrites it where it was captured unclearly, or brings it back to the
   human where it was captured wrongly. No wrong interpretation enters the work.
+  When an agent relays, reformulates, or splits work from an earlier
+  conversation, that agent is a relay, not the intent's origin: the entry check
+  reads the human's actual originating conversation — tracing past any relaying
+  or splitting session — and every split piece carries the human's constraints
+  and originating-conversation pointer verbatim rather than dropping them behind
+  a reference to a parent holder.
 - After that check, every agent takes the recorded behavioral intent as given
   and passes it on unchanged — never re-interpreted, never re-verified. Naming
   the human adds no authority beyond the recorded intent.

@@ -913,7 +913,7 @@ fn build_verdicts(record: &TodoRecord) -> Vec<BuildVerdictView> {
 
 /// `text` percent-encoded for a URL path or query, keeping unreserved
 /// characters and the `/` and `:` a branch reference uses.
-fn encode(text: &str) -> String {
+pub(super) fn encode(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for byte in text.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/' | b':') {
