@@ -111,6 +111,7 @@ there and has publication sync the home.
 
 ## Ownership boundary
 
+<!-- planned-change:fix-interrupted-commit-git-locks -->
 - **Owns** — repository adoption and its claims report; the copy of the
   published `sdlc` `schema.yaml` into a new project; instrukt's section in
   each hook file, its placement,
@@ -119,6 +120,16 @@ there and has publication sync the home.
   and what each hook run starts; composition of attributed commits: author,
   trailers, refusal of caller-written trailers, canonical-branch commit refusal
   and the paths committed.
+<!-- change:fix-interrupted-commit-git-locks -->
+- **Owns** — repository adoption and its claims report; the copy of the
+  published `sdlc` `schema.yaml` into a new project; instrukt's section in
+  each hook file, its placement,
+  idempotence and removal; the hook status report, including each section's
+  last run outcome and refused syncs; which hooks instrukt uses
+  and what each hook run starts; composition of attributed commits: author,
+  trailers, refusal of caller-written trailers and canonical-branch commit
+  refusal (staging stays with git).
+<!-- /planned-change:fix-interrupted-commit-git-locks -->
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
@@ -297,7 +308,11 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 #### Attributed commit (aggregate)
 
 - **Root:** the commit.
+<!-- planned-change:fix-interrupted-commit-git-locks -->
 - **Contains:** the caller's message, the author, the trailers, the paths.
+<!-- change:fix-interrupted-commit-git-locks -->
+- **Contains:** the caller's message, the author, the trailers.
+<!-- /planned-change:fix-interrupted-commit-git-locks -->
 - **Invariants:**
   - The caller's message holds no line with a trailer key instrukt owns.
   - A `Session:` trailer and an agent author appear only when the
