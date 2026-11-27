@@ -316,7 +316,7 @@ And nothing of the repository on GitHub is changed
 - Company homes on one computer are separate folders of one operating-system
   user. What keeps a session working for one company from reading another
   company's home is that company's container
-  (`project/instrukt/spec/feature/runner/company-containers`), not the
+  (`project/instrukt/spec/feature/company/company-containers`), not the
   folders.
 - There are no person homes.
 
