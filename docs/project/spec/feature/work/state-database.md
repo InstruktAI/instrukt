@@ -473,6 +473,7 @@ intent: it is never reflected to GitHub and never copied to another computer.
 | `branch_state` | How far the work branch's release has come: `pending` while it is not deleted; `partial_marker` once a failed deletion is known to have left only the withdrawal's marker beside the branch it did not delete; `deleted` once it is deleted by this withdrawal, or found gone or recreated at a commit that does not descend from `branch_head`. |
 | `started_at` | When the withdrawal began. |
 
+<!-- planned-change:commands-never-touch-github -->
 The row is written, after the todo's record and its working resources were
 checked, before any resource is released. While it exists the todo stays live,
 with its claim as it was, or unclaimed when it had none. A change of the todo's
@@ -508,6 +509,47 @@ attempted no other release and the row records nothing released and nothing
 under way: no worktree the withdrawal is moving, has moved or is moving back,
 and no `partial_marker`. Then the
 todo is left as it was.
+<!-- change:commands-never-touch-github -->
+The row is written, after the todo's record and its working resources were
+checked, before any resource is released. While it exists the todo stays live,
+with its claim as it was, or unclaimed when it had none. A change of the todo's
+record committed while the row exists is refused, naming its doors:
+`instrukt todo remove <slug>`, which completes the withdrawal, or the command
+run again once it has ended. What reflection learns of its own receipts is
+still kept while the row exists. A runner reflection read of the issue while
+the row exists answers no `/instrukt` command and applies no label action it
+finds there: each stays outstanding. An answer to a command, or a label
+action recorded as ignored, is recorded only while the todo's live record is
+still the one it was decided on and no row exists, in the transaction that
+records it; one decided on a record that changed before it was recorded, such
+as an active record the withdrawal committed over meanwhile, is not recorded
+and stays outstanding. A read position never moves past a command or label
+action left outstanding. Whenever one is left outstanding this way, and when
+the row is removed, the issue's stored `ETag` is dropped. Once the withdrawal
+commits, the todo is withdrawn and the runner stops reading its issue
+(`project/instrukt/spec/feature/work/github-record`, Reading GitHub), so
+actions that arrived meanwhile do not change the withdrawn record; if a refusal
+removes the row and leaves the todo live, or if the todo is later reactivated,
+the dropped `ETag` ensures the runner's next reflection read finds anything
+still outstanding rather than being told nothing changed, even when the issue
+has not changed again since.
+Dispatch admission refuses while the row exists, in the same read that
+confirms the reservation, claim and status. The row is updated as each step
+whose outcome must be recognized
+afterwards happens: the branch's commit before the branch is deleted, a
+worktree's stage before each move of it, and each worktree, the
+workspace and the branch once released; recording a partial marker is
+attempted before the marker is taken back, which goes ahead whether or not
+that write succeeded (see the marker-only outcome below). It is removed in the
+transaction that commits the withdrawn record, with `removal` naming exactly
+what was released, or on its own only when a refusal rests on what git or the
+filesystem positively shows — a resource that must be kept, or an attempted
+release proven to have changed nothing or taken back — while the command
+attempted no other release and the row records nothing released and nothing
+under way: no worktree the withdrawal is moving, has moved or is moving back,
+and no `partial_marker`. Then the
+todo is left as it was.
+<!-- /planned-change:commands-never-touch-github -->
 Otherwise a refusal keeps the row with everything it records, `branch_head`,
 worktree stages and `partial_marker` included, whatever refused the command,
 such as files that appeared in the workspace before a partial marker was taken
@@ -588,8 +630,10 @@ moved to. What the row names as released stays released.
 A withdrawal interrupted while the row exists is completed by running
 `instrukt todo remove <slug>` again, which continues from the row without
 touching GitHub: any action that arrived on the issue meanwhile, such as a hold
-label, stays outstanding until the runner's first reflection read after the
-withdrawal commits. It first records
+label, does not block or change the withdrawal; once the withdrawal commits the
+runner stops reading the withdrawn todo's issue, and if a refusal leaves the
+todo live or the todo is later reactivated, the runner's next reflection read
+picks up what stayed outstanding. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name
