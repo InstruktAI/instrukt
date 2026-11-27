@@ -10,6 +10,7 @@
 
 mod _admitted;
 mod _agents;
+mod _agents_file;
 mod _agents_migrate;
 mod _company;
 mod _company_document;

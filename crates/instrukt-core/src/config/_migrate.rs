@@ -88,7 +88,7 @@ pub(super) fn selection(
     }
     if changed && persist {
         let _lock = crate::fsx::LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
+            &super::_agents_file::agents_lock(home),
             std::time::Duration::from_secs(10),
         )?;
         let text = super::render_yaml(&next).map_err(|e| invalid(e.to_string()))?;
