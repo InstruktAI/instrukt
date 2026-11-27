@@ -58,11 +58,13 @@ threads-required = 6
 filter = 'test(=conversations::a_member_is_answered_for_a_message_written_while_the_assistant_was_offline)'
 threads-required = 2
 
-# UC-TC1 downloads a real T3 release (130 s curl bound + 20 s extract), runs
-# the real-release and overlay-link contract workers in parallel (180 s each,
-# with 20 s per-operation bounds), and compares against the fake worker (60 s).
-# Enclose all phases so the harness's own timeouts fire and write
-# T3_CONTRACT_REPORT before nextest terminates the test.
+# UC-TC1 downloads and extracts a real T3 release, runs the real-release and
+# overlay-link contract workers in parallel, and compares against the fake
+# worker (phase bounds owned by `download()`, `REAL_WORKER_TIMEOUT`,
+# `FAKE_WORKER_TIMEOUT`, and `BOUND` in
+# `crates/instrukt-cli/tests/support/t3_contract.rs`). Enclose the test so the
+# harness's own timeouts fire and write `T3_CONTRACT_REPORT` before nextest
+# terminates it.
 [[profile.default.overrides]]
 filter = 'test(=t3_contract::a_release_and_its_fake_are_checked_without_a_model_account)'
 threads-required = 2
