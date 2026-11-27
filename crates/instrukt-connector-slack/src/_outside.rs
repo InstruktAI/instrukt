@@ -1,19 +1,17 @@
-//! How Slack's answers reach the outside gate: the keys its calls reach,
-//! Slack's own service rules, and the judgment of a Web API answer and of a
-//! Socket Mode opening. Nothing here makes a request.
-use instrukt_outside::http::{self, HttpAnswer, Judgment, Rule};
-use instrukt_outside::{Extent, Key, Reason, Settings, Tried, Unavailable};
+//! Translate Slack service outcomes for the shared outside gate.
+use std::io;
+
+use ::http::HeaderMap;
+use instrukt_outside::http::{self, HttpAnswer, Judgment, Rule, TransportFailure};
+use instrukt_outside::{Extent, Key, Named, Reason, Settings, Tried, Unavailable};
 use jiff::Timestamp;
-use serde_json::Value;
-use tungstenite::http::HeaderMap;
+use slack_morphism::ClientResult;
+use slack_morphism::SlackEnvelopeMessage;
+use slack_morphism::errors::SlackClientError;
+use tokio::time::error::Elapsed;
 
 use crate::{SLACK, SlackError};
 
-/// What one Web API call answers when it succeeded: the body and the
-/// `x-oauth-scopes` Slack reported.
-pub(crate) type Answered = (Value, Option<String>);
-
-/// The posting errors that confirm `chat.postMessage` rejected the post.
 const REJECTED_POST: [&str; 9] = [
     "missing_scope",
     "channel_not_found",
@@ -26,18 +24,20 @@ const REJECTED_POST: [&str; 9] = [
     "no_text",
 ];
 
-/// A finding admission makes of the scopes Slack reported, or of their
-/// absence; `None` when the token holds every required scope.
-pub(crate) type Finding<'a> = &'a (dyn Fn(Option<&str>) -> Option<String> + Sync);
-
-/// The scope of one token of one company's named connector: Slack's
-/// unavailability and a refused token apply per token.
+/// Slack's unavailability and a refused token apply per token.
 pub(crate) fn token_key(company: &str, connector: &str, app: bool) -> Key {
     Key::new(SLACK, [company, connector, if app { "app" } else { "bot" }])
 }
 
-/// Slack's service rules over a Web API answer's error code.
-pub(crate) fn slack_rule(answer: &HttpAnswer<'_>) -> Option<Unavailable> {
+fn unavailable(reason: Reason, extent: Extent) -> Unavailable {
+    Unavailable {
+        reason,
+        extent,
+        named: None,
+    }
+}
+
+fn slack_rule(answer: &HttpAnswer<'_>) -> Option<Unavailable> {
     let HttpAnswer::Response {
         code: Some(code), ..
     } = answer
@@ -55,200 +55,225 @@ pub(crate) fn slack_rule(answer: &HttpAnswer<'_>) -> Option<Unavailable> {
         }
         _ => return None,
     };
-    Some(Unavailable {
-        reason,
-        extent,
-        named: None,
-    })
+    Some(unavailable(reason, extent))
 }
 
-/// The scopes of `required` that `reported`, Slack's `x-oauth-scopes`, does
-/// not hold; every one when Slack reported none.
-pub(crate) fn missing_scopes<'a>(required: &'a [String], reported: Option<&str>) -> Vec<&'a str> {
-    let granted: std::collections::HashSet<&str> = reported
-        .into_iter()
-        .flat_map(|scopes| scopes.split(','))
-        .map(str::trim)
-        .collect();
-    required
+fn failure<T>(method: &str, cause: &str, judgment: Judgment) -> Tried<T, SlackError> {
+    let api = SlackError::Api {
+        method: method.into(),
+        cause: cause.into(),
+    };
+    match judgment {
+        Judgment::Unavailable(wait) => Tried::Unavailable(wait, api),
+        _ if method == "chat.postMessage" && REJECTED_POST.contains(&cause) => {
+            Tried::Defect(SlackError::RejectedPost {
+                method: method.into(),
+                cause: cause.into(),
+            })
+        }
+        _ => Tried::Defect(api),
+    }
+}
+
+pub(crate) fn sdk_answer<T>(
+    method: &str,
+    result: Result<ClientResult<T>, Elapsed>,
+    received_at: Timestamp,
+) -> Tried<T, SlackError> {
+    match result {
+        Ok(Ok(value)) => Tried::Done(value),
+        Ok(Err(error)) => sdk_failure(method, error, received_at),
+        Err(_) => transport(method, "request timed out", TransportFailure::TimedOut),
+    }
+}
+
+fn sdk_failure<T>(
+    method: &str,
+    error: SlackClientError,
+    received_at: Timestamp,
+) -> Tried<T, SlackError> {
+    let settings = Settings {
+        rules: &[&slack_rule],
+        ..Settings::default()
+    };
+    match error {
+        SlackClientError::ApiError(error) => {
+            let judgment = http::judge_response(
+                200,
+                &HeaderMap::new(),
+                received_at,
+                Some(&error.code),
+                &settings,
+            );
+            failure(method, &error.code, judgment)
+        }
+        SlackClientError::RateLimitError(error) => {
+            let wait = Unavailable {
+                named: error
+                    .retry_after
+                    .map(|delay| Named::After { delay, received_at }),
+                ..unavailable(Reason::RateLimited, Extent::Key)
+            };
+            failure(
+                method,
+                error.code.as_deref().unwrap_or("HTTP 429"),
+                Judgment::Unavailable(wait),
+            )
+        }
+        SlackClientError::HttpError(error) => {
+            let status = error.status_code.as_u16();
+            let envelope = error.http_response_body.as_deref().and_then(slack_envelope);
+            let code = envelope.as_ref().and_then(slack_code);
+            let judgment =
+                http::judge_response(status, &HeaderMap::new(), received_at, code, &settings);
+            failure(method, code.unwrap_or(&format!("HTTP {status}")), judgment)
+        }
+        SlackClientError::SystemError(error) => {
+            let mut cause = error
+                .cause
+                .as_deref()
+                .map(|err| err as &dyn std::error::Error);
+            while let Some(error) = cause {
+                if let Some(io) = error.downcast_ref::<io::Error>() {
+                    if io.kind() == io::ErrorKind::InvalidData {
+                        return failure(
+                            method,
+                            "invalid Slack response or TLS peer",
+                            Judgment::Defect,
+                        );
+                    }
+                    return transport(
+                        method,
+                        "Slack connection failed",
+                        TransportFailure::from_io(io),
+                    );
+                }
+                if error.is::<::http::Error>() {
+                    return failure(method, "invalid Slack HTTP request", Judgment::Defect);
+                }
+                cause = error.source();
+            }
+            transport(
+                method,
+                "Slack connection failed",
+                TransportFailure::Unreachable,
+            )
+        }
+        SlackClientError::EndOfStream(_) => transport(
+            method,
+            "Slack closed the connection",
+            TransportFailure::Unreachable,
+        ),
+        SlackClientError::ProtocolError(error) => failure(
+            method,
+            &format!("invalid Slack response: {}", error.json_error),
+            Judgment::Defect,
+        ),
+        SlackClientError::HttpProtocolError(_) | SlackClientError::SocketModeProtocolError(_) => {
+            failure(method, "invalid Slack protocol response", Judgment::Defect)
+        }
+    }
+}
+
+fn transport<T>(method: &str, cause: &str, transport: TransportFailure) -> Tried<T, SlackError> {
+    failure(
+        method,
+        cause,
+        http::judge(&HttpAnswer::Transport(transport), &Settings::default()),
+    )
+}
+
+fn scope_finding(required: &[String], reported: Option<&str>) -> Option<String> {
+    let Some(reported) = reported else {
+        return Some("Slack did not report the bot token's scopes".into());
+    };
+    let granted: std::collections::HashSet<_> = reported.split(',').map(str::trim).collect();
+    let missing: Vec<_> = required
         .iter()
         .map(String::as_str)
         .filter(|scope| !granted.contains(scope))
-        .collect()
-}
-
-/// Admission's finding: a scope list Slack cannot provide, or the missing
-/// scopes it names.
-pub(crate) fn scope_finding(required: &[String], reported: Option<&str>) -> Option<String> {
-    if reported.is_none() {
-        return Some("Slack did not report the bot token's scopes".into());
-    }
-    let missing = missing_scopes(required, reported);
+        .collect();
     (!missing.is_empty()).then(|| format!("Slack bot token missing scopes: {}", missing.join(", ")))
 }
 
-/// The answer to `method` read in full: `text` is its body. A rule of
-/// Slack's, or admission's `finding`, may judge it temporary before HTTP's
-/// table does.
-pub(crate) fn answer_view(
-    method: &str,
+fn slack_envelope(text: &str) -> Option<SlackEnvelopeMessage> {
+    serde_json::from_str(text).ok()
+}
+
+fn slack_code(envelope: &SlackEnvelopeMessage) -> Option<&str> {
+    (!envelope.ok).then(|| envelope.error.as_deref().unwrap_or("not ok"))
+}
+
+pub(crate) fn admission_answer(
     status: u16,
     headers: &HeaderMap,
     received_at: Timestamp,
     text: &str,
-    finding: Option<Finding<'_>>,
-) -> Tried<Answered, SlackError> {
-    let body: Option<Value> = serde_json::from_str(text).ok();
-    let ok = body
-        .as_ref()
-        .and_then(|body| body.get("ok"))
-        .and_then(Value::as_bool);
-    let code: Option<String> = (ok == Some(false)).then(|| {
-        body.as_ref()
-            .and_then(|body| body.get("error"))
-            .and_then(Value::as_str)
-            .unwrap_or("not ok")
-            .to_owned()
-    });
-    let scopes = headers
-        .get("x-oauth-scopes")
-        .and_then(|header| header.to_str().ok());
-    let found = (ok == Some(true))
-        .then(|| finding.and_then(|finding| finding(scopes)))
+    required: &[String],
+) -> Tried<(), SlackError> {
+    let envelope = slack_envelope(text);
+    let code = envelope.as_ref().and_then(slack_code);
+    let accepted = envelope.as_ref().is_some_and(|body| body.ok);
+    let finding = accepted
+        .then(|| {
+            let scopes = headers
+                .get("x-oauth-scopes")
+                .and_then(|header| header.to_str().ok());
+            scope_finding(required, scopes)
+        })
         .flatten();
     let scope_rule = |_: &HttpAnswer<'_>| {
-        found.as_ref().map(|_| Unavailable {
-            reason: Reason::Refused,
-            extent: Extent::Key,
-            named: None,
-        })
+        finding
+            .as_ref()
+            .map(|_| unavailable(Reason::Refused, Extent::Key))
     };
     let rules: [&Rule<'_>; 2] = [&slack_rule, &scope_rule];
     let settings = Settings {
         rules: &rules,
         ..Settings::default()
     };
-    let answer = HttpAnswer::Response {
-        status,
-        headers,
-        received_at,
-        code: code.as_deref(),
-    };
-    let api = |cause: String| SlackError::Api {
-        method: method.into(),
-        cause,
-    };
-    let cause = || {
-        found
-            .clone()
-            .or_else(|| code.clone())
-            .unwrap_or_else(|| format!("HTTP {status}"))
-    };
-    match http::judge(&answer, &settings) {
-        Judgment::Unavailable(unavailable) => Tried::Unavailable(unavailable, api(cause())),
-        Judgment::Defect => Tried::Defect(api(cause())),
-        Judgment::Success => match (body, code.as_deref()) {
-            (None, _) => Tried::Defect(api(format!("HTTP {status} without a JSON answer"))),
-            (Some(body), None) if ok == Some(true) => {
-                Tried::Done((body, scopes.map(str::to_owned)))
-            }
-            (Some(_), code) => {
-                let code = code.unwrap_or("not ok");
-                if method == "chat.postMessage" && REJECTED_POST.contains(&code) {
-                    Tried::Defect(SlackError::RejectedPost {
-                        method: method.into(),
-                        cause: code.into(),
-                    })
+    let judgment = http::judge_response(status, headers, received_at, code, &settings);
+    if judgment == Judgment::Success && (200..300).contains(&status) && accepted {
+        Tried::Done(())
+    } else {
+        let cause = finding
+            .or_else(|| code.map(str::to_owned))
+            .unwrap_or_else(|| {
+                if (200..300).contains(&status) {
+                    "no valid Slack admission response".into()
                 } else {
-                    Tried::Defect(api(code.into()))
+                    format!("HTTP {status}")
                 }
-            }
-        },
+            });
+        failure("auth.test", &cause, judgment)
     }
 }
 
-/// A Web API call the client could not complete: the answer's status when
-/// one arrived and its body could not be read, then the transport failure.
-pub(crate) fn transport_view(
-    method: &str,
-    status: Option<(u16, &HeaderMap)>,
+pub(crate) fn admission_transport(
+    response: Option<(u16, &HeaderMap)>,
     received_at: Timestamp,
-    error: &ureq::Error,
-) -> Tried<Answered, SlackError> {
-    let api = SlackError::Api {
-        method: method.into(),
-        cause: error.to_string(),
-    };
-    if let Some((status, headers)) = status {
-        let answer = HttpAnswer::Response {
-            status,
-            headers,
-            received_at,
-            code: None,
-        };
-        if let Judgment::Unavailable(unavailable) = http::judge(&answer, &Settings::default()) {
-            return Tried::Unavailable(unavailable, api);
-        }
-    }
-    let failure = match error {
-        ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => {
-            http::TransportFailure::Unreachable
-        }
-        ureq::Error::Timeout(_) | ureq::Error::BodyStalled => http::TransportFailure::TimedOut,
-        ureq::Error::Io(io) => http::TransportFailure::from_io(io),
-        _ => http::TransportFailure::Other,
-    };
-    match http::judge(&HttpAnswer::Transport(failure), &Settings::default()) {
-        Judgment::Unavailable(unavailable) => Tried::Unavailable(unavailable, api),
-        _ => Tried::Defect(api),
-    }
-}
-
-/// A Socket Mode opening that failed before Slack's `hello`: no connection,
-/// a closed one, or a handshake Slack refused, judged by HTTP's table. Any
-/// other failure (an address, TLS or protocol error) is a defect.
-pub(crate) fn socket_judgment(
-    error: &tungstenite::Error,
-    received_at: Timestamp,
-) -> Option<Unavailable> {
-    let unavailable = |reason| Unavailable {
-        reason,
-        extent: Extent::Scope,
-        named: None,
-    };
-    match error {
-        tungstenite::Error::Io(error) => Some(unavailable(match error.kind() {
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => Reason::TimedOut,
-            _ => Reason::Unreachable,
-        })),
-        tungstenite::Error::ConnectionClosed | tungstenite::Error::AlreadyClosed => {
-            Some(unavailable(Reason::TimedOut))
-        }
-        tungstenite::Error::Http(response) => {
-            let answer = HttpAnswer::Response {
-                status: response.status().as_u16(),
-                headers: response.headers(),
-                received_at,
-                code: None,
-            };
-            match http::judge(&answer, &Settings::default()) {
-                Judgment::Unavailable(unavailable) => Some(unavailable),
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+    error: &reqwest::Error,
+) -> Tried<(), SlackError> {
+    let settings = Settings::default();
+    let judgment = response
+        .map(|(status, headers)| {
+            http::judge_response(status, headers, received_at, None, &settings)
+        })
+        .filter(|judgment| matches!(judgment, Judgment::Unavailable(_)))
+        .unwrap_or_else(|| http::judge_reqwest_error(error, &settings));
+    failure("auth.test", &error.to_string(), judgment)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{answer_view, scope_finding, socket_judgment, token_key};
+    use super::{admission_answer, scope_finding, sdk_answer, token_key};
     use crate::SlackError;
+    use http::HeaderMap;
     use instrukt_outside::{Attempted, Extent, Gate, Reason, Report, Settings, Tried};
     use jiff::Timestamp;
+    use slack_morphism::errors::{SlackClientApiError, SlackClientError};
     use std::sync::Arc;
     use std::time::Instant;
-    use tungstenite::http::HeaderMap;
 
     fn now() -> Timestamp {
         "2026-11-20T10:00:00Z".parse().unwrap()
@@ -260,19 +285,18 @@ mod tests {
         Gate::new(Arc::new(now), Arc::new(move || base), Report::to(|_| {}))
     }
 
-    fn refused(method: &str, code: &str) -> Tried<super::Answered, SlackError> {
-        answer_view(
+    fn refused(method: &str, code: &str) -> Tried<(), SlackError> {
+        sdk_answer(
             method,
-            200,
-            &HeaderMap::new(),
+            Ok(Err(SlackClientError::ApiError(SlackClientApiError::new(
+                code.into(),
+            )))),
             now(),
-            &format!(r#"{{"ok":false,"error":"{code}"}}"#),
-            None,
         )
     }
 
-    fn done() -> Tried<super::Answered, SlackError> {
-        Tried::Done((serde_json::json!({"ok": true}), None))
+    fn done() -> Tried<(), SlackError> {
+        Tried::Done(())
     }
 
     fn reaches(gate: &Gate, app: bool, method: &str) -> bool {
@@ -342,41 +366,13 @@ mod tests {
     #[test]
     fn a_missing_scope_at_admission_is_a_wait_naming_the_scope() {
         let required = vec!["channels:read".to_owned(), "chat:write".to_owned()];
-        let finding = |reported: Option<&str>| scope_finding(&required, reported);
         let mut headers = HeaderMap::new();
         headers.insert("x-oauth-scopes", "chat:write".parse().unwrap());
-        let answer = answer_view(
-            "auth.test",
-            200,
-            &headers,
-            now(),
-            r#"{"ok":true}"#,
-            Some(&finding),
-        );
+        let answer = admission_answer(200, &headers, now(), r#"{"ok":true}"#, &required);
         let Tried::Unavailable(unavailable, SlackError::Api { cause, .. }) = answer else {
             panic!("a wait");
         };
         assert_eq!(unavailable.extent, Extent::Key);
         assert_eq!(cause, scope_finding(&required, Some("chat:write")).unwrap());
-        assert_eq!(
-            super::missing_scopes(&required, Some("chat:write")),
-            ["channels:read"]
-        );
-    }
-
-    #[test]
-    fn a_socket_that_cannot_connect_or_is_refused_503_is_unavailable() {
-        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
-        let judged = socket_judgment(&tungstenite::Error::Io(refused), now()).unwrap();
-        assert_eq!(judged.reason, Reason::Unreachable);
-        let response = tungstenite::http::Response::builder()
-            .status(503)
-            .body(None)
-            .unwrap();
-        let judged = socket_judgment(&tungstenite::Error::Http(Box::new(response)), now()).unwrap();
-        assert_eq!(judged.reason, Reason::Unavailable { status: Some(503) });
-        assert_eq!(judged.extent, Extent::Scope);
-        let url = tungstenite::Error::Url(tungstenite::error::UrlError::NoHostName);
-        assert_eq!(socket_judgment(&url, now()), None);
     }
 }

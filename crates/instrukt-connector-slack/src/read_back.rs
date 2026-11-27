@@ -132,14 +132,14 @@ impl Slack {
             form.push(("cursor", &request.cursor));
         }
         let me = self.me().map_err(web_error)?;
-        let body = match self.api.call(method, false, &form) {
+        let body = match self.api.read(method, &form) {
             Err(SlackError::Api { cause, .. })
                 if !request.cursor.is_empty() && cause == "invalid_cursor" =>
             {
                 // Slack can expire a cursor while the runner is absent. Only
                 // that listing starts over; the saved scan window still holds.
                 form.pop();
-                self.api.call(method, false, &form)
+                self.api.read(method, &form)
             }
             result => result,
         };
