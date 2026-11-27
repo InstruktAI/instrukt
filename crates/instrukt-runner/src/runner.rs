@@ -144,6 +144,8 @@ pub struct RunnerContext<'a> {
     pub env: &'a Env,
     pub tz: &'a TimeZone,
     pub wiring: &'a RunnerWiring,
+    /// What this running process already raised of knowledge proposals.
+    pub reports: &'a crate::review::ProposalReports,
 }
 
 /// A project the runner considers, with its effective configuration.
@@ -1216,6 +1218,10 @@ fn review_pass(
         port: port.as_ref(),
         now,
         clock,
+        company: cx.wiring.company.as_deref(),
+        reports: cx.reports,
+        config: &considered.config,
+        env: cx.env,
     };
     if let Err(error) = crate::review::observe(&pass) {
         tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);

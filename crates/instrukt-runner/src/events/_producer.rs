@@ -107,6 +107,11 @@ impl Event {
                 pull_request,
                 ..
             } => review_subject(project, *pull_request)?,
+            Self::ProposalApproved {
+                project,
+                pull_request,
+                ..
+            } => review_subject(project, Some(*pull_request))?,
         };
         let Value::Object(mut data) = serde_json::to_value(self)? else {
             return Err(EnvelopeError::Declaration(

@@ -195,6 +195,10 @@ same content with the same instrukt release write the same bytes.
   entrypoint whose file differs from its rendering, each missing one, and
   each finding. Neither needs a home, a publication or a configuration: a
   fresh clone and the binary are enough.
+  `instrukt docs render --plugin`, with or without `--check`, does the same
+  for the repository's whole agent material as one operation: in a company's
+  repository, its entrypoints and the company's plugin
+  (`project/instrukt/spec/feature/publication/company-plugin`).
 - **Never by sync or checkout.** A sync writes no entrypoint, and no hook
   renders one after a checkout
   (`project/instrukt/spec/feature/repository/hook-sections`).
@@ -211,6 +215,10 @@ also writes the repository's `AGENTS.md` on main, with the shared workflows
 repository's own renderer, and commits to main only when what it rendered
 differs from what main holds; that workflow and its renderer belong to the
 shared workflows repository (`project/instrukt/policy/shared-workflows`).
+Where the company's standing integrator renders each candidate
+(`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+candidate), that workflow is a second writer of the default branch beside the
+integrator (`general/policy/commits`).
 
 ### Company home entrypoint
 
@@ -348,9 +356,13 @@ the home and leaves any other there as it is.
   `instrukt config validate --company <name>` and `instrukt docs render` in
   the home report every finding of the index and of the documents, and a
   home with a finding is not rendered.
-- **Who renders it.** instrukt renders it in two places: the `pre-commit`
-  section where it is installed in the home, and `instrukt docs render` run
-  in the home or in a clone of the repository. The block order above and the
+- **Who renders it.** instrukt renders it in three places: the `pre-commit`
+  section where it is installed in the home; `instrukt docs render` run in the
+  home or in a clone of the repository; and `instrukt docs render --plugin`,
+  which renders it with the company's plugin as one operation and which the
+  company's integrator runs on each candidate
+  (`project/instrukt/spec/feature/workflow/integration-gate`, A company home's
+  candidate). The block order above and the
   same bytes in a home and in a clone hold for instrukt's rendering, and
   `instrukt docs render --check` compares the working file with that
   rendering. A company repository that carries the shared workflows
@@ -697,9 +709,9 @@ And no agent runtime loads it
 - The rendering depends on the instrukt release that renders it. A CI check
   running another release than the developer's hook may report a difference
   the developer's commit did not cause; CI pins the release it installs.
-- instrukt and the shared workflows repository's publisher each write a
-  company repository's `AGENTS.md` whole, and no contract makes the two
-  renderings the same bytes. The publisher
+- In a company repository that carries the shared workflows repository's
+  publisher, instrukt and that publisher each write its `AGENTS.md` whole,
+  and no contract makes the two renderings the same bytes. The publisher
   commits its rendering to main; the hook section stages instrukt's into the
   commit being made; `instrukt docs render` writes instrukt's to the working
   file, and `instrukt docs render --check` compares the working file with
@@ -708,7 +720,9 @@ And no agent runtime loads it
   differ, although no document changed. After `instrukt docs render` writes
   the file there, the check reports no difference for `AGENTS.md` while the
   commit still holds the publisher's file; it exits zero only where it also
-  names no other entrypoint and no finding.
+  names no other entrypoint and no finding. Where the company's integrator
+  renders each candidate, the publisher's commits are a second writer's
+  beside it (`general/policy/commits`).
 - What the shared workflows repository's publisher reads is that
   repository's contract. A release of it that renders a company's knowledge
   from an `AGENTS.master.md` renders nothing from a repository that holds

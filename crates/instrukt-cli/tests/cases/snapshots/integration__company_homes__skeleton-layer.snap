@@ -6,6 +6,7 @@ expression: "on_main(&env, &remote, \"instrukt.yaml\")"
 schema_version: 6
 project: company-acme
 company_repository: true
+company_name: Acme
 modules:
   todos: false
 review:

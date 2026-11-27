@@ -95,15 +95,23 @@ of instrukt itself (`general/procedure/bug-reporting`).
    changed and at whose request, and verify the committed worktree with
    `instrukt docs render --check`. Push the branch to the remote and retain the
    authoring worktree through review, any requested fixes, and integration
-   (`general/policy/commits`), removing it only once the governed change is
-   integrated or closed. If a declared repository-host service is available
+   (`general/policy/commits`). instrukt itself carries a change made at a
+   workspace administrator's request, and touching only the company's
+   knowledge, to review and integration with no person moving it; a change
+   anyone else asked for, or one touching anything else, waits for a person.
+   It decides this from who asked and what the change touches, never from your
+   commit message or anything else you write. If a declared repository-host
+   service is available
    through `instrukt mcp`, open or update the pull request so validation and
    independent review gate publication (`general/policy/documentation-discipline`),
    and tell the person the proposed update is submitted for review. When only
    Git remote access is available, tell the person in plain words that the
    proposed update is saved on a branch awaiting review (naming the branch only
    when they administer the repository), and treat the branch as pending review
-   rather than an open pull request or a live update.
+   rather than an open pull request or a live update. Once the change is
+   integrated — the remote's default branch contains its branch — or its pull
+   request is closed, remove the authoring worktree and delete the branch
+   locally and on the remote.
 4. **Answer.** Write the answer as the turn's output: it is posted to the
    conversation, and your tool calls, their results and your reasoning are
    not. Write it for the people in the conversation. When the turn needs no

@@ -37,7 +37,7 @@ pub struct InitArgs {
     /// The name people write the company by; needed only when its
     /// repository is created.
     #[arg(long, value_name = "NAME", requires = "company")]
-    name: Option<instrukt_core::publication::CompanyName>,
+    name: Option<instrukt_core::config::CompanyName>,
     /// The company's GitHub administrator, a person's GitHub account; needed
     /// only when its repository is created.
     #[arg(long, value_name = "LOGIN", requires = "company")]

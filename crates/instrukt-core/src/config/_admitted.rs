@@ -733,6 +733,48 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_old_shape_company_layer_loads_with_its_event_responses_withheld() {
+        // A company layer of the shape written before the company identity:
+        // schema 6, a company repository, no `company_name`.
+        let old: Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nproject: company-acme\ncompany_repository: true\nmodules: {{todos: false, events: true}}\nreview: {{automatic: true}}\n",
+            super::super::PROJECT_SCHEMA_VERSION
+        ))
+        .unwrap();
+        let findings: Vec<Finding> =
+            super::super::_validate::judge(&old, super::super::LayerKind::Project, None, None)
+                .into_iter()
+                .filter(|f| f.kind != FindingKind::EventsNeedTransport)
+                .map(|f| Finding {
+                    document: PathBuf::from("instrukt.yaml"),
+                    key: f.key,
+                    kind: f.kind,
+                    message: f.message,
+                })
+                .collect();
+        assert_eq!(
+            findings
+                .iter()
+                .map(|f| (f.key.as_str(), f.kind))
+                .collect::<Vec<_>>(),
+            vec![("modules.events", FindingKind::NoCompanyIdentity)]
+        );
+        let switched = Modules {
+            todos: false,
+            events: true,
+            history: true,
+        };
+        assert_eq!(
+            switched.admitted(&findings),
+            Modules {
+                todos: false,
+                events: false,
+                history: true,
+            }
+        );
+    }
+
     /// A finding that the selected runtime cannot carry the retention window.
     fn retention_capability() -> Finding {
         Finding {

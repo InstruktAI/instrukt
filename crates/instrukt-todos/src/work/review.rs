@@ -824,6 +824,41 @@ impl instrukt_runner::interfaces::AutomaticReview for ReviewWork {
         self.access.review_readiness(repository, now)
     }
 
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        use instrukt_core::interfaces::ProposalReadiness as _;
+        self.access.proposal_readiness(repository, now)
+    }
+
+    fn heads_pull(
+        &self,
+        repository: &str,
+        head: &CommitSha,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<bool, String> {
+        super::_proposals::heads_pull(&self.access, repository, head, clock)
+    }
+
+    fn open_proposal(
+        &self,
+        proposal: &instrukt_runner::interfaces::ProposalPull<'_>,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<instrukt_runner::interfaces::ProposalOpening, String> {
+        super::_proposals::open(&self.access, proposal, clock)
+    }
+
+    fn approved_head(
+        &self,
+        project: &ProjectSlug,
+        head: &CommitSha,
+    ) -> Result<Option<CommitSha>, String> {
+        let held = evidence(&self.home, project, head).map_err(|error| error.to_string())?;
+        Ok(approving(&held).map(|version| version.base.clone()))
+    }
+
     fn identities(&self) -> Result<instrukt_runner::interfaces::ReviewIdentities, String> {
         self.access
             .review_identities()
@@ -1553,14 +1588,19 @@ impl CoverageReader<'_> {
     }
 }
 
+/// The current head verdict of `held` when it approves and its pinned base
+/// covers the canonical branch: the one approval check coverage and the
+/// proposal handoff both read.
+fn approving(held: &CommitEvidence) -> Option<&Version> {
+    held.current()
+        .filter(|version| version.verdict == Verdict::Approve && version.base_on_canonical)
+}
+
 impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
     fn approved(&self, commit: &CommitSha) -> Result<Option<crate::workflow::Approved>, String> {
         let held =
             evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
-        if let Some(version) = held.current()
-            && version.verdict == Verdict::Approve
-            && version.base_on_canonical
-        {
+        if let Some(version) = approving(&held) {
             return Ok(Some(crate::workflow::Approved {
                 reference: format!(
                     "head verdict {} of {commit} by {}",

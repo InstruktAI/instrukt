@@ -2,6 +2,28 @@
 
 ## 0.1.0
 
+### A company repository declares its company identity
+
+A company repository's committed project layer now declares which company it
+is: the key its `project` carries after `company-`, and the name people write
+the company by in the new project-only key `company_name`. `instrukt init
+--company <key> --name <name>` writes it into a new company's skeleton. An
+existing company repository has no `company_name` yet: add it with `instrukt
+config patch` on its project layer, through a reviewed change like any other
+change to the repository. Until then `instrukt config validate` reports the
+missing identity against `modules.events`, the home's event responses are
+withheld, other patches of the layer are refused, and its plugin does not
+render. No migration can supply the name, since it cannot be derived.
+
+`instrukt docs plugin` no longer takes `--key` or `--name`: it reads the
+company identity from the repository's committed project layer, so a home, a
+clone and an integration candidate render the same bytes. A script that still
+passes them gets a usage error; drop both flags. A repository without a
+company identity is refused with that finding and nothing is written.
+`instrukt docs render --plugin` renders the repository's whole agent material
+as one operation, the entrypoints and in a company repository the company's
+plugin, and `instrukt docs render --plugin --check` checks it.
+
 ### A company's settings and skill move
 
 A company home keeps its settings in `company.yaml`, beside the project

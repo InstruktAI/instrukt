@@ -425,7 +425,7 @@ workflow's finding names it.
 | A finalized commit approved in its todo's record | The todo, the build-review approval bound to that exact commit and its report's digest, and the todo's pull request when that approval was reflected there as a review (`project/instrukt/spec/feature/work/github-record`). |
 | A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`). No pull-request review exists for it and none is cited. |
 | An exempted commit | The commit, the exemption's basis and who declared it. |
-| A reproduced merge, documentation fold or revert | The commits it was reproduced from, named as reproduced. |
+| A reproduced merge, documentation fold, revert or rendering of the repository's agent material | The commits it was reproduced from, named as reproduced. |
 
 Every eligible pull request at a commit thus receives its own native review
 from the commit's one verdict: the pull request a request was addressed to and
@@ -674,6 +674,22 @@ Making the company's GitHub administrator an administrator of the repository
 adds them with administrator permission. GitHub adds a member of the owning
 organisation at once; anyone else receives an invitation from GitHub, and
 holds administrator access once they accept it.
+
+A company repository admitted for automatic review needs one more
+credential for its knowledge proposals:
+
+| Credential | Identity | Permissions | Used for |
+| --- | --- | --- | --- |
+| Proposal pull requests | The identity the `company-agent` role selects | Write access to pull requests, read access to contents | Opening a knowledge proposal's pull request. |
+
+Work answers its readiness as it answers automatic review's, by requesting
+the credential with exactly those permissions: met; unmet, a finding naming
+the App, the repository, the missing permission and the configuration repair
+door; or GitHub cannot be asked. It is a readiness of its own, apart from
+automatic review's, and it is never the reviewer identity. Verification
+writes no state. What an unmet or unaskable answer withholds is the runner's
+(`project/instrukt/spec/feature/runner/pull-request-review`, Knowledge
+proposals in a company home).
 
 ## Use cases
 

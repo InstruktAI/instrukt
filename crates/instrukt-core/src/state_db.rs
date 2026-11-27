@@ -225,6 +225,52 @@ impl Store {
         self.migrations.len() as u32
     }
 
+    /// The schema version the store's file holds, read without migrating it
+    /// or taking its lock; `None` when no file exists yet. A process that
+    /// has not opened the file through SQLite reads an in-memory image, as
+    /// [`Store::read`] does with `snapshot`; one that has reads it from a
+    /// live connection that permits queries only.
+    pub fn stored_schema(&self) -> Result<Option<u32>, StoreError> {
+        let path = &self.file;
+        refuse_database_links(self.name, path)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let conn = match _snapshot::read(self.name, path)? {
+            Some(conn) => conn,
+            None => {
+                let conn = open_live(self.name, path)?;
+                conn.pragma_update(None, "query_only", true)
+                    .map_err(StoreError::sqlite(self.name, path))?;
+                conn
+            }
+        };
+        stored_version(&conn, self.name, path).map(Some)
+    }
+
+    /// Whether a writer could open and write the store, asked of the file
+    /// system with access(2) alone: no descriptor is opened and nothing is
+    /// written. An existing store needs its file writable and its folder
+    /// writable and searchable, since SQLite keeps its log and shared memory
+    /// beside it; a store not created yet needs the nearest existing folder
+    /// its first writer creates into.
+    pub fn writable(&self) -> bool {
+        use rustix::fs::{Access, access};
+        let folder = Access::WRITE_OK | Access::EXEC_OK;
+        if self.file.exists() {
+            let parent = self.file.parent().unwrap_or(Path::new("."));
+            return access(&self.file, Access::WRITE_OK).is_ok() && access(parent, folder).is_ok();
+        }
+        let mut at = self.file.parent();
+        while let Some(dir) = at {
+            if dir.exists() {
+                return access(dir, folder).is_ok();
+            }
+            at = dir.parent();
+        }
+        false
+    }
+
     /// Opens the store for reading without its lock; `None` when no file
     /// (or no schema) exists yet, which is empty state. With `snapshot`, an
     /// existing file is read without opening it on disk or creating

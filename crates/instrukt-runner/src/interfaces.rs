@@ -977,6 +977,58 @@ pub trait CompanyPorts: Send + Sync {
         home: &instrukt_core::home::Home,
         now: jiff::Timestamp,
     ) -> Result<serde_json::Value, CompanyError>;
+    /// Whether `head` is an admitted knowledge proposal of the company
+    /// repository checked out at `root`, against its remote-tracking
+    /// canonical branch (`project/instrukt/spec/domain/company`, Knowledge
+    /// proposal). Reads a snapshot of the proposal store and never migrates
+    /// or writes it.
+    fn admitted_proposal(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, CompanyError>;
+    /// The unestablished entries of the company repository checked out at
+    /// `root` whose commit a remote-tracking branch holds, with their
+    /// causes.
+    fn unestablished_proposals(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<Vec<UnestablishedProposal>, CompanyError>;
+    /// The condition of the proposal store of the company repository
+    /// checked out at `root`, derived each time it is asked.
+    fn proposal_store(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<ProposalStoreCondition, CompanyError>;
+}
+
+/// A recorded commit whose speaker could not be established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnestablishedProposal {
+    /// The company's key.
+    pub company: instrukt_core::ids::ProjectSlug,
+    pub commit: instrukt_core::ids::CommitSha,
+    /// Why its speaker could not be established.
+    pub cause: String,
+}
+
+/// The condition of a company's proposal store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalStoreCondition {
+    /// Readable at the current shape and writable, or not created yet with a
+    /// folder it can be created in.
+    Usable,
+    /// Its schema version cannot be read: why.
+    Unreadable(String),
+    /// Of an older shape, which the next recording migrates.
+    Older,
+    /// Of a shape newer than this instrukt knows.
+    UnknownShape,
+    /// Its file or folder refuses a writer.
+    Unwritable,
 }
 
 /// What [`CompanyPorts::start`] opens the connections with.
@@ -1150,12 +1202,68 @@ pub trait AutomaticReview: Send + Sync {
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<(), String>;
+    /// The proposal pull-request credential's readiness on `repository`.
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness;
+    /// Whether any pull request of `repository`, open or closed, has `head`
+    /// as its head commit.
+    fn heads_pull(
+        &self,
+        repository: &str,
+        head: &instrukt_core::ids::CommitSha,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<bool, String>;
+    /// Opens the pull request of the knowledge proposal `proposal` under the
+    /// proposal credential, unless one is open with its branch as head.
+    fn open_proposal(
+        &self,
+        proposal: &ProposalPull<'_>,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<ProposalOpening, String>;
+    /// The pinned base of `head`'s current approving head verdict, when it
+    /// has one that covers the canonical branch.
+    fn approved_head(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<Option<instrukt_core::ids::CommitSha>, String>;
+}
+
+/// A knowledge proposal's pull request to open.
+pub struct ProposalPull<'a> {
+    /// The repository's checkout, whose commits the body names.
+    pub root: &'a std::path::Path,
+    /// `owner/name` on GitHub.
+    pub repository: &'a str,
+    /// The proposal's branch, the pull request's head.
+    pub branch: &'a str,
+    /// The canonical branch, the pull request's base.
+    pub base: &'a str,
+    /// The remote-tracking canonical branch the head's commits are read
+    /// from.
+    pub canonical: &'a str,
+    pub head: &'a instrukt_core::ids::CommitSha,
+}
+
+/// What opening a proposal's pull request did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalOpening {
+    /// The pull request was opened, with this number.
+    Opened(u64),
+    /// A pull request with the branch as its head is already open.
+    AlreadyOpen,
 }
 
 /// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,
 /// and of automatic review's.
 pub trait GitHubReadiness:
-    Send + Sync + instrukt_core::interfaces::AutomaticReviewReadiness
+    Send
+    + Sync
+    + instrukt_core::interfaces::AutomaticReviewReadiness
+    + instrukt_core::interfaces::ProposalReadiness
 {
     fn reflection_ready(
         &self,

@@ -88,6 +88,10 @@ pub enum Operation {
     /// default branch, under the project identity's installation on that
     /// organisation (`github-apps`, Company repositories).
     CompanyRepository,
+    /// Opening a company knowledge proposal's pull request, under the
+    /// identity the `company-agent` role selects (`github-apps`, Company
+    /// repositories).
+    ProposalOpen,
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {

@@ -173,6 +173,8 @@ enum Shape {
     OwningOrganisation,
     /// `company_repository`: a [`Shape::Bool`] with that key's contract.
     CompanyRepository,
+    /// `company_name`: the one line people write the company by.
+    CompanyDisplayName,
     /// `false`, or a GitHub project `<owner>/<number>` (`board`).
     Board,
     Apps,
@@ -290,6 +292,10 @@ fn schema() -> Node {
         (
             "company_repository",
             Leaf(ProjectOnly, Shape::CompanyRepository),
+        ),
+        (
+            super::_identity::COMPANY_NAME_KEY,
+            Leaf(ProjectOnly, Shape::CompanyDisplayName),
         ),
         (
             super::_regenerable::REGENERABLE_KEY,
@@ -568,6 +574,14 @@ fn check_shape(
                 }
             }
             None => out.push(invalid("expected a project slug string")),
+        },
+        Shape::CompanyDisplayName => match value.as_str() {
+            Some(text) => {
+                if let Err(error) = super::_identity::CompanyName::parse(text) {
+                    out.push(invalid(&error.to_string()));
+                }
+            }
+            None => out.push(invalid("expected the company's name as one line of text")),
         },
         Shape::Domain => check_field(Field::Domain, value, path, out),
         Shape::Bool | Shape::CompanyRepository => check_field(Field::Bool, value, path, out),

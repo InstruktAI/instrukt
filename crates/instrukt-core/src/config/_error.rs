@@ -67,6 +67,9 @@ pub enum FindingKind {
     /// `review.automatic` is on and something automatic review needs is
     /// missing.
     AutomaticReviewNotReady,
+    /// A company repository whose project layer declares no company
+    /// identity (`project: company-<key>` and `company_name`).
+    NoCompanyIdentity,
 }
 
 impl FindingKind {
@@ -87,6 +90,7 @@ impl FindingKind {
             Self::EventsNeedTransport => "events_need_transport",
             Self::LeavesTheComputer => "leaves_the_computer",
             Self::AutomaticReviewNotReady => "automatic_review_not_ready",
+            Self::NoCompanyIdentity => "no_company_identity",
         }
     }
 }

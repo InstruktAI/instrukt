@@ -155,6 +155,21 @@ repository's company home adoption carries it out.
 | publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
 | publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
 
+Carrying a company's knowledge to its default branch adds these crossings;
+their contracts are `project/instrukt/spec/feature/runner/pull-request-review`
+and `project/instrukt/spec/feature/workflow/integration-gate` (A company
+home's candidate).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| company → repository | Customer / Supplier | The proposal recording the `post-commit` hook run invokes, through an interface core declares and the CLI wires |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
+| configuration → runner | Customer / Supplier | A company repository's company identity, whose finding withholds the home's event responses |
+| runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
+| configuration → publication | Customer / Supplier | The company identity a company repository's committed project layer declares, with its finding |
+| publication → workflow | Customer / Supplier | Publication's one operation rendering a tree's agent material, from which candidate coverage reproduces a rendering commit |
+
 Thread retention adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
 

@@ -7,7 +7,7 @@
 use std::path::Path;
 
 use crate::common;
-use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
+use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait, wait_for_binding};
 use crate::fixtures::documented;
 use crate::fixtures::event_transport::Computer;
 use crate::fixtures::mcp::{FakeMcp, FakeOAuthMcp, Flaw, OAuthMcpOptions};
@@ -520,19 +520,6 @@ fn a_member_uses_a_server_that_answers_an_earlier_protocol_version() {
         seen(&future),
         vec![rpc(INITIALIZE, None), end(PROTOCOL_VERSIONS[0])]
     );
-}
-
-fn wait_for_binding(env: &TestEnv, session: &str) {
-    let state = instrukt_core::home::Home::at_user_home(env.home().into());
-    let caller = instrukt_core::ids::SessionRef::parse(&format!("t3:{session}")).unwrap();
-    // The runner has recorded the session as the conversation's: its start
-    // is done and the turn under way. The assignment itself answers from the
-    // binding made before the start.
-    wait("the session's recorded binding", || {
-        instrukt_company::conversations::conversation_binding(&state, &caller)
-            .unwrap()
-            .is_some()
-    });
 }
 
 fn machine_id(env: &TestEnv) -> String {

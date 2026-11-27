@@ -131,11 +131,13 @@ and nothing is created
 
 `instrukt docs units` belongs to the Documentation family: it is `docs-read`,
 as the read forms of the renderings are — `docs render --check`,
-`docs plugin --check` and `docs plugin --validate`. Its object is the
-checkout the caller stands in, which it reads and never writes; like those
-read forms, it needs no home, publication, configuration layer, database or
-network, so a fresh clone with the binary is enough
+`docs render --plugin --check`, `docs plugin --check` and
+`docs plugin --validate`. Its object is the checkout the caller stands in,
+which it reads and never writes; like those read forms, it needs no home,
+publication, configuration layer, database or network, so a fresh clone with
+the binary is enough
 (`project/instrukt/spec/feature/publication/compressed-units`).
+`docs render --plugin`, like `docs render` and `docs plugin`, is `docs-write`.
 
 Scope is always authored as `own` or `any`. `any` reaches every object the
 action addresses and adds no exemption to that object's invariants. `own`
