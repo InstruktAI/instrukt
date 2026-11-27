@@ -157,6 +157,23 @@ impl Home {
         self.companies_dir().join(company.as_str())
     }
 
+    /// `~/.instrukt/companies/<name>/.instrukt/knowledge-proposals.db` — the
+    /// company's knowledge proposals, kept out of its repository by the
+    /// home's ignore lines (`project/instrukt/spec/domain/company`).
+    pub fn knowledge_proposals_db_file(&self, company: &ProjectSlug) -> PathBuf {
+        self.company_dir(company)
+            .join(".instrukt")
+            .join("knowledge-proposals.db")
+    }
+
+    /// `~/.instrukt/companies/<name>/.instrukt/knowledge-proposals.lock` —
+    /// the lock the proposal store's recordings take turns on.
+    pub fn knowledge_proposals_lock_file(&self, company: &ProjectSlug) -> PathBuf {
+        self.company_dir(company)
+            .join(".instrukt")
+            .join("knowledge-proposals.lock")
+    }
+
     /// `~/.instrukt/companies/<name>/secrets.env` — the company's own
     /// protected secrets.
     pub fn company_secrets_file(&self, company: &ProjectSlug) -> PathBuf {

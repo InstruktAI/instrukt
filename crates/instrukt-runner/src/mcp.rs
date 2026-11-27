@@ -121,6 +121,9 @@ pub struct Caller {
 /// current turn, as the runner recorded them with that message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Speaker {
+    /// The company whose conversation the turn belongs to, as the runner
+    /// recorded the conversation.
+    pub company: String,
     /// Their identity on the connector.
     pub identity: Option<String>,
     /// Their name as the provider gave it.

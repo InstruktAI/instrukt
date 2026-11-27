@@ -5,6 +5,7 @@
 //! `speaker` for `instrukt mcp`.
 pub mod connector_host;
 pub mod conversations;
+pub mod proposals;
 
 /// How a connector kind is built once for a process, from its environment,
 /// read through a lookup the host makes, and its clock; a setting the kind

@@ -977,6 +977,58 @@ pub trait CompanyPorts: Send + Sync {
         home: &instrukt_core::home::Home,
         now: jiff::Timestamp,
     ) -> Result<serde_json::Value, CompanyError>;
+    /// Whether `head` is an admitted knowledge proposal of the company
+    /// repository checked out at `root`, against its remote-tracking
+    /// canonical branch (`project/instrukt/spec/domain/company`, Knowledge
+    /// proposal). Reads a snapshot of the proposal store and never migrates
+    /// or writes it.
+    fn admitted_proposal(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, CompanyError>;
+    /// The unestablished entries of the company repository checked out at
+    /// `root` whose commit a remote-tracking branch holds, with their
+    /// causes.
+    fn unestablished_proposals(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<Vec<UnestablishedProposal>, CompanyError>;
+    /// The condition of the proposal store of the company repository
+    /// checked out at `root`, derived each time it is asked.
+    fn proposal_store(
+        &self,
+        home: &instrukt_core::home::Home,
+        root: &std::path::Path,
+    ) -> Result<ProposalStoreCondition, CompanyError>;
+}
+
+/// A recorded commit whose speaker could not be established.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnestablishedProposal {
+    /// The company's key.
+    pub company: instrukt_core::ids::ProjectSlug,
+    pub commit: instrukt_core::ids::CommitSha,
+    /// Why its speaker could not be established.
+    pub cause: String,
+}
+
+/// The condition of a company's proposal store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProposalStoreCondition {
+    /// Readable at the current shape and writable, or not created yet with a
+    /// folder it can be created in.
+    Usable,
+    /// Its schema version cannot be read: why.
+    Unreadable(String),
+    /// Of an older shape, which the next recording migrates.
+    Older,
+    /// Of a shape newer than this instrukt knows.
+    UnknownShape,
+    /// Its file or folder refuses a writer.
+    Unwritable,
 }
 
 /// What [`CompanyPorts::start`] opens the connections with.

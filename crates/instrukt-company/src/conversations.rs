@@ -4762,6 +4762,7 @@ pub fn speaker(
             cause: "the turn's addressed message is not one this conversation delivered".into(),
         })?;
     Ok(Some(instrukt_runner::mcp::Speaker {
+        company,
         name: name
             .or_else(|| identity.clone())
             .unwrap_or_else(|| "an unnamed sender".to_owned()),
@@ -4807,6 +4808,37 @@ fn company_error(error: impl std::fmt::Display) -> instrukt_runner::interfaces::
 }
 
 impl instrukt_runner::interfaces::CompanyPorts for Ports {
+    fn admitted_proposal(
+        &self,
+        home: &Home,
+        root: &std::path::Path,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<bool, instrukt_runner::interfaces::CompanyError> {
+        crate::proposals::admitted(home, root, head)
+    }
+
+    fn unestablished_proposals(
+        &self,
+        home: &Home,
+        root: &std::path::Path,
+    ) -> Result<
+        Vec<instrukt_runner::interfaces::UnestablishedProposal>,
+        instrukt_runner::interfaces::CompanyError,
+    > {
+        crate::proposals::unestablished(home, root)
+    }
+
+    fn proposal_store(
+        &self,
+        home: &Home,
+        root: &std::path::Path,
+    ) -> Result<
+        instrukt_runner::interfaces::ProposalStoreCondition,
+        instrukt_runner::interfaces::CompanyError,
+    > {
+        crate::proposals::condition(home, root)
+    }
+
     fn maintain_read_back(
         &self,
         home: &Home,
