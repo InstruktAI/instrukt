@@ -882,13 +882,16 @@ reading runner's files or contacting remote storage.
   and runner work continue unchanged.
 - **A home restore fails before or during destination swap:** insufficient
   headroom on any written volume, decryption error, unsafe tar entry, failed
-  SQLite integrity check, busy home lock, destination symlink escape, or
-  declined/non-interactive confirmation leaves the destination untouched,
-  releases acquired locks, removes staging, and refuses naming the cause and
-  recovery door. During swap, SQLite sidecars are removed only after each main
-  database's same-filesystem atomic rename succeeds; a mid-swap failure rolls
-  back moved entries from same-filesystem rollback staging and, if rollback
-  fails, reports the partial state with the repeat-restore recovery door.
+  SQLite integrity check, busy home lock, lock-path or destination symlink
+  escape (including leaf symlinks), or declined/non-interactive confirmation
+  leaves the destination untouched, releases acquired locks, removes staging,
+  and refuses naming the cause and recovery door. During swap, pre-existing
+  SQLite sidecars are moved into same-filesystem rollback staging after each
+  main database's atomic rename succeeds rather than unlinked mid-swap, and
+  deleted only once the entire swap commits; a mid-swap failure rolls back
+  moved entries and matching sidecars from same-filesystem rollback staging
+  and, if rollback fails, reports the partial state with the repeat-restore
+  recovery door.
 - **No home backup succeeds within runner's staleness threshold
   (`project/instrukt/spec/domain/runner`) while global `backup` is configured
   (whether admitted or withheld, and regardless of the latest attempt's

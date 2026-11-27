@@ -120,9 +120,9 @@ be absent outside that runtime and does not change runtime selection.
   `agents.yaml` role/class/scoped-grant,
   bundle and model-selection shapes and validation; GitHub App public profile
   and role-reference configuration; machine-local protected secrets and owned-file migration;
-  company homes, their settings documents (enforcing symlink confinement across
-  resolution and forward conversion) and their own protected secrets
-  (`project/instrukt/spec/feature/configuration/company-homes`);
+  company homes, their settings documents and their own protected secrets
+  (`project/instrukt/spec/feature/configuration/company-homes`), enforcing
+  symlink confinement across company settings resolution and forward conversion;
   a company home's `connectors:` map and its validation against the connector
   declarations the binary carries, which the CLI installs once when it starts,
   before any configuration is read (a document read without them finds no
@@ -355,10 +355,11 @@ This context emits no events.
 - **Runner (home backup)** — customer / supplier: configuration supplies the
   computer's admitted global `backup` declaration (withholding only home backup
   when the loaded global layer carries `backup` findings), validates backup
-  configuration at entry, and supplies symlink-confined company-home settings
-  resolution and forward conversion
-  (`project/instrukt/spec/feature/configuration/layered-configuration`,
-  `project/instrukt/spec/feature/configuration/company-homes`).
+  configuration at entry
+  (`project/instrukt/spec/feature/configuration/layered-configuration`), and
+  supplies company-home settings resolution and forward conversion
+  (`project/instrukt/spec/feature/configuration/company-homes`), enforcing
+  symlink confinement across company settings documents before conversion.
 <!-- /planned:instrukt-home-backup -->
 
 These are context relationships; module switches determine enablement, not

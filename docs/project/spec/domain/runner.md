@@ -513,26 +513,28 @@ and plain upload framing, never routed through `instrukt-outside`
   `project/instrukt/spec/domain/configuration`). Runner confines its own backup
   roots and post-conversion snapshot inputs, pruning excluded trees before
   descent (including regenerable `companies/<name>/.instrukt/schemas/`,
-  `state/.backup-staging-*`, and local backup bookkeeping files) and refusing
-  any visited escaping or unresolvable symlink fail-closed; symlinks are never
-  archived as symlink entries. Each discovered SQLite store is snapshotted
-  through core's reusable online-backup primitive into owner-only staging,
-  verified, streamed immediately into the compressed `age`-encrypted archive,
-  and unlinked before the next database is snapshotted. Pre-staging headroom is
-  enforced against the shared-machine free-space floor
+  `state/.backup-staging-*`, `state/.backup-restore-staging-*`,
+  `state/.backup-restore-rollback-*`, and local backup bookkeeping files) and
+  refusing any visited escaping or unresolvable symlink fail-closed; symlinks
+  are never archived as symlink entries. Each discovered SQLite store is
+  snapshotted through core's reusable online-backup primitive into owner-only
+  staging, verified, streamed immediately into the compressed `age`-encrypted
+  archive, and unlinked before the next database is snapshotted. Pre-staging
+  headroom is enforced against the shared-machine free-space floor
   (`general/policy/shared-machine-resources`) and staging is removed
   unconditionally on exit.
 - **Publication, post-validation, and bookkeeping errors:** Staged upload,
   exact-size verification, in-region single-object or multipart server-side
-  promotion, validation marking, per-machine retention pruning, and stale
-  orphan cleanup for this computer's namespace follow
-  `project/instrukt/spec/feature/runner/home-backup`. Once `_validated/<key>`
-  is written, `state/backup-state.json` records the published generation and
-  success timestamp even if subsequent staging deletion, retention pruning, or
-  orphan cleanup fails, while still recording the post-validation error,
-  invoking `runner.notify`, and exiting non-zero. On any failed backup run, a
-  failure writing `state/backup-state.json` never suppresses `runner.notify`
-  and surfaces alongside the primary failure.
+  promotion, validation marking, and per-machine retention pruning follow
+  `project/instrukt/spec/feature/runner/home-backup`. Runner also cleans stale
+  remote staging objects and incomplete multipart uploads scoped strictly to
+  this computer's namespace. Once `_validated/<key>` is written,
+  `state/backup-state.json` records the published generation and success
+  timestamp even if subsequent staging deletion, retention pruning, or orphan
+  cleanup fails, while still recording the post-validation error, invoking
+  `runner.notify`, and exiting non-zero. On any failed backup run, a failure
+  writing `state/backup-state.json` never suppresses `runner.notify` and
+  surfaces alongside the primary failure.
 - **Guarded restore:** Restore enforces headroom across every filesystem
   written during staging and swap, stages on the same filesystem as each target
   subtree (handling mountpoint targets and symlinked `INSTRUKT_HOME` or
@@ -540,14 +542,25 @@ and plain upload framing, never routed through `instrukt-outside`
   paths and every non-regular/non-directory entry type, and verifies every
   restored SQLite store before touching the destination. Canonicalizing
   `--into` against active `INSTRUKT_HOME` prevents bypassing the live-home lock
-  guard. Live-home restore acquires non-blocking exclusive locks across all
-  fixed home, company, and known-issues locks (creating absent fixed locks) and
-  all dynamically discovered active home locks in deterministic order, holding
-  them across the entire swap. Before any destination mutation, restore
-  enforces component-by-component symlink confinement below the destination
-  root and each company folder. SQLite sidecars (`-wal`, `-shm`, `-journal`)
-  are removed only after the main database's same-filesystem atomic rename
-  succeeds. Any mid-swap failure rolls back already-moved entries from
+  guard. Before acquiring any live-home lock or mutating the destination,
+  restore enforces full component-by-component symlink confinement (rejecting
+  symlinks at every component including the leaf) below the resolved
+  destination root, resolved `state/` directory, and each company folder.
+  Live-home restore verifies confinement on every fixed and dynamically
+  discovered lock path before opening or creating it, then acquires
+  non-blocking exclusive locks across all fixed home, company, and known-issues
+  locks (creating absent fixed locks) and all dynamically discovered active
+  home locks in deterministic order, holding them across the entire swap. After
+  locks are held and before swap mutations or permission changes, restore
+  enforces the same leaf-inclusive confinement on every restored destination
+  path and its SQLite sidecars. During swap, replaced destination files are
+  moved to same-filesystem rollback staging before renaming staged files into
+  place, and pre-existing SQLite sidecars (`-wal`, `-shm`, `-journal`) are
+  moved into that same-filesystem rollback staging after each main database's
+  atomic rename succeeds (never unlinked mid-swap) so rollback restores both
+  replaced databases and their matching sidecars intact; rollback staging and
+  its moved sidecars are deleted only after the entire swap commits. Any
+  mid-swap failure rolls back already-moved entries and sidecars from
   same-filesystem rollback staging; if rollback fails, restore reports the
   partial state and names the repeat-restore recovery door. Overwrite
   confirmation without `--yes` reads the controlling terminal when standard
