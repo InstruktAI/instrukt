@@ -536,6 +536,12 @@ instrukt has no reap recorded.
 This concerns instrukt's own commands, not a machine-wide process janitor or
 the runtime's standing agent lifecycle, which T3 owns.
 
+On SIGINT or SIGTERM, instrukt first passes the signal it received to each
+group, as a terminal passes it to the job in its foreground, so a command such
+as git releases what it holds before it ends. Whatever has not ended after the
+grace window (`STOP_GRACE` in `crates/instrukt-core/src/process.rs`) is then
+stopped, and instrukt ends with the signal.
+
 ### T3 command translation
 
 Commands run on the computer hosting T3 and instrukt. `start` has no

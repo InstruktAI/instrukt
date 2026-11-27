@@ -117,8 +117,8 @@ there and has publication sync the home.
   idempotence and removal; the hook status report, including each section's
   last run outcome and refused syncs; which hooks instrukt uses
   and what each hook run starts; composition of attributed commits: author,
-  trailers, refusal of caller-written trailers, canonical-branch commit refusal
-  and the paths committed.
+  trailers, refusal of caller-written trailers and canonical-branch commit
+  refusal (staging stays with git).
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
@@ -303,7 +303,7 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 #### Attributed commit (aggregate)
 
 - **Root:** the commit.
-- **Contains:** the caller's message, the author, the trailers, the paths.
+- **Contains:** the caller's message, the author, the trailers.
 - **Invariants:**
   - The caller's message holds no line with a trailer key instrukt owns.
   - A `Session:` trailer and an agent author appear only when the
