@@ -61,9 +61,8 @@ configuration entry. The adapter's metadata carries the observation.
 
 ### What is committed
 
-- `--only <paths>` commits exactly those paths as they are in the working
-  tree, new files included, and leaves everything else in the index as it
-  was.
+- Commits what the caller staged in git's index, as plain `git commit` does;
+  `instrukt repo commit` stages nothing.
 - The project's own git hooks run as for any commit, and the commit waits for
   them however long they take; a hook that refuses the
   commit leaves nothing committed.
@@ -102,6 +101,17 @@ And the commit records whether a human was involved as the developer declared
 
 Retired: no agent authors direct commits on main. Worktree-head review precedes integration.
 
+### UC-RC4: An interrupted commit leaves the repository as it was
+
+```gherkin
+Given an agent committing a staged change while the project's hook runs
+When the commit is stopped by an interrupt or termination signal
+Then nothing is committed
+And git holds no lock in the repository
+And the staged change remains staged in the index
+And the agent's next commit succeeds
+```
+
 ## Known caveats
 
 - T3's caller lookup supplies a native session without verified provider-agent
@@ -110,7 +120,6 @@ Retired: no agent authors direct commits on main. Worktree-head review precedes 
   never supplies identity evidence.
 - Outside the bot-role path, a resolved agent with no configured git author is
   refused with the door `agents.<name>.git_author`.
-- Without `--only`, commit includes what the caller staged, as plain git; `--only` commits exactly the given paths.
 
 ## See Also
 

@@ -3,7 +3,7 @@ source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
 expression: "stdout(&env, &read)"
 ---
 # instrukt docs get: acme/procedure/work
-# Required reads (not loaded) that must have been read at least once: acme/policy/rules, acme/principle/care, beta (`instrukt docs get --domain beta`)
+# Required reads (not loaded) that must have been read at least once: acme/policy/rules, acme/principle/care, general (`instrukt docs get --domain general`)
 
 ---
 id: acme/procedure/work

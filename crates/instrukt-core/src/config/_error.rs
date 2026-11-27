@@ -67,6 +67,9 @@ pub enum FindingKind {
     /// `review.automatic` is on and something automatic review needs is
     /// missing.
     AutomaticReviewNotReady,
+    /// A company repository whose project layer declares no company
+    /// identity (`project: company-<key>` and `company_name`).
+    NoCompanyIdentity,
 }
 
 impl FindingKind {
@@ -87,6 +90,7 @@ impl FindingKind {
             Self::EventsNeedTransport => "events_need_transport",
             Self::LeavesTheComputer => "leaves_the_computer",
             Self::AutomaticReviewNotReady => "automatic_review_not_ready",
+            Self::NoCompanyIdentity => "no_company_identity",
         }
     }
 }
@@ -146,6 +150,14 @@ pub enum ConfigError {
     UnknownSchema { path: PathBuf },
     #[error("{path} does not exist; create it with `{door}`")]
     NoLayer { path: PathBuf, door: String },
+    #[error(
+        "{company} and {legacy} both hold a company's settings; keep the one that holds them and remove the other, then run instrukt again"
+    )]
+    BothCompanyDocuments { company: PathBuf, legacy: PathBuf },
+    #[error(
+        "{path} is a symbolic link, and a company home's ignore lines are never read or written through one; replace it in the company's repository with the file itself, then run the command again"
+    )]
+    LinkedIgnoreFile { path: PathBuf },
     #[error("cannot create the company home {path}: {source}")]
     CreateHome {
         path: PathBuf,

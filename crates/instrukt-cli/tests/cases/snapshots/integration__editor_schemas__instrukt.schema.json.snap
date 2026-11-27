@@ -289,6 +289,16 @@ expression: "String::from_utf8(bytes).unwrap()"
       },
       "additionalProperties": false
     },
+    "company_repository": {
+      "type": "boolean",
+      "default": false,
+      "description": "On, declares the repository a company's: its documentation is the company's knowledge, read and rendered as a company's (project/instrukt/spec/feature/configuration/company-homes, The home). Off, it is a project like any other."
+    },
+    "company_name": {
+      "type": "string",
+      "pattern": "^[^\\n\\r]*\\S[^\\n\\r]*$",
+      "description": "The name people write the company by: one line of text that is not blank. Valid only beside `company_repository: true`; with a `project` of the form `company-<key>` it declares the repository's company identity (project/instrukt/spec/domain/configuration, The company identity)."
+    },
     "regenerable": {
       "type": "array",
       "items": {

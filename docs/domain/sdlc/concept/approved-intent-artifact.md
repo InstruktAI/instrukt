@@ -12,8 +12,14 @@ The **approved intent artifact** is the `input` artifact for every todo kind:
 originating conversation, its author and version. A seeded plan does not
 replace `input`; product requirements and plans derive from it.
 
-The first non-author recipient checks the current input version against its
-originating conversation and records that check. Later recipients carry that
+The mechanical author of an `input` version — such as a relaying or splitting
+agent — is distinct from the human's originating conversation
+(`general/policy/human-contract`). For a split child, the originating
+conversation is the human conversation that authorized the parent's intent, not
+the splitting session.
+
+The first non-author recipient checks the current input version against the
+human's originating conversation and records that check. Later recipients carry that
 intent unchanged while the check remains current. A new input version requires
 a new check; revising a derived artifact does not.
 

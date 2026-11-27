@@ -32,7 +32,7 @@ The unified `todo-orchestrator` routes remediation to the owning role. During
 a code build-review loop the target is `review-findings` → code in `<slug>/work`;
 a finding that invalidates an upstream artifact (`prd`, `architecture`,
 `implementation-plan`) is surfaced back to `todo-orchestrator` so it can route
-the owning preparation role rather than having a code fixer silently alter
+the owning preparation role rather than having the builder silently alter
 approved scope.
 
 A finding against a prepare artifact's own narrative does not automatically
@@ -128,7 +128,7 @@ procedure is ever dispatched.
 4. **Leave the verdict to the reviewer.** Do not change the verdict in the
    findings artifact. Your "Dispositions" section is remediation evidence; the
    continuing reviewer re-evaluates the target against it, updates the report,
-   and stamps the arithmetic verdict. A fixer-written `APPROVE` bypasses
+   and stamps the arithmetic verdict. A producer-written `APPROVE` bypasses
    reviewer authority and the bounded convergence contract.
 
 5. **Commit worktree state when target files changed.** Everything edited in

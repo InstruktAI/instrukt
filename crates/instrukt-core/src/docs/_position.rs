@@ -152,10 +152,10 @@ impl JsonSchema for AgentCli {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GeneralIndex {
-    /// Rendered in full, each with its closure; may name any domain's ids.
+    /// Rendered in full, each with its closure; `general` ids only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub expanded: Vec<SnippetId>,
-    /// Rendered as one listing line each; may name any domain's ids.
+    /// Rendered as one listing line each; `general` ids only.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub listed: Vec<SnippetId>,
     /// Snippets appended to one agent CLI's global file only.

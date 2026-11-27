@@ -340,8 +340,10 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         }
         Command::ListTools { name, json } => {
             let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
-            let visible = view.server(&name)?.clone();
+            // The speaker comes first: a session whose speaker cannot be
+            // established is refused before its server is resolved.
             speak(ctx, &caller, &mut view)?;
+            let visible = view.server(&name)?.clone();
             let started = std::time::Instant::now();
             let (scrub, tools) = with_sign_in_retry(ctx, &view, &visible, |auth| {
                 mcp::list_tools(&target(&visible, auth))
@@ -378,8 +380,10 @@ pub fn run(args: McpArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     anyhow::anyhow!("--json takes the tool's arguments as one JSON object")
                 })?;
             let mut view = mcp::view(&ctx.home, &caller, asked.as_ref())?;
-            let visible = view.server(&name)?.clone();
+            // The speaker comes first: a session whose speaker cannot be
+            // established is refused before its server is resolved.
             speak(ctx, &caller, &mut view)?;
+            let visible = view.server(&name)?.clone();
             let started = std::time::Instant::now();
             let (scrub, result) = with_sign_in_retry(ctx, &view, &visible, |auth| {
                 mcp::call(&target(&visible, auth), &tool, arguments.clone())

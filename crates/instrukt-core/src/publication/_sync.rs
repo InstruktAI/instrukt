@@ -5,6 +5,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+mod _project_docs;
+
 use super::_agents::{MergeRefusal, merge_key, targets};
 use super::_editor::{EditorChange, EditorChangeKind, write_editor_schemas};
 use super::_fingerprint;
@@ -325,6 +327,9 @@ struct Reported<'r> {
 /// Everything a sync computed before it writes anything.
 struct Prepared {
     committed: Committed,
+    /// The committed tree is a company's repository: none of its documents
+    /// is published as documentation.
+    company: bool,
     /// The published positions the committed tree holds, by the domain
     /// name each is addressed by.
     held: Vec<DomainName>,
@@ -385,7 +390,18 @@ fn publish(
         commit: commit.clone(),
         refusal,
     };
-    let (held, reserved) = _tree::held_positions(&committed);
+    // A company's repository publishes no knowledge: its documents are the
+    // company's, never positions, snippets or third-party docs
+    // (`project/instrukt/spec/domain/publication`).
+    let company = super::_render::company_home(
+        &config::classify_root(committed.file(config::CONFIG_FILE_NAME)),
+        committed.entry_index(super::_company::COMPANY_INDEX) == super::_source::EntryIndex::Absent,
+    );
+    let (held, reserved) = if company {
+        (Vec::new(), Vec::new())
+    } else {
+        _tree::held_positions(&committed)
+    };
     if !reserved.is_empty() {
         return Ok(refused(Refusal::ReservedDomain(reserved)));
     }
@@ -396,52 +412,63 @@ fn publish(
         flavor_roles: request.wiring.flavor_roles.clone().filter(|_| todos),
         ..request.wiring.clone()
     };
-    let validation = docs::validate(&ValidationRequest {
-        repo_root: checkout.path(),
-        home,
-        paths: &[],
-        wiring: &wiring,
-    })?;
-    if !validation.findings.is_empty() {
-        return Ok(refused(Refusal::Findings(validation.findings)));
+    let mut notices: Vec<Notice> = Vec::new();
+    if !company {
+        let validation = docs::validate(&ValidationRequest {
+            repo_root: checkout.path(),
+            home,
+            paths: &[],
+            wiring: &wiring,
+        })?;
+        if !validation.findings.is_empty() {
+            return Ok(refused(Refusal::Findings(validation.findings)));
+        }
+        // Sync reports the notices about what it renders; the rest are
+        // `instrukt docs validate`'s.
+        notices.extend(
+            validation
+                .notices
+                .into_iter()
+                .filter(|n| n.code == NoticeCode::DomainWithoutIndex),
+        );
     }
-    // Sync reports the notices about what it renders; the rest are
-    // `instrukt docs validate`'s.
-    let mut notices: Vec<Notice> = validation
-        .notices
-        .into_iter()
-        .filter(|n| n.code == NoticeCode::DomainWithoutIndex)
-        .collect();
     let config = Configuration::load(home, Some(checkout.path()))?;
     drop(checkout);
     let corpus = Corpus::from_sources(
         Some(project.slug.clone()),
         Some(home),
-        committed.doc_sources(),
+        if company {
+            Vec::new()
+        } else {
+            committed.doc_sources()
+        },
     );
-    let positions: Vec<Position> = held
-        .iter()
-        .map(Position::of_domain)
-        .chain(
-            committed
-                .below("docs/project/")
-                .next()
-                .map(|_| Position::Project),
-        )
-        .collect();
-    let mut unit_findings = _units::reserved_folders(&committed);
-    unit_findings.extend(_units::published_findings(
-        &committed,
-        &corpus,
-        &positions,
-        Some(&project.slug),
-    ));
-    if !unit_findings.is_empty() {
-        return Ok(refused(Refusal::Units(unit_findings)));
+    // A company's repository holds no published position, so it has no
+    // compressed unit to check.
+    if !company {
+        let positions: Vec<Position> = held
+            .iter()
+            .map(Position::of_domain)
+            .chain(
+                committed
+                    .below("docs/project/")
+                    .next()
+                    .map(|_| Position::Project),
+            )
+            .collect();
+        let mut unit_findings = _units::reserved_folders(&committed);
+        unit_findings.extend(_units::published_findings(
+            &committed,
+            &corpus,
+            &positions,
+            Some(&project.slug),
+        ));
+        if !unit_findings.is_empty() {
+            return Ok(refused(Refusal::Units(unit_findings)));
+        }
     }
-    let mut contribution = Contribution::of(&project.slug, &corpus, &held);
-    contribution.record_lineage(&committed, &corpus);
-    if let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
+    if !company
+        && let Some(claim) = ProjectClaimRecord::load(home, &project.slug)?
         && claim.owner != project.slug
     {
         return Ok(refused(Refusal::Claim(Claim::ProjectOwned {
@@ -451,21 +478,30 @@ fn publish(
     }
     let owners = _tree::claims(home)?;
     let (index, undigested) = GlobalIndex::load_with_undigested(home)?.unwrap_or_default();
-    // The invoking project's own entries are replaced by its patch; every
-    // other project's entry left without a digest is persisted so, and named.
-    report.findings.extend(
-        index
-            .snippets
-            .iter()
-            .filter(|entry| undigested.contains(&entry.id) && entry.source_project != project.slug)
-            .map(|entry| SyncFinding::EntryUndigested {
-                id: entry.id.clone(),
-                owner: entry.source_project.clone(),
-            }),
-    );
-    let patched = match patch(&index, &owners, &contribution) {
-        Ok(patched) => patched,
-        Err(claim) => return Ok(refused(Refusal::Claim(claim))),
+    let patched = if company {
+        index.clone()
+    } else {
+        // The invoking project's own entries are replaced by its patch; every
+        // other project's entry left without a digest is persisted so, and
+        // named. A company's sync persists no index.
+        report.findings.extend(
+            index
+                .snippets
+                .iter()
+                .filter(|entry| {
+                    undigested.contains(&entry.id) && entry.source_project != project.slug
+                })
+                .map(|entry| SyncFinding::EntryUndigested {
+                    id: entry.id.clone(),
+                    owner: entry.source_project.clone(),
+                }),
+        );
+        let mut contribution = Contribution::of(&project.slug, &corpus, &held);
+        contribution.record_lineage(&committed, &corpus);
+        match patch(&index, &owners, &contribution) {
+            Ok(patched) => patched,
+            Err(claim) => return Ok(refused(Refusal::Claim(claim))),
+        }
     };
 
     // Rendering reads the committed tree and the home as it stands; it
@@ -510,6 +546,7 @@ fn publish(
 
     let prepared = Prepared {
         committed,
+        company,
         held,
         index,
         patched,
@@ -898,57 +935,11 @@ fn write(
             tx.remove_file(&in_home(&_tree::claim_path(home, domain))?)?;
         }
     }
-    // Project positions use the same transaction and whole-tree replacement.
-    let project_dir = in_home(&home.project_docs_dir(&project.slug))?;
-    let claim_path = in_home(&_tree::project_claim_path(home, &project.slug))?;
-    if prepared.committed.below("docs/project/").next().is_some() {
-        let staged = staging.path().join("project").join(project.slug.as_str());
-        _tree::stage_position(&prepared.committed, &Position::Project, &staged)?;
-        _tree::stage_units(&prepared.committed, &Position::Project, &staged)?;
-        tx.replace_dir(&staged, &project_dir)?;
-        let claim = ProjectClaimRecord {
-            project: project.slug.clone(),
-            owner: project.slug.clone(),
-        };
-        let text = serde_yaml_ng::to_string(&claim).map_err(PublicationError::Render)?;
-        tx.write(&claim_path, text.as_bytes())?;
-    } else {
-        tx.remove_dir(&project_dir)?;
-        tx.remove_file(&claim_path)?;
+    // A company's repository publishes no project position, no third-party
+    // doc and no contribution to the index.
+    if !prepared.company {
+        _project_docs::publish_project_docs(home, project, prepared, &staging, tx)?;
     }
-    // Third-party docs: file by file, owner-scoped.
-    let docs = home.docs_dir();
-    let mine = |owner: &ProjectSlug| owner == &project.slug;
-    for doc in prepared
-        .patched
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        let source = Path::new("docs").join(&doc.path);
-        if let Some(bytes) = prepared.committed.file(&source.to_string_lossy()) {
-            tx.write(&in_home(&docs.join(&doc.path))?, bytes)?;
-        }
-    }
-    let third_party: BTreeSet<&PathBuf> = prepared
-        .patched
-        .third_party
-        .iter()
-        .map(|d| &d.path)
-        .collect();
-    for old in prepared
-        .index
-        .third_party
-        .iter()
-        .filter(|d| mine(&d.source_project))
-    {
-        if !third_party.contains(&old.path) {
-            tx.remove_file(&in_home(&docs.join(&old.path))?)?;
-        }
-    }
-    let index_text =
-        serde_yaml_ng::to_string(&prepared.patched).map_err(PublicationError::Render)?;
-    tx.write(&in_home(&home.index_file())?, index_text.as_bytes())?;
 
     // Outside the home, from the owner of `docs/general/`: the global agent
     // files with their settings keys, written whole and never removed;

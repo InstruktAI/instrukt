@@ -50,9 +50,7 @@ pub use _editor::{
 };
 pub use _fingerprint::EvalFingerprint;
 pub use _patch::Claim;
-pub use _plugin::{
-    CompanyName, CompanyNameError, PluginDrift, PluginFinding, PluginPlan, PluginVersion,
-};
+pub use _plugin::{PluginDrift, PluginFinding, PluginPlan, PluginVersion};
 pub use _render::{
     GENERATED_LINE, PlannedFile, RenderFinding, RenderFindingKind, RenderPlan, is_rendering,
 };
@@ -136,16 +134,26 @@ pub fn inspect_units(
 /// rendering decides by, with the root `instrukt.yaml` read as a view of the
 /// tree reads it.
 pub fn is_company_index(root: &Path, rel: &str) -> Result<bool, PublicationStateError> {
-    if rel != _company::COMPANY_INDEX {
-        return Ok(false);
-    }
+    Ok(rel == _company::COMPANY_INDEX && is_company_repository(root)?)
+}
+
+/// Whether the working tree whose root is `root` is a company's repository:
+/// its root `instrukt.yaml` and its `docs/index.yaml` decide it by the rule
+/// rendering decides by — a project layer declaring `company_repository`, a
+/// company's settings document, or no root document beside a
+/// `docs/index.yaml`. A company's documents are its knowledge, never
+/// snippets: docs validation, sync and `init` read none of them as such
+/// (`project/instrukt/spec/domain/publication`).
+pub fn is_company_repository(root: &Path) -> Result<bool, PublicationStateError> {
     let read = |path: &Path| {
         let path = path.to_path_buf();
         move |source| PublicationStateError::Read { path, source }
     };
     let document = _source::root_document_on_disk(root)
         .map_err(read(&root.join(crate::config::CONFIG_FILE_NAME)))?;
-    let absent = _source::entry_index_absent_on_disk(root, rel).map_err(read(&root.join(rel)))?;
+    let index = _company::COMPANY_INDEX;
+    let absent =
+        _source::entry_index_absent_on_disk(root, index).map_err(read(&root.join(index)))?;
     Ok(_render::company_home(
         &crate::config::classify_root(document.as_deref()),
         absent,
@@ -186,49 +194,133 @@ pub fn write_rendering(root: &Path, plan: &RenderPlan) -> Result<Vec<PathBuf>, P
     Ok(changed)
 }
 
-/// Plans the rendering of the company plugin of `key`, named `name`, from
-/// the working tree whose root is `root`
-/// (`project/instrukt/spec/feature/publication/company-plugin`): what it
-/// found, and what to write and remove wherever that can be known, read
-/// from the working tree alone, the plugin's folder and the catalog
-/// included. Writes nothing.
-pub fn plan_plugin(
-    root: &Path,
-    key: &ProjectSlug,
-    name: &CompanyName,
-) -> Result<PluginPlan, PublicationError> {
-    _plugin::plan(&plugin_view(root, key)?, key, name)
+/// Plans the rendering of the company plugin from the working tree whose
+/// root is `root`, under the company identity its root project layer
+/// declares (`project/instrukt/spec/feature/publication/company-plugin`):
+/// what it found, and what to write and remove wherever that can be known,
+/// read from the working tree alone, the plugin's folder and the catalog
+/// included. A repository without a company identity has configuration's
+/// finding alone. Writes nothing.
+pub fn plan_plugin(root: &Path) -> Result<PluginPlan, PublicationError> {
+    _plugin::plan(&plugin_view(root)?)
 }
 
-/// Every finding of the company plugin of `key`, named `name`, in the
-/// working tree whose root is `root`, as [`plan_plugin`] finds them, without
-/// comparing any file with the rendering. Writes nothing.
-pub fn validate_plugin(
-    root: &Path,
-    key: &ProjectSlug,
-    name: &CompanyName,
-) -> Result<Vec<PluginFinding>, PublicationError> {
-    _plugin::findings(&plugin_view(root, key)?, key, name)
+/// Every finding of the company plugin in the working tree whose root is
+/// `root`, as [`plan_plugin`] finds them, without comparing any file.
+/// Writes nothing.
+pub fn validate_plugin(root: &Path) -> Result<Vec<PluginFinding>, PublicationError> {
+    _plugin::findings(&plugin_view(root)?)
 }
 
-/// The view of the working tree whose root is `root` that the plugin of
-/// `key` is rendered from: the plugin's folder and the catalog included.
-fn plugin_view(root: &Path, key: &ProjectSlug) -> Result<_source::Committed, PublicationError> {
-    let folder = _plugin::folder(key);
+/// The view of the working tree whose root is `root` that its company's
+/// plugin is rendered from: with the skill's folder, the catalog and the
+/// manifest an earlier rendering left, whose version a versionless entry
+/// carries forward, of the key the root project layer declares. Without a
+/// company identity there is no folder to read, and the plan names the
+/// finding from the root document the view holds.
+fn plugin_view(root: &Path) -> Result<_source::Committed, PublicationError> {
+    let document = _source::root_document_on_disk(root).map_err(|source| PublicationError::Io {
+        path: root.join(crate::config::CONFIG_FILE_NAME),
+        source,
+    })?;
+    let Ok(identity) = crate::config::company_identity(document.as_deref()) else {
+        return _source::Committed::working_tree(root);
+    };
+    let folder = _plugin::folder(&identity.key);
+    let earlier = _plugin::earlier_manifest(&identity.key);
     _source::Committed::working_tree_places(
         root,
         _source::Places {
             folder: &folder,
-            file: _plugin::CATALOG,
+            files: &[_plugin::CATALOG, &earlier],
         },
     )
+}
+
+/// What rendering a repository's agent material plans
+/// (`project/instrukt/spec/domain/publication`, Rendering a company's
+/// knowledge at integration): its entrypoints, and in a company's repository
+/// also the company's plugin with its catalog entry. Publication alone
+/// enumerates that material.
+#[derive(Debug, Clone)]
+pub struct AgentMaterial {
+    /// The repository's rendered entrypoints.
+    pub entrypoints: RenderPlan,
+    /// The company's plugin; `None` outside a company's repository.
+    pub plugin: Option<PluginPlan>,
+}
+
+impl AgentMaterial {
+    /// Whether any part holds a finding, which leaves that part unwritten.
+    pub fn has_findings(&self) -> bool {
+        !self.entrypoints.findings.is_empty()
+            || self
+                .plugin
+                .as_ref()
+                .is_some_and(|plugin| !plugin.findings.is_empty())
+    }
+}
+
+/// Plans the rendering of the agent material of the working tree whose root
+/// is `root`, reading that tree alone: the check form of
+/// [`write_agent_material`]. Writes nothing. A company's repository is
+/// decided by the one rule rendering decides by ([`is_company_repository`]).
+pub fn plan_agent_material(root: &Path) -> Result<AgentMaterial, PublicationError> {
+    let entrypoints = render_repository(RepositoryView::WorkingTree(root))?;
+    let plugin = if is_company_repository(root)? {
+        Some(plan_plugin(root)?)
+    } else {
+        None
+    };
+    Ok(AgentMaterial {
+        entrypoints,
+        plugin,
+    })
+}
+
+/// Applies `material` to the working tree whose root is `root`: the
+/// entrypoints as [`write_rendering`] applies them, then the plugin as
+/// [`write_plugin`] applies it, which writes nothing while it holds a
+/// finding. Returns the paths it changed, relative to `root`.
+pub fn write_agent_material(
+    root: &Path,
+    material: &AgentMaterial,
+) -> Result<Vec<PathBuf>, PublicationError> {
+    let mut changed = write_rendering(root, &material.entrypoints)?;
+    if let Some(plugin) = &material.plugin {
+        changed.extend(write_plugin(root, plugin)?);
+    }
+    Ok(changed)
+}
+
+/// Whether the repository path `path`, relative to the root, is company
+/// knowledge: a Markdown document under `docs/`, the company index
+/// `docs/index.yaml`, or the root `AGENTS.md` rendered from them. What a
+/// knowledge proposal may change with no person.
+pub fn is_company_knowledge(path: &Path) -> bool {
+    use std::path::Component;
+    let mut components = path.components();
+    let normal = |c: Component<'_>| matches!(c, Component::Normal(_));
+    if !path.components().all(normal) {
+        return false;
+    }
+    if path == Path::new(_render::AGENTS_FILE) || path == Path::new(_company::COMPANY_INDEX) {
+        return true;
+    }
+    let under_docs = components
+        .next()
+        .is_some_and(|first| first.as_os_str() == _company::DOCS.trim_end_matches('/'));
+    under_docs
+        && components.next().is_some()
+        && path.extension().is_some_and(|extension| extension == "md")
 }
 
 /// Applies `plan` to the working tree whose root is `root`, and nothing
 /// while it holds a finding. Each removal comes first, with each folder it
 /// leaves empty inside the plugin's folder, so a new file never meets an
 /// old file or an emptied folder on its way. Then each write follows, one file at a
-/// time: the plugin's other files, then its manifest, then the catalog.
+/// time: the skill's files, then the catalog, whose entry is the plugin's
+/// manifest.
 /// Each write is atomic and nothing passes through a symbolic link. A
 /// rendering cut short leaves exactly the removals and writes made before
 /// the cut; the next rendering compares against what the folder then
@@ -250,7 +342,9 @@ pub fn write_plugin(root: &Path, plan: &PluginPlan) -> Result<Vec<PathBuf>, Publ
                 });
             }
         }
-        remove_emptied_folders(root, &plan.folder, path)?;
+        if let Some(folder) = &plan.folder {
+            remove_emptied_folders(root, folder, path)?;
+        }
     }
     for file in drift.writes.iter().chain(&plan.catalog) {
         let target = _tx::own_destination(root, &file.path)?;
@@ -534,9 +628,12 @@ mod tests {
     fn a_rendering_replaces_an_emptied_folder_with_the_document_now_at_its_path() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let key = ProjectSlug::parse("acme").unwrap();
-        let name = CompanyName::parse("Acme").unwrap();
-        let references = root.join("plugins/acme/skills/acme/references");
+        write(
+            root,
+            "instrukt.yaml",
+            "project: company-acme\ncompany_repository: true\ncompany_name: Acme\n",
+        );
+        let references = root.join("skills/acme/references");
         write(
             root,
             ".claude-plugin/marketplace.json",
@@ -548,7 +645,7 @@ mod tests {
             "docs/guide.md/spring.md",
             "---\ndescription: Spring.\n---\n\n# Spring\n",
         );
-        write_plugin(root, &plan_plugin(root, &key, &name).unwrap()).unwrap();
+        write_plugin(root, &plan_plugin(root).unwrap()).unwrap();
         assert!(references.join("guide.md/spring.md").is_file());
 
         std::fs::remove_dir_all(root.join("docs/guide.md")).unwrap();
@@ -558,11 +655,11 @@ mod tests {
             "docs/guide.md",
             "---\ndescription: The guide.\n---\n\n# Guide\n",
         );
-        let plan = plan_plugin(root, &key, &name).unwrap();
+        let plan = plan_plugin(root).unwrap();
         assert!(plan.findings.is_empty());
         write_plugin(root, &plan).unwrap();
         assert!(references.join("guide.md").is_file());
-        let again = plan_plugin(root, &key, &name).unwrap().drift.unwrap();
+        let again = plan_plugin(root).unwrap().drift.unwrap();
         assert!(again.writes.is_empty() && again.removals.is_empty());
     }
 
@@ -570,8 +667,11 @@ mod tests {
     fn a_tracked_folder_replaced_by_a_document_reads_as_gone_before_it_is_staged() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        let key = ProjectSlug::parse("acme").unwrap();
-        let name = CompanyName::parse("Acme").unwrap();
+        write(
+            root,
+            "instrukt.yaml",
+            "project: company-acme\ncompany_repository: true\ncompany_name: Acme\n",
+        );
         crate::git::run(root, ["init", "--quiet"]).unwrap();
         write(
             root,
@@ -584,7 +684,7 @@ mod tests {
             "docs/guide.md/spring.md",
             "---\ndescription: Spring.\n---\n\n# Spring\n",
         );
-        write_plugin(root, &plan_plugin(root, &key, &name).unwrap()).unwrap();
+        write_plugin(root, &plan_plugin(root).unwrap()).unwrap();
         // The document and its generated file are tracked.
         crate::git::run(root, ["add", "--all"]).unwrap();
 
@@ -597,13 +697,36 @@ mod tests {
             "docs/guide.md",
             "---\ndescription: The guide.\n---\n\n# Guide\n",
         );
-        let plan = plan_plugin(root, &key, &name).unwrap();
+        let plan = plan_plugin(root).unwrap();
         assert!(plan.findings.is_empty(), "{:?}", plan.findings);
         write_plugin(root, &plan).unwrap();
-        let again = plan_plugin(root, &key, &name).unwrap();
+        let again = plan_plugin(root).unwrap();
         assert!(again.findings.is_empty(), "{:?}", again.findings);
         let drift = again.drift.unwrap();
         assert!(drift.writes.is_empty() && drift.removals.is_empty());
         assert!(again.catalog.is_none());
+    }
+
+    #[test]
+    fn company_knowledge_is_its_markdown_documents_its_index_and_the_root_agents_file() {
+        for path in [
+            "docs/a.md",
+            "docs/_compressed/a.md",
+            "docs/index.yaml",
+            "AGENTS.md",
+            "docs/AGENTS.md",
+        ] {
+            assert!(is_company_knowledge(Path::new(path)), "{path}");
+        }
+        for path in [
+            "instrukt.yaml",
+            "skills/k/SKILL.md",
+            ".claude-plugin/marketplace.json",
+            "docs/schema.yaml",
+            "docs/../AGENTS.md",
+            "docs",
+        ] {
+            assert!(!is_company_knowledge(Path::new(path)), "{path}");
+        }
     }
 }

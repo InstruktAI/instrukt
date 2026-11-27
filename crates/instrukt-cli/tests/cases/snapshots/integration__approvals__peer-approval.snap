@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/approvals.rs
+assertion_line: 197
 expression: "redact(&format!(\"{}---\\n{}---\\n{approved}---\\npeer allowed:\\n{allowed}---\\nhuman required:\\n{reserved}---\\n{shown}\",\nString::from_utf8_lossy(&unreasoned.get_output().stderr),\nString::from_utf8_lossy(&sessionless.get_output().stderr),))"
 ---
 instrukt: a peer approval states the peer's reason with `--reason <text>`
@@ -7,7 +8,7 @@ instrukt: a peer approval states the peer's reason with `--reason <text>`
 instrukt: a peer approval names the peer session that judged it: run it in that session, or pass `--session <runtime:id>`
 ---
 stamped nested-lists: prd approved by a peer — <digest 1> — reason: it follows the input
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 peer allowed:
 pickup: held by this session
@@ -29,7 +30,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: approved by peer (<digest 1>)
-  handoff gate: blocked (branch head not pushed to origin; no independent build_review approve stamp; no verification disposition recorded (a pass, tier_0_skip or hotfix_deferred is owed at this commit))
+  handoff gate: blocked (workspace, local and published heads differ; no independent build_review approve stamp; no verification disposition recorded (a pass, tier_0_skip or hotfix_deferred is owed at this commit))
 ---
 human required:
 pickup: held by this session
@@ -51,7 +52,7 @@ reviews:
 gates:
   interference lock: free
   prd approval: pending human approval (target <digest 1>)
-  handoff gate: blocked (PRD approval required; branch head not pushed to origin; no independent build_review approve stamp; no verification disposition recorded (a pass, tier_0_skip or hotfix_deferred is owed at this commit))
+  handoff gate: blocked (PRD approval required; workspace, local and published heads differ; no independent build_review approve stamp; no verification disposition recorded (a pass, tier_0_skip or hotfix_deferred is owed at this commit))
 ---
 nested-lists · feature · active
 identity: <id 1>
@@ -60,8 +61,7 @@ created: <time> by session t3:lead-1
 revision: 7
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: held since <time> by session t3:lead-1
 hold: none
 sessions:

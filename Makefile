@@ -15,7 +15,7 @@ format:
 lint:
 	scripts/lint.sh
 
-# Lower the size and suppression baseline to the tree; it never raises an entry.
+# Lower the suppression baseline to the tree; it never raises an entry.
 ratchet:
 	scripts/check-ratchet.py --update
 

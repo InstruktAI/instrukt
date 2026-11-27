@@ -1,6 +1,6 @@
 ---
-description: 'Maintain indexed project scratchpad workspaces for material shared in active collaboration or a concrete handoff.'
-activation_trigger: 'Use when identified working material must be shared for active collaboration or a concrete handoff; and when joining, resuming, or promoting from an existing shared scratchpad workspace.'
+description: 'Maintain indexed project scratchpads for active collaboration or a concrete handoff.'
+activation_trigger: 'Identified working material must be shared for active collaboration or a concrete handoff; or joining, resuming, or promoting from an existing shared project scratchpad workspace.'
 visibility: public
 ---
 

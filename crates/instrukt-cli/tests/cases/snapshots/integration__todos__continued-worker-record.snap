@@ -1,7 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
-assertion_line: 635
-expression: "redact(&crew.todo([\"show\", slug]))"
+assertion_line: 626
+expression: redact(&shown)
 ---
 retained-planner · change · active
 identity: <id 1>
@@ -10,8 +10,7 @@ created: <time> by session t3:lead-1
 revision: 13
 intent:
   Keep list depth inside block quotes.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: held since <time> by session t3:lead-1
 hold: none
 sessions:

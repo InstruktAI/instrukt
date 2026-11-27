@@ -75,10 +75,15 @@ Apply these configured action values to the identified assignment and session.
   satisfied, complete work whose outcome is delivered, and retire work with
   no actionable continuation under these rules. The existing state label is
   evidence to reconcile, never a reason to preserve the state.
+- **A hold's reason is a record; it is never restated.** It records why the
+  hold was placed, and stays as written, like any record of a past decision.
+  A hold is released only when its condition is met or the work is meant to
+  move, never to place another: releasing makes the todo dispatchable at once,
+  and the runner claims it before a new hold lands.
 
 ### Ad hoc work and workspace placement
 
-- **Ad hoc work uses a short-lived worktree.** Review its exact head before the integrator merges it through the normal gate. A repository todo uses a single `<slug>/work` worktree and branch for both pending documentation and implementation; pending markers are folded by the integrator at delivery and the worktree and branch are cleaned up after promotion. No agent other than the integrator commits on main.
+- **Where repository work is authored is `general/policy/commits`.** A todo's orchestrator and the workers it dispatches work in the todo's worktree, created when the orchestrator starts; ad hoc work, pending documentation written ahead for a todo included, uses a short-lived one-off worktree whose exact head is reviewed before the integrator merges it through the normal gate, and is removed after. No agent other than the integrator commits on main.
 
 ### Unexpected bugs
 
@@ -92,32 +97,33 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 ### Decide before creating
 
-- **Documentation evidence precedes lifecycle entry.** Pending contracts
-  that preparation consumes are authored, committed under their intended todo
-  slug, and independently reviewed with required changes resolved before
-  entry. Associate the commits with `instrukt repo commit --todo <slug>` under
-  `general/policy/commits`. Review evidence binds the committed revision;
-  the author's declaration is not an independent review.
+- **Pending contracts are written before the plan.** Who writes them is
+  `general/policy/documentation-discipline` (Functionality is doc-driven): the
+  creating session when it holds context a handoff would lose, otherwise the
+  claimant at preparation entry, through the workers it dispatches in the
+  todo's worktree. A creating session
+  writes them as pending carriers naming the todo, in a one-off worktree under
+  `general/policy/commits`, commits with `instrukt repo commit --todo <slug>`,
+  has the head independently reviewed and merged by the integrator, and
+  removes the worktree; it files the todo held, its reason naming that
+  branch's merge onto main. The todo's worktree exists only once its
+  orchestrator starts work. Review evidence binds the committed revision; the
+  author's declaration is not an independent review.
 - **Documentation impact remains agent judgment.** The agent identifies the
   required pending contracts or records an explicit `doc_impact_none` basis.
   Neither workflow derivation nor a creation command grades prose or infers
-  semantic documentation impact. Iceboxed forming work acquires its required
-  evidence before entering the lifecycle.
+  semantic documentation impact.
 
-- **A todo enters the lifecycle valid; the icebox parks ideas at any stage.** A
-  todo is valid when its intended outcome and every known contract that Prepare
-  will consume have converged, and no pending authoring, review, or commit is
-  still expected to change them. Creating a todo without `--icebox` enters it
-  into the lifecycle, so it is valid at creation. An idea still forming is
-  created with `--icebox` and made valid before it is unfrozen; unfreezing
-  enters it into the lifecycle.
-- **Place a filing by what it waits on.** Valid work waiting on another todo
-  is created with `--after <slugs>`, and leaves the wait on its own when they
-  deliver. Valid work waiting on a concrete condition outside the project's
-  todos is created with `--hold --reason <text>`, the reason naming that
-  condition under the hold rule above, so it is held from its first revision.
-  `--icebox` is for work that has not converged, never for a dependency or for
-  converged work waiting on a merge or release, and never combined with a hold.
+- **A todo enters the lifecycle once its outcome has converged.** Contracts
+  still to be written or reviewed are preparation work (above) and never delay
+  filing. An outcome still forming does not enter the lifecycle.
+- **Place a filing by what it waits on.** Converged work waiting on another
+  todo is created with `--after <slugs>`, and leaves the wait on its own when
+  they deliver. Converged work waiting on a concrete condition outside the
+  project's todos — the merge of a branch carrying its written-ahead
+  contracts included — is created with `--hold --reason <text>`, the reason
+  naming that condition under the hold rule above, so it is held from its
+  first revision.
 - **Run the bounded creation check before every `instrukt todo create` and
   before starting ad-hoc work.** Read `instrukt todo list`, which lists the
   live work — the todos a new one could overlap with. For each plausible
@@ -171,16 +177,16 @@ once, deduplicated, while preserving the existing restoration obligation.
   gate.
 
 
-- **Execute settled code work in context.** When the approach is known,
-  the edit is bounded, and the work needs neither a plan, a builder, nor a
-  handoff, make the change in a short-lived one-off worktree only when an explicit execution request, a
-  bounded brief, or a completed human conversation in which every active
-  participant agreed the outcome and the human released the edit supplies
-  authority. Human presence alone supplies none. Importance does not decide
-  this boundary; remaining judgment does. A small change whose correctness is
-  genuinely contested still belongs in the lifecycle. A `change` todo created
-  despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/overview`).
+- **Fix bounded findings in context.** An agent that finds a
+  documentation-only change, or a bounded code change of about five minutes
+  (approach known, edit bounded, needing neither a plan, a builder nor a
+  handoff), makes it itself at once in a short-lived one-off worktree and files
+  nothing; finding it supplies the authority. Importance does not decide this
+  boundary; remaining judgment does. A change whose correctness is genuinely
+  contested still belongs in the lifecycle. A company's agent never holds repair
+  authority and reports instead. A `change` todo created despite meeting these
+  criteria may still take the in-context path at prepare entry
+  (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite
@@ -203,8 +209,7 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **The creation check belongs to the filing agent.** Face the decisions
   above before `instrukt todo create <slug> <content> --kind <kind> --approved`.
-  Without `--approved`, the command prints the admission questions and creates
-  nothing. Pass it only after facing those questions.
+  The command writes the record only with `--approved`.
   Creation writes the item and its first `input` version together in the
   local record. The runner dispatches eligible work under module enablement,
   pickup policy and the workflow's current obligation; creation supplies no
@@ -228,7 +233,7 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **A worker's observation is decided by the session that governs it.** A
   worker is a session executing one job for a governing session it reports back to: a
-  builder, reviewer, verifier, diagnosis peer, fixer, or finalizer. What it notices
+  builder, reviewer, verifier, diagnosis peer, or finalizer. What it notices
   outside that job reaches the governing session as an observation — what it
   saw, where, and how it came to see it — through the channel its own
   procedure names, or else in its final report. The governing session decides
@@ -287,26 +292,32 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   stamped creation record and the current `input`, establish the owning
   project, repeat the bounded creation check, apply the governing creation and
   process-authority contracts, and confirm that functionality work carries its
-  required pending documentation, written by whoever holds the awareness
+  required pending documentation, written by whoever holds the awareness —
+  the claimant has it written now when the creating session did not
   (`general/policy/documentation-discipline`). The record establishes the
   filing actor, originating session, observed human involvement and input
   version; it does not prove which sources or queries the creator consulted.
 
 - **Check intent by position.** `input` is the intent record for every kind,
   including work with a supplied plan. The first recipient other than its
-  author reads the originating conversation through
-  the configured runtime conversation read instruction and compares outcome-level
-  substance. Confirm the record, clarify expression without changing meaning,
+  author reads the human's actual originating conversation through
+  the configured runtime conversation read instruction — tracing past any
+  relaying or splitting session, and for a grouped child following its parent or
+  recorded origin pointer back to the root human conversation
+  (`general/policy/human-contract`) — and compares outcome-level substance.
+  Reading a relaying or splitting subagent's thread is not an intent check.
+  Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
-  Record `instrukt todo stamp <slug> --intent-checked` bound to that input
-  version, checker and conversation. A current check travels unchanged to
-  later recipients; role names and author membership are not substitutes for
-  the version-bound stamp. The check runs where the conversation is readable,
-  without copying it to GitHub. Unreadable evidence supplies no check, and an
-  author never independently checks their own compression. If the originating
-  conversation is permanently unavailable, return the intent to the human in the
-  responsible thread; a new `input` version from that conversation becomes the checkable
-  basis.
+  Record `instrukt todo stamp <slug> --intent-checked --conversation <origin-session>`
+  with the observed session of the human's originating conversation. The stamp
+  binds that conversation to the current `input` digest. A current check requires
+  both the current digest and the human's actual originating conversation. A
+  valid current check travels unchanged to later recipients. Check the
+  conversation where it is readable and leave its content in the runtime. Unreadable evidence
+  supplies no check, and an author never independently checks their own
+  compression. If the originating conversation is permanently unavailable,
+  return the intent to the human in the responsible thread; a new `input`
+  version from that conversation becomes the checkable basis.
 
 - **Repair before retiring.** Correct the project, input, missing
   documentation, dependencies, or other repairable omission in place. Retire
@@ -602,10 +613,12 @@ Each placement answers a different question about why work is not moving. A
 prerequisite clears itself when the todo it names delivers, so a hold standing
 for one waits on someone to remember it. A hold is the only record that keeps
 converged work in the lifecycle, paused, with the condition it waits on visible
-to everyone reading the work. The icebox takes work out of the lifecycle and
-records no condition, so converged work parked there drops out of the fleet's
-attention and is found again only by chance. Holding the work as it is created
-leaves no moment in which the runner can pick it up unheld. A hold whose
+to everyone reading the work. Contracts still to be written are work, not a
+forming outcome: held on the merge of the branch that carries them, the todo
+waits visibly on a named condition; unheld, its claimant has them written. Pending carriers on main need no
+open worktree: the todo's worktree is created when its orchestrator starts, so
+written-ahead work leaves no checkout waiting for a worker. Holding the work as
+it is created leaves no moment in which the runner can pick it up unheld. A hold whose
 evidence has arrived pauses work that is free to move; the coordinator is the
 one standing reader of every todo's hold, and releasing on the evidence the
 hold itself names applies the condition as recorded rather than judging it, so

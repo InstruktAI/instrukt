@@ -434,7 +434,7 @@ pub(super) fn missing_role_procedure(
         _ => "connectors".into(),
     };
     Finding {
-        document: Layer::Company(company.clone()).path(home),
+        document: Layer::Company(company.clone()).located(home),
         key,
         kind: FindingKind::InvalidValue,
         message: format!(
@@ -494,8 +494,8 @@ pub fn connector_procedure_finding(
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
     super::_layer::migrate_if_needed(home, layer)?;
-    let path = layer.path(home);
     let view = super::_layer::inspect_layer(home, layer)?;
+    let path = view.path;
     let Some(value) = view.value else {
         return Err(ConfigError::NoLayer {
             path,
@@ -504,7 +504,7 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
     };
     let mut findings = findings_for(home, layer, &path, &value)?;
     if let Layer::Company(name) = layer {
-        findings.extend(local_material(home, name)?);
+        findings.extend(super::_company_document::local_material(home, name, &path)?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
             && !entries.is_empty()
         {
@@ -547,44 +547,6 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         });
     }
     Ok(findings)
-}
-
-/// What the company home `name` keeps on the computer that its repository
-/// tracks or does not ignore, each a finding naming the path
-/// (`project/instrukt/spec/feature/configuration/company-homes`, "What
-/// stays out of the repository"). Nothing outside a git working tree.
-fn local_material(
-    home: &Home,
-    name: &crate::ids::ProjectSlug,
-) -> Result<Vec<Finding>, ConfigError> {
-    let dir = home.company_dir(name);
-    if crate::git::worktree_root(&dir)?.is_none() {
-        return Ok(Vec::new());
-    }
-    let mut found = Vec::new();
-    for line in super::_layer::COMPANY_IGNORED {
-        let relative = line.trim_matches('/');
-        let path = dir.join(relative);
-        let tracked = !crate::git::run(&dir, ["ls-files", "--", relative])?
-            .trim()
-            .is_empty();
-        let message = if tracked {
-            "the home's repository tracks it; it stays on this computer, so untrack it with `git rm -r --cached` and commit".to_owned()
-        } else if path.exists() && !crate::git::succeeds(&dir, ["check-ignore", "-q", relative])? {
-            format!(
-                "the home's repository does not ignore it; `instrukt config init --company {name}` adds its ignore line"
-            )
-        } else {
-            continue;
-        };
-        found.push(Finding {
-            document: path,
-            key: "repository".into(),
-            kind: FindingKind::LeavesTheComputer,
-            message,
-        });
-    }
-    Ok(found)
 }
 
 /// Validate the addressed layer using machine records, without other checkout reads.
@@ -662,6 +624,7 @@ pub(crate) fn judge(
         LayerKind::Project => {
             required_modules(value, &effective, &mut found);
             event_transport(&effective, &mut found);
+            found.extend(super::_identity::findings(value));
         }
         LayerKind::Global => {
             runner_runtime(value, &effective, &mut found);

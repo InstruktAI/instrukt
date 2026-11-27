@@ -3,7 +3,7 @@
 //! involvement as trailers, and the work item when given. What the
 //! environment does not resolve is left out, never guessed.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use crate::config::{Configuration, Env};
@@ -36,9 +36,6 @@ pub struct CommitRequest {
     pub human_involved: bool,
     /// The work item the commit belongs to.
     pub todo: Option<TodoSlug>,
-    /// Commit exactly these paths as they are in the working tree, leaving
-    /// the rest of the index as it is; empty commits what is staged.
-    pub only: Vec<PathBuf>,
 }
 
 /// The association a commit names with a work item.
@@ -65,26 +62,7 @@ pub fn commit(
         return Err(RepositoryError::CanonicalAuthoring);
     }
     let configuration = Configuration::load(home, Some(&root))?;
-    let author = match configuration.caller(env)? {
-        Some(caller) => match wiring
-            .session_role
-            .as_ref()
-            .map(|lookup| lookup.role(&caller))
-            .transpose()?
-            .flatten()
-        {
-            Some(role) => {
-                let actors = wiring.github_actors.as_ref().ok_or_else(|| {
-                    crate::github::AppError::Setup(
-                        "verified actor capability unavailable; configure github.apps".into(),
-                    )
-                })?;
-                Some(actors.actor(role.as_str())?.author())
-            }
-            None => agent_author(&configuration, env)?,
-        },
-        None => agent_author(&configuration, env)?,
-    };
+    let author = author(&configuration, env, wiring)?;
     let session = session(&configuration, env)?;
     let todo = match &request.todo {
         Some(slug) => Some(todo_trailer(&configuration, wiring, slug)?),
@@ -106,11 +84,7 @@ pub fn commit(
     if let Some(author) = &author {
         args.push(format!("--author={author}"));
     }
-    if request.only.is_empty() {
-        git::run_with_hooks(cwd, &args)?;
-    } else {
-        commit_only(cwd, &mut args, &request.only)?;
-    }
+    git::run_with_hooks(cwd, &args)?;
     let sha = CommitSha::parse(&git::run(cwd, ["rev-parse", "HEAD"])?)?;
     tracing::debug!(
         event = "commit_created",
@@ -118,61 +92,73 @@ pub fn commit(
         agent_author = author.is_some(),
         session = session.is_some(),
         human_involved = request.human_involved,
-        only_paths = request.only.len(),
         duration_ms = started.elapsed().as_millis() as u64,
     );
     Ok(sha)
 }
 
-/// Commits exactly `paths`: untracked ones are made known to the index
-/// (intent to add) so `--only` takes them, and made unknown again when the
-/// commit does not happen.
-fn commit_only(
-    cwd: &Path,
-    args: &mut Vec<String>,
-    paths: &[PathBuf],
-) -> Result<(), RepositoryError> {
-    let mut listing = vec![
-        "ls-files".to_owned(),
-        "-z".to_owned(),
-        "--others".to_owned(),
-        "--exclude-standard".to_owned(),
-        "--".to_owned(),
-    ];
-    listing.extend(paths.iter().map(|path| path.display().to_string()));
-    let untracked: Vec<String> = git::run(cwd, &listing)?
-        .split('\0')
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if !untracked.is_empty() {
-        let mut add = vec![
-            "add".to_owned(),
-            "--intent-to-add".to_owned(),
-            "--".to_owned(),
-        ];
-        add.extend(untracked.iter().cloned());
-        git::run(cwd, &add)?;
-    }
-    args.push("--only".into());
-    args.push("--".into());
-    args.extend(paths.iter().map(|path| path.display().to_string()));
-    let committed = git::run_with_hooks(cwd, &*args);
-    if committed.is_err() && !untracked.is_empty() {
-        let mut forget = vec![
-            "rm".to_owned(),
-            "--cached".to_owned(),
-            "--quiet".to_owned(),
-            "--ignore-unmatch".to_owned(),
-            "--".to_owned(),
-        ];
-        forget.extend(untracked);
-        if let Err(err) = git::run(cwd, &forget) {
-            tracing::warn!(event = "commit_index_not_restored", error = %err);
+/// The author of an attributed commit: the verified bot of the acting
+/// session's recorded role, else the acting agent's configured author;
+/// `None` when neither resolves, leaving git's own.
+fn author(
+    configuration: &Configuration,
+    env: &Env,
+    wiring: &CoreWiring,
+) -> Result<Option<String>, RepositoryError> {
+    let Some(caller) = configuration.caller(env)? else {
+        return agent_author(configuration, env);
+    };
+    match wiring
+        .session_role
+        .as_ref()
+        .map(|lookup| lookup.role(&caller))
+        .transpose()?
+        .flatten()
+    {
+        Some(role) => {
+            let actors = wiring.github_actors.as_ref().ok_or_else(|| {
+                crate::github::AppError::Setup(
+                    "verified actor capability unavailable; configure github.apps".into(),
+                )
+            })?;
+            Ok(Some(actors.actor(role.as_str())?.author()))
         }
+        None => agent_author(configuration, env),
     }
-    committed?;
-    Ok(())
+}
+
+/// Makes the root commit of the repository at `root` from everything its
+/// working tree holds, on the branch it stands on: the one commit instrukt
+/// composes on a default branch, because it creates that branch
+/// (`project/instrukt/spec/domain/repository`, Company home adoption). It
+/// is attributed as [`commit`] attributes, `Human-Involved:` as the caller
+/// declares it; the repository has no hooks to run.
+pub(super) fn root_commit(
+    home: &Home,
+    root: &Path,
+    env: &Env,
+    wiring: &CoreWiring,
+    message: &str,
+    human_involved: bool,
+) -> Result<CommitSha, RepositoryError> {
+    refuse_owned_trailers(message)?;
+    let configuration = Configuration::load(home, Some(root))?;
+    let author = author(&configuration, env, wiring)?;
+    let session = session(&configuration, env)?;
+    let message = compose(message, session.as_deref(), human_involved, None);
+    git::run(root, ["add", "--all"])?;
+    let mut args: Vec<String> = vec![
+        "commit".into(),
+        "--quiet".into(),
+        "--cleanup=whitespace".into(),
+        "--message".into(),
+        message,
+    ];
+    if let Some(author) = &author {
+        args.push(format!("--author={author}"));
+    }
+    git::run(root, &args)?;
+    Ok(CommitSha::parse(&git::run(root, ["rev-parse", "HEAD"])?)?)
 }
 
 /// Refuses a message with a line whose key is a trailer instrukt owns, in

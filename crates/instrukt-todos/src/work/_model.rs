@@ -219,8 +219,7 @@ impl TodoRecord {
         )
     }
 
-    /// Whether implementation has started (a build/review/verification/
-    /// finalize stamp or builder/fixer/finalizer binding exists).
+    /// Whether the record contains implementation evidence.
     pub fn implementation_started(&self) -> bool {
         self.stamps.iter().any(|s| {
             matches!(
@@ -231,10 +230,7 @@ impl TodoRecord {
                     | StampFact::VerificationDisposition { .. }
                     | StampFact::FinalizeReady { .. }
             )
-        }) || self
-            .bindings
-            .iter()
-            .any(|b| matches!(b.role.as_str(), "builder" | "fixer" | "finalizer"))
+        })
     }
 
     /// The next record-order number, for an artifact version or stamp

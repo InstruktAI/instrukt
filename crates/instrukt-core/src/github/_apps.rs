@@ -83,6 +83,15 @@ pub enum Operation {
     /// Publishing an automatic review's verdict on pull requests and
     /// commits, under the identity the `commit-reviewer` role selects.
     ReviewPublish,
+    /// Creating a company's repository in the owning organisation, making
+    /// its GitHub administrator an administrator of it and setting its
+    /// default branch, under the project identity's installation on that
+    /// organisation (`github-apps`, Company repositories).
+    CompanyRepository,
+    /// Opening a company knowledge proposal's pull request, under the
+    /// identity the `company-agent` role selects (`github-apps`, Company
+    /// repositories).
+    ProposalOpen,
 }
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AppError {

@@ -124,6 +124,10 @@ codes! {
     ReferenceDomainUnpublished => "reference-domain-unpublished",
     /// A published snippet referencing local material.
     ReferenceLocalFromPublished => "reference-local-from-published",
+    /// Any other Required reads or See Also entry naming a position its
+    /// snippet may not reference: references run upward only, from a
+    /// specific body toward the generic one.
+    ReferenceDirection => "reference-direction-invalid",
 
     // Baselines
     BaselineLineInvalid => "baseline-line-invalid",
@@ -146,7 +150,7 @@ codes! {
     IndexIdUnresolved => "index-id-unresolved",
     /// An id that names a pending snippet.
     IndexIdPending => "index-id-pending",
-    /// A domain's or the project's index naming an id of another position.
+    /// An index naming an id of another position.
     IndexIdForeign => "index-id-foreign",
     /// An `agents` key with invalid provider-name syntax.
     IndexAgentInvalid => "index-agent-invalid",

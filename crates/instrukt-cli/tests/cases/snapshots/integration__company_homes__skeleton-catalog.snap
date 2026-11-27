@@ -1,0 +1,25 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "on_main(&env, &remote, \".claude-plugin/marketplace.json\")"
+---
+{
+  "name": "acme",
+  "owner": {
+    "name": "Acme"
+  },
+  "plugins": [
+    {
+      "name": "acme",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./skills/acme"
+      ],
+      "version": "0.1.0",
+      "description": "The knowledge of Acme, as the company keeps it in its own repository.",
+      "author": {
+        "name": "Acme"
+      }
+    }
+  ]
+}

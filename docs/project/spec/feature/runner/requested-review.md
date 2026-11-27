@@ -58,8 +58,7 @@ directs. A source pointer adds to what the reviewer reads and removes nothing
 from it (`sdlc/procedure/lifecycle/work/review-commits`).
 
 The pinned base of a requested review is the pinned base work admits the
-head's verdict against (`project/instrukt/spec/feature/work/github-apps`,
-Admission of review evidence, Range). For a head that shares history with the
+head's verdict against (`project/instrukt/spec/feature/work/github-apps`). For a head that shares history with the
 project's canonical branch and has had no review request, that is its merge
 base with the canonical branch, as the review procedure pins a one-off
 candidate (`sdlc/procedure/lifecycle/work/review-commits`). The runner reads it
@@ -73,11 +72,10 @@ from work and derives none of its own.
 | Re-review of a revised head | The prior report, no disposition file | None stands here, and none was handed off. |
 | Dispute of findings on an unchanged head | The prior report and the disposition file | It stands here, and its current version was recorded by this head's requested reviewer (Starting the reviewer). |
 
-The head's verdict here is the head verdict work's Settlement row reads: one
+The head's verdict here is the head verdict work records for this computer: one
 that stands here with the session that recorded its current version, one an
 export handed off, or none
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence, Settlement). A head whose verdict was handed off admits no ask of
+(`project/instrukt/spec/feature/work/github-apps`). A head whose verdict was handed off admits no ask of
 any kind, because work admits no further version of it here. A derived
 approval and a verdict recognised as already published are no head verdict
 and decide no kind of ask.
@@ -96,10 +94,10 @@ asked for.
 | Placement | The worktree is the project's registered checkout or a linked worktree of it, the named branch is checked out in it, and that branch's head is the named head. The report destination lies outside the worktree, in a directory that exists; a prior report and a disposition file are files that exist. | What the repository or the file system shows instead. |
 | Cleanliness | The worktree holds no uncommitted change. | That the worktree is not clean. The door is committing or removing the change. |
 | Range | The head is a commit of the repository that shares history with the project's canonical branch, and the named base is the pinned base. | The pinned base, or that the head shares no history with the canonical branch. |
-| Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`, Admission of review evidence, Settlement). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
-| Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`, One review per commit). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
+| Review state | The head's verdict on this computer is as its kind of ask requires (Kinds of ask), read from work (`project/instrukt/spec/feature/work/github-apps`). | The verdict that stands, the session that recorded its current version and `instrukt review show`; for a verdict handed off, the export and its door (`project/instrukt/spec/feature/work/github-apps`). |
+| Request | The commit has no live review request: none is queued, selected or handed over (`project/instrukt/spec/feature/runner/pull-request-review`). | The request with its standing, and the session that holds it once it was handed over. The door is that request's review, seen with `instrukt review show`. |
 | Outstanding | No ask of the head is outstanding, and the head's requested reviewer has no turn in progress (Starting the reviewer). The same ask repeated while it is outstanding is not refused: it returns that ask. | The outstanding ask or the turn in progress, and its reviewer session. |
-| Runtime | The selected runtime starts a session under a fixed key, sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`, Runtime choice and feature availability). | The runtime and the capability it lacks. |
+| Runtime | The selected runtime starts a session under a fixed key (attaching an existing linked worktree when the candidate lives in one), sends it input under a fixed command identity whose acceptance it reports afterwards, and reports whether the session has a turn in progress (`project/instrukt/spec/feature/runner/session-continuity`). | The runtime and the capability it lacks. |
 | Procedure | `sdlc/procedure/lifecycle/work/review-commits` is active in the project's published set and declares the `commit-reviewer` role. | The procedure and what the published set shows instead. |
 
 A refused ask starts no reviewer, sends nothing and records nothing.
@@ -107,9 +105,8 @@ A refused ask starts no reviewer, sends nothing and records nothing.
 ### The reviewer's assignment
 
 instrukt renders the assignment from the admitted coordinates in one fixed
-wording, as a runner-authored assignment input
-(`project/instrukt/spec/feature/runner/conversation-links`, `[Instrukt
-Assignment]`). It holds, in this order:
+wording, as a runner-authored `[Instrukt Assignment]` control frame. It holds,
+in this order:
 
 1. the procedure the reviewer executes, `sdlc/procedure/lifecycle/work/review-commits`,
    read with its closure, for the one-off worktree review it describes;
@@ -128,18 +125,18 @@ asks for on its own initiative, under the role that procedure declares
 (`sdlc/procedure/lifecycle/work/review-commits`), and covers the commits after
 the pinned base up to the exact head. The reviewer is independent of the
 candidate's authors as its procedure and the admission of its verdict require
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence): it is a session instrukt started for this head, and its role
+(`project/instrukt/spec/feature/work/github-apps`): it is a session instrukt started for this head, and its role
 commits nothing.
 
 ### Starting the reviewer
 
 Each head asked for has one requested reviewer: an instrukt-owned session under
 the start key `instrukt:review:<encoded-project>:<head>`
-(`project/instrukt/spec/feature/runner/session-continuity`, Start keys and
-locks), started in the project's registered checkout under the role
-`commit-reviewer`. The ask holds that key's lock from admission to the
-runtime's acceptance.
+(`project/instrukt/spec/feature/runner/session-continuity`), started in the
+candidate's worktree — attaching it as an existing worktree of the project's
+registered checkout when it is a linked worktree, or in the registered checkout
+when the candidate lives there — under the role `commit-reviewer`. The ask
+holds that key's lock from admission to the runtime's acceptance.
 
 | The head's requested reviewer | What an admitted ask does |
 | --- | --- |
@@ -155,22 +152,22 @@ is a new head and has its own requested reviewer.
 
 A start is the keyed start of session-continuity, whose identities are fixed
 by the start key and generation before anything reaches the runtime
-(`project/instrukt/spec/feature/runner/session-continuity`, Keyed dispatch and
-recovery). A send carries a command identity derived from the start key, the
+(`project/instrukt/spec/feature/runner/session-continuity`). A send carries a command identity derived from the start key, the
 generation it is sent to and the ask, recorded with the ask before anything
 reaches the runtime. The runtime keeps a repeated command identity from
 opening a second turn.
 
 ### Beside review requests
 
-A requested review holds no review request, so work admits its verdict as a
-one-off review's (`project/instrukt/spec/feature/work/github-apps`, Admission
-of review evidence, Request). The ask is refused while the commit has a live
-review request, because work then admits only that request's reviewer. The
-runner's own decisions do not read requested reviews: a commit that becomes
-owed while its requested reviewer works is asked for as any other owed commit
-(`project/instrukt/spec/feature/runner/pull-request-review`, Review requests),
-and from then on only that request's reviewer records its verdict.
+A requested review holds no review request; work admits its verdict under the
+same head-verdict rules as any other review
+(`project/instrukt/spec/feature/work/github-apps`). The ask is refused while the
+commit has a live review request
+(`project/instrukt/spec/feature/runner/pull-request-review`). The runner's own
+decisions do not read requested reviews: a commit that becomes owed while its
+requested reviewer works is asked for as any other owed commit
+(`project/instrukt/spec/feature/runner/pull-request-review`), and the first
+verdict recorded settles the commit.
 
 ### What the requester receives
 
@@ -184,7 +181,7 @@ records its verdict. The reply does not wait for the review.
 When the runtime does not accept the start or the send within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
 It replays the ask with the identities the first one recorded
-(`project/instrukt/policy/checks-and-guards`). A send is sent again under its
+(`project/instrukt/spec/feature/runner/session-continuity`). A send is sent again under its
 command identity, which the runtime accepts once: a send it already accepted
 opens no second turn and is reported accepted
 (`project/instrukt/spec/feature/runner/t3-contract`). Nothing recognises a send
@@ -195,8 +192,7 @@ that command replays an ask; nothing in the background delivers it.
 
 Asking for a review records no verdict and no review evidence. The reviewer
 records its verdict with `instrukt review record`, admitted under the rules
-that bind every head verdict (`project/instrukt/spec/feature/work/github-apps`,
-Admission of review evidence), and returns its outcome as its procedure
+that bind every head verdict (`project/instrukt/spec/feature/work/github-apps`), and returns its outcome as its procedure
 directs.
 
 ### Re-review
@@ -204,11 +200,9 @@ directs.
 A revised candidate is a new head. Its review is asked for as that head's, and
 names the prior report. A dispute of findings without a new commit names the
 unchanged head, the prior report and the disposition file, and is sent to that
-head's requested reviewer, the session that recorded its verdict. That session
-judges it under its procedure; the turn the dispute opened is no review
-request's, so a revised verdict it records is admitted as a revision
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence, Settlement). Both carry coordinates only.
+head's requested reviewer, the session that recorded its verdict. That session judges it under its procedure and may revise the verdict it
+recorded while that verdict stands locally
+(`project/instrukt/spec/feature/work/github-apps`). Both carry coordinates only.
 
 ### Requested review records
 
@@ -221,14 +215,14 @@ The runner keeps each admitted ask in a store of its own.
 | Property | Value |
 | --- | --- |
 | Holds | Per project and head: each admitted ask with its kind, its coordinates, its rendering and that rendering's SHA-256 digest, the requested reviewer's start key, whether a start or a send delivers it, a send's command identity, the generation it reached, and when it was admitted and accepted. |
-| Nature | Authoritative: the requested reviewer's assignment, from which its role, project and placement resolve (`project/instrukt/spec/feature/configuration/roles-and-capabilities`, Caller and object resolution), and the only record of which session a dispute of the head goes to. |
+| Nature | Authoritative: the requested reviewer's assignment, from which its role, project and placement resolve (`project/instrukt/spec/feature/configuration/roles-and-capabilities`), and the only record of which session a dispute of the head goes to. |
 | Owner | The runner; written only by `instrukt review start`. |
 | Loss cost | The requested reviewer resolves no assignment and records no verdict, and a dispute of its head can no longer be asked for: lost intent. |
 | Medium | A SQLite database of its own with its own migrations: the asks grow with every head asked for, are read by head and by start key, and a head's asks change together. |
-| Write isolation | Its own lock, taken only by `instrukt review start` and held for each of that command's transactions, never while the command waits on the runtime or takes the state database's writer lock. No background writer takes it, and no write to this store takes the writer lock (`sdlc/policy/state-storage`, Write isolation follows contention). Readers, the requested reviewer's assignment resolution among them, take no lock. |
+| Write isolation | Its own lock, taken only by `instrukt review start` and held for each of that command's transactions, never while the command waits on the runtime or takes the state database's writer lock. No background writer takes it, and no write to this store takes the writer lock (`sdlc/policy/state-storage`). Readers, the requested reviewer's assignment resolution among them, take no lock. |
 | Recording | The ask, with a send's command identity, is recorded before its start or send reaches the runtime, and its acceptance and generation once the runtime accepted it. The start key joins it to the runner's runtime binding, which the keyed start records in the state database as every keyed start does. |
-| Scope | One computer: the requested reviewer runs on this computer's runtime. Moving review evidence between computers moves no ask (`project/instrukt/spec/feature/work/github-apps`, Evidence when the serving computer changes). |
-| Lifecycle | A head's asks are current while the canonical branch does not contain the head, and history once it does. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`, Review evidence storage), inside `instrukt review start`. |
+| Scope | One computer: the requested reviewer runs on this computer's runtime. Moving review evidence between computers moves no ask (`project/instrukt/spec/feature/work/github-apps`). |
+| Lifecycle | A head's asks are current while the canonical branch does not contain the head, and history once it does. History is retired after the retention period of review evidence history (`project/instrukt/spec/feature/work/github-apps`), inside `instrukt review start`. |
 
 ## Use cases
 
@@ -279,15 +273,13 @@ And when the reviewer later records a revised verdict for that head, the agent r
   untrusted data (`sdlc/procedure/lifecycle/work/review-commits`).
 - A session can still start a reviewer by other means. Such a review is no
   requested review: nothing checks its assignment, and its verdict is admitted
-  under the same rules (`project/instrukt/spec/feature/work/github-apps`,
-  Admission of review evidence).
+  under the same rules (`project/instrukt/spec/feature/work/github-apps`).
 - The requested reviewer is a native session. Input another session sends it
   through the runtime is not part of its assignment, and its procedure reads it
   as untrusted data.
 - A commit that becomes owed under automatic review while its requested
-  reviewer works is reviewed twice. The verdict recorded first settles it; when
-  the review request is live first, the requested reviewer's verdict is refused
-  and names that request.
+  reviewer works is reviewed twice; the verdict recorded first settles it
+  (`project/instrukt/spec/feature/work/github-apps`).
 - A dispute reaches only the requested reviewer that recorded the verdict.
   Once that session is archived or deleted, or when the verdict was recorded
   by a reviewer started by other means, a dispute is refused and a revised

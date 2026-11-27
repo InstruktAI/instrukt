@@ -1,4 +1,5 @@
-//! Work-owned verified actors and bounded installation credentials.
+//! Work-owned verified actors and bounded installation credentials backed by
+//! [`octocrab`] App authentication and [`instrukt_outside::Gate`].
 use instrukt_core::{
     config::{Agents, Configuration},
     github::{App, AppError, Bot, Credential, Operation},
@@ -7,81 +8,52 @@ use instrukt_core::{
 use jiff::Timestamp;
 use serde_json::{Value, json};
 use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::{Arc, Mutex},
+    collections::{BTreeMap, BTreeSet, HashMap},
+    sync::{Arc, Mutex, PoisonError},
     time::{Duration, Instant},
 };
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 fn setup(cause: &str) -> AppError {
     AppError::Setup(cause.into())
 }
 
-/// A caller's `now` carried forward on the monotonic clock, so each GitHub
-/// answer is dated when it is received, not when the work that awaited it
-/// began. Its wall time and monotonic origin are taken together, once, where
-/// the caller samples `now`; every client and issuance of that pass carries
-/// this one value, so waiting on the capability lock is never left out.
+/// A caller's `now` carried forward on the monotonic clock so each GitHub
+/// answer is dated when received.
 #[derive(Clone, Copy)]
 pub(crate) struct Clock {
     start: Timestamp,
     started: Instant,
 }
 impl Clock {
-    /// Anchors `start`, just sampled, to this instant.
     pub(crate) fn starting(start: Timestamp) -> Self {
         Self {
             start,
             started: Instant::now(),
         }
     }
-    /// The present moment, exact to the nanosecond: a stored deadline has
-    /// arrived only once this reaches it. Rounding a relative wait into a
-    /// deadline is [`super::_github::Limits`]'s, never the clock's.
     fn now(&self) -> Timestamp {
         self.checked_now().unwrap_or(Timestamp::MAX)
     }
-    /// [`Clock::now`], or `None` past the representable range.
     pub(super) fn checked_now(&self) -> Option<Timestamp> {
-        carried(self.start, self.started.elapsed())
+        jiff::SignedDuration::try_from(self.started.elapsed())
+            .ok()
+            .and_then(|elapsed| self.start.checked_add(elapsed).ok())
     }
 }
 
-/// `start` carried forward by `elapsed` on the monotonic clock, exactly: no
-/// fraction of a second is dropped or added. `None` past the representable
-/// range.
-pub(super) fn carried(start: Timestamp, elapsed: Duration) -> Option<Timestamp> {
-    jiff::SignedDuration::try_from(elapsed)
-        .ok()
-        .and_then(|elapsed| start.checked_add(elapsed).ok())
-}
-
-/// Each App's issuance deferral: the instant GitHub permits that App's next
-/// request after throttling it. It is shared by every repository and
-/// operation the App serves.
-#[derive(Default)]
-struct Deferrals(BTreeMap<u64, Timestamp>);
-impl Deferrals {
-    /// The deferral of `app` still in force at the exact moment `now`: one
-    /// whose instant has not yet arrived.
-    fn until(&self, app: u64, now: Timestamp) -> Option<Timestamp> {
-        self.0.get(&app).copied().filter(|until| *until > now)
-    }
-    /// Remembers the retry boundary of a throttled issuance of `app`.
-    fn record(&mut self, app: u64, error: &AppError) {
-        if let AppError::RateLimited { until: Some(until) } = error {
-            self.0.insert(app, *until);
-        }
-    }
-}
 #[derive(Clone, Copy)]
-enum Method {
-    Get,
+pub(super) enum Method {
     Post,
+    Patch,
+    Put,
 }
 
 /// One invocation's work-owned GitHub capabilities. The CLI shares this object
 /// between work, repository and runner; no credential or key is persisted.
 pub struct GitHubAccess {
-    home: Home,
+    pub(super) home: Home,
     state: Mutex<Option<Apps>>,
 }
 impl GitHubAccess {
@@ -91,7 +63,7 @@ impl GitHubAccess {
             state: Mutex::new(None),
         }
     }
-    fn with_apps<T>(
+    pub(super) fn with_apps<T>(
         &self,
         action: impl FnOnce(&mut Apps) -> Result<T, AppError>,
     ) -> Result<T, AppError> {
@@ -100,10 +72,10 @@ impl GitHubAccess {
             .lock()
             .map_err(|_| setup("GitHub capability lock failed"))?;
         let current = Apps::load(&self.home)?;
-        let unchanged = state
+        if !state
             .as_ref()
-            .is_some_and(|apps| apps.api == current.api && apps.identity == current.identity);
-        if !unchanged {
+            .is_some_and(|apps| apps.api == current.api && apps.identity == current.identity)
+        {
             *state = Some(current);
         }
         action(
@@ -114,6 +86,9 @@ impl GitHubAccess {
     }
     pub(crate) fn validate(&self) -> Result<(), AppError> {
         self.with_apps(|_| Ok(()))
+    }
+    pub(crate) fn gate(&self) -> Result<instrukt_outside::Gate, AppError> {
+        self.with_apps(|apps| Ok(apps.gate.clone()))
     }
     pub(crate) fn begin_pass(&self) -> Result<(), AppError> {
         let mut state = self
@@ -137,9 +112,6 @@ impl GitHubAccess {
     ) -> Result<Arc<Credential>, AppError> {
         self.with_apps(|apps| apps.issue(repository, role, operation, clock))
     }
-    /// The configured App bots trusted as pull-request authors and the bot
-    /// of the identity the `commit-reviewer` role selects, from the
-    /// machine's recorded configuration without a request.
     pub(crate) fn review_identities(
         &self,
     ) -> Result<instrukt_runner::interfaces::ReviewIdentities, AppError> {
@@ -160,34 +132,49 @@ impl GitHubAccess {
             reviewer,
         })
     }
-    /// A client of `repository` under the publication credential of the
-    /// identity the `commit-reviewer` role selects. `clock` is read here, as
-    /// issuance begins, never earlier in the caller's pass.
     pub(crate) fn review_client(
         &self,
         repository: &str,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<super::_github::GitHub, AppError> {
+        self.role_client(
+            repository,
+            instrukt_core::config::REVIEW_ROLE,
+            Operation::ReviewPublish,
+            clock,
+        )
+    }
+    pub(crate) fn proposal_client(
+        &self,
+        repository: &str,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<super::_github::GitHub, AppError> {
+        self.role_client(
+            repository,
+            instrukt_core::config::COMPANY_AGENT_ROLE,
+            Operation::ProposalOpen,
+            clock,
+        )
+    }
+    fn role_client(
+        &self,
+        repository: &str,
+        role: &str,
+        operation: Operation,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<super::_github::GitHub, AppError> {
         let clock = Clock::starting(clock());
         self.with_apps(|apps| {
-            let credential = apps.issue(
-                repository,
-                Some(instrukt_core::config::REVIEW_ROLE),
-                Operation::ReviewPublish,
-                clock,
-            )?;
-            Ok(super::_github::GitHub::new(
-                &apps.api,
-                repository,
-                credential.token().to_owned(),
-            ))
+            let credential = apps.issue(repository, Some(role), operation, clock)?;
+            Ok(
+                super::_github::GitHub::new(&apps.api, repository, credential.token().to_owned())
+                    .with_gate(apps.gate.clone()),
+            )
         })
     }
 }
 impl instrukt_core::interfaces::GitHubActors for GitHubAccess {
     fn actor(&self, role: &str) -> Result<Bot, AppError> {
-        // Setup records the verified stable bot tuple in machine configuration.
-        // Local attribution consumes those facts; it grants no remote access.
         let config = Configuration::load_global(&self.home)
             .map_err(|_| setup("cannot read machine-global configuration"))?;
         Ok(IdentitySettings::read(&config, &self.home)?
@@ -223,10 +210,10 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
         self.with_apps(|apps| {
             let record = apps.issue(repository, None, Operation::Record, clock)?;
             apps.verified_bots(repository, clock)?;
-            let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into());
+            let gh = super::_github::GitHub::new(&apps.api, repository, record.token().into())
+                .with_gate(apps.gate.clone());
             let inspect = || -> Result<(), super::GitHubError> {
-                let repository = gh.read("")?;
-                if repository["has_issues"] == false {
+                if gh.read("")?["has_issues"] == false {
                     return Err(setup("repository issues are disabled").into());
                 }
                 let issues = gh.list("/issues?state=all")?;
@@ -241,7 +228,8 @@ impl instrukt_runner::interfaces::GitHubReadiness for GitHubAccess {
             };
             inspect().map_err(readiness_error)?;
             let account = apps.issue(repository, None, Operation::Board, clock)?;
-            let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into());
+            let gh = super::_github::GitHub::new(&apps.api, repository, account.token().into())
+                .with_gate(apps.gate.clone());
             super::_board::inspect(&gh, board).map_err(readiness_error)
         })
     }
@@ -257,23 +245,37 @@ fn readiness_error(error: super::GitHubError) -> AppError {
     }
 }
 
-fn permissions(operation: Operation) -> Value {
+fn permissions_list(operation: Operation) -> &'static [(&'static str, &'static str)] {
     match operation {
-        Operation::Record => json!({"issues":"write","contents":"read","pull_requests":"read"}),
-        Operation::Author => json!({"contents":"write","pull_requests":"write"}),
-        Operation::Review => json!({"contents":"read","pull_requests":"write"}),
-        Operation::Board => json!({"organization_projects":"write"}),
-        Operation::Observe => json!({"checks":"read","statuses":"read","contents":"read"}),
-        Operation::ReviewObserve => json!({"pull_requests":"read"}),
-        Operation::ReviewPublish => json!({"pull_requests":"write","statuses":"write"}),
+        Operation::Record => &[
+            ("issues", "write"),
+            ("contents", "read"),
+            ("pull_requests", "read"),
+        ],
+        Operation::Author => &[("contents", "write"), ("pull_requests", "write")],
+        Operation::Review => &[("contents", "read"), ("pull_requests", "write")],
+        Operation::Board => &[("organization_projects", "write")],
+        Operation::Observe => &[
+            ("checks", "read"),
+            ("statuses", "read"),
+            ("contents", "read"),
+        ],
+        Operation::ReviewObserve => &[("pull_requests", "read")],
+        Operation::ReviewPublish => &[("pull_requests", "write"), ("statuses", "write")],
+        Operation::CompanyRepository => &[("administration", "write")],
+        Operation::ProposalOpen => &[("pull_requests", "write"), ("contents", "read")],
     }
 }
 
-/// The identity whose credential automatic review could not be issued.
+fn permissions_map(operation: Operation) -> HashMap<String, String> {
+    permissions_list(operation)
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect()
+}
+
 struct Unready {
-    /// Which identity, in plain words.
     identity: &'static str,
-    /// Its App's slug, when the configuration names one.
     app: Option<String>,
     operation: Operation,
     error: AppError,
@@ -285,24 +287,23 @@ impl instrukt_core::interfaces::AutomaticReviewReadiness for GitHubAccess {
         repository: &str,
         now: Timestamp,
     ) -> instrukt_core::interfaces::ReviewReadiness {
-        use instrukt_core::interfaces::ReviewReadiness;
         let clock = Clock::starting(now);
         let answer = self.with_apps(|apps| {
-            let unready = |apps: &Apps, identity, role, operation, error| Unready {
+            let fail = |apps: &Apps, identity, role, operation, error| Unready {
                 identity,
                 app: Some(apps.selected(role).slug.clone()),
                 operation,
                 error,
             };
             let observation = match apps.issue(repository, None, Operation::ReviewObserve, clock) {
-                Ok(credential) => credential,
-                Err(error) => {
-                    return Ok(Err(unready(
+                Ok(cred) => cred,
+                Err(err) => {
+                    return Ok(Err(fail(
                         apps,
                         "project",
                         None,
                         Operation::ReviewObserve,
-                        error,
+                        err,
                     )));
                 }
             };
@@ -310,53 +311,96 @@ impl instrukt_core::interfaces::AutomaticReviewReadiness for GitHubAccess {
             Ok(
                 match apps.issue(repository, role, Operation::ReviewPublish, clock) {
                     Ok(_) => Ok(observation),
-                    Err(error) => Err(unready(
-                        apps,
-                        "reviewer",
-                        role,
-                        Operation::ReviewPublish,
-                        error,
-                    )),
+                    Err(err) => Err(fail(apps, "reviewer", role, Operation::ReviewPublish, err)),
                 },
             )
         });
-        let unready = match answer {
-            Ok(Ok(observation)) => return ReviewReadiness::Met { observation },
-            Ok(Err(unready)) => unready,
-            Err(error) => Unready {
-                identity: "configured",
-                app: None,
-                operation: Operation::ReviewObserve,
-                error,
-            },
-        };
-        match &unready.error {
-            AppError::Unreachable | AppError::RateLimited { .. } => {
-                return ReviewReadiness::CannotAsk(unready.error.to_string());
-            }
-            AppError::Refused { status, .. } if *status >= 500 => {
-                return ReviewReadiness::CannotAsk(unready.error.to_string());
-            }
-            _ => {}
-        }
-        let needed = permissions(unready.operation)
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(name, level)| format!("{name}: {}", level.as_str().unwrap_or_default()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let app = unready
-            .app
-            .map(|slug| format!(" App `{slug}`"))
-            .unwrap_or_default();
-        tracing::info!(event = "review_readiness_unmet", repository, identity = unready.identity, error = %unready.error);
-        ReviewReadiness::Unmet(format!(
-            "the {} identity's{app} cannot do its part for automatic review on {repository}: {}; grant its installation on {repository} {needed}",
-            unready.identity, unready.error
-        ))
+        readiness_result(
+            answer,
+            repository,
+            "automatic review",
+            "review_readiness_unmet",
+            Operation::ReviewObserve,
+        )
     }
 }
+
+impl instrukt_core::interfaces::ProposalReadiness for GitHubAccess {
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        let clock = Clock::starting(now);
+        let role = Some(instrukt_core::config::COMPANY_AGENT_ROLE);
+        let answer = self.with_apps(|apps| {
+            Ok(
+                match apps.issue(repository, role, Operation::ProposalOpen, clock) {
+                    Ok(cred) => Ok(cred),
+                    Err(error) => Err(Unready {
+                        identity: "company agent",
+                        app: Some(apps.selected(role).slug.clone()),
+                        operation: Operation::ProposalOpen,
+                        error,
+                    }),
+                },
+            )
+        });
+        readiness_result(
+            answer,
+            repository,
+            "knowledge proposals",
+            "proposal_readiness_unmet",
+            Operation::ProposalOpen,
+        )
+    }
+}
+
+fn readiness_result(
+    answer: Result<Result<Arc<Credential>, Unready>, AppError>,
+    repository: &str,
+    purpose: &str,
+    event: &'static str,
+    fallback_operation: Operation,
+) -> instrukt_core::interfaces::ReviewReadiness {
+    use instrukt_core::interfaces::ReviewReadiness;
+    let unready = match answer {
+        Ok(Ok(observation)) => return ReviewReadiness::Met { observation },
+        Ok(Err(unready)) => unready,
+        Err(error) => Unready {
+            identity: "configured",
+            app: None,
+            operation: fallback_operation,
+            error,
+        },
+    };
+    match &unready.error {
+        AppError::Unreachable | AppError::RateLimited { .. } => {
+            return ReviewReadiness::CannotAsk(unready.error.to_string());
+        }
+        AppError::Refused { status, .. } if *status >= 500 => {
+            return ReviewReadiness::CannotAsk(unready.error.to_string());
+        }
+        _ => {}
+    }
+    let mut perms: Vec<_> = permissions_map(unready.operation).into_iter().collect();
+    perms.sort_by(|a, b| a.0.cmp(&b.0));
+    let needed = perms
+        .into_iter()
+        .map(|(name, level)| format!("{name}: {level}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let app = unready
+        .app
+        .map(|slug| format!(" App `{slug}`"))
+        .unwrap_or_default();
+    tracing::info!(event, repository, identity = unready.identity, error = %unready.error);
+    ReviewReadiness::Unmet(format!(
+        "the {} identity's{app} cannot do its part for {purpose} on {repository}: {}; grant its installation on {repository} {needed}",
+        unready.identity, unready.error
+    ))
+}
+
 #[derive(PartialEq, Eq)]
 struct IdentitySettings {
     apps: BTreeMap<String, App>,
@@ -390,9 +434,6 @@ impl IdentitySettings {
             roles,
         })
     }
-    /// The App a recorded `role` selects: the `github_app` of the role
-    /// configuration says now governs it (a retired split orchestrator's
-    /// work selects `todo-orchestrator`'s), else the project App.
     fn selected(&self, role: Option<&str>) -> &App {
         let name = role
             .map(instrukt_core::config::current_role)
@@ -401,12 +442,13 @@ impl IdentitySettings {
         &self.apps[name]
     }
 }
-struct Apps {
+
+pub(super) struct Apps {
     home: Home,
     api: String,
     identity: IdentitySettings,
-    agent: ureq::Agent,
-    auth_deferrals: Deferrals,
+    gate_clock: Arc<Mutex<Clock>>,
+    gate: instrukt_outside::Gate,
     actors: BTreeMap<String, Bot>,
     verified_apps: BTreeSet<u64>,
     installations: BTreeMap<(String, u64), Value>,
@@ -417,35 +459,30 @@ impl Apps {
         let config = Configuration::load_global(home)
             .map_err(|_| setup("cannot read machine-global configuration"))?;
         let identity = IdentitySettings::read(&config, home)?;
-        let api = config
-            .github_api_url()
-            .map_err(|_| setup("cannot read github.api_url"))?
-            .to_owned();
-        let url = url::Url::parse(&api).map_err(|_| setup("invalid github.api_url"))?;
-        if url.scheme() != "https"
-            && !(url.scheme() == "http"
-                && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
-        {
-            return Err(setup(
-                "github.api_url requires HTTPS (HTTP only on loopback)",
-            ));
-        }
+        let api = api_base(&config)?;
+        let gate_clock = Arc::new(Mutex::new(Clock::starting(Timestamp::now())));
+        let reader = gate_clock.clone();
+        let gate = instrukt_outside::Gate::new(
+            Arc::new(move || reader.lock().unwrap_or_else(PoisonError::into_inner).now()),
+            Arc::new(Instant::now),
+            instrukt_outside::Report::log(),
+        );
         Ok(Self {
             home: home.clone(),
-            api: api.trim_end_matches('/').into(),
+            api,
             identity,
-            agent: agent(),
-            auth_deferrals: Default::default(),
+            gate_clock,
+            gate,
             actors: Default::default(),
             verified_apps: Default::default(),
             installations: Default::default(),
             credentials: Default::default(),
         })
     }
-    fn selected(&self, role: Option<&str>) -> &App {
+    pub(super) fn selected(&self, role: Option<&str>) -> &App {
         self.identity.selected(role)
     }
-    fn issue(
+    pub(super) fn issue(
         &mut self,
         repository: &str,
         role: Option<&str>,
@@ -455,10 +492,10 @@ impl Apps {
         let now = clock.now();
         let app = self.selected(role).clone();
         let key = (repository.to_owned(), app.app_id, operation);
-        if let Some(until) = self.auth_deferrals.until(app.app_id, now) {
-            return Err(AppError::RateLimited { until: Some(until) });
-        }
-
+        *self
+            .gate_clock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = clock;
         if let Some(credential) = self
             .credentials
             .get(&key)
@@ -467,17 +504,85 @@ impl Apps {
             return Ok(credential.clone());
         }
         let renewal = self.credentials.contains_key(&key);
-        let start = std::time::Instant::now();
-        let result = self
-            .issue_uncached(repository, &app, operation, clock)
-            .map(Arc::new);
-        tracing::debug!(event="github_credential_acquired",app_id=app.app_id,app_slug=%app.slug,repository,operation=?operation,outcome=if result.is_err(){"failed"}else if renewal{"renewed"}else{"issued"},duration_ms=u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX));
+        let start = Instant::now();
+        let gate = self.gate.clone();
+        let gate_key = instrukt_outside::Key::new("github-app", [self.api.as_str()])
+            .item(app.app_id.to_string());
+        let attempt = gate.attempt(
+            &gate_key,
+            &instrukt_outside::Settings::default(),
+            || match self
+                .issue_uncached(repository, &app, operation, clock)
+                .map(Arc::new)
+            {
+                Ok(credential) => instrukt_outside::Tried::Done(credential),
+                Err(error @ AppError::RateLimited { until }) => {
+                    instrukt_outside::Tried::Unavailable(
+                        instrukt_outside::Unavailable {
+                            reason: instrukt_outside::Reason::RateLimited,
+                            extent: instrukt_outside::Extent::Key,
+                            named: until.map(instrukt_outside::Named::At),
+                        },
+                        error,
+                    )
+                }
+                Err(error @ AppError::Unreachable) => instrukt_outside::Tried::Unavailable(
+                    instrukt_outside::Unavailable {
+                        reason: instrukt_outside::Reason::Unreachable,
+                        extent: instrukt_outside::Extent::Scope,
+                        named: None,
+                    },
+                    error,
+                ),
+                Err(error @ AppError::Refused { status, .. }) if status >= 500 => {
+                    instrukt_outside::Tried::Unavailable(
+                        instrukt_outside::Unavailable {
+                            reason: instrukt_outside::Reason::Unavailable {
+                                status: Some(status),
+                            },
+                            extent: instrukt_outside::Extent::Scope,
+                            named: None,
+                        },
+                        error,
+                    )
+                }
+                Err(error) => instrukt_outside::Tried::Defect(error),
+            },
+        );
+        let result = match attempt {
+            instrukt_outside::Attempted::Done(credential) => Ok(credential),
+            instrukt_outside::Attempted::Defect(error) => Err(error),
+            instrukt_outside::Attempted::Wait {
+                error: Some(error), ..
+            } => Err(error),
+            instrukt_outside::Attempted::Wait { wait, error: None } => {
+                if wait.reason() == instrukt_outside::Reason::RateLimited {
+                    Err(AppError::RateLimited {
+                        until: Some(wait.at()),
+                    })
+                } else {
+                    Err(AppError::Unreachable)
+                }
+            }
+        };
+        tracing::debug!(
+            event = "github_credential_acquired",
+            app_id = app.app_id,
+            app_slug = %app.slug,
+            repository,
+            operation = ?operation,
+            outcome = if result.is_err() {
+                "failed"
+            } else if renewal {
+                "renewed"
+            } else {
+                "issued"
+            },
+            duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX),
+        );
         if result.is_err() {
             self.installations
                 .remove(&(repository.to_owned(), app.app_id));
-        }
-        if let Err(error) = &result {
-            self.auth_deferrals.record(app.app_id, error);
         }
         if let Ok(credential) = &result {
             self.credentials.insert(key, credential.clone());
@@ -491,17 +596,20 @@ impl Apps {
         op: Operation,
         clock: Clock,
     ) -> Result<Credential, AppError> {
-        let now = clock.now();
-        let key = instrukt_core::config::resolve_secret(&self.home, &app.private_key).map_err(|_| {
-            setup(
-                "selected App key unavailable in owner-only secrets.env; use instrukt secrets set",
-            )
-        })?;
-        let key = jsonwebtoken::EncodingKey::from_rsa_pem(key.as_bytes())
+        let pem = instrukt_core::config::resolve_secret(&self.home, &app.private_key).map_err(
+            |_| {
+                setup(
+                    "selected App key unavailable in owner-only secrets.env; use instrukt secrets set",
+                )
+            },
+        )?;
+        let key = octocrab::EncodingKey::from_rsa_pem(pem.as_bytes())
             .map_err(|_| setup("selected App key is not usable RSA PEM"))?;
-        let jwt = jsonwebtoken::encode(&jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256),&json!({"iat":now.as_second()-60,"exp":now.as_second()+540,"iss":app.app_id.to_string()}),&key).map_err(|_|setup("cannot sign selected App JWT"))?;
+        let app_crab = build_octocrab(&self.api, |b| {
+            b.app(octocrab::models::AppId(app.app_id), key)
+        })?;
         if !self.verified_apps.contains(&app.app_id) {
-            let identity = self.request(Method::Get, "/app", &jwt, None, clock)?;
+            let identity = get_json(&app_crab, "/app", clock)?;
             if identity["id"].as_u64() != Some(app.app_id)
                 || identity["slug"].as_str() != Some(&app.slug)
             {
@@ -511,15 +619,15 @@ impl Apps {
             }
             self.verified_apps.insert(app.app_id);
         }
+        let organisation = op == Operation::CompanyRepository;
+        let installation_endpoint = if organisation {
+            format!("/orgs/{repository}/installation")
+        } else {
+            format!("/repos/{repository}/installation")
+        };
         let installation = match self.installations.get(&(repository.into(), app.app_id)) {
             Some(installation) => installation.clone(),
-            None => self.request(
-                Method::Get,
-                &format!("/repos/{repository}/installation"),
-                &jwt,
-                None,
-                clock,
-            )?,
+            None => get_json(&app_crab, &installation_endpoint, clock)?,
         };
         if !installation["suspended_at"].is_null() || !installation["suspended_by"].is_null() {
             return Err(setup("repository installation is suspended"));
@@ -530,24 +638,27 @@ impl Apps {
             .as_u64()
             .filter(|_| installation["app_id"].as_u64() == Some(app.app_id))
             .ok_or_else(|| setup("repository installation does not match selected App"))?;
-        let permissions = permissions(op);
-        check_permissions(&installation["permissions"], &permissions)?;
-        let (_, repo) = repository
-            .split_once('/')
-            .ok_or_else(|| setup("invalid repository"))?;
-        let token_request = if op == Operation::Board {
-            json!({"permissions": permissions})
-        } else {
-            json!({"repositories": [repo], "permissions": permissions})
+        let required_list = permissions_list(op);
+        let required_permissions = permissions_map(op);
+        check_permissions(&installation["permissions"], required_list)?;
+        let unscoped = op == Operation::Board || organisation;
+        let mut token_request = octocrab::models::apps::CreateInstallationAccessToken {
+            permissions: Some(required_permissions.clone()),
+            ..Default::default()
         };
-        let response = self.request(
-            Method::Post,
+        if !unscoped {
+            let (_, repo) = repository
+                .split_once('/')
+                .ok_or_else(|| setup("invalid repository"))?;
+            token_request.repositories = Some(vec![repo.to_owned()]);
+        }
+        let response = post_json(
+            &app_crab,
             &format!("/app/installations/{id}/access_tokens"),
-            &jwt,
-            Some(&token_request),
+            &token_request,
             clock,
         )?;
-        check_permissions(&response["permissions"], &permissions)?;
+        check_permissions(&response["permissions"], required_list)?;
         let expires: Timestamp = response["expires_at"]
             .as_str()
             .and_then(|s| s.parse::<Timestamp>().ok())
@@ -557,12 +668,11 @@ impl Apps {
             .as_str()
             .filter(|s| !s.trim().is_empty())
             .ok_or_else(|| setup("issuance returned no installation credential"))?;
-        if op != Operation::Board {
-            let repos = self.request(
-                Method::Get,
+        let token_crab = build_bearer_octocrab(&self.api, token)?;
+        if !unscoped {
+            let repos = get_json(
+                &token_crab,
                 "/installation/repositories?per_page=100",
-                token,
-                None,
                 clock,
             )?;
             if !repos["repositories"].as_array().is_some_and(|rs| {
@@ -572,14 +682,29 @@ impl Apps {
                 return Err(setup("issued credential cannot reach repository"));
             }
         }
-        let viewer = self.request(
-            Method::Post,
-            "/graphql",
-            token,
-            Some(&json!({"query":"query { viewer { id login databaseId } }"})),
-            clock,
-        )?;
-        let viewer = &viewer["data"]["viewer"];
+        let viewer_query = json!({"query":"query { viewer { id login databaseId } }"});
+        let viewer_answer =
+            self.send(Method::Post, "/graphql", token, Some(&viewer_query), clock)?;
+        if !(200..300).contains(&viewer_answer.status) {
+            return Err(AppError::Refused {
+                operation: "/graphql".into(),
+                status: viewer_answer.status,
+            });
+        }
+        if let Some(errors) = viewer_answer.body["errors"]
+            .as_array()
+            .filter(|e| !e.is_empty())
+            && let super::GitHubError::RateLimited { until } = super::_github::graphql_failure(
+                errors,
+                viewer_answer.status,
+                &viewer_answer.limits,
+                viewer_answer.received,
+                token,
+            )
+        {
+            return Err(AppError::RateLimited { until });
+        }
+        let viewer = &viewer_answer.body["data"]["viewer"];
         if viewer["databaseId"].as_u64() != Some(app.bot.id)
             || viewer["id"].as_str() != Some(&app.bot.node_id)
             || viewer["login"].as_str() != Some(&app.bot.login)
@@ -593,18 +718,13 @@ impl Apps {
     }
     fn verified_bots(&mut self, repository: &str, clock: Clock) -> Result<Vec<Bot>, AppError> {
         let credential = self.issue(repository, None, Operation::Record, clock)?;
+        let token_crab = build_bearer_octocrab(&self.api, credential.token())?;
         let apps = self.identity.apps.values().cloned().collect::<Vec<_>>();
         for app in &apps {
             if self.actors.get(&app.bot.login) == Some(&app.bot) {
                 continue;
             }
-            let bot = self.request(
-                Method::Get,
-                &format!("/users/{}", app.bot.login),
-                credential.token(),
-                None,
-                clock,
-            )?;
+            let bot = get_json(&token_crab, &format!("/users/{}", app.bot.login), clock)?;
             if !app.bot.matches(&bot)
                 || bot["login"].as_str() != Some(&app.bot.login)
                 || bot["type"] != "Bot"
@@ -617,88 +737,223 @@ impl Apps {
         }
         Ok(apps.into_iter().map(|app| app.bot).collect())
     }
-    /// One App API request; a throttled answer's retry boundary counts from
-    /// when `clock` says the answer was received.
-    fn request(
+    /// One App API request answered with any status but a throttling one;
+    /// used by `_company_repos` and GraphQL viewer checks.
+    pub(super) fn send(
         &self,
         method: Method,
         endpoint: &str,
         bearer: &str,
         body: Option<&Value>,
         clock: Clock,
-    ) -> Result<Value, AppError> {
+    ) -> Result<Answer, AppError> {
         if bearer.is_empty() {
             return Err(setup("authenticated App capability is unavailable"));
         }
-        let url = match (endpoint, self.api.strip_suffix("/api/v3")) {
-            ("/graphql", Some(host)) => format!("{host}/api/graphql"),
-            _ => format!("{}{endpoint}", self.api),
+        let (base_uri, route) = match (endpoint, self.api.strip_suffix("/api/v3")) {
+            ("/graphql", Some(host)) => (host, "/api/graphql"),
+            _ => (self.api.as_str(), endpoint),
         };
-        let mut response = match method {
-            Method::Post => headers(self.agent.post(&url), bearer)
-                .header("Content-Type", "application/json")
-                .send(body.map(Value::to_string).unwrap_or_default()),
-            Method::Get => headers(self.agent.get(&url), bearer).call(),
-        }
-        .map_err(|_| AppError::Unreachable)?;
-        let received = clock.now();
-        let status = response.status().as_u16();
-        let limits = super::_github::Limits::read(response.headers());
-        if limits.refusal_throttles(status) {
-            return Err(AppError::RateLimited {
-                until: limits.until(received),
-            });
-        }
-        if !(200..300).contains(&status) {
-            return Err(AppError::Refused {
-                operation: endpoint.split('?').next().unwrap_or(endpoint).into(),
-                status,
-            });
-        }
-        let text = response
-            .body_mut()
-            .read_to_string()
-            .map_err(|_| AppError::Unreachable)?;
-        let answer: Value =
-            serde_json::from_str(&text).map_err(|_| setup("unreadable App API response"))?;
-        // GraphQL reports throttling, primary or secondary, in a successful
-        // answer's `errors`; its retry boundary is the headers' to name, or
-        // GitHub's minute for a secondary limit that names no delay.
-        if let Some(errors) = answer["errors"].as_array().filter(|e| !e.is_empty())
-            && let super::GitHubError::RateLimited { until } =
-                super::_github::graphql_failure(errors, status, &limits, received, bearer)
-        {
-            return Err(AppError::RateLimited { until });
-        }
-        Ok(answer)
+        let crab = build_bearer_octocrab(base_uri, bearer)?;
+        let route = route.to_owned();
+        let payload = body.cloned();
+        let (status, headers, received, text) = instrukt_outside::runtime::block_on(async move {
+            tokio::time::timeout(REQUEST_TIMEOUT, async move {
+                let response = match method {
+                    Method::Post => crab._post(route, payload.as_ref()).await,
+                    Method::Patch => crab._patch(route, payload.as_ref()).await,
+                    Method::Put => crab._put(route, payload.as_ref()).await,
+                }
+                .map_err(|_| AppError::Unreachable)?;
+                let received = clock.now();
+                let status = response.status().as_u16();
+                let headers = response.headers().clone();
+                // Judge throttling from status + headers BEFORE reading the body so
+                // a body timeout or decode failure on 429/403 cannot discard the retry deadline.
+                if let Some(until) = super::_github::judge_rate_limit(status, &headers, received) {
+                    return Err(AppError::RateLimited { until });
+                }
+                let text = crab
+                    .body_to_string(response)
+                    .await
+                    .map_err(|_| AppError::Unreachable)?;
+                Ok::<_, AppError>((status, headers, received, text))
+            })
+            .await
+            .map_err(|_| AppError::Unreachable)?
+        })
+        .map_err(|_| AppError::Unreachable)??;
+        let body = if text.trim().is_empty() {
+            Value::Null
+        } else {
+            match serde_json::from_str(&text) {
+                Ok(body) => body,
+                Err(_) if !(200..300).contains(&status) => Value::Null,
+                Err(_) => return Err(setup("unreadable App API response")),
+            }
+        };
+        Ok(Answer {
+            status,
+            body,
+            limits: super::_github::Limits::read(&headers),
+            received,
+        })
     }
 }
-fn agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_global(Some(Duration::from_secs(30)))
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .max_redirects(0)
-        .user_agent("instrukt")
-        .build()
-        .into()
+
+fn get_json(crab: &octocrab::Octocrab, endpoint: &str, clock: Clock) -> Result<Value, AppError> {
+    let (crab, route) = (crab.clone(), endpoint.to_owned());
+    run_octocrab(endpoint, clock, async move {
+        crab.get::<Value, _, _>(route, None::<&()>).await
+    })
 }
-fn check_permissions(actual: &Value, required: &Value) -> Result<(), AppError> {
-    for (name, wanted) in required.as_object().into_iter().flatten() {
-        if actual[name] != *wanted && !(wanted == "read" && actual[name] == "write") {
+
+fn post_json<B: serde::Serialize>(
+    crab: &octocrab::Octocrab,
+    endpoint: &str,
+    body: &B,
+    clock: Clock,
+) -> Result<Value, AppError> {
+    let (crab, route) = (crab.clone(), endpoint.to_owned());
+    let payload = serde_json::to_value(body).map_err(|_| setup("unreadable App API request"))?;
+    run_octocrab(endpoint, clock, async move {
+        crab.post::<_, Value>(route, Some(&payload)).await
+    })
+}
+
+fn run_octocrab<F>(endpoint: &str, clock: Clock, future: F) -> Result<Value, AppError>
+where
+    F: std::future::Future<Output = octocrab::Result<Value>> + Send,
+{
+    let outcome = instrukt_outside::runtime::block_on(async move {
+        tokio::time::timeout(REQUEST_TIMEOUT, future)
+            .await
+            .map_err(|_| AppError::Unreachable)
+    })
+    .map_err(|_| AppError::Unreachable)??;
+    match outcome {
+        Ok(value) => Ok(value),
+        Err(octocrab::Error::JWT { .. }) => Err(setup("cannot sign selected App JWT")),
+        Err(octocrab::Error::GitHub { source, .. }) => {
+            let status = source.status_code.as_u16();
+            let empty = http::HeaderMap::new();
+            let headers = source.headers.as_ref().unwrap_or(&empty);
+            if let Some(until) = super::_github::judge_rate_limit(status, headers, clock.now()) {
+                return Err(AppError::RateLimited { until });
+            }
+            Err(AppError::Refused {
+                operation: endpoint.split('?').next().unwrap_or(endpoint).into(),
+                status,
+            })
+        }
+        Err(octocrab::Error::Serde { .. } | octocrab::Error::Json { .. }) => {
+            Err(setup("unreadable App API response"))
+        }
+        Err(_) => Err(AppError::Unreachable),
+    }
+}
+
+fn build_octocrab(
+    base_uri: &str,
+    configure: impl FnOnce(
+        octocrab::OctocrabBuilder<
+            octocrab::NoSvc,
+            octocrab::DefaultOctocrabBuilderConfig,
+            octocrab::NoAuth,
+            octocrab::NotLayerReady,
+        >,
+    ) -> octocrab::OctocrabBuilder<
+        octocrab::NoSvc,
+        octocrab::DefaultOctocrabBuilderConfig,
+        octocrab::NoAuth,
+        octocrab::NotLayerReady,
+    >,
+) -> Result<octocrab::Octocrab, AppError> {
+    let rt = instrukt_outside::runtime::runtime().map_err(|_| AppError::Unreachable)?;
+    let _guard = rt.enter();
+    let builder =
+        super::_github::octocrab_builder(base_uri).map_err(|_| setup("invalid github.api_url"))?;
+    configure(builder)
+        .build()
+        .map_err(|_| AppError::Unreachable)
+}
+
+fn build_bearer_octocrab(base_uri: &str, bearer: &str) -> Result<octocrab::Octocrab, AppError> {
+    if http::HeaderValue::from_str(&format!("Bearer {bearer}")).is_err() {
+        return Err(setup("authenticated App capability is unavailable"));
+    }
+    build_octocrab(base_uri, |b| b.personal_token(bearer.to_owned()))
+}
+
+pub(super) struct Answer {
+    pub(super) status: u16,
+    pub(super) body: Value,
+    limits: super::_github::Limits,
+    received: Timestamp,
+}
+
+/// The GitHub API address `config` declares, without a trailing `/`: HTTPS,
+/// or HTTP on loopback only.
+pub(super) fn api_base(config: &Configuration) -> Result<String, AppError> {
+    let api = config
+        .github_api_url()
+        .map_err(|_| setup("cannot read github.api_url"))?;
+    let url = url::Url::parse(api).map_err(|_| setup("invalid github.api_url"))?;
+    if url.scheme() != "https"
+        && !(url.scheme() == "http"
+            && matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]")))
+    {
+        return Err(setup(
+            "github.api_url requires HTTPS (HTTP only on loopback)",
+        ));
+    }
+    Ok(api.trim_end_matches('/').into())
+}
+
+/// Unauthenticated GET against the configured GitHub API origin through
+/// [`octocrab::Octocrab`], used for public account lookup.
+pub(super) fn public_get(api: &str, route: &str) -> Result<(u16, http::HeaderMap, String), String> {
+    let rt = instrukt_outside::runtime::runtime().map_err(|err| err.to_string())?;
+    let crab = {
+        let _guard = rt.enter();
+        super::_github::octocrab_builder(api)
+            .map_err(|err| err.to_string())?
+            .build()
+            .map_err(|err| err.to_string())?
+    };
+    let route = route.to_owned();
+    instrukt_outside::runtime::block_on(async move {
+        tokio::time::timeout(REQUEST_TIMEOUT, async move {
+            let response = crab._get(route).await.map_err(|err| err.to_string())?;
+            let status = response.status().as_u16();
+            let headers = response.headers().clone();
+            if status == 404
+                || super::_github::Limits::read(&headers).refusal_throttles(status)
+                || !(200..300).contains(&status)
+            {
+                return Ok((status, headers, String::new()));
+            }
+            let text = crab
+                .body_to_string(response)
+                .await
+                .map_err(|err| err.to_string())?;
+            Ok((status, headers, text))
+        })
+        .await
+        .map_err(|_| "request timed out".to_owned())?
+    })
+    .map_err(|err| err.to_string())?
+}
+
+fn check_permissions(actual: &Value, required: &[(&str, &str)]) -> Result<(), AppError> {
+    for &(name, wanted) in required {
+        if actual[name] != wanted && !(wanted == "read" && actual[name] == "write") {
             return Err(setup(&format!(
                 "installation credential lacks required {name} permission"
             )));
         }
     }
     Ok(())
-}
-
-fn headers<B>(request: ureq::RequestBuilder<B>, bearer: &str) -> ureq::RequestBuilder<B> {
-    let request = request
-        .header("Accept", "application/vnd.github+json")
-        .header("X-GitHub-Api-Version", "2022-11-28");
-    request.header("Authorization", &format!("Bearer {bearer}"))
 }
 
 #[cfg(test)]
@@ -732,78 +987,6 @@ mod tests {
                 .map(|(role, app)| ((*role).into(), (*app).into()))
                 .collect(),
         }
-    }
-
-    /// A whole second the moments below count from; GitHub's primary reset
-    /// in them, 2025-12-31T23:50:10Z, is ten seconds later.
-    const START: i64 = 1_767_225_000;
-    const RESET: i64 = START + 10;
-
-    /// `second` plus `millis` milliseconds, which may be negative.
-    fn moment(second: i64, millis: i64) -> Timestamp {
-        Timestamp::from_second(second)
-            .unwrap()
-            .checked_add(jiff::SignedDuration::from_millis(millis))
-            .unwrap()
-    }
-
-    /// The throttling signals of an answer with these headers.
-    fn limits(headers: &[(&'static str, &str)]) -> crate::work::_github::Limits {
-        let mut map = ureq::http::HeaderMap::new();
-        for (name, value) in headers {
-            map.insert(*name, value.parse().unwrap());
-        }
-        crate::work::_github::Limits::read(&map)
-    }
-
-    /// App 1's deferral as issuance keeps it after a throttled answer with
-    /// `limits` received at `received`.
-    fn deferred(limits: &crate::work::_github::Limits, received: Timestamp) -> Deferrals {
-        let mut deferrals = Deferrals::default();
-        deferrals.record(
-            1,
-            &AppError::RateLimited {
-                until: limits.until(received),
-            },
-        );
-        deferrals
-    }
-
-    #[test]
-    fn a_clock_carries_a_fractional_start_forward_by_exactly_the_time_elapsed() {
-        let carried = carried(moment(START, 800), Duration::from_millis(800));
-        assert_eq!(carried, Some(moment(START, 1_600)));
-    }
-
-    #[test]
-    fn a_cached_reset_defers_issuance_until_its_exact_instant() {
-        let reset = RESET.to_string();
-        let limits = limits(&[
-            ("x-ratelimit-remaining", "0"),
-            ("x-ratelimit-reset", &reset),
-        ]);
-        let deferrals = deferred(&limits, moment(START, 0));
-        assert_eq!(
-            deferrals.until(1, moment(RESET, -200)),
-            Some(moment(RESET, 0))
-        );
-        assert_eq!(deferrals.until(1, moment(RESET, 0)), None);
-        assert_eq!(deferrals.until(1, moment(RESET, 200)), None);
-    }
-
-    #[test]
-    fn a_cached_named_delay_defers_issuance_its_full_length_after_a_fractional_receipt() {
-        // Answered 0.8 s after a clock that began 0.8 s into its second.
-        let received = carried(moment(START, 800), Duration::from_millis(800)).unwrap();
-        let deferrals = deferred(&limits(&[("retry-after", "2")]), received);
-        // Two seconds from a receipt at START + 1.6 s end at START + 3.6 s;
-        // the deadline is the whole second after.
-        assert_eq!(
-            deferrals.until(1, moment(START + 3, 800)),
-            Some(moment(START + 4, 0))
-        );
-        assert_eq!(deferrals.until(1, moment(START + 4, 0)), None);
-        assert_eq!(deferrals.until(1, moment(START + 4, 200)), None);
     }
 
     #[test]

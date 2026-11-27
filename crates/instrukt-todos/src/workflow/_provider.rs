@@ -28,22 +28,6 @@ pub(crate) const DRIFT_ARTIFACTS: [&str; 3] = [
     artifact_names::IMPLEMENTATION_PLAN,
 ];
 
-/// Writer and authoring/analysis roles whose sessions cannot independently
-/// approve a build (`setup` is retained for legacy and test-flavor records).
-const WRITER_ROLES: [&str; 11] = [
-    "builder",
-    "fixer",
-    "setup",
-    "finalizer",
-    "intaker",
-    "architect",
-    "planner",
-    "diagnoser",
-    "deferrer",
-    "task-preparer",
-    "drift-analyzer",
-];
-
 /// Who may approve each gate (`approvals.prd`, `approvals.task`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Approvers {
@@ -61,18 +45,6 @@ pub enum PrerequisiteStanding {
     EmptyHolder,
     /// The record no longer has the todo.
     NotFound,
-}
-
-/// Whether the todo's work changed since a reviewed commit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ChangeSinceReview {
-    /// The reviewed commit is the exact current head.
-    Unchanged,
-    /// Only clean merges of the canonical branch separate them.
-    CleanUpstreamMerges,
-    TodoChanged,
-    /// The repository could not tell.
-    Undetermined,
 }
 
 /// Whether a referenced path changed on the canonical branch since grounding.
@@ -121,7 +93,7 @@ pub(crate) struct Observations {
     pub worktree_path: Option<PathBuf>,
     pub branch_head: Option<CommitSha>,
     pub remote_head: Option<CommitSha>,
-    pub reviewed_change: Option<ChangeSinceReview>,
+    pub commit_writers: BTreeSet<String>,
     pub grounding: BTreeMap<String, GroundingChange>,
     pub judged_grounding: BTreeMap<String, GroundingChange>,
 }
@@ -299,14 +271,6 @@ pub struct VerificationFact {
     pub admits_handoff: bool,
 }
 
-/// The latest disposition a verifier recorded for the worktree head when it
-/// is fail or blocked: what limits the orchestrator's skip or deferral there.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct VerifierLimitFact {
-    pub disposition: VerificationDisposition,
-    pub commit: CommitSha,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct PrerequisiteFact {
     pub slug: TodoSlug,
@@ -347,8 +311,6 @@ pub struct TodoLedger {
     pub deferrals_open: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification: Option<VerificationFact>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub verifier_limit: Option<VerifierLimitFact>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub finalize_ready_commit: Option<CommitSha>,
     pub prerequisites: Vec<PrerequisiteFact>,
@@ -502,13 +464,8 @@ impl TodoLedger {
                 .as_ref()
                 .map(|t| format!(", follow-up {} ({})", t.slug, t.id))
                 .unwrap_or_default();
-            let limit = self
-                .verifier_limit
-                .as_ref()
-                .map(|l| format!(" [verifier recorded {} at this head]", l.disposition))
-                .unwrap_or_default();
             lines.push(format!(
-                "verification: {} ({}, commit {}, report {}, by {}{role}{follow_up}){limit}",
+                "verification: {} ({}, commit {}, report {}, by {}{role}{follow_up})",
                 v.disposition,
                 v.binding.as_str(),
                 v.commit,
@@ -641,14 +598,6 @@ pub(crate) fn selected_workspace(evidence: &TodoEvidence) -> Option<&RoleBinding
     }) {
         return Some(active);
     }
-    if let Some(finalizer) = evidence
-        .bindings
-        .iter()
-        .rev()
-        .find(|b| b.role.as_str() == "finalizer" && b.attempt.completion_sequence.is_some())
-    {
-        return Some(finalizer);
-    }
     evidence.bindings.iter().rev().find(|b| {
         b.attempt.assignment == AssignmentKind::Driver
             && matches!(b.attempt.lane, Some(Lane::Work | Lane::Prepare))
@@ -656,28 +605,32 @@ pub(crate) fn selected_workspace(evidence: &TodoEvidence) -> Option<&RoleBinding
     })
 }
 
-/// Returns whether `actor` is an independent reviewer for a build on this
-/// todo: a session distinct from `caller`, distinct from any driver/claimant
-/// orchestrator session, and distinct from any writer role session on the todo.
-pub fn is_independent_reviewer(
-    claim_session: Option<&SessionRef>,
-    bindings: &[(RoleName, AssignmentKind, Option<&SessionRef>)],
+/// An independent reviewer is a session separate from the claimant, drivers,
+/// and sessions whose Git or workspace evidence shows they wrote the change.
+pub(crate) fn is_independent_reviewer(
+    evidence: &TodoEvidence,
     reviewer: &Actor,
-    caller: Option<&SessionRef>,
+    commit_writers: &BTreeSet<String>,
 ) -> bool {
-    let Actor::Session(reviewer_session) = reviewer else {
+    let Actor::Session(session) = reviewer else {
         return false;
     };
-    if caller == Some(reviewer_session) {
-        return false;
-    }
-    if claim_session == Some(reviewer_session) {
-        return false;
-    }
-    !bindings.iter().any(|(role, assignment, session)| {
-        *session == Some(reviewer_session)
-            && (*assignment == AssignmentKind::Driver || WRITER_ROLES.contains(&role.as_str()))
-    })
+    evidence
+        .claim
+        .as_ref()
+        .and_then(|claim| claim.session.as_ref())
+        != Some(session)
+        && !commit_writers.contains(&session.to_string())
+        && !evidence.bindings.iter().any(|binding| {
+            let attempt = &binding.attempt;
+            let moved_head = attempt
+                .completed_head
+                .as_ref()
+                .or(attempt.failure_head.as_ref());
+            &binding.binding.session == session
+                && (attempt.assignment == AssignmentKind::Driver
+                    || (moved_head.is_some() && moved_head != attempt.base_head.as_ref()))
+        })
 }
 
 /// Pure ledger view over a todo's evidence.
@@ -926,13 +879,13 @@ fn latest_disposition(
 /// disposition"): the latest verification disposition names `candidate`,
 /// binds the current `verification-findings` report and admits handoff,
 /// and a pass was recorded by a session independent of the claim holder,
-/// driver and writers (and of `caller`, when given). One predicate for
+/// driver and writers. One predicate for
 /// `--finalize-ready` and the ledger, so the ledger never advertises a
 /// readiness that refuses. The error names what is owed.
 pub(crate) fn handoff_disposition(
     evidence: &TodoEvidence,
     candidate: &CommitSha,
-    caller: Option<&SessionRef>,
+    commit_writers: &BTreeSet<String>,
 ) -> Result<(), String> {
     // Ledger reasons are joined with `; `, so none holds one.
     const OWED: &str = "a pass, tier_0_skip or hotfix_deferred is owed at this commit";
@@ -960,25 +913,10 @@ pub(crate) fn handoff_disposition(
             "latest verification disposition is {disposition} ({OWED})"
         ));
     }
-    if disposition == VerificationDisposition::Pass {
-        let bindings: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = evidence
-            .bindings
-            .iter()
-            .map(|b| {
-                (
-                    b.role.clone(),
-                    b.attempt.assignment,
-                    Some(&b.binding.session),
-                )
-            })
-            .collect();
-        let claim = evidence.claim.as_ref().and_then(|c| c.session.as_ref());
-        if !is_independent_reviewer(claim, &bindings, &stamp.actor, caller) {
-            return Err(
-                "the verification pass was not recorded by an independent verifier (a new independent verifier attempt is owed)"
-                    .to_owned(),
-            );
-        }
+    if disposition == VerificationDisposition::Pass
+        && !is_independent_reviewer(evidence, &stamp.actor, commit_writers)
+    {
+        return Err("the verification pass requires an independent session".to_owned());
     }
     Ok(())
 }
@@ -1133,18 +1071,6 @@ pub(crate) fn derive_ledger(
     prerequisites: Vec<(TodoSlug, PrerequisiteStanding)>,
 ) -> TodoLedger {
     let ledger = Ledger::new(evidence);
-    let binding_tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = evidence
-        .bindings
-        .iter()
-        .map(|b| {
-            (
-                b.role.clone(),
-                b.attempt.assignment,
-                Some(&b.binding.session),
-            )
-        })
-        .collect();
-
     let branch = evidence
         .branch
         .clone()
@@ -1260,21 +1186,11 @@ pub(crate) fn derive_ledger(
             } else if head == Some(target) {
                 BuildReviewBinding::ExactTarget
             } else {
-                match observed.reviewed_change {
-                    Some(ChangeSinceReview::Unchanged) => BuildReviewBinding::ExactTarget,
-                    Some(
-                        ChangeSinceReview::CleanUpstreamMerges | ChangeSinceReview::TodoChanged,
-                    ) => BuildReviewBinding::TodoChanged,
-                    Some(ChangeSinceReview::Undetermined) => BuildReviewBinding::Undetermined,
-                    None => BuildReviewBinding::Unbound,
-                }
+                head.map_or(BuildReviewBinding::Unbound, |_| {
+                    BuildReviewBinding::TodoChanged
+                })
             };
-            let independent = is_independent_reviewer(
-                evidence.claim.as_ref().and_then(|c| c.session.as_ref()),
-                &binding_tuples,
-                &s.actor,
-                None,
-            );
+            let independent = is_independent_reviewer(evidence, &s.actor, &observed.commit_writers);
             Some(BuildReviewFact {
                 verdict: *verdict,
                 target_commit: target.clone(),
@@ -1329,39 +1245,11 @@ pub(crate) fn derive_ledger(
             role: s.role.clone(),
             follow_up,
             binding,
-            admits_handoff: observed_head
-                .is_some_and(|head| handoff_disposition(evidence, head, None).is_ok()),
+            admits_handoff: observed_head.is_some_and(|head| {
+                handoff_disposition(evidence, head, &observed.commit_writers).is_ok()
+            }),
         }
     });
-    let verifier_limit = observed_head.and_then(|head| {
-        evidence
-            .stamps
-            .iter()
-            .rev()
-            .find_map(|s| match &s.fact {
-                StampFact::VerificationDisposition {
-                    disposition,
-                    commit,
-                    ..
-                } if commit == head
-                    && s.role.as_ref().map(RoleName::as_str) == Some(super::VERIFIER_ROLE) =>
-                {
-                    Some(*disposition)
-                }
-                _ => None,
-            })
-            .filter(|d| {
-                matches!(
-                    d,
-                    VerificationDisposition::Fail | VerificationDisposition::Blocked
-                )
-            })
-            .map(|disposition| VerifierLimitFact {
-                disposition,
-                commit: head.clone(),
-            })
-    });
-
     // Gate 1: Interference lock
     let active_workspace_attempt = evidence
         .bindings
@@ -1450,8 +1338,8 @@ pub(crate) fn derive_ledger(
             .as_ref()
             .and_then(|w| w.head.clone())
             .or_else(|| observed.branch_head.clone());
-        if !pushed {
-            reasons.push("branch head not pushed to origin".to_owned());
+        if !pushed || head != observed.branch_head {
+            reasons.push("workspace, local and published heads differ".to_owned());
         }
         match &build_review {
             Some(br)
@@ -1475,7 +1363,7 @@ pub(crate) fn derive_ledger(
             }
         }
         if let Some(head) = &head
-            && let Err(why) = handoff_disposition(evidence, head, None)
+            && let Err(why) = handoff_disposition(evidence, head, &observed.commit_writers)
         {
             reasons.push(why);
         }
@@ -1516,7 +1404,6 @@ pub(crate) fn derive_ledger(
         diagnosis_settled,
         deferrals_open,
         verification,
-        verifier_limit,
         finalize_ready_commit,
         prerequisites,
         prerequisites_satisfied,
@@ -1652,7 +1539,7 @@ mod tests {
     fn a_disposition_admits_handoff_only_at_its_commit_and_report() {
         let head = sha('a');
         let mut evidence = verified("tier 0");
-        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        assert!(handoff_disposition(&evidence, &head, &BTreeSet::new()).is_err());
         disposed(
             &mut evidence,
             "orchestrator",
@@ -1660,13 +1547,16 @@ mod tests {
             &head,
             "tier 0",
         );
-        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+        assert_eq!(
+            handoff_disposition(&evidence, &head, &BTreeSet::new()),
+            Ok(())
+        );
         // A new candidate commit carries none until one is recorded for it.
-        assert!(handoff_disposition(&evidence, &sha('b'), None).is_err());
+        assert!(handoff_disposition(&evidence, &sha('b'), &BTreeSet::new()).is_err());
         // A rewritten report leaves the disposition as history.
         let mut rewritten = evidence.clone();
         rewritten.artifacts[0].versions[0].digest = digest("tier 0, revised");
-        assert!(handoff_disposition(&rewritten, &head, None).is_err());
+        assert!(handoff_disposition(&rewritten, &head, &BTreeSet::new()).is_err());
     }
 
     #[test]
@@ -1687,7 +1577,7 @@ mod tests {
             &head,
             "live run",
         );
-        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        assert!(handoff_disposition(&evidence, &head, &BTreeSet::new()).is_err());
         disposed(
             &mut evidence,
             "verifier",
@@ -1695,7 +1585,10 @@ mod tests {
             &head,
             "live run",
         );
-        assert_eq!(handoff_disposition(&evidence, &head, None), Ok(()));
+        assert_eq!(
+            handoff_disposition(&evidence, &head, &BTreeSet::new()),
+            Ok(())
+        );
     }
 
     #[test]
@@ -1709,7 +1602,7 @@ mod tests {
             &head,
             "live run",
         );
-        assert!(handoff_disposition(&evidence, &head, None).is_err());
+        assert!(handoff_disposition(&evidence, &head, &BTreeSet::new()).is_err());
         let mut independent = verified("live run");
         disposed(
             &mut independent,
@@ -1718,8 +1611,18 @@ mod tests {
             &head,
             "live run",
         );
-        assert_eq!(handoff_disposition(&independent, &head, None), Ok(()));
-        assert!(handoff_disposition(&independent, &head, Some(&session("verifier"))).is_err());
+        assert_eq!(
+            handoff_disposition(&independent, &head, &BTreeSet::new()),
+            Ok(())
+        );
+        assert!(
+            handoff_disposition(
+                &independent,
+                &head,
+                &BTreeSet::from([session("verifier").to_string()])
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1755,7 +1658,6 @@ mod tests {
             worktree_path: Some(PathBuf::from("/tmp/wt")),
             branch_head: Some(head.clone()),
             remote_head: Some(head.clone()),
-            reviewed_change: Some(ChangeSinceReview::Unchanged),
             ..Default::default()
         };
         let approvers = Approvers {
@@ -1803,7 +1705,7 @@ mod tests {
     }
 
     #[test]
-    fn self_approval_by_orchestrator_or_builder_fails_integrate_gate() {
+    fn self_approval_by_the_claim_holder_fails_integrate_gate() {
         let head = sha('b');
         let mut evidence = todo(TodoKind::Bug)
             .artifact(artifact_names::INPUT, "fix crash")
@@ -1835,7 +1737,6 @@ mod tests {
             worktree_path: Some(PathBuf::from("/tmp/wt")),
             branch_head: Some(head.clone()),
             remote_head: Some(head),
-            reviewed_change: Some(ChangeSinceReview::Unchanged),
             ..Default::default()
         };
         let ledger = derive_ledger(
@@ -1886,7 +1787,6 @@ mod tests {
             worktree_path: Some(PathBuf::from("/tmp/wt")),
             branch_head: Some(head.clone()),
             remote_head: Some(head),
-            reviewed_change: Some(ChangeSinceReview::Unchanged),
             ..Default::default()
         };
         let ledger = derive_ledger(
@@ -1920,7 +1820,6 @@ mod tests {
             worktree_path: Some(PathBuf::from("/tmp/wt")),
             branch_head: Some(head.clone()),
             remote_head: Some(head.clone()),
-            reviewed_change: Some(ChangeSinceReview::Unchanged),
             ..Default::default()
         };
         let stamp = |fact: StampFact, seq: u64| crate::evidence::StampRecord {

@@ -7,7 +7,19 @@ Adopt instrukt in the current git repository
 Usage: instrukt init [OPTIONS]
 
 Options:
-      --slug <SLUG>  The project slug, instead of the one derived from the primary worktree's folder
-                     name
-  -h, --help         Print help
-  -V, --version      Print version
+      --slug <SLUG>                  The project slug, instead of the one derived from the primary
+                                     worktree's folder name
+      --company <KEY>                Add the company of this key to the computer instead: its
+                                     repository `company-<key>` in the organisation `github.org`
+                                     names, created with the company skeleton when it does not
+                                     exist, checked out as ~/.instrukt/companies/<key>/ and made
+                                     ready. The working directory is not read
+      --name <NAME>                  The name people write the company by; needed only when its
+                                     repository is created
+      --admin <LOGIN>                The company's GitHub administrator, a person's GitHub account;
+                                     needed only when its repository is created
+      --human-involved <true|false>  Whether a human was involved, declared for the root commit of a
+                                     created repository; `false` when omitted [possible values:
+                                     true, false]
+  -h, --help                         Print help
+  -V, --version                      Print version

@@ -1,7 +1,5 @@
 ---
-description: Capture and organize knowledge a human expresses into a doc snippet batch,
-  conversationally, authoring only after every active participant agrees and the human
-  releases it.
+description: 'Capture human-expressed knowledge into doc snippets conversationally; author only after every active participant agrees and the human releases it.'
 role: knowledge-author
 parameters:
   - name: topic
@@ -14,7 +12,7 @@ parameters:
 
 - [general/procedure/doc-snippet-authoring](doc-snippet-authoring.md)
 - [general/procedure/scratchpad-workspace](scratchpad-workspace.md)
-- [sdlc/policy/command-contract-read](../../domain/sdlc/policy/command-contract-read.md)
+- [general/policy/command-contract-read](../policy/command-contract-read.md)
 
 ## Goal
 

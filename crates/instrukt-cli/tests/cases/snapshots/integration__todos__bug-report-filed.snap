@@ -1,9 +1,10 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
+assertion_line: 335
 expression: "redact(&format!(\"{}---\\n{shown}\", stdout(&filed)))"
 ---
 filed fix-sync-drops-the-ops-domain (bug) in project demo with identity <id 1>
-reflection: reflected to GitHub
+reflection: pending: not yet reflected
 ---
 fix-sync-drops-the-ops-domain · bug · active
 identity: <id 1>
@@ -14,8 +15,7 @@ intent:
   Sync drops the ops domain
   
   `instrukt sync` in ops printed `published`; `instrukt docs index --domain ops` listed nothing.
-reflection: reflected to GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: not held
 hold: none
 artifacts:

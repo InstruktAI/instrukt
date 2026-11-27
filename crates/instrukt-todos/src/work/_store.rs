@@ -164,12 +164,6 @@ impl ReflectionLock {
         })
     }
 
-    /// Takes the lock only when no reflection holds it; never waits.
-    pub fn try_acquire(home: &Home) -> Result<Option<Self>, WorkError> {
-        let path = Self::path(home)?;
-        Ok(LockGuard::try_acquire(&path)?.map(|guard| Self { _guard: guard }))
-    }
-
     fn path(home: &Home) -> Result<PathBuf, WorkError> {
         let path = home.reflection_lock_file();
         state_db::refuse_link("the reflection lock", &path).map_err(StateDbError::from)?;

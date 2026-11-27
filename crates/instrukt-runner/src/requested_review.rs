@@ -179,8 +179,8 @@ pub fn ask(context: &AskContext<'_>, coordinates: Coordinates) -> Result<Reply, 
 
 /// The assignment of the requested reviewer started under `start_key`, from
 /// the latest ask recorded under it, accepted or not: role
-/// `commit-reviewer`, the project and the registered checkout it was
-/// started in (`roles-and-capabilities`, Caller and object resolution).
+/// `commit-reviewer`, the project and the worktree it was started in
+/// (`roles-and-capabilities`, Caller and object resolution).
 pub(crate) fn assignment(
     home: &Home,
     start_key: &str,
@@ -206,7 +206,8 @@ pub(crate) fn assignment(
     }))
 }
 
-/// The project's registered checkout, where the requested reviewer starts.
+/// The project's registered checkout, used to validate linked worktrees and
+/// resolve the runtime project.
 fn registered_checkout(home: &Home, slug: &ProjectSlug) -> Result<PathBuf, AskError> {
     instrukt_core::publication::PublishedRecord::load(home, slug)
         .map_err(failed)?
@@ -344,6 +345,7 @@ impl Delivering<'_> {
             Route::Start | Route::Successor => (Delivery::Start, None),
             Route::Send { generation, .. } => (Delivery::Send, Some(*generation)),
         };
+        let worktree_path = self.worktree_path()?;
         let named = serde_json::to_string(&self.coordinates.named()).map_err(failed)?;
         let ask = _store::record(
             self.context.home,
@@ -355,7 +357,7 @@ impl Delivering<'_> {
                 rendering: &self.rendering.text,
                 digest: &self.rendering.digest,
                 start_key: self.key,
-                checkout: self.checkout,
+                checkout: &worktree_path,
                 delivery,
                 send_generation,
                 admitted_at: self.context.now,
@@ -415,7 +417,7 @@ impl Delivering<'_> {
                     self.head()
                 )));
             }
-            (Delivery::Start, _, _) => self.start(false)?,
+            (Delivery::Start, _, _) => self.start_with_brief(false, &ask.rendering)?,
         };
         self.accepted(ask, &session, true)
     }
@@ -423,14 +425,19 @@ impl Delivering<'_> {
     /// The keyed start of the requested reviewer with the rendering as its
     /// opening input; `successor` succeeds an archived or deleted generation.
     fn start(&self, successor: bool) -> Result<SessionRef, AskError> {
+        self.start_with_brief(successor, &self.rendering.text)
+    }
+
+    fn start_with_brief(&self, successor: bool, brief: &str) -> Result<SessionRef, AskError> {
         let context = self.context;
-        let request = self.request()?;
+        let (request, existing_worktree) = self.request(brief)?;
         let thread = if successor {
             keyed::succeed_owned(
                 self.guard,
                 self.invocation,
                 self.adapter,
                 &request,
+                existing_worktree.as_deref(),
                 context.now,
             )
         } else {
@@ -439,6 +446,7 @@ impl Delivering<'_> {
                 invocation: self.invocation,
                 project: Some(self.slug().as_str()),
                 request: &request,
+                existing_worktree: existing_worktree.as_deref(),
                 now: context.now,
             };
             let result = keyed::start_owned(self.adapter, &assignment, self.guard);
@@ -455,9 +463,15 @@ impl Delivering<'_> {
         Ok(thread.session)
     }
 
-    /// The start request: the same construction a standing start uses, in
-    /// the registered checkout, under the review procedure's role.
-    fn request(&self) -> Result<RuntimeStart, AskError> {
+    fn worktree_path(&self) -> Result<PathBuf, AskError> {
+        canonicalize_path(&self.coordinates.worktree, "candidate worktree")
+    }
+
+    /// The start request and optional linked existing worktree: rooted in the
+    /// project's registered checkout so the runtime resolves the project, and
+    /// attaching the candidate's linked worktree when it differs from that
+    /// checkout, under the review procedure's role.
+    fn request(&self, brief: &str) -> Result<(RuntimeStart, Option<PathBuf>), AskError> {
         let context = self.context;
         let preferences = crate::agents::role_order(
             context.config,
@@ -472,30 +486,36 @@ impl Delivering<'_> {
                 .into_iter()
                 .next();
         let head = self.head().as_str();
-        Ok(RuntimeStart {
-            preferences,
-            selection,
-            selection_evidence: Some(
-                self.adapter
-                    .selection_realization(crate::runtime::SelectionOperation::ThreadStart),
-            ),
-            checkout: self.checkout.to_path_buf(),
-            title: format!(
-                "review · {} @ {}",
-                self.coordinates.branch,
-                &head[..head.len().min(12)]
-            ),
-            key: self.key.to_owned(),
-            brief: self.rendering.text.clone(),
-            worktree: None,
-            launch_modes: None,
-            native_launch: None,
-            profiles: crate::runtime::Profiles::default(),
-        })
+        let worktree_path = self.worktree_path()?;
+        let checkout_path = canonicalize_path(self.checkout, "registered checkout")?;
+        let existing_worktree = linked_worktree(worktree_path, &checkout_path);
+        Ok((
+            RuntimeStart {
+                preferences,
+                selection,
+                selection_evidence: Some(
+                    self.adapter
+                        .selection_realization(crate::runtime::SelectionOperation::ThreadStart),
+                ),
+                checkout: self.checkout.to_path_buf(),
+                title: format!(
+                    "review · {} @ {}",
+                    self.coordinates.branch,
+                    &head[..head.len().min(12)]
+                ),
+                key: self.key.to_owned(),
+                brief: brief.to_owned(),
+                worktree: None,
+                launch_modes: None,
+                native_launch: None,
+                profiles: crate::runtime::Profiles::default(),
+            },
+            existing_worktree,
+        ))
     }
 
-    /// Sends the rendering under the ask's recorded command identity; the
-    /// runtime accepts one identity once.
+    /// Sends the ask's stored rendering under its recorded command identity;
+    /// the runtime accepts one identity once.
     fn send(&self, ask: &Ask, session: &SessionRef) -> Result<(), AskError> {
         let command = ask.command_id.as_deref().ok_or_else(|| {
             failed(format!(
@@ -505,7 +525,7 @@ impl Delivering<'_> {
             ))
         })?;
         self.adapter
-            .dispatch_send(session, command, &self.rendering.text, &mut || Ok(()))
+            .dispatch_send(session, command, &ask.rendering, &mut || Ok(()))
             .map_err(|error| self.not_accepted("send", &error.into_inner()))
     }
 
@@ -588,6 +608,23 @@ fn retire(context: &AskContext<'_>, slug: &ProjectSlug) {
     }
 }
 
+/// Resolves `path` to its canonical form, naming `label` and `path` on error.
+fn canonicalize_path(path: &Path, label: &str) -> Result<PathBuf, AskError> {
+    std::fs::canonicalize(path).map_err(|error| {
+        failed(format!(
+            "cannot resolve {label} path {}: {error}",
+            path.display()
+        ))
+    })
+}
+
+/// Returns `Some(worktree)` when the canonical candidate worktree is a linked
+/// worktree distinct from the canonical registered `checkout`, or `None` when
+/// the candidate lives in the registered checkout itself.
+fn linked_worktree(worktree: PathBuf, checkout: &Path) -> Option<PathBuf> {
+    (worktree != checkout).then_some(worktree)
+}
+
 /// The canonical branch as the checkout knows it: the remote-tracking
 /// branch when it exists, else the local one.
 fn canonical_branch(root: &Path) -> Result<String, instrukt_core::git::GitError> {
@@ -603,4 +640,22 @@ fn canonical_branch(root: &Path) -> Result<String, instrukt_core::git::GitError>
             branch
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linked_worktree_returns_none_for_registered_checkout() {
+        let checkout = PathBuf::from("/workspace/project");
+        assert_eq!(linked_worktree(checkout.clone(), &checkout), None);
+    }
+
+    #[test]
+    fn linked_worktree_returns_some_for_distinct_worktree() {
+        let checkout = PathBuf::from("/workspace/project");
+        let worktree = PathBuf::from("/worktrees/project-feature");
+        assert_eq!(linked_worktree(worktree.clone(), &checkout), Some(worktree));
+    }
 }

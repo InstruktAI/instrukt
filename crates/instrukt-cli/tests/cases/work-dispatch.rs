@@ -225,7 +225,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
     std::fs::write(&machine, valid_machine).unwrap();
     // A company document admission refuses leaves that company out: there is
     // nothing to serve, as the runner would host nothing.
-    let document = env.instrukt_home().join("companies/acme/instrukt.yaml");
+    let document = env.instrukt_home().join("companies/acme/company.yaml");
     let valid = std::fs::read_to_string(&document).unwrap();
     std::fs::write(&document, format!("{valid}bogus: 1\n")).unwrap();
     let refused = env.run(env.home(), ["run"]).failure();

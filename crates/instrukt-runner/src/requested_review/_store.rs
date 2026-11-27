@@ -89,7 +89,7 @@ pub(super) struct NewAsk<'a> {
     pub rendering: &'a str,
     pub digest: &'a str,
     pub start_key: &'a str,
-    /// The project's registered checkout the reviewer is started in.
+    /// The worktree the reviewer is started in.
     pub checkout: &'a std::path::Path,
     pub delivery: Delivery,
     /// The generation a send goes to; none for a start.
@@ -103,6 +103,7 @@ pub(super) struct Ask {
     pub project: String,
     pub number: u64,
     pub kind: String,
+    pub rendering: String,
     pub digest: String,
     pub start_key: String,
     pub checkout: PathBuf,
@@ -115,7 +116,7 @@ pub(super) struct Ask {
     pub accepted_at: Option<Timestamp>,
 }
 
-const COLUMNS: &str = "project, number, kind, digest, start_key, checkout, delivery, command_id, generation, admitted_at, accepted_at";
+const COLUMNS: &str = "project, number, kind, rendering, digest, start_key, checkout, delivery, command_id, generation, admitted_at, accepted_at";
 
 fn ask(row: &Row<'_>) -> instrukt_core::state_db::rusqlite::Result<Ask> {
     use instrukt_core::state_db::rusqlite::Error::FromSqlConversionFailure;
@@ -128,19 +129,20 @@ fn ask(row: &Row<'_>) -> instrukt_core::state_db::rusqlite::Result<Ask> {
         project: row.get(0)?,
         number: row.get(1)?,
         kind: row.get(2)?,
-        digest: row.get(3)?,
-        start_key: row.get(4)?,
-        checkout: PathBuf::from(row.get::<_, String>(5)?),
-        delivery: match row.get::<_, String>(6)?.as_str() {
+        rendering: row.get(3)?,
+        digest: row.get(4)?,
+        start_key: row.get(5)?,
+        checkout: PathBuf::from(row.get::<_, String>(6)?),
+        delivery: match row.get::<_, String>(7)?.as_str() {
             "send" => Delivery::Send,
             _ => Delivery::Start,
         },
-        command_id: row.get(7)?,
-        generation: row.get(8)?,
-        admitted_at: moment(9, row.get(9)?)?,
+        command_id: row.get(8)?,
+        generation: row.get(9)?,
+        admitted_at: moment(10, row.get(10)?)?,
         accepted_at: row
-            .get::<_, Option<String>>(10)?
-            .map(|text| moment(10, text))
+            .get::<_, Option<String>>(11)?
+            .map(|text| moment(11, text))
             .transpose()?,
     })
 }
@@ -209,6 +211,7 @@ pub(super) fn record(home: &Home, new: &NewAsk<'_>) -> Result<Ask, StoreError> {
             project: new.project.to_string(),
             number,
             kind: new.kind.to_owned(),
+            rendering: new.rendering.to_owned(),
             digest: new.digest.to_owned(),
             start_key: new.start_key.to_owned(),
             checkout: new.checkout.to_path_buf(),

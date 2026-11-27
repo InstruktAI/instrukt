@@ -1,0 +1,15 @@
+---
+source: crates/instrukt-cli/tests/cases/company-homes.rs
+expression: "(github.collaborators(\"homes/company-acme\"),\ngithub.default_branch(\"homes/company-acme\"),)"
+---
+(
+    [
+        (
+            "acme-admin",
+            "admin",
+        ),
+    ],
+    Some(
+        "main",
+    ),
+)

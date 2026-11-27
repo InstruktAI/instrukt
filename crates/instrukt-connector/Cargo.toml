@@ -8,9 +8,12 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+instrukt-outside.workspace = true
 jiff.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 
 [lints]
 workspace = true

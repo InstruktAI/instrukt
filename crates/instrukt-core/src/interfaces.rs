@@ -132,6 +132,22 @@ pub trait GraphGeneration: Send + Sync {
     fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
 }
 
+/// The company's recording of a commit just made as a knowledge proposal
+/// (`project/instrukt/spec/domain/company`, Knowledge proposal). The
+/// `post-commit` hook run invokes it synchronously with the commit's
+/// repository root and the hook's environment, which is the committing
+/// session's; it decides everything, reports on `stderr`, the commit's
+/// standard error, and never fails the commit.
+pub trait ProposalRecording: Send + Sync {
+    fn record(
+        &self,
+        home: &crate::home::Home,
+        root: &Path,
+        env: &crate::config::Env,
+        stderr: &mut dyn std::io::Write,
+    );
+}
+
 /// How the adapter selected an instruction target home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -223,6 +239,7 @@ pub struct CoreWiring {
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
     pub configured_runtimes: Option<Arc<dyn ConfiguredAgentRuntimes>>,
+    pub proposal_recording: Option<Arc<dyn ProposalRecording>>,
 }
 
 impl std::fmt::Debug for CoreWiring {
@@ -236,6 +253,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .field("configured_runtimes", &self.configured_runtimes.is_some())
+            .field("proposal_recording", &self.proposal_recording.is_some())
             .finish()
     }
 }
@@ -259,6 +277,98 @@ pub enum ReviewReadiness {
 /// credentials and writes no state.
 pub trait AutomaticReviewReadiness: Send + Sync {
     fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
+/// Work's readiness answer for the proposal pull-request credential: the
+/// identity the `company-agent` role selects, with write access to pull
+/// requests and read access to contents. It requests that one credential
+/// and writes no state; a met answer carries it.
+pub trait ProposalReadiness: Send + Sync {
+    fn proposal_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
+/// What kind of account a GitHub login names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountKind {
+    /// An organisation.
+    Organisation,
+    /// A person's own account.
+    Personal,
+    /// No account of that login.
+    Absent,
+}
+
+/// Work's answer to what kind of account a GitHub login names, read from
+/// GitHub's public account record
+/// (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+pub trait GitHubAccounts: Send + Sync {
+    fn account_kind(&self, login: &str) -> Result<AccountKind, InterfaceError>;
+}
+
+/// What creating a company's repository found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Creation {
+    /// GitHub created the repository, empty.
+    Created,
+    /// A repository of that name already exists in the organisation.
+    AlreadyExists,
+}
+
+/// Why work's GitHub boundary could not act on a company repository.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CompanyRepositoryError {
+    /// The project identity cannot administer repositories in the
+    /// organisation: no installation there, or one without the permission.
+    #[error(
+        "the project App{} cannot create repositories in the GitHub organisation `{organisation}` ({cause}); install it on `{organisation}` with write access to repository administration (administration: write), then run the command again — the configuration skill's GitHub App setup, Company repositories, walks through it",
+        app.as_deref().map(|slug| format!(" `{slug}`")).unwrap_or_default()
+    )]
+    NotReady {
+        app: Option<String>,
+        organisation: crate::ids::GitHubOrganisation,
+        cause: String,
+    },
+    /// GitHub refused the operation or could not be asked.
+    #[error("{0}")]
+    Failed(String),
+}
+
+/// Work's GitHub boundary for company repositories, under the project
+/// identity's installation on the owning organisation
+/// (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+/// `now` is the time credentials are issued at.
+pub trait CompanyRepositories: Send + Sync {
+    /// Whether the project identity can administer repositories in `org`:
+    /// its credential requested with exactly that permission.
+    fn ready(
+        &self,
+        org: &crate::ids::GitHubOrganisation,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
+    /// Creates the private repository `org/repo`, empty.
+    fn create(
+        &self,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
+        now: jiff::Timestamp,
+    ) -> Result<Creation, CompanyRepositoryError>;
+    /// Makes `login` an administrator of `org/repo`: at once for a member
+    /// of `org`, by GitHub's invitation for anyone else.
+    fn grant_admin(
+        &self,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
+        login: &crate::ids::GitHubLogin,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
+    /// Sets the default branch of `org/repo` to `branch`.
+    fn set_default_branch(
+        &self,
+        org: &crate::ids::GitHubOrganisation,
+        repo: &ProjectSlug,
+        branch: &str,
+        now: jiff::Timestamp,
+    ) -> Result<(), CompanyRepositoryError>;
 }
 
 /// Setup-verified stable actor facts for local author attribution. No repository
