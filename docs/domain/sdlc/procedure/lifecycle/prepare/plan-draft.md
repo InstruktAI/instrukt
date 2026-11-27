@@ -367,8 +367,8 @@ worktree predating a recently landed bootstrap or substrate extension:
   verification workflow path migration (`sdlc/policy/live-verification`:
   a standalone CI workflow bootstrap or path migration carries no application
   change), do **not** stop on the missing default-branch workflow.
-  Verify the pre-entry reviewed pending Layer 1 and Layer 2 fills committed on
-  `<slug>/work` (`sdlc/policy/todo-creation-discipline` for pre-entry authoring
+  Verify the reviewed pending Layer 1 and Layer 2 fills the todo carries
+  (`sdlc/policy/todo-creation-discipline` for written-ahead authoring
   and independent review; `general/spec/snippet-authoring-schema`,
   `general/procedure/doc-snippet-authoring`, and
   `sdlc/procedure/verification-bootstrap` for `delivered_by: [{slug}]`

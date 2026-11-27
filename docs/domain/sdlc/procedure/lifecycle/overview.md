@@ -245,12 +245,11 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
        FIRST on the clean, unheld todo
        (`instrukt todo attempt {slug} --role planner --attempt <n> --failed ...`,
        preserving any legitimate committed preparation work). Then reuse an
-       already-linked prerequisite bootstrap todo or establish and unfreeze a
-       new standalone prerequisite bootstrap todo `<bootstrap-slug>` (carrying
-       zero mixed application changes, with pre-entry reviewed pending Layer 1
-       and Layer 2 fills pushed to `origin/<bootstrap-slug>/work` and no local
-       `refs/heads/<bootstrap-slug>/work` left behind) following the tracked
-       pre-entry sequence (`sdlc/procedure/verification-bootstrap`).
+       already-linked prerequisite bootstrap todo or establish a new standalone
+       prerequisite bootstrap todo `<bootstrap-slug>` (carrying zero mixed
+       application changes, its reviewed pending Layer 1 and Layer 2 fills
+       written ahead and merged onto main while it is held) following the
+       tracked written-ahead sequence (`sdlc/procedure/verification-bootstrap`).
        Read `{slug}`'s current prerequisites from `instrukt todo show {slug}`,
        append `<bootstrap-slug>` without dropping existing edges
        (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
@@ -394,11 +393,10 @@ Runner wake-up of an orchestrator serves approvals that arrive out of band
            verification workflow exists yet) blocks an application todo, **always**
            route it as a **standalone prerequisite bootstrap todo** (never
            mixing application changes with first-time CI workflow creation,
-           `sdlc/policy/live-verification`): establish and unfreeze
-           `<bootstrap-slug>` with pre-entry reviewed pending Layer 1 and
-           Layer 2 fills pushed to `origin/<bootstrap-slug>/work` (leaving no
-           local `refs/heads/<bootstrap-slug>/work`) following the tracked
-           pre-entry sequence (`sdlc/procedure/verification-bootstrap`), append
+           `sdlc/policy/live-verification`): establish `<bootstrap-slug>` with
+           its reviewed pending Layer 1 and Layer 2 fills written ahead and
+           merged onto main while it is held, following the tracked
+           written-ahead sequence (`sdlc/procedure/verification-bootstrap`), append
            `<bootstrap-slug>` to `{slug}`'s prerequisites without dropping
            existing edges
            (`instrukt todo update {slug} --after <existing-prereqs>,<bootstrap-slug>`,
