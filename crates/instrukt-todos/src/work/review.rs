@@ -13,7 +13,6 @@ mod _store;
 mod _transfer;
 
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use instrukt_core::git;
 use instrukt_core::home::Home;
@@ -29,19 +28,12 @@ pub(crate) use _publication::shortened;
 pub use _published::{Delivery, DeliveryState, Derived, Destination, Recognised};
 pub use _transfer::Statement;
 
-use _admission::{Offer, RequestCheck, TurnDecision};
 use _store::Held;
 
 use crate::evidence::ContentDigest;
 
 /// The remote whose canonical branch evidence is judged against.
 const REMOTE: &str = "origin";
-
-/// How long a recording command asks a runtime that cannot say again.
-const TURN_WAIT: Duration = Duration::from_secs(30);
-
-/// How often within that wait the runtime is asked again.
-const TURN_RETRY: Duration = Duration::from_secs(1);
 
 /// A review's outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -106,7 +98,7 @@ pub struct Version {
     pub name: ContentDigest,
     pub report: String,
     pub reviewer: SessionRef,
-    /// The session that entered a handed-over approval.
+    /// The session that entered the verdict on the reviewer's behalf.
     pub entered_by: Option<SessionRef>,
     /// The pinned base the review started from.
     pub base: CommitSha,
@@ -298,45 +290,50 @@ impl ReviewProject {
         base: &CommitSha,
         head: &CommitSha,
     ) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
-        self.trailers(&[&format!("{base}..{head}")])
+        if base == head {
+            commit_sessions(&self.root, &["-1", head.as_str()])
+        } else {
+            commit_sessions(&self.root, &[&format!("{base}..{head}")])
+        }
     }
 
     /// The sessions `commit`'s `Session:` trailers name.
     fn sessions_of(&self, commit: &CommitSha) -> Result<Vec<String>, ReviewError> {
-        Ok(self
-            .trailers(&["-1", commit.as_str()])?
+        Ok(commit_sessions(&self.root, &["-1", commit.as_str()])?
             .into_iter()
             .next()
             .map(|(_, sessions)| sessions)
             .unwrap_or_default())
     }
+}
 
-    /// The commits `revisions` select, each with the sessions its
-    /// `Session:` trailers name.
-    fn trailers(&self, revisions: &[&str]) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
-        let mut args = vec![
-            "log",
-            "--format=%H%x1f%(trailers:key=Session,valueonly,separator=%x1e)%x1d",
-        ];
-        args.extend(revisions);
-        let text = git::run(&self.root, args)?;
-        text.split('\u{1d}')
-            .map(str::trim)
-            .filter(|entry| !entry.is_empty())
-            .map(|entry| {
-                let (sha, sessions) = entry.split_once('\u{1f}').unwrap_or((entry, ""));
-                let sha = CommitSha::parse(sha.trim())
-                    .map_err(|_| ReviewError::Record(format!("commit id `{sha}` from git")))?;
-                let sessions = sessions
-                    .split('\u{1e}')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
-                    .collect();
-                Ok((sha, sessions))
-            })
-            .collect()
-    }
+/// The commits selected by Git and the sessions named in their trailers.
+pub(crate) fn commit_sessions(
+    root: &Path,
+    revisions: &[&str],
+) -> Result<Vec<(CommitSha, Vec<String>)>, ReviewError> {
+    let mut args = vec![
+        "log",
+        "--format=%H%x1f%(trailers:key=Session,valueonly,separator=%x1e)%x1d",
+    ];
+    args.extend(revisions);
+    let text = git::run(root, args)?;
+    text.split('\u{1d}')
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let (sha, sessions) = entry.split_once('\u{1f}').unwrap_or((entry, ""));
+            let sha = CommitSha::parse(sha.trim())
+                .map_err(|_| ReviewError::Record(format!("commit id `{sha}` from git")))?;
+            let sessions = sessions
+                .split('\u{1e}')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .collect();
+            Ok((sha, sessions))
+        })
+        .collect()
 }
 
 /// A head verdict offered for recording.
@@ -348,8 +345,7 @@ pub struct RecordRequest {
     pub report: String,
     /// The calling session, when one resolves.
     pub caller: Option<SessionRef>,
-    /// The session whose approval the caller enters, for a handed-over
-    /// approval.
+    /// The recorded reviewer when a different session enters the verdict.
     pub reviewer: Option<SessionRef>,
 }
 
@@ -363,12 +359,12 @@ pub struct Recorded {
 }
 
 /// Admits and records a head verdict (`instrukt review record`). Every read
-/// that may wait — git, delivery's records, the runtime — happens before
+/// that may wait happens before
 /// `state/review.lock` is taken; the transaction reads the commit's state
 /// again and decides under the lock.
 pub fn record(
     home: &Home,
-    env: &instrukt_core::config::Env,
+    _env: &instrukt_core::config::Env,
     project: &ReviewProject,
     request: &RecordRequest,
     clock: &dyn Fn() -> Timestamp,
@@ -379,8 +375,8 @@ pub fn record(
             "no session resolves for this caller; record a verdict from the reviewing agent session the selected runtime recognises",
         ));
     };
-    let entering = request.reviewer.as_ref().map(|_| caller.clone());
-    let reviewer = request.reviewer.clone().unwrap_or(caller);
+    let reviewer = request.reviewer.clone().unwrap_or_else(|| caller.clone());
+    let entering = (reviewer != caller).then_some(caller);
     if request.report.trim().is_empty() {
         return Err(refused(
             "the report is missing; supply the complete review report with --report",
@@ -389,40 +385,17 @@ pub fn record(
     let state = RunnerState::new(home);
     let requests = instrukt_runner::review::requests(&state, &project.slug, &head)?;
     let held = held_here(home, &project.slug, &head)?;
-    let (offer, check) = _admission::offer(&held, &reviewer, &requests);
-    if let Offer::HandedOff(export) = &offer {
-        return Err(handed_off(&head, export));
-    }
-    let answers = match check {
-        RequestCheck::Unrequested => None,
-        RequestCheck::Answers(number) => Some(number),
-        RequestCheck::Refused {
-            number,
-            standing,
-            holder,
-        } => {
-            let holder = holder
-                .map(|session| format!(" and is held by session {session}"))
-                .unwrap_or_else(|| ", and no session holds it yet".to_owned());
+    let answers = match &held {
+        Held::HandedOff { export } => return Err(handed_off(&head, export)),
+        Held::Stands { current, .. } if current.reviewer != reviewer => {
             return Err(refused(format!(
-                "review request {number} for {head} is {standing:?}{holder}; only the session it was handed over to records this commit's verdict"
+                "{head} is settled by session {}'s verdict; see `instrukt review show {head}`",
+                current.reviewer
             )));
         }
+        Held::Stands { .. } => None,
+        Held::Nothing => _admission::answered_request(&requests, &reviewer),
     };
-    let returned_base = match &entering {
-        Some(entering) => handed_over(home, env, &head, &reviewer, entering, request, &held)?,
-        None => false,
-    };
-    match offer {
-        Offer::First | Offer::Revision => {}
-        Offer::AskTurn => ask_turn(&state, project, &head, &reviewer)?,
-        Offer::SettledByAnother(session) => {
-            return Err(refused(format!(
-                "{head} is settled by session {session}'s verdict; see `instrukt review show {head}`"
-            )));
-        }
-        Offer::HandedOff(export) => return Err(handed_off(&head, &export)),
-    }
     let (canonical, pinned) = pinned_base(project, &head, &held, &requests)?;
     let Some(pinned) = pinned else {
         return Err(refused(format!(
@@ -437,22 +410,16 @@ pub fn record(
     }
     let base_on_canonical = project.contains(pinned.as_str(), &canonical)?;
     let commits = project.sessions_in(&pinned, &head)?;
-    for session in std::iter::once(&reviewer).chain(entering.as_ref()) {
-        let naming: Vec<String> = commits
-            .iter()
-            .filter(|(_, sessions)| sessions.iter().any(|s| s == &session.to_string()))
-            .map(|(sha, _)| sha.to_string())
-            .collect();
-        if !naming.is_empty() {
-            return Err(refused(format!(
-                "session {session} authored reviewed commits {}; the review needs a session none of them names",
-                naming.join(", ")
-            )));
-        }
-    }
-    if entering.is_some() && !_admission::names_commit(&request.report, &base) && !returned_base {
+    let reviewer_ref = reviewer.to_string();
+    let naming: Vec<String> = commits
+        .iter()
+        .filter(|(_, sessions)| sessions.contains(&reviewer_ref))
+        .map(|(sha, _)| sha.to_string())
+        .collect();
+    if !naming.is_empty() {
         return Err(refused(format!(
-            "the base {base} is named neither in session {reviewer}'s message returning the report nor in the report"
+            "session {reviewer} authored reviewed commits {}; the review needs a session none of them names",
+            naming.join(", ")
         )));
     }
     let unattributed = commits
@@ -507,63 +474,6 @@ pub fn record(
     Ok(recorded)
 }
 
-/// The facts work establishes beside a handed-over approval's statement:
-/// an approving report, no verdict of the commit yet, an entering session
-/// other than the named one, and a message the named session authored that
-/// names the head together with the report's digest. Returns whether such a
-/// message also names the supplied base.
-fn handed_over(
-    home: &Home,
-    env: &instrukt_core::config::Env,
-    head: &CommitSha,
-    reviewer: &SessionRef,
-    entering: &SessionRef,
-    request: &RecordRequest,
-    held: &Held,
-) -> Result<bool, ReviewError> {
-    if request.verdict != Verdict::Approve || !_admission::approving(&request.report) {
-        return Err(refused(
-            "a handed-over result is entered only as an approval whose report ends in the approving verdict line `Verdict: APPROVE`",
-        ));
-    }
-    if held != &Held::Nothing {
-        return Err(refused(format!(
-            "{head} already has a verdict; a handed-over approval is entered only for a commit that has none"
-        )));
-    }
-    if entering == reviewer {
-        return Err(refused(
-            "the named session records its own result without --reviewer",
-        ));
-    }
-    let messages = match instrukt_runner::review::conversation(home, env, reviewer) {
-        instrukt_runner::review::Conversation::Read { messages, .. } => messages,
-        instrukt_runner::review::Conversation::CannotRead(cause) => {
-            return Err(refused(format!(
-                "session {reviewer}'s conversation cannot be read ({cause}); nothing is recorded"
-            )));
-        }
-    };
-    let digest = ContentDigest::of(&request.report);
-    let returning: Vec<&str> = messages
-        .iter()
-        .filter(|message| message.role == instrukt_runner::runtime::conversations::Role::Assistant)
-        .map(|message| message.text.as_str())
-        .filter(|text| _admission::names_head_and_digest(text, head, digest.as_str()))
-        .collect();
-    if returning.is_empty() {
-        return Err(refused(format!(
-            "no message session {reviewer} authored names {head} together with the report's digest {digest}"
-        )));
-    }
-    let base = CommitSha::parse(&request.base).ok();
-    Ok(base.is_some_and(|base| {
-        returning
-            .iter()
-            .any(|text| _admission::names_commit(text, &base))
-    }))
-}
-
 /// What this computer holds of `head`'s verdict, read without a lock.
 fn held_here(home: &Home, project: &ProjectSlug, head: &CommitSha) -> Result<Held, ReviewError> {
     Ok(match _store::reader(home)? {
@@ -591,41 +501,6 @@ fn handed_off(head: &CommitSha, export: &str) -> ReviewError {
     refused(format!(
         "{head}'s verdict was handed off by export {export}; record on the computer that imported it, or import here a file that carries the commit's verdict"
     ))
-}
-
-/// Asks which input opened the reviewing session's turn until the runtime
-/// answers or the command's wait has passed.
-fn ask_turn(
-    state: &RunnerState,
-    project: &ReviewProject,
-    head: &CommitSha,
-    reviewer: &SessionRef,
-) -> Result<(), ReviewError> {
-    let started = Instant::now();
-    loop {
-        let answer = instrukt_runner::review::turn_opening(state, &project.slug, head, reviewer)?;
-        match _admission::turn_decision(&answer) {
-            TurnDecision::Admit => return Ok(()),
-            TurnDecision::OpenedByRequest(number) => {
-                return Err(refused(format!(
-                    "review request {number} for {head} opened the turn session {reviewer} has in progress, and {head} is already settled; that request is answered by the verdict that stands"
-                )));
-            }
-            TurnDecision::NoTurn => {
-                return Err(refused(format!(
-                    "session {reviewer} has no turn in progress; a revision is recorded within a turn of its session"
-                )));
-            }
-            TurnDecision::AskAgain(cause) => {
-                if started.elapsed() >= TURN_WAIT {
-                    return Err(refused(format!(
-                        "the runtime adapter cannot say which input opened session {reviewer}'s turn ({cause}); nothing is recorded: run the same command with the same report once the runtime answers"
-                    )));
-                }
-                std::thread::sleep(TURN_RETRY);
-            }
-        }
-    }
 }
 
 /// The cutoff before which history is retired: the work record's recovery

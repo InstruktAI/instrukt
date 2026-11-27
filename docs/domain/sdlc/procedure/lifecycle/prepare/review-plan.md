@@ -204,28 +204,15 @@ artifact quality policy. Do not add an intent-formation lane to the delivery
 review catalogue; build and commit review validate delivery against already
 approved intent and must not re-litigate it.
 
-`input` is the basis this comparison rests on. Inspect its current version,
-any intent-checked stamp, and `log` per `sdlc/policy/todo-creation-discipline`.
-A valid current check — verifying the current `input` version against the
-human's actual originating conversation, whether by `--intent-checked` stamp
-bound to that conversation or by digest-bound verification recorded in `log` —
-is taken as given, regardless of which role performed it; rewriting the plan
-does not invalidate that check. An `--intent-checked` stamp whose recorded
-conversation is a relaying or splitting session rather than the human's
-originating conversation does not satisfy the check.
-If you are the first recipient other than the current input's author and no
-valid current check exists, read the human's actual originating conversation through
-the configured runtime conversation read instruction — tracing past any relaying
-or splitting session (`general/policy/human-contract`,
-`sdlc/policy/todo-creation-discipline`) — before weighing the plan against
-it. Checking a split child against its splitting agent's thread supplies no
-intent check. Confirm fidelity and record the check per
-`sdlc/policy/todo-creation-discipline` — using
-`instrukt todo stamp {slug} --intent-checked` only when the stamp binds the
-human's originating conversation, and otherwise recording the checked `input`
-digest, checker, and originating human conversation address in the todo's `log`
-artifact and `plan-review-findings` rather than publishing a writer-derived
-stamp. If expression needs
+`input` is the basis for this comparison. Check whether the current digest has
+an intent-checked stamp that names the human's actual originating conversation
+(`sdlc/policy/todo-creation-discipline`). The current check survives a plan
+rewrite. If you are the first non-author recipient and the input has no valid
+check, read the human's originating conversation through the configured runtime
+instruction, tracing past any relaying or splitting session
+(`general/policy/human-contract`). Confirm fidelity and record
+`instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`.
+If expression needs
 clarifying, return it to its author for a new input version; reviewer
 separation still applies. A mistaken interpretation returns to the human in the
 responsible session's thread as one intent question. A conversation required

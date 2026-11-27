@@ -7,13 +7,16 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use instrukt_core::config::Configuration;
-use instrukt_core::ids::{CommitSha, SessionRef, TodoSlug};
+use instrukt_core::ids::{CommitSha, TodoSlug};
 use instrukt_core::machine;
 use instrukt_core::publication::EvalFingerprint;
 use instrukt_core::{git, github};
 use instrukt_runner::events::{Event, EventLog};
-use instrukt_runner::interfaces::{AgentPreference, CatchUp, ProjectRef, TaskSchedule, TodoKind};
+use instrukt_runner::interfaces::{
+    AgentPreference, AssignmentKind, CatchUp, ProjectRef, TaskSchedule, TodoKind,
+};
 
+use super::_attempts;
 use super::_diff::{DiffLine, diff_lines};
 use super::_error::WorkError;
 use super::_model::{
@@ -169,7 +172,7 @@ impl Work {
         }
         if request.icebox && request.hold.is_some() {
             return Err(WorkError::refused(
-                "a held todo is converged work waiting in the lifecycle, and the icebox parks work that has not converged; file it with one of them",
+                "a todo cannot be created with both an icebox status and a dispatch hold",
             ));
         }
         ensure_slug_free(&mut s, &request.slug, None)?;
@@ -667,64 +670,35 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let index = s.enter(slug)?;
         let record = s.items[index].record.clone();
-        if record.status != TodoStatus::Active {
+        let session = s.caller_session()?;
+        let completion = _attempts::completion_binding(&record, session.as_ref(), request);
+        let closing_holder = record.status == TodoStatus::StructuralHolder
+            && matches!(request, StampRequest::RoleComplete);
+        if record.status != TodoStatus::Active && !closing_holder {
             return Err(WorkError::refused(format!(
                 "stamps record facts of active work; `{slug}` is {}",
                 status_word(record.status)
             )));
         }
-        let session = s.caller_session()?;
-        let completion =
-            super::_attempts::completion_binding(&record, session.as_ref(), cwd, request)?;
-        if let Some(binding) = completion
-            && super::_attempts::completion(request)
-                .is_some_and(|c| c.repeat == super::_attempts::Repeat::Retained)
-            && record.bindings[binding].attempt.released_at.is_some()
-            && let Some(sequence) = record.bindings[binding].attempt.completion_sequence
-            && let Some(stamp) = record
-                .stamps
-                .iter()
-                .find(|stamp| stamp.sequence == sequence)
-        {
-            return Ok(Outcome {
-                value: stamp.clone(),
-                reflection: s.status(index),
-                docs_changed: Vec::new(),
-            });
-        }
-        // A verification disposition: workflow admits the caller under the
-        // binding it acts as; a released verifier attempt replays exactly;
-        // the orchestrator's record-only write needs a free, clean workspace.
-        let mut disposition_role = None;
-        if let StampRequest::VerificationDisposition {
-            disposition,
-            follow_up,
-        } = request
-        {
-            let (role, released) =
-                admit_disposition(&record, session.as_ref(), cwd, completion, *disposition)?;
-            if let Some(binding) = released {
-                let value =
-                    released_disposition(&record, binding, *disposition, follow_up.as_ref())?;
-                return Ok(Outcome {
-                    value,
-                    reflection: s.status(index),
-                    docs_changed: Vec::new(),
-                });
-            }
-            disposition_role = Some(role);
-        }
-        if matches!(request, StampRequest::FinalizeReady) {
+        let completed_head = completion
+            .map(|index| _attempts::completion_head(&record.bindings[index], cwd))
+            .transpose()?
+            .flatten();
+        let mut workspace_head = completed_head.as_ref();
+        let ready_head;
+        if matches!(
+            request,
+            StampRequest::BuildStarted | StampRequest::FinalizeReady
+        ) {
             let prd_approver = s
                 .config
                 .approver(instrukt_core::config::ApprovalGate::Prd)?;
-            super::_attempts::readiness(
-                &record,
-                session.as_ref(),
-                cwd,
-                &project.root,
-                prd_approver,
-            )?;
+            if matches!(request, StampRequest::FinalizeReady) {
+                ready_head = _attempts::readiness(&record, cwd, &project.root, prd_approver)?;
+                workspace_head = Some(&ready_head);
+            } else {
+                _attempts::require_prd_approval(&record, prd_approver)?;
+            }
         }
         if matches!(request, StampRequest::TaskFiringStarted { .. }) {
             let task_approver = s
@@ -751,12 +725,34 @@ impl Work {
                 session: session.as_ref(),
                 now: s.now,
                 follow_up: follow_up.as_ref(),
+                completion: completion.map(|index| &record.bindings[index]),
+                workspace_head,
             },
         )?;
         let actor = match resolved.actor {
             Some(actor) => actor,
             None => s.actor()?,
         };
+        if let StampFact::BuildVerdict {
+            verdict: crate::evidence::BuildVerdict::Approve,
+            target: commit,
+            ..
+        }
+        | StampFact::VerificationDisposition {
+            disposition: VerificationDisposition::Pass,
+            commit,
+            ..
+        } = &resolved.fact
+        {
+            if let (Some(index), Some(head)) = (completion, completed_head.as_ref())
+                && record.bindings[index].attempt.base_head.as_ref() != Some(head)
+            {
+                return Err(WorkError::refused(
+                    "approval and verification pass require a session that did not change the workspace head",
+                ));
+            }
+            crate::workflow::require_independent(&record, &project.root, commit, &actor)?;
+        }
         let (model, model_provenance) = s.model_of(&actor);
         let mut fact = resolved.fact;
         if let StampFact::DriftReviewed {
@@ -780,9 +776,9 @@ impl Work {
             source_comment: None,
             fact,
             at: s.now,
-            // A disposition carries the role of the binding admission
-            // matched, which stickiness reads (`delivery-cycle`).
-            role: disposition_role.or_else(|| role_of(&record, &actor)),
+            role: completion
+                .map(|index| record.bindings[index].role.clone())
+                .or_else(|| role_of(&record, &actor)),
             actor: actor.clone(),
             model,
             eval_fingerprint: EvalFingerprint::current(self.home())?.map(|f| f.fingerprint),
@@ -838,45 +834,33 @@ impl Work {
                 docs_changed: std::mem::take(&mut s.docs_changed),
             });
         }
-        let replay_prior = if matches!(stamp.fact, StampFact::DiagnosisSettled { .. }) {
-            record
-                .stamps
-                .iter()
-                .rev()
-                .find(|prior| prior.fact == stamp.fact)
-                .cloned()
-        } else if matches!(stamp.fact, StampFact::VerificationDisposition { .. }) {
-            // Only the orchestrator's record-only write replays here; a
-            // verifier's released attempt replayed above.
-            completion
-                .is_none()
-                .then(|| record_only_replay(&record, &stamp.fact, &stamp.actor))
-                .flatten()
-                .cloned()
-        } else {
-            current_drift_replay(&record, &stamp.fact, &stamp.actor).cloned()
-        };
-        if let Some(prior) = replay_prior {
-            if let Some(binding) = completion
-                && record.bindings[binding].attempt.released_at.is_none()
-            {
-                let now = s.now;
-                let completed_head = super::_stamps::head(cwd)?;
-                let sequence = prior.sequence;
-                s.commit("reconcile completed read-only attempt", |s| {
-                    let b = &mut s.items[index].record.bindings[binding];
-                    b.attempt.completion_sequence = Some(sequence);
-                    b.attempt.completed_head = Some(completed_head.clone());
-                    b.attempt.released_at = Some(now);
-                    Ok(())
-                })?;
-                s.flush(LockWait::No)?;
+        if completion.is_none() {
+            let replay = if _attempts::completes_attempt(request) {
+                completion_replay(&record, cwd, &stamp)?
+            } else {
+                None
+            };
+            let replay = replay
+                .or_else(|| record_only_replay(&record, &stamp.fact, &stamp.actor))
+                .or_else(|| current_drift_replay(&record, &stamp.fact, &stamp.actor))
+                .or_else(|| {
+                    matches!(stamp.fact, StampFact::DiagnosisSettled { .. })
+                        .then(|| record.stamps.last())
+                        .flatten()
+                        .filter(|prior| prior.fact == stamp.fact && prior.actor == stamp.actor)
+                });
+            if let Some(prior) = replay {
+                return Ok(Outcome {
+                    value: prior.clone(),
+                    reflection: s.status(index),
+                    docs_changed: std::mem::take(&mut s.docs_changed),
+                });
             }
-            return Ok(Outcome {
-                value: prior,
-                reflection: s.status(index),
-                docs_changed: std::mem::take(&mut s.docs_changed),
-            });
+        }
+        if closing_holder && completion.is_none() {
+            return Err(WorkError::refused(
+                "completion on a structural holder requires a bound attempt or its matching replay",
+            ));
         }
         let now = s.now;
         let events = handoff
@@ -920,16 +904,10 @@ impl Work {
             let mut stamp = stamp;
             stamp.sequence = record.next_sequence();
             if let Some(binding) = completion {
-                let b = &mut record.bindings[binding];
-                if b.attempt.released_at.is_none() {
-                    b.attempt.completion_sequence = Some(stamp.sequence);
-                    b.attempt.completed_head = if b.worktree.is_some() {
-                        Some(super::_stamps::head(cwd)?)
-                    } else {
-                        None
-                    };
-                    b.attempt.released_at = Some(now);
-                }
+                let attempt = &mut record.bindings[binding].attempt;
+                attempt.completion_sequence = Some(stamp.sequence);
+                attempt.completed_head = completed_head;
+                attempt.released_at = Some(now);
             }
             record.stamps.push(stamp);
             Ok(())
@@ -1274,21 +1252,22 @@ fn apply_update(
         let claim = record.claim.as_ref().ok_or_else(|| {
             WorkError::refused(format!("`{}` holds no execution claim", record.slug))
         })?;
-        // A task's claim covers one run: only that run's session releases
-        // it — the claiming session, or the one bound as its task runner.
-        let is_task = record.kind == TodoKind::Task;
         let holder = claim.machine == machine
-            && caller.as_ref().is_some_and(|caller| {
-                claim.session.as_ref() == Some(caller)
-                    || record.bindings.iter().any(|b| {
-                        b.session.as_ref() == Some(caller)
-                            && (!is_task
-                                || b.role.as_str() == instrukt_runner::dispatch::TASK_RUNNER_ROLE)
+            && caller.as_ref().is_some_and(|caller| match &claim.session {
+                Some(holder) => holder == caller,
+                None => record
+                    .bindings
+                    .iter()
+                    .rev()
+                    .find(|binding| {
+                        binding.attempt.assignment == AssignmentKind::Task
+                            && binding.attempt.released_at.is_none()
                     })
+                    .is_some_and(|binding| binding.session.as_ref() == Some(caller)),
             });
         if !holder {
             return Err(WorkError::refused(format!(
-                "`{}` is claimed elsewhere; only the session holding the claim, or one bound to the todo on the claiming computer, releases it",
+                "`{}` is claimed elsewhere; only the claim holder or the bound execution of an unassigned task claim releases it",
                 record.slug
             )));
         }
@@ -1702,88 +1681,47 @@ fn writable(record: &TodoRecord) -> Result<(), WorkError> {
     }
 }
 
-/// The binding a verification disposition is recorded under, admitted by
-/// workflow's rule: the caller's bound verifier attempt (`completion`), or
-/// on the record-only path its live driver binding, over a free and clean
-/// shared workspace. Returns that binding's role and, for a verifier
-/// attempt already released, its index for exact replay.
-fn admit_disposition(
-    record: &TodoRecord,
-    caller: Option<&SessionRef>,
+/// An unchanged completion can replay the retained stamp of the caller's attempt.
+fn completion_replay<'r>(
+    record: &'r TodoRecord,
     cwd: &Path,
-    completion: Option<usize>,
-    disposition: VerificationDisposition,
-) -> Result<(instrukt_core::ids::RoleName, Option<usize>), WorkError> {
-    const NEITHER: &str = "a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator";
-    const DOORS: &str = "a pass, fail or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip or hotfix deferral from the claim-holding orchestrator";
-    let caller = caller.ok_or_else(|| {
-        WorkError::refused(format!("{NEITHER}; no agent session is active: {DOORS}"))
-    })?;
-    let (binding, driver) = match completion {
-        Some(binding) => (binding, None),
-        None => {
-            let driver = super::_attempts::live_driver(record, caller).ok_or_else(|| {
-                WorkError::refused(format!(
-                    "{NEITHER}, and this session holds neither a verifier attempt nor the todo's live driver binding: {DOORS}"
-                ))
-            })?;
-            (driver, Some(driver))
+    proposed: &StampRecord,
+) -> Result<Option<&'r StampRecord>, WorkError> {
+    let Actor::Session(session) = &proposed.actor else {
+        return Ok(None);
+    };
+    let Some(binding) = record.bindings.iter().rev().find(|binding| {
+        binding.session.as_ref() == Some(session)
+            && matches!(
+                binding.attempt.assignment,
+                AssignmentKind::Child | AssignmentKind::Workspace
+            )
+    }) else {
+        return Ok(None);
+    };
+    let Some(prior) = binding.attempt.completion_sequence.and_then(|sequence| {
+        record
+            .stamps
+            .iter()
+            .find(|stamp| stamp.sequence == sequence)
+    }) else {
+        return Ok(None);
+    };
+    let same_fact = match &proposed.fact {
+        StampFact::RoleComplete { .. } => matches!(prior.fact, StampFact::RoleComplete { .. }),
+        StampFact::DriftReviewed { .. } => {
+            current_drift_replay(record, &proposed.fact, &proposed.actor) == Some(prior)
         }
+        _ => prior.fact == proposed.fact,
     };
-    let role = record.bindings[binding].role.clone();
-    let commit = _stamps::head(cwd)?;
-    crate::workflow::verification_admission(record, caller, &role, disposition, &commit)
-        .map_err(WorkError::refused)?;
-    if let Some(driver) = driver {
-        super::_attempts::record_only_workspace(record, driver, cwd)?;
-        return Ok((role, None));
+    if same_fact && prior.actor == proposed.actor && _attempts::matches_completion(binding, cwd)? {
+        Ok(Some(prior))
+    } else {
+        Ok(None)
     }
-    let released = record.bindings[binding].attempt.released_at.is_some();
-    Ok((role, released.then_some(binding)))
 }
 
-/// A released verifier attempt's exact replay: its retained disposition,
-/// when the request names the same disposition and no follow-up and the
-/// `verification-findings` report is unchanged; otherwise refused, since
-/// a verifier attempt records one disposition (`stamps`, "Verification
-/// dispositions").
-fn released_disposition(
-    record: &TodoRecord,
-    binding: usize,
-    disposition: VerificationDisposition,
-    follow_up: Option<&TodoSlug>,
-) -> Result<StampRecord, WorkError> {
-    let retained = record.bindings[binding]
-        .attempt
-        .completion_sequence
-        .and_then(|sequence| record.stamps.iter().find(|s| s.sequence == sequence));
-    let Some(stamp) = retained else {
-        return Err(WorkError::refused(
-            "this released verifier attempt recorded no disposition; a new verifier attempt records one",
-        ));
-    };
-    let StampFact::VerificationDisposition {
-        disposition: recorded,
-        report,
-        ..
-    } = &stamp.fact
-    else {
-        return Err(WorkError::refused(
-            "this released verifier attempt recorded no disposition; a new verifier attempt records one",
-        ));
-    };
-    let current = record.current_digest(artifact_names::VERIFICATION_FINDINGS);
-    if *recorded == disposition && follow_up.is_none() && current == Some(report) {
-        return Ok(stamp.clone());
-    }
-    Err(WorkError::refused(format!(
-        "this verifier attempt recorded `{recorded}` for findings `{report}`; a different disposition or a rewritten report needs a new verifier attempt"
-    )))
-}
-
-/// The orchestrator's earlier record-only disposition this one replays:
-/// the latest disposition recorded, when the same actor recorded the same
-/// disposition for the same commit, report and follow-up identity.
+/// An identical verification disposition from the same actor replays the latest one.
 fn record_only_replay<'r>(
     record: &'r TodoRecord,
     fact: &StampFact,

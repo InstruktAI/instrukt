@@ -209,8 +209,7 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **The creation check belongs to the filing agent.** Face the decisions
   above before `instrukt todo create <slug> <content> --kind <kind> --approved`.
-  Without `--approved`, the command prints the admission questions and creates
-  nothing. Pass it only after facing those questions.
+  The command writes the record only with `--approved`.
   Creation writes the item and its first `input` version together in the
   local record. The runner dispatches eligible work under module enablement,
   pickup policy and the workflow's current obligation; creation supplies no
@@ -309,25 +308,12 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   Reading a relaying or splitting subagent's thread is not an intent check.
   Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
-  Record `instrukt todo stamp <slug> --intent-checked` when the stamp binds the
-  human's originating conversation (when the current `input` was authored in
-  that conversation, or when the stamp command accepts and binds that
-  conversation explicitly). When a relaying or splitting session authored the
-  current `input` and `--intent-checked` would bind that relay session instead
-  of the human's originating conversation, do not publish a writer-derived
-  stamp; record the verification — naming the checked `input` digest, checker,
-  and originating human conversation address — in the todo's `log` artifact
-  (`instrukt todo artifacts write <slug> log <content>`) and review findings so
-  truthful provenance travels downstream. A current check for the current
-  `input` version is either an `--intent-checked` stamp whose recorded
-  conversation is the human's actual originating conversation, or that
-  digest-bound verification in `log`; an `--intent-checked` stamp bound to a
-  relaying or splitting session rather than the human's originating
-  conversation does not satisfy the check, and the next non-author recipient
-  performs the original-human check. A valid current check travels unchanged to
-  later recipients; role names and author membership are not substitutes for a
-  version-bound check. The check runs where the
-  conversation is readable, without copying it to GitHub. Unreadable evidence
+  Record `instrukt todo stamp <slug> --intent-checked --conversation <origin-session>`
+  with the observed session of the human's originating conversation. The stamp
+  binds that conversation to the current `input` digest. A current check requires
+  both the current digest and the human's actual originating conversation. A
+  valid current check travels unchanged to later recipients. Check the
+  conversation where it is readable and leave its content in the runtime. Unreadable evidence
   supplies no check, and an author never independently checks their own
   compression. If the originating conversation is permanently unavailable,
   return the intent to the human in the responsible thread; a new `input`

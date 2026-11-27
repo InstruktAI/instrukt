@@ -551,11 +551,17 @@ pub enum StampFact {
     /// `--build-complete`: the stamped work-branch head.
     BuildComplete { head: CommitSha },
     RoleComplete {
-        head: CommitSha,
-        role: RoleName,
-        attempt: u64,
-        base: CommitSha,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<CommitSha>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<RoleName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<CommitSha>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         artifacts: Vec<(ArtifactName, ContentDigest)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         commits: Vec<CommitSha>,
     },
     /// `--deferrals-processed`: the deferrals artifact it covers.

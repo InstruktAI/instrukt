@@ -8,12 +8,11 @@ use std::path::Path;
 
 use instrukt_core::git;
 use instrukt_core::ids::{CommitSha, SessionRef, TodoSlug};
-use instrukt_runner::dispatch::TASK_RUNNER_ROLE;
-use instrukt_runner::interfaces::TodoKind;
+use instrukt_runner::interfaces::{AssignmentKind, TodoKind};
 use jiff::Timestamp;
 
 use super::_error::WorkError;
-use super::_model::{TodoRecord, TodoRef};
+use super::_model::{Binding, TodoRecord, TodoRef};
 use crate::evidence::{
     Actor, ApprovalGate, ApprovedBy, ArtifactName, BuildVerdict, ContentDigest, DriftClass,
     Grounding, PreparationReview, ReviewVerdict, StampFact, TaskResult, VerificationDisposition,
@@ -62,7 +61,7 @@ pub enum StampRequest {
     BuildStarted,
     /// `--build-complete`.
     BuildComplete,
-    /// Setup, finalizer or preparation-writer completion and atomic attempt release.
+    /// Completion and release of the caller's bound attempt, when present.
     RoleComplete,
     /// `--deferrals-processed`.
     DeferralsProcessed,
@@ -96,6 +95,9 @@ pub(crate) struct StampInputs<'a> {
     /// The acting session, when the caller runs in one.
     pub session: Option<&'a SessionRef>,
     pub now: Timestamp,
+    pub completion: Option<&'a Binding>,
+    /// A head already validated for attempt release or finalize readiness.
+    pub workspace_head: Option<&'a CommitSha>,
     /// The open todo a verification disposition's `--follow-up` names, as
     /// the work session resolved it: `None` when none was named, or when
     /// the slug names no todo of the project that is neither delivered nor
@@ -117,6 +119,14 @@ pub(crate) struct Resolved {
     /// The outcome ends the execution that holds the claim: the claim is
     /// released (a claim covers one occurrence's run).
     pub releases_claim: bool,
+}
+
+impl StampInputs<'_> {
+    fn commit(&self) -> Result<CommitSha, WorkError> {
+        self.workspace_head
+            .cloned()
+            .map_or_else(|| head(self.cwd), Ok)
+    }
 }
 
 pub(crate) fn resolve(
@@ -143,7 +153,7 @@ pub(crate) fn resolve(
         }
         StampRequest::BuildVerdict { verdict } => plain(StampFact::BuildVerdict {
             verdict: *verdict,
-            target: head(inputs.cwd)?,
+            target: inputs.commit()?,
             report: current(record, artifact_names::REVIEW_FINDINGS)?,
         }),
         StampRequest::Approval {
@@ -294,8 +304,7 @@ pub(crate) fn resolve(
                 None => match record
                     .bindings
                     .iter()
-                    .find(|b| b.role.as_str() == "setup")
-                    .and_then(|b| b.attempt.base_head.clone())
+                    .find_map(|b| b.worktree.as_ref().and(b.attempt.base_head.clone()))
                 {
                     Some(base) => base,
                     None => merge_base(inputs.cwd, inputs.base_branch)?,
@@ -310,54 +319,46 @@ pub(crate) fn resolve(
             }
         }
         StampRequest::RoleComplete => {
-            let binding = record
-                .bindings
-                .iter()
-                .find(|b| b.session.as_ref() == inputs.session && b.attempt.released_at.is_none())
-                .ok_or_else(|| WorkError::refused("no active role attempt"))?;
-            let current_head = head(inputs.cwd)?;
-            let is_worktreeless_task = binding.worktree.is_none()
-                && record.kind == instrukt_runner::interfaces::TodoKind::Task;
-            let base = match binding.attempt.base_head.clone() {
-                Some(base) => base,
-                None if is_worktreeless_task => current_head.clone(),
-                None => return Err(WorkError::refused("role base is absent")),
-            };
-            let artifacts = super::_attempts::writer_artifact(binding.role.as_str())
-                .into_iter()
-                .map(|name| Ok((ArtifactName::new(name), current(record, name)?)))
-                .collect::<Result<Vec<_>, WorkError>>()?;
-            let commits = if is_worktreeless_task {
-                Vec::new()
-            } else {
+            let binding = inputs.completion;
+            let head = inputs.workspace_head;
+            let base = binding.and_then(|binding| binding.attempt.base_head.as_ref());
+            let commits = if let (Some(base), Some(head)) = (base, head) {
                 git::run(
                     inputs.cwd,
-                    ["log", "--format=%H", &format!("{}..HEAD", base)],
+                    ["log", "--format=%H", &format!("{base}..{head}")],
                 )?
                 .lines()
-                .map(|sha| CommitSha::parse(sha).map_err(|e| WorkError::refused(e.to_string())))
+                .map(|sha| CommitSha::parse(sha).map_err(|err| WorkError::refused(err.to_string())))
                 .collect::<Result<Vec<_>, _>>()?
+            } else {
+                Vec::new()
             };
             plain(StampFact::RoleComplete {
-                artifacts,
+                head: head.cloned(),
+                role: binding.map(|binding| binding.role.clone()),
+                attempt: binding.map(|binding| binding.attempt.number),
+                base: base.cloned(),
+                artifacts: Vec::new(),
                 commits,
-                head: current_head,
-                role: binding.role.clone(),
-                attempt: binding.attempt.number,
-                base,
             })
         }
         StampRequest::BuildComplete => Resolved {
-            branch: record.branch.clone().or_else(|| branch(inputs.cwd).ok()),
+            branch: if record.branch.is_none() {
+                inputs
+                    .completion
+                    .and_then(|binding| binding.attempt.branch.clone())
+            } else {
+                None
+            },
             ..plain(StampFact::BuildComplete {
-                head: head(inputs.cwd)?,
+                head: inputs.commit()?,
             })
         },
         StampRequest::DeferralsProcessed => plain(StampFact::DeferralsProcessed {
             deferrals: current(record, artifact_names::DEFERRALS)?,
         }),
         StampRequest::FinalizeReady => {
-            let commit = head(inputs.cwd)?;
+            let commit = inputs.commit()?;
             let already_recorded = record
                 .stamps
                 .iter()
@@ -383,7 +384,7 @@ pub(crate) fn resolve(
             let follow_up = follow_up_of(record, *disposition, follow_up.as_ref(), inputs)?;
             plain(StampFact::VerificationDisposition {
                 disposition: *disposition,
-                commit: head(inputs.cwd)?,
+                commit: inputs.commit()?,
                 report: current(record, artifact_names::VERIFICATION_FINDINGS)?,
                 follow_up,
             })
@@ -460,7 +461,10 @@ pub(crate) fn resolve(
                 .is_some_and(|claim| match &claim.session {
                     Some(holder) => holder == caller,
                     None => record.bindings.iter().any(|b| {
-                        b.session.as_ref() == Some(caller) && b.role.as_str() == TASK_RUNNER_ROLE
+                        b.session.as_ref() == Some(caller)
+                            && b.attempt.assignment == AssignmentKind::Task
+                            && b.attempt.occurrence == Some(mine.occurrence)
+                            && b.attempt.released_at.is_none()
                     }),
                 });
             let occurrence = mine.occurrence;
@@ -785,6 +789,8 @@ mod tests {
             session: None,
             now: Timestamp::from_second(9).unwrap(),
             follow_up: found,
+            completion: None,
+            workspace_head: None,
         };
         resolve(&request, record, &inputs).map(|resolved| resolved.fact)
     }

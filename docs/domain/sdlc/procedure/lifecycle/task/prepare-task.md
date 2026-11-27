@@ -52,11 +52,9 @@ Use `instrukt <command> -h` for individual commands.
    splitting session does not satisfy the check). If no valid current check
    exists and you are the first non-author recipient, read the human's actual
    originating conversation through the configured runtime read — tracing past
-   any relaying or splitting session — and record the check per
-   `sdlc/policy/todo-creation-discipline` (`instrukt todo stamp {slug} --intent-checked`
-   only when the stamp binds the human's originating conversation, otherwise
-   recording the checked `input` digest, checker, and originating human
-   conversation address in `log`).
+   any relaying or splitting session — and record the check with
+   `instrukt todo stamp {slug} --intent-checked --conversation <origin-session>`
+   per `sdlc/policy/todo-creation-discipline`.
    If the originating conversation is permanently unavailable, return the intent to the
    human in the responsible thread; a new `input` version from that conversation becomes
    the checkable basis.

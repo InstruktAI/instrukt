@@ -1,15 +1,14 @@
 ---
-description: Workflow flavor manifest (`workflow.yaml`) declares the unified orchestrator, runtime capabilities, and roles; code serves a facts-only ledger while prose procedures own routing.
+description: Workflow flavor manifest (`workflow.yaml`) declares the driver role, runtime capabilities and role vocabulary.
 ---
 # Workflow Definition — Spec
 
 ## What it is
 
-A project selects a published workflow flavor via `workflow.domain` (default
-`sdlc`). The flavor declares its unified orchestrator role, required runtime
-capabilities, and role vocabulary in `workflow/workflow.yaml`. All activity
-routing lives in the orchestrator's prose procedure; Rust code derives only a
-facts-only ledger and enforces the three hard integrity invariants.
+The `workflow.domain` setting selects a published workflow flavor
+(default `sdlc`). Its manifest declares the configured driver role, runtime
+capability requirements and role vocabulary. The ledger reports recorded
+work evidence and the integrity checks.
 
 ## Canonical fields
 
@@ -17,7 +16,7 @@ facts-only ledger and enforces the three hard integrity invariants.
 
 | Key | Contract |
 | --- | --- |
-| `orchestrator` | Single unified orchestrator role name (e.g. `todo-orchestrator`), listed in `roles` and declared by exactly one procedure in the domain. |
+| `orchestrator` | Configured driver role, listed in `roles` and declared by exactly one procedure in the domain. |
 | `requires` | Typed list of runtime capability names (`worktree_create`, `worktree_attach`, `shared_delegation`, `link`, `notify`, `agent_selection`); may be empty `[]`. |
 | `roles` | Non-empty list of unique role names declared by the domain's non-subscribed procedures. |
 
@@ -54,14 +53,12 @@ persisting a phase or dictating a next step:
 
 ## Use cases
 
-### UC-WD1: Adopt a project workflow
+### UC-WD1: Select a published workflow flavor
 
 ```gherkin
-Given a developer is adopting instrukt for a project
-And the developer has selected a flavor declaring its unified orchestrator, roles, and prose playbook
-When the developer updates the flavor's orchestrator role or prose procedure
-Then pickup and dispatch follow the published flavor declaration and current factual ledger
-And changing routing choices in prose requires no change to the workflow engine
+Given a project selects a published workflow domain
+When instrukt loads its flavor manifest
+Then it reads the declared driver role, capabilities and roles
 ```
 
 ### UC-WD2: Enable a workflow whose runtime can carry its declared work

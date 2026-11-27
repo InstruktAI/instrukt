@@ -329,8 +329,8 @@ non-zero = fatal lookup error), using the exact rules in
 `git merge-base HEAD "<canonical-ref>"` before any `git diff`; check `git log`
 exit status before interpreting empty stdout as absent). On any fatal ref or
 history lookup failure, never treat a fill or workflow as absent — leave
-`<slug>/work` clean, record the diagnostic in `log`, and stop without writing
-`implementation-plan` or stamping `--role-complete`.
+`<slug>/work` clean, record the diagnostic in `log`, and release the attempt
+with `--role-complete`. Return without an `implementation-plan`.
 
 Resolve Layer 1 accurately against `<canonical-ref>`, including on a retained
 worktree predating a recently landed bootstrap or substrate extension:
@@ -363,9 +363,9 @@ worktree predating a recently landed bootstrap or substrate extension:
   matrix or draft against a stale fill — leave `<slug>/work` clean (discarding
   any uncommitted scratch edits while preserving legitimate committed
   preparation work), record the published commit versus `<canonical-ref>`'s fill
-  commit in `log`, and stop without writing `implementation-plan` or stamping
-  `--role-complete` so `todo-orchestrator` resolves this stopped attempt
-  (`--failed`) and retries once publication catches up. Once publication is
+  commit in `log`, and release the attempt with `--role-complete` before
+  returning without a plan. The orchestrator retries once publication catches
+  up. Once publication is
   current for that path, read the delivered fill via
   `instrukt docs get project/<project>/spec/verification-substrate` (without
   `--target`); only when unlisted on current published canonical docs and absent
@@ -402,10 +402,10 @@ worktree predating a recently landed bootstrap or substrate extension:
   workflow bootstrap or path migration carries no application change) and do not draft a stale plan against the
   unbootstrapped repository: leave `<slug>/work` clean (discarding any
   uncommitted scratch edits while preserving legitimate committed preparation
-  work), record the missing default-branch workflow in `log`, and stop without
-  writing `implementation-plan` or stamping `--role-complete` so
-  `todo-orchestrator` resolves this stopped attempt cleanly (`--failed`) and
-  orders `{slug}` after the standalone prerequisite bootstrap todo (`--after` +
+  work), record the missing default-branch workflow in `log`, and release the
+  attempt with `--role-complete`. Return without an `implementation-plan`.
+  `todo-orchestrator` orders `{slug}` after the standalone prerequisite
+  bootstrap todo (`--after` +
   `--unclaim`, `sdlc/procedure/lifecycle/overview`).
 - **Existing substrate extension and retained-worktree synchronization:** When
   the default-branch verification workflow already exists on `<canonical-ref>`
@@ -708,22 +708,17 @@ release per step 2.
   stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
   returns here with `plan-review-findings` for fix, evidence-backed rejection,
   or re-derivation under step 1b.
-- **Released child grouping executed under step 2:** do not stamp
-  `--role-complete` (which binds `implementation-plan` and is refused without
-  one, or would bind a stale seed on the now-frozen holder). Report the created
-  child slugs and dependency order back to `todo-orchestrator`, which closes
-  the `planner` attempt with
-  `instrukt todo attempt {slug} --role planner --attempt <n> --failed --reason "..."`
-  without dispatching `plan-reviewer` against the holder.
-- **Unreleased split proposal awaiting human release:** write the proposed
-  partition, dependency order, and scope/size rationale to `log`
-  (`instrukt todo artifacts write {slug} log <content>`) and stop without
-  filing children or stamping `--role-complete`. `todo-orchestrator` closes the
-  stopped `planner` attempt with
-  `instrukt todo attempt {slug} --role planner --attempt <n> --failed --reason "..."`,
-  presents the proposed partition for human release without dispatching
-  `plan-reviewer`, and keeps its claim or places `--hold` until the human
-  releases the split (`sdlc/procedure/lifecycle/overview`).
+- **Released child grouping executed under step 2:** stamp
+  `instrukt todo stamp {slug} --role-complete` from the clean workspace.
+  Report the child slugs and dependency order to `todo-orchestrator`. The
+  structural holder has no plan review.
+- **Unreleased split proposal awaiting human release:** record the proposed
+  partition, dependency order, and scope/size rationale in `log`
+  (`instrukt todo artifacts write {slug} log <content>`). Release the clean
+  workspace attempt with `instrukt todo stamp {slug} --role-complete` and
+  return without filing children. `todo-orchestrator` presents the partition
+  for human release and keeps its claim or places `--hold` while waiting
+  (`sdlc/procedure/lifecycle/overview`).
 
 ## Outputs
 
