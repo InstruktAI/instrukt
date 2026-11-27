@@ -219,6 +219,7 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         sources: args.sources,
     })?;
     let verdicts = crate::wiring::head_verdicts(ctx);
+    let asker = caller(ctx, &config)?;
     let project = instrukt_runner::interfaces::ProjectRef {
         slug: project.slug,
         root: project.root,
@@ -229,6 +230,7 @@ fn start(args: StartArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
             config: &config,
             project: &project,
             verdicts: verdicts.as_ref(),
+            asker,
             now: ctx.clock.now(),
         },
         coordinates,

@@ -27,13 +27,14 @@ use jiff::Timestamp;
 use serde::Serialize;
 
 pub use _admission::{Coordinate, Coordinates, FormRefusal, Kind, RawCoordinates, SourcePointer};
+pub use _store::{EarlierHead, TracedBy};
 
 use crate::interfaces::{HeadVerdicts, ProjectRef};
 use crate::keyed::{self, KeyGuard, RuntimeInvocation};
 use crate::runtime::{Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::RunnerState;
-use _store::{Ask, Delivery};
+use _store::{Ask, Delivery, RecordOutcome};
 
 /// How long an ask waits for the machine's dispatch gate, which runner
 /// wake-ups hold only while admitting their own invocations.
@@ -91,6 +92,8 @@ pub struct AskContext<'a> {
     /// The project the caller stands in, at the caller's worktree root.
     pub project: &'a ProjectRef,
     pub verdicts: &'a dyn HeadVerdicts,
+    /// The session that asked, when one resolved for the caller.
+    pub asker: Option<SessionRef>,
     pub now: Timestamp,
 }
 
@@ -297,8 +300,15 @@ impl Delivering<'_> {
             .filter(|thread| thread.presence == Presence::Present);
         let reviewer_turn = present.map(turn).transpose()?;
         let asks = _store::asks(self.context.home, self.slug(), self.head()).map_err(failed)?;
+        let expected_last_number = asks
+            .iter()
+            .rev()
+            .find(|ask| ask.closed_at.is_none())
+            .map(|ask| ask.number);
         let outstanding = asks
-            .last()
+            .iter()
+            .rev()
+            .find(|ask| ask.closed_at.is_none())
             .filter(|ask| ask.accepted_at.is_none() || reviewer_turn == Some(Turn::InProgress));
         // The same ask while outstanding returns it, whatever its reviewer
         // recorded meanwhile within the turn it opened (Outstanding).
@@ -346,8 +356,9 @@ impl Delivering<'_> {
             Route::Send { generation, .. } => (Delivery::Send, Some(*generation)),
         };
         let worktree_path = self.worktree_path()?;
+        let report_path = _store::canonical_report(&self.coordinates.report).map_err(failed)?;
         let named = serde_json::to_string(&self.coordinates.named()).map_err(failed)?;
-        let ask = _store::record(
+        let ask = match _store::record(
             self.context.home,
             &_store::NewAsk {
                 project: self.slug(),
@@ -361,10 +372,35 @@ impl Delivering<'_> {
                 delivery,
                 send_generation,
                 admitted_at: self.context.now,
+                asker: self.context.asker.as_ref(),
+                trace: None,
+                report: &report_path,
             },
+            expected_last_number,
         )
-        .map_err(failed)?;
-        tracing::info!(event = "requested_review_admitted", project = %self.slug(), head = %self.head(), ask = ask.number, kind = self.kind.as_str());
+        .map_err(failed)?
+        {
+            RecordOutcome::Recorded(ask) => *ask,
+            RecordOutcome::Conflict => {
+                return Err(refused(
+                    Check::Outstanding,
+                    format!(
+                        "another ask of {} was admitted concurrently; run the same command again",
+                        self.head()
+                    ),
+                ));
+            }
+        };
+        tracing::info!(
+            event = "requested_review_admitted",
+            project = %self.slug(),
+            head = %self.head(),
+            ask = ask.number,
+            kind = self.kind.as_str(),
+            asker = ?ask.asker,
+            trace = ?ask.trace,
+            report = %ask.report.display()
+        );
         let session = match route {
             Route::Start => self.start(false)?,
             Route::Successor => self.start(true)?,
