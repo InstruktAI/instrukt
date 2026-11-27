@@ -818,6 +818,10 @@ fn render(path: &Path, before: &[u8], value: &Value) -> Result<Vec<u8>, ConfigEr
 /// folder and its own file name, so a company's `company.yaml` and the
 /// project layer beside it never share one. It lives in the home, never
 /// beside a project's document.
+pub fn document_lock_path(home: &Home, path: &Path) -> PathBuf {
+    lock_path(home, path)
+}
+
 pub(super) fn lock_path(home: &Home, path: &Path) -> PathBuf {
     let canonical = path
         .parent()

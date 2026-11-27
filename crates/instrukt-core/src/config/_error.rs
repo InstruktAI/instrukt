@@ -158,6 +158,10 @@ pub enum ConfigError {
         "{path} is a symbolic link, and a company home's ignore lines are never read or written through one; replace it in the company's repository with the file itself, then run the command again"
     )]
     LinkedIgnoreFile { path: PathBuf },
+    #[error(
+        "{path} is a symbolic link, and a company home's settings document is never read or converted through one; replace it with the regular file itself, then run the command again"
+    )]
+    LinkedCompanyDocument { path: PathBuf },
     #[error("cannot create the company home {path}: {source}")]
     CreateHome {
         path: PathBuf,

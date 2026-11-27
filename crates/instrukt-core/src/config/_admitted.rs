@@ -51,6 +51,8 @@ pub struct Admitted {
     published: bool,
     /// The retention window admitted: `None` while it is off or withheld.
     thread_retention: Option<jiff::SignedDuration>,
+    /// Whether global `backup` findings withheld home backup admission.
+    backup_withheld: bool,
 }
 
 /// A company home admitted with its generation.
@@ -136,11 +138,12 @@ pub struct Candidate {
 impl Admitted {
     /// Builds a generation from the files, reading each once. An invalid
     /// machine layer or `agents.yaml` refuses it: nothing can run on them;
-    /// a machine layer whose only findings withhold thread retention is
-    /// admitted with the window off and its findings reported. A
-    /// company home that does not validate, or a project whose layer cannot
-    /// be read, is left out with its findings and makes the candidate
-    /// incomplete; a finding against a project's module withholds that module.
+    /// a machine layer whose only findings withhold thread retention or home
+    /// backup is admitted with those capabilities withheld and its findings
+    /// reported. A company home that does not validate, or a project whose
+    /// layer cannot be read, is left out with its findings and makes the
+    /// candidate incomplete; a finding against a project's module withholds
+    /// that module.
     pub fn load(home: &Home) -> Result<Candidate, AdmissionError> {
         // Admission reads and never writes: older documents are converted in
         // memory, and the profiles are the shipped ones when there is no file.
@@ -202,12 +205,20 @@ impl Admitted {
         };
         let mut findings = Vec::new();
         let mut thread_retention = super::_thread_retention::admitted(global_layer.as_ref());
+        let mut backup_withheld = false;
         if let Some(value) = &global_layer {
             let found = findings_given(home, &Layer::Global, &global_path, value, given)?;
             match admit_machine_layer(found) {
                 MachineLayer::Admitted => {}
-                MachineLayer::RetentionWithheld(found) => {
-                    thread_retention = None;
+                MachineLayer::Withheld {
+                    findings: found,
+                    thread_retention: withhold_retention,
+                    backup: withhold_backup,
+                } => {
+                    if withhold_retention {
+                        thread_retention = None;
+                    }
+                    backup_withheld = withhold_backup;
                     findings.extend(found);
                 }
                 MachineLayer::Refused(found) => {
@@ -271,10 +282,17 @@ impl Admitted {
                 projects,
                 published,
                 thread_retention,
+                backup_withheld,
             },
             findings,
             complete,
         })
+    }
+
+    /// Whether global `backup` findings withheld home backup admission in this
+    /// generation while leaving the rest of the global layer admitted.
+    pub fn backup_withheld(&self) -> bool {
+        self.backup_withheld
     }
 
     /// The computer's retention window as admitted: `None` while it is off,
@@ -373,9 +391,13 @@ impl Admitted {
 enum MachineLayer {
     /// No finding: the layer is admitted whole.
     Admitted,
-    /// Only findings that withhold thread retention: the layer is admitted
-    /// with the window off, and these are reported.
-    RetentionWithheld(Vec<Finding>),
+    /// Only findings that withhold thread retention and/or home backup: the
+    /// layer is admitted with those capabilities withheld, and these are reported.
+    Withheld {
+        findings: Vec<Finding>,
+        thread_retention: bool,
+        backup: bool,
+    },
     /// Any other finding: nothing can run on the layer.
     Refused(Vec<Finding>),
 }
@@ -385,8 +407,17 @@ enum MachineLayer {
 fn admit_machine_layer(found: Vec<Finding>) -> MachineLayer {
     if found.is_empty() {
         MachineLayer::Admitted
-    } else if found.iter().all(super::withholds_thread_retention) {
-        MachineLayer::RetentionWithheld(found)
+    } else if found
+        .iter()
+        .all(|f| super::withholds_thread_retention(f) || super::withholds_backup(f))
+    {
+        let thread_retention = found.iter().any(super::withholds_thread_retention);
+        let backup = found.iter().any(super::withholds_backup);
+        MachineLayer::Withheld {
+            findings: found,
+            thread_retention,
+            backup,
+        }
     } else {
         MachineLayer::Refused(found)
     }
@@ -792,7 +823,32 @@ mod tests {
     fn a_machine_layer_whose_only_finding_withholds_retention_is_admitted_with_it_withheld() {
         assert_eq!(
             admit_machine_layer(vec![retention_capability()]),
-            MachineLayer::RetentionWithheld(vec![retention_capability()])
+            MachineLayer::Withheld {
+                findings: vec![retention_capability()],
+                thread_retention: true,
+                backup: false,
+            }
+        );
+    }
+
+    #[test]
+    fn a_machine_layer_with_backup_findings_only_withholds_backup_alone() {
+        let backup_finding = finding("backup.endpoint");
+        assert_eq!(
+            admit_machine_layer(vec![backup_finding.clone()]),
+            MachineLayer::Withheld {
+                findings: vec![backup_finding.clone()],
+                thread_retention: false,
+                backup: true,
+            }
+        );
+        assert_eq!(
+            admit_machine_layer(vec![retention_capability(), backup_finding.clone()]),
+            MachineLayer::Withheld {
+                findings: vec![retention_capability(), backup_finding],
+                thread_retention: true,
+                backup: true,
+            }
         );
     }
 
@@ -830,6 +886,7 @@ mod tests {
             projects: Vec::new(),
             published,
             thread_retention: None,
+            backup_withheld: false,
         }
     }
 
