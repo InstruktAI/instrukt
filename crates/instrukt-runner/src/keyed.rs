@@ -12,9 +12,11 @@ use std::time::Duration;
 use crate::runtime::{Presence, RuntimeAdapter, RuntimeAssignment, RuntimeStart, Thread};
 
 mod _findings;
+mod _wake;
 use crate::sessions::SessionsError;
 use crate::state::{self, RunnerState, StateError};
 pub(crate) use _findings::note;
+pub use _wake::{NotWoken, WakeOutcome, WakeTarget, WakeTargetLookup, wake, wake_target};
 
 pub fn encode(value: &str) -> String {
     let mut out = String::new();
@@ -50,6 +52,16 @@ pub fn todo_key(project: &str, slug: &str, role: &str, attempt: u64) -> String {
 /// (`session-continuity`, Start keys and locks).
 pub fn review_key(project: &str, head: &str) -> String {
     format!("instrukt:review:{}:{}", encode(project), encode(head))
+}
+
+/// Whether `key` is a requested-reviewer start key.
+pub(crate) fn is_review_key(key: &str) -> bool {
+    kind(key) == "review"
+}
+
+/// Whether `key` is a requested-reviewer start key belonging to `project`.
+pub fn is_review_key_for_project(key: &str, project: &instrukt_core::ids::ProjectSlug) -> bool {
+    key.starts_with(&format!("instrukt:review:{}:", encode(project.as_str())))
 }
 pub fn task_key(project: &str, slug: &str, occurrence: Timestamp) -> String {
     format!(
@@ -826,13 +838,13 @@ fn succeed_claimed(
         request.brief = conversation_assignment_prefix(&request.brief)
             .ok_or_else(|| SessionsError::Refused("missing conversation assignment".into()))?;
     }
-    let is_review_replacement = replacement_request.is_some() && kind(key) == "review";
+    let is_review_replacement = replacement_request.is_some() && is_review_key(key);
     if let Some(replacement) = replacement_request {
         request.title = replacement.title.clone();
         // A requested reviewer's successor opens with the replacement ask's
         // rendering and admitted worktree placement rather than inheriting its
         // predecessor's.
-        if kind(key) == "review" {
+        if is_review_key(key) {
             request.brief = replacement.brief.clone();
             request.worktree = None;
         }
@@ -898,7 +910,7 @@ fn succeed_claimed(
         }
         existing
     };
-    if kind(key) != "review"
+    if !is_review_key(key)
         && request.worktree.is_none()
         && let Some(path) = native.existing_worktree.as_ref()
     {
@@ -1018,6 +1030,52 @@ enum DeliveryOwner {
     },
 }
 
+struct SessionBindingRow {
+    key: String,
+    generation: u64,
+    project_id: Option<String>,
+    request: Option<String>,
+    checkout: String,
+}
+
+impl SessionBindingRow {
+    fn checkout_path(&self) -> Option<std::path::PathBuf> {
+        let requested = self
+            .request
+            .as_deref()
+            .and_then(|text| serde_json::from_str::<RuntimeStart>(text).ok())
+            .map(|request| request.checkout);
+        requested.or_else(|| (!self.checkout.is_empty()).then(|| self.checkout.clone().into()))
+    }
+}
+
+fn bindings_for_session(
+    state: &RunnerState,
+    runtime: &str,
+    session: &SessionRef,
+) -> Result<Vec<SessionBindingRow>, StateError> {
+    let session_text = session.to_string();
+    Ok(state
+        .read(|conn, path| {
+            let mut stmt = conn
+                .prepare("SELECT semantic_key,generation,project_id,request,checkout FROM runtime_bindings WHERE runtime=?1 AND session=?2 ORDER BY rowid")
+                .map_err(state::sql(path))?;
+            stmt.query_map(params![runtime, session_text], |r| {
+                Ok(SessionBindingRow {
+                    key: r.get(0)?,
+                    generation: r.get(1)?,
+                    project_id: r.get(2)?,
+                    request: r.get(3)?,
+                    checkout: r.get(4)?,
+                })
+            })
+            .map_err(state::sql(path))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(state::sql(path))
+        })?
+        .unwrap_or_default())
+}
+
 fn delivery_owner(
     state: &RunnerState,
     runtime: &str,
@@ -1025,31 +1083,14 @@ fn delivery_owner(
     work: Option<&dyn crate::interfaces::SessionBindings>,
 ) -> Result<Option<DeliveryOwner>, SessionsError> {
     let session_text = session.to_string();
-    let binding = state.read(|conn, path| {
-        conn.query_row(
-            "SELECT semantic_key,project_id,request,checkout FROM runtime_bindings WHERE runtime=?1 AND session=?2",
-            params![runtime, session_text],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, String>(3)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(state::sql(path))
-    })?;
-    if let Some((key, project_id, request, checkout)) = binding.flatten() {
-        let requested = request
-            .as_deref()
-            .and_then(|text| serde_json::from_str::<RuntimeStart>(text).ok())
-            .map(|request| request.checkout);
-        let checkout = requested.or_else(|| (!checkout.is_empty()).then(|| checkout.into()));
+    if let Some(row) = bindings_for_session(state, runtime, session)?
+        .into_iter()
+        .next()
+    {
+        let checkout = row.checkout_path();
         return Ok(Some(DeliveryOwner::Binding {
-            key,
-            recorded_project: project_id.is_some(),
+            key: row.key,
+            recorded_project: row.project_id.is_some(),
             checkout,
         }));
     }
