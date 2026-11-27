@@ -486,8 +486,8 @@ fn upload_artifacts(gh: &GitHub, item: &mut LocalItem, issue: IssueRef) -> Resul
             Some(address) if recovered => remote_versions(gh, number, address, confirmed)?,
             _ => Vec::new(),
         };
-        // Versions keep their order: a version maps to a remote version
-        // after the one its predecessor maps to.
+        // Uploaded or matched versions map strictly after `floor`; a version
+        // repeating its predecessor's content inherits its remote version or refusal.
         let mut floor = 0;
         for i in 0..artifact.versions.len() {
             let (before, rest) = artifact.versions.split_at_mut(i);

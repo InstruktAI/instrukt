@@ -950,7 +950,7 @@ impl Work {
             remote: None,
             content: Some(content.to_owned()),
         };
-        // Content that does not change does not move: nothing is recorded.
+        // A write matching the current version's content, provenance and writer records nothing.
         if let Some(current) = s.items[index].record.current_version(name)
             && current.repeats(&version)
         {

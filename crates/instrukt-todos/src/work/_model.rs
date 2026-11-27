@@ -375,17 +375,23 @@ impl Version {
     /// Whether `other` changes nothing about this version: the same content,
     /// provenance and writer, whenever it was written.
     pub fn repeats(&self, other: &Version) -> bool {
-        (
-            &self.digest,
-            &self.derived_from,
-            &self.grounding,
-            &self.writer,
-        ) == (
-            &other.digest,
-            &other.derived_from,
-            &other.grounding,
-            &other.writer,
-        )
+        let Self {
+            digest,
+            writer,
+            derived_from,
+            grounding,
+            created: _,
+            sequence: _,
+            remote: _,
+            content: _,
+        } = self;
+        (digest, derived_from, grounding, writer)
+            == (
+                &other.digest,
+                &other.derived_from,
+                &other.grounding,
+                &other.writer,
+            )
     }
 }
 
@@ -504,11 +510,21 @@ mod tests {
         let later = Version {
             created: Timestamp::from_second(9).unwrap(),
             sequence: 4,
+            remote: Some(2),
+            content: None,
             ..version("x", "dev")
         };
         assert!(current.repeats(&later));
         assert!(!current.repeats(&version("y", "dev")));
         assert!(!current.repeats(&version("x", "other")));
+        let rederived = Version {
+            derived_from: vec![Upstream {
+                artifact: ArtifactName::new("prd"),
+                digest: Some(digest_of("prd-v1")),
+            }],
+            ..version("x", "dev")
+        };
+        assert!(!current.repeats(&rederived));
         let regrounded = Version {
             grounding: Grounding {
                 referenced_paths: vec!["src".into()],
