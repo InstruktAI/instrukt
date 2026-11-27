@@ -18,6 +18,7 @@ build, review, verify, fix, process deferrals, and finalize.
 
 ### Three hard integrity invariants
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 1. **No interference (attempt lock):** at most one active `Workspace` or `Child`
    attempt may be open on `<slug>/work` at a time. Attempt reservation
    (`instrukt todo attempt`) requires a clean worktree on the recorded branch;
@@ -38,6 +39,33 @@ build, review, verify, fix, process deferrals, and finalize.
 3. **Human-owned approval gates:** configured `approvals.prd` is enforced on
    `builder` and `finalizer` reservations and on `--finalize-ready`
    whenever the todo is a `feature` or carries a `prd` artifact.
+<!-- change:fix-autostart-prepare-work-boundary -->
+1. **No interference (attempt lock):** at most one active `Workspace` or `Child`
+   attempt may be open on `<slug>/work` at a time. Attempt reservation
+   (`instrukt todo attempt`) requires a clean worktree on the recorded branch;
+   completion stamps (`--role-complete`, `--build-complete`, review verdicts,
+   verification dispositions, `--deferrals-processed`) release the attempt
+   atomically.
+2. **Independent exact-SHA handoff gate:** `--verdict approve --phase build_review`
+   requires an independent reviewer session distinct from the orchestrator and
+   all writer roles (`builder`, `setup`, `finalizer`, `intaker`,
+   `architect`, `planner`). `--finalize-ready` (callable by a retained completed
+   `finalizer` or directly by the claim-holding `todo-orchestrator`) requires
+   no open workspace attempt, a clean worktree matching local and published
+   `origin/<slug>/work` HEAD, a current independent `build_review` `approve`
+   stamp bound to that **exact commit SHA** and current `review-findings`
+   digest, and a current verification disposition for that exact commit that
+   admits handoff (Live verification disposition below). `--finalize-ready`
+   appends `workflow.finalized` atomically.
+3. **Human-owned gates:** configured `approvals.prd` is enforced on
+   `builder` and `finalizer` reservations and on `--finalize-ready`
+   whenever the todo is a `feature` or carries a `prd` artifact. With
+   `runner.autostart` off for the todo's kind, the deliberate work start is
+   enforced on `builder` reservations until implementation has started: the
+   reservation needs a `--work-ready` stamp and no standing dispatch hold
+   (`project/instrukt/spec/feature/runner/work-dispatch`, Deliberate work
+   start).
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ### Live verification disposition
 

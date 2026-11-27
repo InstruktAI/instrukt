@@ -29,10 +29,17 @@ commit. Intelligence owns all activity routing in clear prose
 
 ## Ubiquitous language
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 - **Factual ledger:** read-only structured observation of a todo's artifacts, digests, stamps, claims, bindings, workspace/git state, open findings, verification dispositions, drift, prerequisites, and gate status.
 - **Hard integrity invariant:** a code-enforced check where restoring state cannot repair the harm (interference lock, independent exact-SHA handoff gate, human-owned `approvals.prd`/`approvals.task` gates).
 - **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
+<!-- change:fix-autostart-prepare-work-boundary -->
+- **Factual ledger:** read-only structured observation of a todo's artifacts, digests, stamps, claims, bindings, workspace/git state, open findings, verification dispositions, drift, prerequisites, and gate status.
+- **Hard integrity invariant:** a code-enforced check where restoring state cannot repair the harm (interference lock, independent exact-SHA handoff gate, human-owned `approvals.prd`/`approvals.task` gates and the deliberate work start a kind with `runner.autostart` off waits for).
+- **Unified orchestrator:** the single `todo-orchestrator` role routing composable primitives in prose inside one `<slug>/work` worktree (or with no worktree for tasks).
+- **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 - **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
 

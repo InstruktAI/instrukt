@@ -33,6 +33,7 @@ table.
 
 ### What Code Enforces (Three Hard Integrity Invariants)
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 1. **No interference:** one active writer/child workspace attempt per todo
    worktree at a time (`instrukt todo attempt` / `bind`, atomically released on
    the role's completion stamp).
@@ -50,6 +51,27 @@ table.
    `feature` todos and any todo carrying a `prd` artifact before build or
    finalization) and `approvals.task` (required before `task-runner` executes a
    `task` todo).
+<!-- change:fix-autostart-prepare-work-boundary -->
+1. **No interference:** one active writer/child workspace attempt per todo
+   worktree at a time (`instrukt todo attempt` / `bind`, atomically released on
+   the role's completion stamp).
+2. **Independent exact-SHA handoff gate:** `--finalize-ready` hands an exact
+   commit SHA to `integrate` only when that SHA carries both an **independent
+   reviewer's `build_review` `approve` stamp** bound to it and the current
+   `review-findings` report, and a **current verification disposition** for it
+   that admits handoff (`pass`, `tier_0_skip` or `hotfix_deferred`, bound to
+   the current `verification-findings` report). Reviewers stamp their own
+   verdicts and independent verifiers their own `pass`, `fail` or `blocked`;
+   an approval or a `pass` recorded by the orchestrator or any writer is
+   refused. Only the standing `integrator` writes `main`, and only for that
+   handed-off SHA once its CI is green.
+3. **Human-owned gates:** configured `approvals.prd` (required for
+   `feature` todos and any todo carrying a `prd` artifact before build or
+   finalization), `approvals.task` (required before `task-runner` executes a
+   `task` todo), and, for a kind whose `runner.autostart` is off, the
+   deliberate work start (required before the first `builder` round; see
+   Deliberate Work Start).
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ### Composable Primitives & Prose Routing
 
@@ -163,6 +185,23 @@ with `--by human --session` naming this conversation:
 
 Runner wake-up of an orchestrator serves approvals that arrive out of band
 (such as on GitHub) while the conversation is idle.
+
+<!-- planned:fix-autostart-prepare-work-boundary -->
+### Deliberate Work Start
+
+On every route — fast-track, planned and feature — the first `builder` round
+starts the work. When its reservation is refused because `runner.autostart` is
+off for the todo's kind, the work waits for a deliberate start, also when you
+are continuing from your own preparation: present what preparation produced,
+record `instrukt todo stamp <slug> --work-ready` (it places the dispatch hold),
+release your claim (`instrukt todo update <slug> --unclaim`) and stop.
+Releasing that hold starts the work. When the human, or a peer on their
+direction, releases it, the runner resumes you. When the human tells you in
+your own conversation to start, release it yourself
+(`instrukt todo update <slug> --release`), reclaim with
+`instrukt todo work <slug>` from `<slug>/work` and continue with the `builder`
+round. Rounds after implementation has started are not held back.
+<!-- /planned:fix-autostart-prepare-work-boundary -->
 
 ## Preconditions
 
