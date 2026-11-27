@@ -58,11 +58,33 @@ fn tracked(slug: &str, repository: &str) -> String {
 
 impl Evaluated {
     fn new() -> Self {
+        Self::committing_as(None)
+    }
+
+    /// A computer named `name` whose repositories commit as that computer,
+    /// so its commits never share an identity with another computer's
+    /// identical ones, whatever second they are made in.
+    fn on_computer(name: &str) -> Self {
+        Self::committing_as(Some(name))
+    }
+
+    fn committing_as(computer: Option<&str>) -> Self {
         let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
         let runtime = runtime::FakeRuntime::new(&project.env, "t3", false);
         runtime.open_session("s1");
         let model = runtime.state_dir().join("s1.json");
         project.env.set_env("T3CODE_THREAD_ID", "s1");
+        if let Some(name) = computer {
+            let email = format!("{name}@computer.test");
+            for (variable, value) in [
+                ("GIT_AUTHOR_NAME", name),
+                ("GIT_COMMITTER_NAME", name),
+                ("GIT_AUTHOR_EMAIL", email.as_str()),
+                ("GIT_COMMITTER_EMAIL", email.as_str()),
+            ] {
+                project.env.set_env(variable, value);
+            }
+        }
         project.env.set_env("INSTRUKT_NOW", "2030-01-05T08:00:00Z");
         let flavor = workflow::Flavor::publish(&project.env);
         // The eval set: a review policy, published an hour later.
@@ -352,10 +374,10 @@ fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offlin
     );
     // A asks; B runs `instrukt run` with history off; C only ticks; D
     // ticked once and is offline since.
-    let mut a = Evaluated::new();
-    let mut b = Evaluated::new();
-    let mut c = Evaluated::new();
-    let mut d = Evaluated::new();
+    let mut a = Evaluated::on_computer("a");
+    let mut b = Evaluated::on_computer("b");
+    let mut c = Evaluated::on_computer("c");
+    let mut d = Evaluated::on_computer("d");
     let redis = common::redis::RedisServer::new(&a.project.env);
     records_work(&mut a, "a", "claude-opus 4.1", "claude-sonnet 4.5");
     records_work(&mut b, "b", "claude-opus 4.1", "claude-opus 4.1");
