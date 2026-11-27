@@ -643,25 +643,31 @@ mod tests {
     #[test]
     fn a_call_answers_a_wait_past_its_bound_without_pausing() {
         let f = Fixture::new();
-        let mut tries = 0;
-        // Pausing asks whether to stop; a stop that answers yes ends any
-        // pause at once, so a call that would pause is seen without waiting.
-        let asked = std::cell::Cell::new(0);
-        let named = Named::After {
-            delay: Duration::from_secs(3_600),
-            received_at: f.wall(),
+        let settings = Settings {
+            backoff: Backoff::new(Duration::from_secs(10), Duration::from_secs(10)).unwrap(),
+            ..Settings::default()
         };
+        // Whenever the call asks whether to stop, the monotonic source moves
+        // past any pause and the answer is no: a call that paused would try
+        // again at once and succeed, so only the caller's bound answers the
+        // wait after one try.
+        let far = *f.mono.lock().unwrap() + Duration::from_secs(86_400);
+        let mut tries = 0;
         let answer = f.gate.call(
             &scope().item("a"),
-            &Settings::default(),
+            &settings,
             CallerWait::Within(Duration::from_secs(5)),
             &|| {
-                asked.set(asked.get() + 1);
-                true
+                f.reach(far);
+                false
             },
             || {
                 tries += 1;
-                Outcome::Down(Extent::Key, Some(named)).tried()
+                if tries == 1 {
+                    Outcome::Down(Extent::Key, None).tried()
+                } else {
+                    Outcome::Done.tried()
+                }
             },
         );
         assert!(matches!(
@@ -672,7 +678,6 @@ mod tests {
             }
         ));
         assert_eq!(tries, 1);
-        assert_eq!(asked.get(), 0);
     }
 
     #[test]
