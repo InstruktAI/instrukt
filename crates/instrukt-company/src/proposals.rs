@@ -165,9 +165,8 @@ impl Recording {
             report(
                 stderr,
                 "knowledge_proposal_not_recorded",
-                &format!(
-                    "the commit is not recorded as a knowledge proposal and waits for a person: {cause}"
-                ),
+                "the commit is not recorded as a knowledge proposal and waits for a person",
+                &cause,
             );
         }
     }
@@ -230,9 +229,8 @@ impl Recording {
                 report(
                     stderr,
                     "knowledge_proposal_unestablished",
-                    &format!(
-                        "the speaker of the committing turn could not be established, so the commit is recorded unestablished and waits for a person: {cause}"
-                    ),
+                    "the speaker of the committing turn could not be established, so the commit is recorded unestablished and waits for a person",
+                    &cause,
                 );
                 Entry {
                     company: identity.key.clone(),
@@ -254,7 +252,8 @@ impl Recording {
                 report(
                     stderr,
                     "knowledge_proposal_retirement_skipped",
-                    &format!("no recorded proposal was retired this time: {cause}"),
+                    "no recorded proposal was retired this time",
+                    &cause,
                 );
                 Vec::new()
             }
@@ -269,11 +268,12 @@ impl instrukt_core::interfaces::ProposalRecording for Recording {
     }
 }
 
-/// Reports `message` to the log under `event` and as one line on the
-/// commit's standard error.
-fn report(stderr: &mut dyn Write, event: &'static str, message: &str) {
-    tracing::warn!(event, "{message}");
-    if let Err(error) = writeln!(stderr, "instrukt: {message}") {
+/// Reports `summary`, fixed words, with its `cause` to the log under
+/// `event`, the cause as a field of its own, and as one line on the commit's
+/// standard error.
+fn report(stderr: &mut dyn Write, event: &'static str, summary: &'static str, cause: &str) {
+    tracing::warn!(event, cause, "{summary}");
+    if let Err(error) = writeln!(stderr, "instrukt: {summary}: {cause}") {
         tracing::debug!(event = "knowledge_proposal_report_unwritten", error = %error);
     }
 }
