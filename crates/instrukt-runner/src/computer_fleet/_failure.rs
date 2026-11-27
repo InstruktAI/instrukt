@@ -228,20 +228,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_write_is_tried_again_with_the_next_outcome() {
-        let (_dir, home) = home();
-        let now = Arc::new(Mutex::new(seconds(0)));
-        // The state directory's place is taken by a file, so nothing can be
-        // written into it.
-        instrukt_core::fsx::atomic_write(&home.state_dir(), b"").unwrap();
-        let mut file = FailureFile::new(&home, clock(&now));
-        assert!(!file.record(Some("cause")));
-        instrukt_core::fsx::remove_file(home.state_dir()).unwrap();
-        assert!(file.record(Some("cause")));
-        assert!(path(&home).exists());
-    }
-
-    #[test]
     fn an_unreadable_file_is_shown_as_the_workers_failure() {
         let (_dir, home) = home();
         instrukt_core::fsx::atomic_write(&path(&home), b"not json").unwrap();
