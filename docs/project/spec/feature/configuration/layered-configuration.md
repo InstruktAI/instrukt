@@ -152,8 +152,8 @@ insufficiently protected secret value for `access_key_id` or
 and `instrukt secrets set` door without disclosing values), an invalid `age`
 recipient, an invalid schedule time, a non-positive retention count, or an
 unknown subkey is a validation finding at `backup` naming the offending key
-(`project/instrukt/policy/checks-and-guards`: prerequisites are checked where
-configuration enters). `config patch` refuses a write that introduces such a
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where configuration enters). `config patch` refuses a write that introduces such a
 finding; `config validate --global`, `config validate`, and
 `config validate --company <name>` report it in their respective documents
 without changing anything.

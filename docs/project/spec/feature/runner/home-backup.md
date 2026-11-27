@@ -40,7 +40,8 @@ Global configuration and entry validation are owned by
 `project/instrukt/spec/feature/configuration/layered-configuration`; when home
 backup is not configured or is withheld due to a configuration finding, backup
 commands refuse with that finding and its configuration door
-(`project/instrukt/policy/checks-and-guards`). Command capability admission and
+(`sdlc/principle/design-fundamentals`, Fail Fast;
+`general/principle/trust-and-guardrails`). Command capability admission and
 refusal of company-assigned sessions are owned by
 `project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
@@ -105,11 +106,11 @@ omitted (`sdlc/policy/security-awareness`).
   (`general/policy/shared-machine-resources`) and refuses without writing
   staging data if headroom would be violated; temporary staging files are
   cleaned up on both success and failure.
-- **Outside-service availability:** Calls to the S3-compatible endpoint pass
-  through the outside gate (`project/instrukt/design/architecture/outside-gate`,
-  `project/instrukt/policy/checks-and-guards`) with one retry layer and bounded
-  wait semantics; an outage leaves existing remote generations intact, cleans
-  staging on a best-effort basis, and records the failed run locally.
+- **Outside-service availability:** As one-shot CLI invocations, calls to the
+  S3-compatible endpoint use the established S3 client directly with bounded
+  retries and ordinary error handling (`sdlc/policy/substrate-anchoring`); an
+  outage leaves existing remote generations intact, cleans staging on a
+  best-effort basis, and records the failed run locally.
 
 ### Offsite publication, verification and retention
 
@@ -167,7 +168,7 @@ omitted (`sdlc/policy/security-awareness`).
   (`runner.lock`, `writer.lock`, or other held home state locks) are held,
   naming the holder where known and naming the door: stop instrukt services
   first, or pass `--into <dir>` to extract beside the live home for inspection
-  or selective recovery (`project/instrukt/policy/checks-and-guards`).
+  or selective recovery (`general/principle/trust-and-guardrails`).
 - **Alternate target (`--into <dir>`):** Extracts the verified backup contents
   into `<dir>` without acquiring or modifying the live instrukt home.
 - **Overwrite confirmation:** Restore prompts unconditionally for confirmation
@@ -282,5 +283,3 @@ And the other computer's generations are untouched
 - [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
 - [project/instrukt/spec/feature/runner/company-containers](company-containers.md)
 - [project/instrukt/spec/feature/publication/instrukt-status](../publication/instrukt-status.md)
-- [project/instrukt/design/architecture/outside-gate](../../../design/architecture/outside-gate.md)
-- [project/instrukt/policy/checks-and-guards](../../../policy/checks-and-guards.md)

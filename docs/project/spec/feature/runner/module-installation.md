@@ -254,7 +254,7 @@ agent session.
 - Unit names, files, and crontab markers follow the home-isolation rules of
   Withdrawal and ownership below, carrying a path-derived suffix for homes
   other than `~/.instrukt` and re-writing instrukt's own definition whole on
-  every install (`project/instrukt/policy/checks-and-guards`).
+  every install without checking proof of earlier writes.
 - Missing, blank, unreadable, or insufficiently protected backup secret values
   in `~/.instrukt/secrets.env` are reported by `instrukt install` and
   `instrukt install --check` as unmet findings naming the key, reference, and

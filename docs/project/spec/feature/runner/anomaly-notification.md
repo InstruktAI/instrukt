@@ -84,7 +84,7 @@ reference identifying this computer's condition and never secrets or sensitive
 payload (`sdlc/policy/security-awareness`). Every active backup failure or
 staleness condition is listed in `instrukt events status` with its repair door,
 whether or not a notification command is configured, until a subsequent backup
-succeeds (`project/instrukt/policy/checks-and-guards`).
+succeeds.
 <!-- /planned:instrukt-home-backup -->
 
 ## Use cases
