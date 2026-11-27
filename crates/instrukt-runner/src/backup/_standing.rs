@@ -1,11 +1,15 @@
 //! Runner's local-only, lock-free `HomeBackupStanding` implementation
 //! (`project/instrukt/spec/feature/runner/home-backup`).
 
-use instrukt_core::config::{BackupAdmission, inspect_global_backup};
+use std::os::unix::fs::PermissionsExt as _;
+
+use instrukt_core::config::{BackupAdmission, Configuration, Env, inspect_global_backup};
+use instrukt_core::fsx;
 use instrukt_core::home::Home;
 use instrukt_core::interfaces::{
     BackupStanding, BackupStandingError, BackupSuccess, HomeBackupStanding,
 };
+use instrukt_core::machine::existing_machine_id;
 use jiff::{SignedDuration, Timestamp};
 
 use super::_state::{BackupOutcome, read_state};
@@ -83,6 +87,149 @@ impl HomeBackupStanding for Standing {
             }
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct StalenessMark {
+    episode_anchor: Timestamp,
+}
+
+fn remove_staleness_mark(path: &std::path::Path) {
+    if let Err(error) = fsx::remove_file(path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            event = "backup_staleness_mark_remove_failed",
+            path = %path.display(),
+            %error,
+            "failed to remove backup staleness notification mark"
+        );
+    }
+}
+
+fn read_staleness_mark(path: &std::path::Path) -> Result<Option<StalenessMark>, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err("staleness mark is a symbolic link".into());
+        }
+        Ok(_) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.to_string()),
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let mark: StalenessMark = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+    Ok(Some(mark))
+}
+
+/// Evaluates local backup staleness on every runner wake (under `runner.lock`)
+/// without network calls, sending at most one `backup:stale:<machine-id>`
+/// notification per stale episode and clearing the mark once backup recovers.
+pub fn check_staleness_on_wake(home: &Home, config: &Configuration, env: &Env, now: Timestamp) {
+    let mark_path = home.backup_staleness_notified_file();
+    match inspect_global_backup(home) {
+        Ok(BackupAdmission::Unconfigured) => {
+            remove_staleness_mark(&mark_path);
+            return;
+        }
+        Ok(BackupAdmission::Admitted(_) | BackupAdmission::Withheld(_)) => {}
+        Err(error) => {
+            tracing::warn!(
+                event = "backup_staleness_check_skipped",
+                %error,
+                "could not inspect global backup configuration during wake"
+            );
+            return;
+        }
+    }
+
+    let state_path = home.backup_state_file();
+    let state = match read_state(&state_path) {
+        Ok(Some(state)) => state,
+        Ok(None) => {
+            remove_staleness_mark(&mark_path);
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "backup_staleness_state_unreadable",
+                path = %state_path.display(),
+                %error,
+                "skipping wake-time backup staleness notification because bookkeeping is unreadable"
+            );
+            return;
+        }
+    };
+
+    let anchor = state.last_success_at.unwrap_or(state.first_attempt_at);
+    if now.duration_since(anchor) <= STALENESS_THRESHOLD {
+        remove_staleness_mark(&mark_path);
+        return;
+    }
+
+    match read_staleness_mark(&mark_path) {
+        Ok(Some(existing)) if existing.episode_anchor == anchor => return,
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(
+                event = "backup_staleness_mark_unreadable",
+                path = %mark_path.display(),
+                %error,
+                "skipping wake-time backup staleness notification because deduplication mark is unreadable"
+            );
+            return;
+        }
+    }
+
+    let machine_id = match existing_machine_id(home) {
+        Ok(Some(mid)) => mid,
+        Ok(None) => {
+            tracing::warn!(
+                event = "backup_staleness_machine_id_missing",
+                "skipping wake-time backup staleness notification because state/machine-id is absent"
+            );
+            return;
+        }
+        Err(error) => {
+            tracing::warn!(
+                event = "backup_staleness_machine_id_unreadable",
+                %error,
+                "skipping wake-time backup staleness notification because state/machine-id is unreadable"
+            );
+            return;
+        }
+    };
+
+    // Persist deduplication mark BEFORE notifying so a mark write failure
+    // never turns into per-minute notification spam.
+    let mark_bytes = match serde_json::to_vec(&StalenessMark {
+        episode_anchor: anchor,
+    }) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(
+                event = "backup_staleness_mark_serialize_failed",
+                %error,
+                "skipping wake-time backup staleness notification"
+            );
+            return;
+        }
+    };
+    if let Err(error) = fsx::atomic_write_with_permissions(
+        &mark_path,
+        &mark_bytes,
+        std::fs::Permissions::from_mode(0o600),
+    ) {
+        tracing::warn!(
+            event = "backup_staleness_mark_write_failed",
+            path = %mark_path.display(),
+            %error,
+            "skipping wake-time backup staleness notification because deduplication mark could not be persisted"
+        );
+        return;
+    }
+
+    let reference = format!("backup:stale:{machine_id}");
+    crate::anomaly::notify(config, env, &reference, None);
 }
 
 #[cfg(test)]
@@ -210,5 +357,89 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn check_staleness_on_wake_deduplicates_clears_on_recovery_and_handles_withheld() {
+        let (_dir, home) = configure_home(false); // withheld config still alerts on staleness
+        let mid = instrukt_core::machine::machine_id(&home).unwrap();
+        let log_file = home.root().join("notify.log");
+        let notify_script = home.root().join("notify.sh");
+        std::fs::write(
+            &notify_script,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$1\" >> {}\n",
+                log_file.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&notify_script, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let existing_yaml = std::fs::read_to_string(home.global_config()).unwrap();
+        let with_notify = format!(
+            "{existing_yaml}runner:\n  notify: {}\n",
+            notify_script.display()
+        );
+        fsx::atomic_write(&home.global_config(), with_notify.as_bytes()).unwrap();
+        let config = Configuration::load_global(&home).unwrap();
+
+        let t0: Timestamp = "2030-01-06T03:00:00Z".parse().unwrap();
+        let t_stale: Timestamp = "2030-01-07T15:00:01Z".parse().unwrap();
+        let t_recovered: Timestamp = "2030-01-07T16:00:00Z".parse().unwrap();
+        let t_stale2: Timestamp = "2030-01-09T04:00:01Z".parse().unwrap();
+
+        write_state(
+            &home.backup_state_file(),
+            &BackupState {
+                schema_version: STATE_SCHEMA_VERSION,
+                first_attempt_at: t0,
+                last_attempt_at: t0,
+                last_outcome: BackupOutcome::Ok,
+                last_success_at: Some(t0),
+                last_generation: Some("gen1".into()),
+                last_error: None,
+            },
+        )
+        .unwrap();
+
+        // First stale wake notifies once and writes mark.
+        check_staleness_on_wake(&home, &config, &Env::default(), t_stale);
+        // Second stale wake for the same episode deduplicates.
+        check_staleness_on_wake(&home, &config, &Env::default(), t_recovered);
+        let lines: Vec<String> = std::fs::read_to_string(&log_file)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(lines, vec![format!("backup:stale:{mid}")]);
+        assert!(home.backup_staleness_notified_file().exists());
+
+        // Recovery clears the mark.
+        write_state(
+            &home.backup_state_file(),
+            &BackupState {
+                schema_version: STATE_SCHEMA_VERSION,
+                first_attempt_at: t0,
+                last_attempt_at: t_recovered,
+                last_outcome: BackupOutcome::Ok,
+                last_success_at: Some(t_recovered),
+                last_generation: Some("gen2".into()),
+                last_error: None,
+            },
+        )
+        .unwrap();
+        check_staleness_on_wake(&home, &config, &Env::default(), t_recovered);
+        assert!(!home.backup_staleness_notified_file().exists());
+
+        // A later distinct stale episode notifies again.
+        check_staleness_on_wake(&home, &config, &Env::default(), t_stale2);
+        let lines2: Vec<String> = std::fs::read_to_string(&log_file)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(
+            lines2,
+            vec![format!("backup:stale:{mid}"), format!("backup:stale:{mid}")]
+        );
     }
 }

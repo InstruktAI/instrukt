@@ -22,7 +22,7 @@ use jiff::Timestamp;
 
 pub use _archive::{ARCHIVE_EXTENSION, StagedArchive, StagingDir, archive_filename};
 pub use _restore::{IdentityInput, RestoreOptions, RestoreReport, restore};
-pub use _standing::{STALENESS_THRESHOLD, Standing};
+pub use _standing::{STALENESS_THRESHOLD, Standing, check_staleness_on_wake};
 pub use _state::{BackupOutcome, BackupState, STATE_SCHEMA_VERSION};
 pub use _storage::{
     BackupGeneration, ORPHAN_CLEANUP_AGE, PruneReport, S3Storage, TransferThresholds,

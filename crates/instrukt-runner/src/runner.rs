@@ -233,6 +233,9 @@ pub fn tick(
     let current = Current::new(candidate.generation);
     instrukt_core::config::serve(cx.home, &current);
     let admitted = current.get();
+    // Evaluate local home backup staleness under the runner lock independently
+    // of event-platform or wake failures.
+    crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, now);
     // Readiness is refreshed once, on entry, before any start; a failure
     // leaves the starts with the configured order. The token is revoked when
     // the tick ends.
@@ -468,6 +471,9 @@ pub fn run(
             connections.check();
         }
         let admitted = current.get();
+        // Evaluate local home backup staleness under the runner lock on every
+        // wake independently of RuntimeInvocation::acquire.
+        crate::backup::check_staleness_on_wake(cx.home, admitted.global(), cx.env, woke_at);
         if let Some(readiness) = &readiness {
             readiness.wake();
         }
