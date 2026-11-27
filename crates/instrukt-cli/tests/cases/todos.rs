@@ -97,7 +97,7 @@ fn withdrawal_releases_the_working_copy_and_branch_and_refuses_while_work_would_
     std::fs::write(copy.join("draft.rs"), "// unfinished\n").unwrap();
     let uncommitted = remove().failure();
     std::fs::remove_file(copy.join("draft.rs")).unwrap();
-    let workspace = project.repo.path().join("workspace/nested-lists");
+    let workspace = project.repo.path().join(".instrukt/workspace/nested-lists");
     std::fs::create_dir_all(&workspace).unwrap();
     std::fs::write(workspace.join("report.md"), "results\n").unwrap();
     let busy = remove().failure();
