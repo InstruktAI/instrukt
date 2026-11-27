@@ -111,8 +111,8 @@ A refused ask starts no reviewer, sends nothing and records nothing.
 ### The reviewer's assignment
 
 instrukt renders the assignment from the admitted coordinates in one fixed
-wording, as a runner-authored assignment input
-(`project/instrukt/spec/feature/runner/conversation-links`). It holds, in this order:
+wording, as a runner-authored `[Instrukt Assignment]` control frame. It holds,
+in this order:
 
 1. the procedure the reviewer executes, `sdlc/procedure/lifecycle/work/review-commits`,
    read with its closure, for the one-off worktree review it describes;
@@ -186,13 +186,15 @@ runtime keeps a repeated command identity from opening a second turn.
 
 ### Beside review requests
 
-A requested review holds no review request, so work admits its verdict as a
-one-off review's (`project/instrukt/spec/feature/work/github-apps`). The ask is refused while the commit has a live
-review request, because work then admits only that request's reviewer. The
-runner's own decisions do not read requested reviews: a commit that becomes
-owed while its requested reviewer works is asked for as any other owed commit
-(`project/instrukt/spec/feature/runner/pull-request-review`),
-and from then on only that request's reviewer records its verdict.
+A requested review holds no review request; work admits its verdict under the
+same head-verdict rules as any other review
+(`project/instrukt/spec/feature/work/github-apps`). The ask is refused while the
+commit has a live review request
+(`project/instrukt/spec/feature/runner/pull-request-review`). The runner's own
+decisions do not read requested reviews: a commit that becomes owed while its
+requested reviewer works is asked for as any other owed commit
+(`project/instrukt/spec/feature/runner/pull-request-review`), and the first
+verdict recorded settles the commit.
 
 ### What the requester receives
 
@@ -211,7 +213,7 @@ wake-up stale. The reply does not wait for the review.
 When the runtime does not accept the start or the wake within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
 It replays the ask with the identities the first one recorded
-(`project/instrukt/policy/checks-and-guards`). A wake is sent again under its
+(`project/instrukt/spec/feature/runner/session-continuity`). A wake is sent again under its
 command identity, which the runtime accepts once: a wake it already accepted
 opens no second turn and is reported accepted
 (`project/instrukt/spec/feature/runner/t3-contract`). Nothing recognises a wake
@@ -265,8 +267,8 @@ the earlier head. A dispute of findings without a new commit names the
 unchanged head, the prior report and the disposition file, and reaches that
 head's reviewer of record, the session that recorded its verdict. That session
 judges it under its procedure, which records every judgment as a new version
-(`sdlc/procedure/lifecycle/work/review-commits`). The turn the dispute opened
-is no review request's, so that version is admitted as a revision
+(`sdlc/procedure/lifecycle/work/review-commits`), and may revise the verdict
+it recorded while that verdict stands locally
 (`project/instrukt/spec/feature/work/github-apps`). Both carry
 coordinates only.
 
@@ -346,9 +348,8 @@ And when the reviewer later records a revised verdict for that head, the agent r
   through the runtime is not part of its assignment, and its procedure reads it
   as untrusted data.
 - A commit that becomes owed under automatic review while its requested
-  reviewer works is reviewed twice. The verdict recorded first settles it; when
-  the review request is live first, the requested reviewer's verdict is refused
-  and names that request.
+  reviewer works is reviewed twice; the verdict recorded first settles it
+  (`project/instrukt/spec/feature/work/github-apps`).
 - A dispute reaches only the requested reviewer that recorded the verdict.
   Once that session is archived or deleted, or when the verdict was recorded
   by a reviewer started by other means, a dispute is refused and a revised
