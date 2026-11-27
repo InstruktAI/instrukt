@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 1136
 expression: "project.github.issue(REPOSITORY, 1).unwrap()[\"labels\"]"
 ---
 [
@@ -22,7 +23,7 @@ expression: "project.github.issue(REPOSITORY, 1).unwrap()[\"labels\"]"
     "description": null
   },
   {
-    "id": 102003,
+    "id": 102203,
     "name": "team-owned",
     "color": "ededed",
     "description": null

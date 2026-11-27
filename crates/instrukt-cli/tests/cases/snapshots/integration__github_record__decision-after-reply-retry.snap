@@ -1,6 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1142
+assertion_line: 1344
 expression: redact(&again)
 ---
 reply-work · feature · active
@@ -10,7 +10,7 @@ created: <time> by Test Developer
 revision: 3
 intent:
   Preserve the decision through confirmation failure.
-reflection: pending: not yet reflected
+reflection: reflected to GitHub
 issue: #1
 claim: not held
 hold: none
@@ -20,4 +20,4 @@ artifacts:
   prd (1 version)
     <digest 2> by Test Developer at <time>
 stamps:
-  #3 <time> changes requested on prd: Clarify scope. — <digest 2> — by @maintainer
+  #3 <time> changes requested on prd: Clarify scope. — <digest 2> — by @maintainer, eval <digest 3>

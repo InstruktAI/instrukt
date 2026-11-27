@@ -9,6 +9,11 @@ use support::{Project, REPOSITORY};
 fn issue_maintenance_uses_the_project_app_and_never_a_process_token() {
     let project = Project::new();
     project.create("app-record", "bug", "Verify bot attribution.");
+    assert!(
+        project.github.requests().is_empty(),
+        "bugs report must not contact GitHub"
+    );
+    project.tick();
     assert_eq!(project.github.issues(REPOSITORY).len(), 1);
     let config = project
         .env
@@ -32,8 +37,22 @@ fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) ->
         "bug",
         "Keep accepted work through credential failure.",
     );
+    project.tick();
     let comments = project.github.comments(REPOSITORY, 1);
     let artifacts = project.github.artifacts(REPOSITORY, 1);
+    let requests_before = project.github.requests().len();
+    let written = project.ok([
+        "artifacts",
+        "write",
+        "pending-app",
+        "log",
+        "accepted locally",
+    ]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before,
+        "artifacts write must not contact GitHub"
+    );
     project.github.respond_once(
         method,
         endpoint,
@@ -43,16 +62,17 @@ fn rejected_credential(method: &str, endpoint: &str, body: serde_json::Value) ->
             body,
         },
     );
-    let written = project.ok([
-        "artifacts",
-        "write",
-        "pending-app",
-        "log",
-        "accepted locally",
-    ]);
+    project.tick();
+    let requests_after_tick = project.github.requests().len();
+    let shown = project.ok(["show", "pending-app"]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_after_tick,
+        "todo show must not contact GitHub"
+    );
     assert_eq!(project.github.comments(REPOSITORY, 1), comments);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), artifacts);
-    support::redact(&written)
+    support::redact(&format!("{written}---\n{shown}"))
 }
 // spec: project/instrukt/spec/feature/work/github-apps UC-GA1
 #[test]
@@ -157,8 +177,18 @@ fn one_multi_item_reflection_reuses_authenticated_actor_facts_and_operation_cred
     for item in 0..8 {
         project.create(&format!("record-{item}"), "bug", "Reflect shared work.");
     }
+    assert!(
+        project.github.requests().is_empty(),
+        "bugs report must not contact GitHub"
+    );
+    project.tick();
     project.github.clear_requests();
     project.ok(["update", "record-0"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo update must not contact GitHub"
+    );
+    project.tick();
     assert_eq!(
         project
             .github

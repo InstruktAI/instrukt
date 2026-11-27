@@ -1,6 +1,21 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 1864
 expression: redact(&pending)
 ---
-filed retry-views (bug) in project demo with identity <id 1>
+retry-views · bug · active
+identity: <id 1>
+record status: active
+created: <time> by Test Developer
+revision: 1
+intent:
+  Keep the cockpit retryable.
 reflection: pending: GitHub: GitHub answered POST /orgs/acme/projectsV2/1/views with 503: Service unavailable
+issue: #1
+claim: not held
+hold: none
+artifacts:
+  input (1 version)
+    <digest 1> by Test Developer at <time>
+stamps:
+  none

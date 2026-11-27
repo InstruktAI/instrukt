@@ -138,6 +138,11 @@ fn a_request_filed_with_its_kind_is_retained_as_a_todo_with_a_durable_identity()
         "Keep the depth of nested lists when parsing Markdown.",
     );
     let shown = project.ok(["show", "nested-lists"]);
+    let _listed = project.ok(["list"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create, show, and list must not contact GitHub"
+    );
 
     insta::assert_snapshot!("recorded", redact(&format!("{filed}---\n{shown}")));
 }
@@ -162,6 +167,10 @@ fn withdrawn_work_is_restored_with_its_intent_and_evidence_under_its_identity() 
 
     let restored = project.ok(["reactivate", "nested-lists"]);
     let shown = project.ok(["show", "nested-lists"]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo remove, reactivate, and show must not contact GitHub"
+    );
 
     insta::assert_snapshot!(
         "restored",
@@ -354,7 +363,7 @@ fn a_faced_report_is_filed_as_a_bug_in_the_project_it_names() {
     insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: this computer records no project `elsewhere`; name the owning project with `--project <slug>`: this computer records demo");
     insta::assert_snapshot!(
         redact(&project.ok(["list"])),
-        @"fix-sync-drops-the-ops-domain · bug · active"
+        @"fix-sync-drops-the-ops-domain · bug · active · reflection pending"
     );
 }
 
@@ -441,9 +450,9 @@ fn the_open_bugs_of_a_project_are_listed_and_nothing_else() {
     instrukt: [TMP]/demo/instrukt.yaml: schema_version 5 inspected as 6; file migrates on the next writing command
     ");
     insta::assert_snapshot!(filtered.join(""), @r"
-    --iceboxed: fix-index-skips-a-domain · bug · iceboxed
-    --removed: fix-hook-waits-forever · bug · withdrawn
-    --delivered: fix-status-hides-a-section · bug · delivered
+    --iceboxed: fix-index-skips-a-domain · bug · iceboxed · reflection pending
+    --removed: fix-hook-waits-forever · bug · withdrawn · reflection pending
+    --delivered: fix-status-hides-a-section · bug · delivered · reflection pending
     ");
     assert_eq!(std::fs::read_to_string(&layer).unwrap(), older);
 }

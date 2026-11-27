@@ -428,6 +428,7 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         "feature",
         "Lists keep their depth everywhere.",
     );
+    project.tick();
     let todo = |args: &[&str]| {
         let mut command = project.env.instrukt_process(project.repo.path());
         command.arg("todo").args(args);
@@ -435,21 +436,32 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     };
     let read = || finished_within(todo(&["artifacts", "read", "list-depth", "log"]), UNBLOCKED);
 
-    // The coming reflection stops at its artifact upload, and again at the
-    // issue fields once GitHub holds the artifact version.
+    // Record the first local change; it returns locally without contacting GitHub.
+    let requests_before = project.github.requests().len();
+    project.ok(["artifacts", "write", "list-depth", "log", FIRST]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before,
+        "artifacts write must not contact GitHub"
+    );
+
+    // The runner's reflection pass stops at its artifact upload, and again at
+    // the issue fields once GitHub holds the artifact version.
     let upload = project.github.pause_once("POST", "/issues/1/artifacts");
     let fields = project.github.pause_once("PATCH", "/issues/1");
-    let first = todo(&["artifacts", "write", "list-depth", "log", FIRST])
+    let first = project
+        .tick_command()
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     assert!(
         upload.wait_until_received(Duration::from_secs(30)),
-        "the first command's reflection never reached GitHub"
+        "the runner's reflection never reached GitHub"
     );
 
-    // Reads complete while a local write holds the writer lock.
+    // Reads (list, show, artifacts read) complete while a local write holds
+    // the writer lock and a reflection holds the reflection lock.
     let writer = instrukt_core::fsx::LockGuard::acquire(
         &project.env.instrukt_home().join("state/writer.lock"),
         Duration::from_secs(5),
@@ -459,6 +471,12 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
         .expect("listing the work waited on the writer lock or on GitHub");
     assert!(listing.status.success(), "{listing:?}");
     let listing = String::from_utf8(listing.stdout).unwrap();
+    let shown_while_locked = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("showing the todo waited on the writer lock or on GitHub");
+    assert!(
+        shown_while_locked.status.success(),
+        "{shown_while_locked:?}"
+    );
     let current = read().expect("reading an artifact waited on the writer lock or on GitHub");
     assert!(current.status.success(), "{current:?}");
     let current = String::from_utf8(current.stdout).unwrap();
@@ -470,7 +488,7 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     drop(upload);
     assert!(
         fields.wait_until_received(Duration::from_secs(30)),
-        "the first command's issue update never reached GitHub"
+        "the runner's issue update never reached GitHub"
     );
 
     // A local change to the same todo commits while the reflection is in
@@ -506,9 +524,52 @@ fn local_work_proceeds_while_a_github_reflection_is_in_flight() {
     drop(fields);
     let first = first.wait_with_output().unwrap();
     assert!(first.status.success(), "{first:?}");
-    // The next reflection that takes the lock — here a command that changes
-    // nothing — reflects what the second command left pending.
-    project.ok(["update", "list-depth"]);
+    // The next runner tick reflects what the second command left pending.
+    project.tick();
+
+    // Even when an expired withdrawn todo is present in SQLite, `todo show`
+    // stays read-only and never acquires `writer.lock` to purge it.
+    let expired = |args: &[&str]| {
+        let mut command = project.env.instrukt_process(project.repo.path());
+        command
+            .env("INSTRUKT_NOW", "2029-12-20T09:00:00Z")
+            .arg("todo")
+            .args(args);
+        command
+    };
+    assert!(
+        expired(&[
+            "create",
+            "expired-withdrawn",
+            "Withdrawn past recovery window.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .output()
+        .unwrap()
+        .status
+        .success()
+    );
+    assert!(
+        expired(&["remove", "expired-withdrawn"])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let writer = instrukt_core::fsx::LockGuard::acquire(
+        &project.env.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    let show_with_expired = finished_within(todo(&["show", "list-depth"]), UNBLOCKED)
+        .expect("todo show waited on writer.lock when an expired withdrawn todo existed");
+    assert!(show_with_expired.status.success(), "{show_with_expired:?}");
+    let list_with_expired = finished_within(todo(&["list"]), UNBLOCKED)
+        .expect("todo list waited on writer.lock when an expired withdrawn todo existed");
+    assert!(list_with_expired.status.success(), "{list_with_expired:?}");
+    drop(writer);
 
     // Both changes reached GitHub intact.
     let listed = project.ok(["artifacts", "list", "list-depth"]);
