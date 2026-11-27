@@ -395,6 +395,24 @@ impl Home {
         self.state_dir().join("machine-id")
     }
 
+    /// `~/.instrukt/state/backup-state.json` — local bookkeeping for the most
+    /// recent home backup attempt and last validated generation.
+    pub fn backup_state_file(&self) -> PathBuf {
+        self.state_dir().join("backup-state.json")
+    }
+
+    /// `~/.instrukt/state/backup.lock` — serializes home backup runs on this
+    /// computer and guards `state/backup-state.json`.
+    pub fn backup_lock_file(&self) -> PathBuf {
+        self.state_dir().join("backup.lock")
+    }
+
+    /// `~/.instrukt/state/backup-staleness-notified.json` — deduplication mark
+    /// for wake-time backup staleness notifications, guarded by `runner.lock`.
+    pub fn backup_staleness_notified_file(&self) -> PathBuf {
+        self.state_dir().join("backup-staleness-notified.json")
+    }
+
     /// `~/.instrukt/git/` — ingested external repositories.
     pub fn git_dir(&self) -> PathBuf {
         self.root.join("git")
@@ -446,6 +464,9 @@ mod tests {
             home.eval_fingerprint_dir(),
             home.blueprint_dir(&project),
             home.machine_id_file(),
+            home.backup_state_file(),
+            home.backup_lock_file(),
+            home.backup_staleness_notified_file(),
             home.git_dir(),
             home.locks_dir(),
         ] {
