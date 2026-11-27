@@ -1202,12 +1202,68 @@ pub trait AutomaticReview: Send + Sync {
         now: Timestamp,
         clock: &dyn Fn() -> Timestamp,
     ) -> Result<(), String>;
+    /// The proposal pull-request credential's readiness on `repository`.
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness;
+    /// Whether any pull request of `repository`, open or closed, has `head`
+    /// as its head commit.
+    fn heads_pull(
+        &self,
+        repository: &str,
+        head: &instrukt_core::ids::CommitSha,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<bool, String>;
+    /// Opens the pull request of the knowledge proposal `proposal` under the
+    /// proposal credential, unless one is open with its branch as head.
+    fn open_proposal(
+        &self,
+        proposal: &ProposalPull<'_>,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<ProposalOpening, String>;
+    /// The pinned base of `head`'s current approving head verdict, when it
+    /// has one that covers the canonical branch.
+    fn approved_head(
+        &self,
+        project: &instrukt_core::ids::ProjectSlug,
+        head: &instrukt_core::ids::CommitSha,
+    ) -> Result<Option<instrukt_core::ids::CommitSha>, String>;
+}
+
+/// A knowledge proposal's pull request to open.
+pub struct ProposalPull<'a> {
+    /// The repository's checkout, whose commits the body names.
+    pub root: &'a std::path::Path,
+    /// `owner/name` on GitHub.
+    pub repository: &'a str,
+    /// The proposal's branch, the pull request's head.
+    pub branch: &'a str,
+    /// The canonical branch, the pull request's base.
+    pub base: &'a str,
+    /// The remote-tracking canonical branch the head's commits are read
+    /// from.
+    pub canonical: &'a str,
+    pub head: &'a instrukt_core::ids::CommitSha,
+}
+
+/// What opening a proposal's pull request did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProposalOpening {
+    /// The pull request was opened, with this number.
+    Opened(u64),
+    /// A pull request with the branch as its head is already open.
+    AlreadyOpen,
 }
 
 /// Work-owned, non-mutating inspection of shared-record GitHub prerequisites,
 /// and of automatic review's.
 pub trait GitHubReadiness:
-    Send + Sync + instrukt_core::interfaces::AutomaticReviewReadiness
+    Send
+    + Sync
+    + instrukt_core::interfaces::AutomaticReviewReadiness
+    + instrukt_core::interfaces::ProposalReadiness
 {
     fn reflection_ready(
         &self,

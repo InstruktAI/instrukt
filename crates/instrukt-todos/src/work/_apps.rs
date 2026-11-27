@@ -186,6 +186,31 @@ impl GitHubAccess {
         })
     }
 }
+impl GitHubAccess {
+    /// A client of `repository` under the proposal pull-request credential
+    /// of the identity the `company-agent` role selects. `clock` is read
+    /// here, as issuance begins.
+    pub(crate) fn proposal_client(
+        &self,
+        repository: &str,
+        clock: &dyn Fn() -> Timestamp,
+    ) -> Result<super::_github::GitHub, AppError> {
+        let clock = Clock::starting(clock());
+        self.with_apps(|apps| {
+            let credential = apps.issue(
+                repository,
+                Some(instrukt_core::config::COMPANY_AGENT_ROLE),
+                Operation::ProposalOpen,
+                clock,
+            )?;
+            Ok(super::_github::GitHub::new(
+                &apps.api,
+                repository,
+                credential.token().to_owned(),
+            ))
+        })
+    }
+}
 impl instrukt_core::interfaces::GitHubActors for GitHubAccess {
     fn actor(&self, role: &str) -> Result<Bot, AppError> {
         // Setup records the verified stable bot tuple in machine configuration.
@@ -269,6 +294,7 @@ fn permissions(operation: Operation) -> Value {
         Operation::ReviewObserve => json!({"pull_requests":"read"}),
         Operation::ReviewPublish => json!({"pull_requests":"write","statuses":"write"}),
         Operation::CompanyRepository => json!({"administration":"write"}),
+        Operation::ProposalOpen => json!({"pull_requests":"write","contents":"read"}),
     }
 }
 
@@ -333,32 +359,92 @@ impl instrukt_core::interfaces::AutomaticReviewReadiness for GitHubAccess {
                 error,
             },
         };
-        match &unready.error {
-            AppError::Unreachable | AppError::RateLimited { .. } => {
-                return ReviewReadiness::CannotAsk(unready.error.to_string());
-            }
-            AppError::Refused { status, .. } if *status >= 500 => {
-                return ReviewReadiness::CannotAsk(unready.error.to_string());
-            }
-            _ => {}
-        }
-        let needed = permissions(unready.operation)
-            .as_object()
-            .into_iter()
-            .flatten()
-            .map(|(name, level)| format!("{name}: {}", level.as_str().unwrap_or_default()))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let app = unready
-            .app
-            .map(|slug| format!(" App `{slug}`"))
-            .unwrap_or_default();
-        tracing::info!(event = "review_readiness_unmet", repository, identity = unready.identity, error = %unready.error);
-        ReviewReadiness::Unmet(format!(
-            "the {} identity's{app} cannot do its part for automatic review on {repository}: {}; grant its installation on {repository} {needed}",
-            unready.identity, unready.error
-        ))
+        unready_answer(
+            unready,
+            repository,
+            "automatic review",
+            "review_readiness_unmet",
+        )
     }
+}
+
+impl instrukt_core::interfaces::ProposalReadiness for GitHubAccess {
+    fn proposal_readiness(
+        &self,
+        repository: &str,
+        now: Timestamp,
+    ) -> instrukt_core::interfaces::ReviewReadiness {
+        use instrukt_core::interfaces::ReviewReadiness;
+        let clock = Clock::starting(now);
+        let role = Some(instrukt_core::config::COMPANY_AGENT_ROLE);
+        let answer = self.with_apps(|apps| {
+            Ok(
+                match apps.issue(repository, role, Operation::ProposalOpen, clock) {
+                    Ok(credential) => Ok(credential),
+                    Err(error) => Err(Unready {
+                        identity: "company agent",
+                        app: Some(apps.selected(role).slug.clone()),
+                        operation: Operation::ProposalOpen,
+                        error,
+                    }),
+                },
+            )
+        });
+        let unready = match answer {
+            Ok(Ok(observation)) => return ReviewReadiness::Met { observation },
+            Ok(Err(unready)) => unready,
+            Err(error) => Unready {
+                identity: "configured",
+                app: None,
+                operation: Operation::ProposalOpen,
+                error,
+            },
+        };
+        unready_answer(
+            unready,
+            repository,
+            "knowledge proposals",
+            "proposal_readiness_unmet",
+        )
+    }
+}
+
+/// The readiness answer for an identity that could not do its part for
+/// `purpose` on `repository`: GitHub unreachable, rate limited or failing
+/// with a 5xx answers nothing; anything else is unmet, naming the identity,
+/// its App, the repository and the permissions its installation needs.
+fn unready_answer(
+    unready: Unready,
+    repository: &str,
+    purpose: &str,
+    event: &'static str,
+) -> instrukt_core::interfaces::ReviewReadiness {
+    use instrukt_core::interfaces::ReviewReadiness;
+    match &unready.error {
+        AppError::Unreachable | AppError::RateLimited { .. } => {
+            return ReviewReadiness::CannotAsk(unready.error.to_string());
+        }
+        AppError::Refused { status, .. } if *status >= 500 => {
+            return ReviewReadiness::CannotAsk(unready.error.to_string());
+        }
+        _ => {}
+    }
+    let needed = permissions(unready.operation)
+        .as_object()
+        .into_iter()
+        .flatten()
+        .map(|(name, level)| format!("{name}: {}", level.as_str().unwrap_or_default()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let app = unready
+        .app
+        .map(|slug| format!(" App `{slug}`"))
+        .unwrap_or_default();
+    tracing::info!(event, repository, identity = unready.identity, error = %unready.error);
+    ReviewReadiness::Unmet(format!(
+        "the {} identity's{app} cannot do its part for {purpose} on {repository}: {}; grant its installation on {repository} {needed}",
+        unready.identity, unready.error
+    ))
 }
 #[derive(PartialEq, Eq)]
 struct IdentitySettings {

@@ -279,6 +279,14 @@ pub trait AutomaticReviewReadiness: Send + Sync {
     fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
 }
 
+/// Work's readiness answer for the proposal pull-request credential: the
+/// identity the `company-agent` role selects, with write access to pull
+/// requests and read access to contents. It requests that one credential
+/// and writes no state; a met answer carries it.
+pub trait ProposalReadiness: Send + Sync {
+    fn proposal_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
 /// What kind of account a GitHub login names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AccountKind {
