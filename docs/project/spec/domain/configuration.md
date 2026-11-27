@@ -98,6 +98,7 @@ be absent outside that runtime and does not change runtime selection.
 
 ## Ownership boundary
 
+<!-- planned-change:config-patch-agents-prune-defaults -->
 - **Owns** — the `instrukt.yaml` schema, `agents.yaml` role/class/scoped-grant,
   bundle and model-selection shapes and validation; GitHub App public profile
   and role-reference configuration; machine-local protected secrets and owned-file migration;
@@ -136,6 +137,47 @@ be absent outside that runtime and does not change runtime selection.
   selected adapter's environment-only recognition without importing runner.
 - **Implementation roots** — the configuration module of the `instrukt-core`
   crate; its module layout is set by the architecture design.
+<!-- change:config-patch-agents-prune-defaults -->
+- **Owns** — the `instrukt.yaml` schema, `agents.yaml` role/class/scoped-grant,
+  bundle and model-selection shapes and validation; GitHub App public profile
+  and role-reference configuration; machine-local protected secrets and owned-file migration;
+  company homes, their settings documents and their own protected secrets;
+  a company home's `connectors:` map and its validation against the connector
+  declarations the binary carries, which the CLI installs once when it starts,
+  before any configuration is read (a document read without them finds no
+  connector kind supported); layer rules; validation of a layer
+  document; schema versions and migration; the effective configuration;
+  revisions and safe patching; interpolation; validation of the runtime
+  choice, agent-action instruction entries and derived caller identity.
+  Code owns the action catalog and operation mappings; configuration owns the
+  composed grants, with admission consuming owner-supplied assignment facts.
+- **Does not own** — what any key does: docs and publication read
+  `project`; repository decides when publication runs and its commit
+  composition reads adapter caller identity and `agents.<name>.git_author` and decides the
+  commit author and trailers, including the selected App bot author for bound
+  bot roles; the GitHub boundary owns installation-token issuance and actor
+  verification; the fields each connector kind's declaration takes are
+  declared by its connector (`project/instrukt/spec/domain/company`);
+  blueprint, work, workflow, runner and company read the
+  keys and module switches governing their capabilities; the flavor's
+  procedures run the checks the project documents. Configuration migration
+  precedes refusal or skip on every path; configuration owns its ordering and conversion.
+- **Published contracts** — `instrukt config get [<path>] [--global]`,
+  `instrukt config patch --revision <rev> [--global]`,
+  `instrukt config init [--global]`, `instrukt config validate [--global]`,
+  each also addressing a company home with `--company <name>`, and `get` and
+  `patch` addressing the agents file with `--agents`;
+  the migration operation every entry path invokes before refusal or skip; the
+  configuration schema type the editor schema of `instrukt.yaml` is generated
+  from (`project/instrukt/spec/feature/publication/editor-schemas`); the runtime selection and adapter caller-identity lookup used by
+  commit composition.
+- **Allowed dependencies** — the company context's connector declarations, as
+  published data; configuration depends on no other context's behavior.
+  It declares the caller-identity lookup interface; CLI wiring supplies the
+  selected adapter's environment-only recognition without importing runner.
+- **Implementation roots** — the configuration module of the `instrukt-core`
+  crate; its module layout is set by the architecture design.
+<!-- /planned-change:config-patch-agents-prune-defaults -->
 
 Adding a company extends this boundary
 (`project/instrukt/spec/feature/configuration/company-homes`, Generation):

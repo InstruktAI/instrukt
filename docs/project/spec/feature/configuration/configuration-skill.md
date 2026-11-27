@@ -93,6 +93,7 @@ configuration; they retain their named repair doors.
 
 ### Agent profiles and readiness
 
+<!-- planned-change:config-patch-agents-prune-defaults -->
 Read `~/.instrukt/agents.yaml` and show the current role/profile order before
 changing model selection. Detect ACP instances already configured in T3, ask
 where the developer wants them in that order, and write their profiles and order
@@ -100,6 +101,21 @@ changes. For a supported harness not ready, guide login or key setup and wait
 for readiness. Keep model-provider keys with T3. instrukt creates no T3 provider
 instance and implements no ACP. Selection and upgrade semantics belong to
 `project/instrukt/spec/feature/configuration/agent-selection`.
+<!-- change:config-patch-agents-prune-defaults -->
+Read the effective selection with `instrukt config get --agents [--json]` and
+its revision with `instrukt config get --agents --revision`, and show the
+current role/profile order before changing model selection. Detect ACP
+instances already configured in T3, ask where the developer wants them in that
+order, and record their profiles and order changes with
+`instrukt config patch --agents --revision <rev>`. A stale revision requires a
+fresh read and recomputed difference. For a supported harness not ready, guide
+login or key setup and wait for readiness. Keep model-provider keys with T3.
+instrukt creates no T3 provider instance and implements no ACP. Selection and
+upgrade semantics belong to
+`project/instrukt/spec/feature/configuration/agent-selection`; editing the
+agents file belongs to
+`project/instrukt/spec/feature/configuration/configuration-editing`.
+<!-- /planned-change:config-patch-agents-prune-defaults -->
 
 Write instrukt-owned signing and Redis secrets only through `instrukt secrets
 set` or `instrukt secrets generate`, without echoing values. Every computer's

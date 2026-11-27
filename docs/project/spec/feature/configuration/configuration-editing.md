@@ -1,11 +1,12 @@
 ---
-description: Creating, reading and changing instrukt's configuration documents through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
+description: Creating, reading and changing instrukt's configuration documents through `instrukt config init|get|patch` — revision checks, whole-document validation and atomic writes — reading and patching the computer's agents file with `--agents`, which keeps it to its overrides of the shipped defaults, and `instrukt config schema`, which shows what the addressed document can declare, a company home's connectors and their setup included.
 ---
 
 # Configuration Editing — Spec
 
 ## What it is
 
+<!-- planned-change:config-patch-agents-prune-defaults -->
 Configuration is changed through the CLI, never by hand-editing a file that
 another writer may be changing. A patch is made against the revision the
 caller read; a patch against a changed document is refused instead of
@@ -13,6 +14,16 @@ overwriting it. The whole resulting document is validated before anything is
 written, and the write is atomic. Every verb addresses the project layer by
 default, the global layer with `--global` and a company home's document with
 `--company <name>`.
+<!-- change:config-patch-agents-prune-defaults -->
+Configuration is changed through the CLI, never by hand-editing a file that
+another writer may be changing. A patch is made against the revision the
+caller read; a patch against a changed document is refused instead of
+overwriting it. The whole resulting document is validated before anything is
+written, and the write is atomic. Every verb addresses the project layer by
+default, the global layer with `--global` and a company home's document with
+`--company <name>`; `get` and `patch` address the computer's agents file with
+`--agents` (Agents file, below).
+<!-- /planned-change:config-patch-agents-prune-defaults -->
 
 ## Canonical fields
 
@@ -52,6 +63,46 @@ Owned-file evolution and protected secret commands are
 - **Missing layer:** a patch to a layer that does not exist is refused,
   directing the caller to `init`. A project-layer patch outside a project is
   refused.
+
+<!-- planned:config-patch-agents-prune-defaults -->
+### Agents file
+
+`--agents` addresses `~/.instrukt/agents.yaml`, which holds the user's
+overrides of the shipped agent selection
+(`project/instrukt/spec/feature/configuration/agent-selection`). It applies to
+`get` and `patch`, and excludes `--global` and `--company`.
+
+- **Read:** `get --agents [<path>] [--json]` answers from the effective
+  selection — the shipped defaults with the file's overrides merged over
+  them — as literal data, with nothing interpolated. A path that does not
+  exist fails non-zero, naming the missing segment.
+- **Revision:** `get --agents --revision` prints the revision of the file's
+  stored bytes. Without a file it prints the absent file's revision, the same
+  on every read whatever conversion or migration is pending, so a first patch
+  needs no `init`.
+- **Patch:** `patch --agents --revision <rev>` takes the input, merge and
+  revision check of a layer patch and applies them to the stored overrides.
+  As for a layer (`project/instrukt/spec/feature/configuration/owned-files`),
+  the patch checks the revision against the bytes it finds on disk and, under
+  the same lock, persists what the next writing command does to the file
+  first: its shape conversion or recognised-copy removal
+  (`project/instrukt/spec/feature/configuration/agent-selection`), and an
+  older global layer's selection carried into it. That conversion stays when
+  the patch is refused. The resulting effective selection is validated as one
+  document; any finding refuses the patch and writes none of it. A file that
+  differs from an older global layer's selection is refused by the read and
+  the patch alike, until the two are reconciled.
+- **Overrides only:** the write keeps only what differs from the shipped
+  defaults. Mappings — the top-level sections, each role and profile entry,
+  and each mapping within them — are compared key by key. Any other value is
+  dropped when it equals the shipped value whole; that includes lists, such as
+  each bundle entry's grants and a role's `can` and `order`. A mapping left
+  empty is dropped. When nothing but `schema_version` remains,
+  the file is removed. An empty patch therefore reduces a full copy of the
+  defaults to its overrides and leaves the effective selection unchanged.
+- **Stored text:** the file holds the overrides as data; instrukt writes no
+  references, comments or guidance into it.
+<!-- /planned:config-patch-agents-prune-defaults -->
 
 ### Schema
 
