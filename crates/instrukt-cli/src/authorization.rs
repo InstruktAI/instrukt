@@ -41,7 +41,7 @@ pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<
     )?;
     let recorded = assignment
         .map(|assignment| {
-            let grants = Agents::load(&ctx.home)?.capabilities(assignment.role.as_str())?;
+            let grants = Agents::load(&inspection)?.capabilities(assignment.role.as_str())?;
             Ok::<_, anyhow::Error>((assignment, grants))
         })
         .transpose()?;
