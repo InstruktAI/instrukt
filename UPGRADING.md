@@ -2,6 +2,70 @@
 
 ## 0.1.0
 
+### Retired discussion links, control wrappers, bare NOOP suppression, and proxy review recording
+
+The following legacy surfaces have been retired:
+
+- **`instrukt discuss` and `runtime.discuss`:** Peer thread conversation links
+  and the `instrukt discuss` subcommand have been removed. Company-connected
+  conversation relay (Slack connectors) continues unchanged. Existing
+  `instrukt.yaml` machine overrides carrying `runtimes.t3.discuss` and existing
+  `agents.yaml` files carrying the `conversation-link` action continue to parse
+  and admit without failing startup; remove those retired keys when you next
+  edit those files. Existing `state/instrukt.db` databases open without manual
+  migration (historical schema migrations are preserved; any prior
+  `conversation_links` rows remain dormant and unread).
+- **Global `[Instrukt Assignment]` and `[Instrukt Notification]` wrappers:**
+  Runner deliveries and agent launch briefs now arrive as plain structured text
+  without `[Instrukt Assignment]` / `[Instrukt Notification]` wrappers. Only
+  company connected-conversation messages retain `[Member (... · boundary)]`
+  and `[Instrukt Conversation Context (boundary)]` framing. In-flight
+  conversation rollovers, unaccepted requested-review retries, and open manual
+  standing reservations stored before upgrade continue to match their legacy
+  wrapped payloads until they complete.
+- **Bare `NOOP` suppression:** Connected company conversations no longer drop a
+  turn whose output is literally `NOOP`; it is posted as ordinary turn output.
+  Empty/whitespace turns remain unposted.
+- **`instrukt review record --reviewer`:** Proxy verdict entry on behalf of
+  another session has been removed so every standing verdict is recorded
+  directly by the independent reviewing session that produced it. Historical
+  verdicts that recorded an `entered_by` session remain readable and exportable.
+
+**Transition & rollback:** Upgrading requires no database reset or config edit
+for existing `runtimes.t3.discuss` / `conversation-link` keys, and in-flight
+standing/review/conversation records finish cleanly. Scripts or agent
+instructions invoking `instrukt discuss`, `instrukt config get runtime.discuss`,
+or `instrukt review record --reviewer` must be updated to native runtime
+delegation/messaging and direct reviewer-session `instrukt review record`
+calls. To roll back, let any open new-format manual standing reservations
+complete or clear them before restoring the previous `instrukt` binary:
+although this release performs no destructive SQLite schema migration, manual
+standing reservations opened on this release store plain (unwrapped) briefs
+that older binaries cannot resume because older builds require exact matches
+against the legacy `[Instrukt Assignment]` wrapper.
+
+### A company repository declares its company identity
+
+A company repository's committed project layer now declares which company it
+is: the key its `project` carries after `company-`, and the name people write
+the company by in the new project-only key `company_name`. `instrukt init
+--company <key> --name <name>` writes it into a new company's skeleton. An
+existing company repository has no `company_name` yet: add it with `instrukt
+config patch` on its project layer, through a reviewed change like any other
+change to the repository. Until then `instrukt config validate` reports the
+missing identity against `modules.events`, the home's event responses are
+withheld, other patches of the layer are refused, and its plugin does not
+render. No migration can supply the name, since it cannot be derived.
+
+`instrukt docs plugin` no longer takes `--key` or `--name`: it reads the
+company identity from the repository's committed project layer, so a home, a
+clone and an integration candidate render the same bytes. A script that still
+passes them gets a usage error; drop both flags. A repository without a
+company identity is refused with that finding and nothing is written.
+`instrukt docs render --plugin` renders the repository's whole agent material
+as one operation, the entrypoints and in a company repository the company's
+plugin, and `instrukt docs render --plugin --check` checks it.
+
 ### A company's settings and skill move
 
 A company home keeps its settings in `company.yaml`, beside the project
@@ -336,9 +400,8 @@ published. To switch it on for a project, in this order:
    `runner.review_needed` under the `commit-reviewer` role and is the only
    procedure subscribed to it. Admission requires that route.
 4. Record the approval of every head reviewed before the cutover that is not
-   on the canonical branch yet: its reviewing session with `instrukt review
-   record`, or another session with `instrukt review record --reviewer
-   <session>`. A head whose approval is not recorded is reviewed as part of its
+   on the canonical branch yet from its reviewing session with `instrukt review
+   record`. A head whose approval is not recorded is reviewed as part of its
    candidate.
 5. Set `review: {automatic: true}` in the project layer through a reviewed
    commit. `instrukt config patch` refuses it while a finding stands, and

@@ -99,7 +99,7 @@ fn exact_home(entry: &IndexEntry, origin: &EventHome) -> Option<String> {
 pub(crate) fn consumer(
     home: &Home,
     state: &RunnerState,
-    wakeup: std::sync::mpsc::SyncSender<()>,
+    wakeup: tokio::sync::mpsc::Sender<()>,
 ) -> Result<Consumer, crate::events::TypePatternError> {
     let home = home.clone();
     let state = state.clone();
@@ -172,8 +172,8 @@ pub(crate) fn consumer(
             }
             if changed {
                 match wakeup.try_send(()) {
-                    Ok(()) | Err(std::sync::mpsc::TrySendError::Full(())) => {} // One wake already accounts for all durable pending input.
-                    Err(std::sync::mpsc::TrySendError::Disconnected(())) => tracing::debug!(
+                    Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Full(())) => {} // One wake already accounts for all durable pending input.
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(())) => tracing::debug!(
                         event = "activation_coordinator_stopped",
                         "accepted activations remain durable for the next invocation"
                     ),

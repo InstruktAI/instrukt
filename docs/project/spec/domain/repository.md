@@ -117,8 +117,8 @@ there and has publication sync the home.
   idempotence and removal; the hook status report, including each section's
   last run outcome and refused syncs; which hooks instrukt uses
   and what each hook run starts; composition of attributed commits: author,
-  trailers, refusal of caller-written trailers, canonical-branch commit refusal
-  and the paths committed.
+  trailers, refusal of caller-written trailers and canonical-branch commit
+  refusal (staging stays with git).
 - **Does not own** — what a sync publishes and the ownership it records
   (publication, `project/instrukt/spec/domain/publication`); the
   editor schemas and modelines init asks publication to write (publication,
@@ -169,6 +169,12 @@ Company home adoption extends this boundary:
   (creating the repository, its administrator and its default branch, through
   an interface core declares and the CLI wires, as for the verified bot
   author).
+
+The `post-commit` hook run also invokes the company context's proposal
+recording, through an interface core declares and the CLI wires, in the
+session and the repository the commit was made in, and waits for it. The run
+decides nothing about it and never fails the commit; what the commit waits
+for is the recording's (`project/instrukt/spec/domain/company`).
 
 `instrukt repo reclaim` shares the `repo` namespace and is not this context's:
 it reclaims the regenerable output of a todo's worktree and belongs to runner
@@ -297,7 +303,7 @@ it reclaims the regenerable output of a todo's worktree and belongs to runner
 #### Attributed commit (aggregate)
 
 - **Root:** the commit.
-- **Contains:** the caller's message, the author, the trailers, the paths.
+- **Contains:** the caller's message, the author, the trailers.
 - **Invariants:**
   - The caller's message holds no line with a trailer key instrukt owns.
   - A `Session:` trailer and an agent author appear only when the
@@ -350,6 +356,8 @@ This context emits no events.
   (`project/instrukt/spec/feature/blueprint/graph-generation`).
 - **work** — Customer / Supplier. Recorded and planned associations are named
   in `Todo:` and `Planned-Todo:` trailers; work owns whether the item exists.
+- **company** — Customer / Supplier. The `post-commit` hook run invokes the
+  company context's proposal recording, declared by core and wired by the CLI.
 
 - **workflow** — Customer / Supplier. Repository supplies candidate integration
   branches and exact-commit main advancement.

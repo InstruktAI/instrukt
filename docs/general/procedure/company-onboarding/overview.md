@@ -194,6 +194,25 @@ onboarded company runs step 11, then step 7, then step 10.
    worktree. Where the head cannot be integrated yet, keep the reviewed
    worktree and report it as open in step 10. The proof of step 9 runs on the
    home once it holds the knowledge.
+
+   The integrator renders the company's skill with its catalog entry, and the
+   `AGENTS.md`, into every candidate it promotes, under the company identity
+   the home's committed `instrukt.yaml` declares with `company_name`; nothing
+   else renders them onto the default branch. So:
+   - In the worktree, `instrukt docs render --plugin --check` names the skill
+     as stale until the knowledge is integrated; that is expected, and Claude
+     serves the previous skill until the integrated revision is promoted.
+   - Once the home holds the integrated knowledge, run `instrukt docs render
+     --plugin --check` there; it passes with nothing named. Where it names the
+     skill or `AGENTS.md`, report it as open in step 10.
+   - Where `instrukt config validate` names the home's missing company
+     identity, the integrator renders nothing and instrukt withholds the
+     home's event responses until it is repaired: patch `company_name` into
+     the project layer in a worktree with `instrukt config patch`, as the
+     finding names, and hand that change to integration as above.
+   - A repository that carries the shared workflows repository's publishing
+     workflow keeps it, and that workflow then writes the default branch
+     beside the integrator. Report it in step 10 when you find it.
 9. **Prove that a person is answered.** With a person of the company present,
    have them address the agent where they talk, and read:
    - the answer arrives in the same conversation and nowhere else;

@@ -37,7 +37,7 @@ pub struct InitArgs {
     /// The name people write the company by; needed only when its
     /// repository is created.
     #[arg(long, value_name = "NAME", requires = "company")]
-    name: Option<instrukt_core::publication::CompanyName>,
+    name: Option<instrukt_core::config::CompanyName>,
     /// The company's GitHub administrator, a person's GitHub account; needed
     /// only when its repository is created.
     #[arg(long, value_name = "LOGIN", requires = "company")]
@@ -619,10 +619,6 @@ struct CommitArgs {
     /// The work item this commit belongs to.
     #[arg(long, value_name = "SLUG")]
     todo: Option<String>,
-    /// Commit exactly these paths as they are in the working tree, new
-    /// files included; everything else in the index stays as it was.
-    #[arg(long, num_args = 1.., value_name = "PATH")]
-    only: Vec<PathBuf>,
 }
 
 pub fn run_repo(args: RepoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
@@ -740,7 +736,6 @@ fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         message,
         human_involved: args.human_involved,
         todo: args.todo.as_deref().map(TodoSlug::parse).transpose()?,
-        only: args.only,
     };
     let sha = repository::commit(
         &ctx.home,

@@ -41,7 +41,11 @@ For taxonomy snippets, authoring reads and edits the snippet's source file in th
 0.  **Establish authoring authority, then earn the snippet.** Load this procedure
     when a snippet first enters consideration, before drafting its shape. A
     bounded dispatched brief or an original explicit authoring request supplies
-    authority for its scope. When the current human conversation began as
+    authority for its scope. Finding a bounded documentation-only fix to an
+    existing snippet supplies authority to make it at once in a short-lived
+    one-off worktree (`sdlc/policy/todo-creation-discipline`, Fix bounded
+    findings in context); a company's agent reports instead, and a fix whose
+    correctness is contested goes to the lifecycle. When the current human conversation began as
     exploration or design, authoring starts only after every active participant
     agrees the outcome and the human releases it for materialization. Silence,
     unilateral confidence, partial agreement, and automated checkpoint or

@@ -517,13 +517,10 @@ pub(crate) fn obtain_issuer_login(
 
     // 4. Discover authorization server's token endpoint and issuer (`aud`).
     let auth = discover_auth(&server.url)?;
-    let token_endpoint = auth
-        .token_endpoint
-        .as_deref()
-        .ok_or_else(|| McpError::Server {
-            server: server.name.to_string(),
-            cause: "authorization server metadata omits `token_endpoint`".into(),
-        })?;
+    let token_endpoint = auth.token_endpoint().ok_or_else(|| McpError::Server {
+        server: server.name.to_string(),
+        cause: "authorization server metadata omits `token_endpoint`".into(),
+    })?;
     if !instrukt_core::config::mcp_address_admitted(token_endpoint) {
         return Err(McpError::Server {
             server: server.name.to_string(),
@@ -575,33 +572,30 @@ pub(crate) fn obtain_issuer_login(
         form.push(("scope", scope));
     }
 
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_global(Some(Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .build()
-        .into();
-    let mut response = agent
-        .post(token_endpoint)
-        .header("Accept", "application/json")
-        .send_form(form)
-        .map_err(|error| McpError::Server {
-            server: server.name.to_string(),
-            cause: format!("issuer token exchange failed: {error}"),
-        })?;
-    let status = response.status().as_u16();
-    let body_text = response
-        .body_mut()
-        .with_config()
-        .limit(1024 * 1024)
-        .read_to_string()
-        .unwrap_or_default();
+    let http_client = super::_http::client(
+        server.name.as_str(),
+        Duration::from_secs(10),
+        Duration::from_secs(30),
+        false,
+    )?;
+    let (status, body_text) = super::_http::run_async(server.name.as_str(), async {
+        super::_http::post_form_text(&http_client, token_endpoint, &form)
+            .await
+            .map_err(|detail| McpError::Unreachable {
+                server: server.name.to_string(),
+                url: super::_http::redact_url(token_endpoint),
+                cause: format!("issuer token exchange failed: {detail}"),
+            })
+    })??;
     if !(200..300).contains(&status) {
         let code = serde_json::from_str::<Value>(&body_text)
             .ok()
-            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
-            .unwrap_or_else(|| format!("HTTP {status}"));
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(Value::as_str)
+                    .and_then(super::_http::exact_rfc6749_code)
+            })
+            .map_or_else(|| format!("HTTP {status}"), str::to_owned);
         return Err(McpError::Server {
             server: server.name.to_string(),
             cause: format!("issuer jwt-bearer token exchange refused ({code})"),

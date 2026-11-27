@@ -37,6 +37,7 @@ pub mod anomaly;
 pub mod ci;
 pub mod computer_fleet;
 pub mod consumers;
+pub mod control;
 pub mod dispatch;
 pub mod event_log;
 pub mod events;
@@ -71,8 +72,7 @@ pub use _attention::deliver_approval_attention;
 
 pub mod assignments;
 
-pub mod envelopes;
-pub mod links;
 pub mod mcp;
+pub(crate) mod relay;
 
 pub mod installation;

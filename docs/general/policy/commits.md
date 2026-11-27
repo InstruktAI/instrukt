@@ -73,8 +73,7 @@ All Committizen types are allowed.
   tracked change for commit, report what remains uncommitted and offer to
   commit; do not commit it, revert it, or suppress the automation.
 - Commit through `instrukt repo commit`. It stages nothing: stage the change
-  with git first, or name its paths with `--only <path>...` to commit just
-  those.
+  with `git add` first.
 - When the human intends a full commit, first inspect the entire change set,
   then commit the full working tree as-is, with no selective scoping, under a
   clear, meaningful, intent-based commit message.

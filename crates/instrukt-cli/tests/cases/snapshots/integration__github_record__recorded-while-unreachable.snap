@@ -1,9 +1,10 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
+assertion_line: 50
 expression: "redact(&format!(\"{recorded}---\\n{shown}---\\n{read}\"))"
 ---
 wrote prd of nested-lists: <digest 1>
-reflection: pending: GitHub: GitHub App API unavailable; retry the pending operation
+reflection: pending: not yet reflected
 ---
 nested-lists · feature · active
 identity: <id 1>
@@ -12,8 +13,7 @@ created: <time> by Test Developer
 revision: 2
 intent:
   Keep the depth of nested lists when parsing Markdown.
-reflection: pending: GitHub: GitHub App API unavailable; retry the pending operation
-GitHub not read (GitHub is unreachable): shown as this computer records it; what people did on the issue since its last read is applied by the next read
+reflection: pending: GitHub is unreachable
 issue: #1
 claim: not held
 hold: none

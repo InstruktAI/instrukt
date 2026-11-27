@@ -37,15 +37,15 @@ not this system: its errors are relayed to the person it belongs to.
 2. **Report or fix in context.** When your procedure routes what you notice
    outside your job to a governing session, report the observation there and
    stop: that session decides it and files
-   (`sdlc/policy/todo-creation-discipline`). When the repair is settled work
-   you already hold authority for, make it in context and file nothing
-   (`sdlc/policy/todo-creation-discipline`, Execute settled code work in
-   context); this step grants no authority you do not already hold. A
-   company's agent never holds repair authority: for it the answer is always
+   (`sdlc/policy/todo-creation-discipline`). Otherwise, when the repair is
+   documentation-only or a bounded code change of about five minutes, make it
+   yourself at once in a short-lived one-off worktree and file nothing
+   (`sdlc/policy/todo-creation-discipline`, Fix bounded findings in context).
+   A company's agent never holds repair authority: for it the answer is always
    to report.
 3. **Open the front door.** Run `instrukt bugs report '<description>'`. It
-   files nothing and prints the questions to face: bug or change, validity,
-   fix in context or file, evidence, duplication, ordering, owning project.
+   files nothing and prints the questions to face: fix in context or file, bug or change,
+   validity, evidence, duplication, ordering, owning project.
    Answer each against the sources it names:
    - **Duplication.** In the owning project, read `instrukt todo list
      --project <slug>`, `instrukt bugs list --project <slug>` and `instrukt

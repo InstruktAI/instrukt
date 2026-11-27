@@ -117,6 +117,10 @@ impl FakeMcp {
                     };
                     let authorization = carried("Authorization");
                     let protocol_version = carried("MCP-Protocol-Version");
+                    if *request.method() == tiny_http::Method::Get {
+                        request.respond(tiny_http::Response::empty(405)).unwrap();
+                        continue;
+                    }
                     if *request.method() == tiny_http::Method::Delete {
                         received.lock().unwrap().push(Received {
                             method: None,
@@ -779,6 +783,10 @@ impl FakeOAuthMcp {
                     }
 
                     if path == "/mcp" {
+                        if method == tiny_http::Method::Get {
+                            request.respond(tiny_http::Response::empty(405)).unwrap();
+                            continue;
+                        }
                         if method == tiny_http::Method::Delete {
                             request.respond(tiny_http::Response::empty(200)).unwrap();
                             continue;
@@ -895,12 +903,16 @@ impl FakeOAuthMcp {
             q.append_pair("state", &state);
             q.append_pair("iss", &self.base_url);
         }
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .http_status_as_error(false)
-            .build()
-            .into();
-        let resp = agent.get(callback.as_str()).call().unwrap();
-        resp.status().as_u16()
+        let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+            follow_redirects: false,
+            ..Default::default()
+        })
+        .unwrap();
+        let url = callback.as_str().to_owned();
+        instrukt_outside::runtime::block_on(async move {
+            client.get(url).send().await.unwrap().status().as_u16()
+        })
+        .unwrap()
     }
 
     /// Revoke all currently issued Bearer tokens so the next MCP call gets HTTP 401.
@@ -987,46 +999,56 @@ fn verify_ema_assertion(
         .to_owned();
 
     // Fetch real discovery + JWKS from the company's ingress endpoint!
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_connect(Some(Duration::from_secs(5)))
-        .timeout_global(Some(Duration::from_secs(5)))
-        .http_status_as_error(false)
-        .build()
-        .into();
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        connect_timeout: Duration::from_secs(5),
+        request_timeout: Duration::from_secs(5),
+        follow_redirects: false,
+        ..Default::default()
+    })
+    .map_err(|e| format!("http client: {e}"))?;
     let disc_url = format!(
         "{}/.well-known/openid-configuration",
         iss.trim_end_matches('/')
     );
-    let mut disc_resp = agent
-        .get(&disc_url)
-        .call()
-        .map_err(|e| format!("disc GET {disc_url}: {e}"))?;
-    if disc_resp.status().as_u16() != 200 {
-        return Err(format!(
-            "discovery returned {}",
-            disc_resp.status().as_u16()
-        ));
-    }
-    let disc_text = disc_resp
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("disc body: {e}"))?;
-    let disc: Value = serde_json::from_str(&disc_text).map_err(|e| format!("disc json: {e}"))?;
-    if disc["issuer"].as_str() != Some(iss.as_str()) {
-        return Err("discovery issuer mismatch".into());
-    }
-    let jwks_uri = disc["jwks_uri"].as_str().ok_or("missing jwks_uri")?;
-    let mut jwks_resp = agent
-        .get(jwks_uri)
-        .call()
-        .map_err(|e| format!("jwks GET {jwks_uri}: {e}"))?;
-    if jwks_resp.status().as_u16() != 200 {
-        return Err(format!("jwks returned {}", jwks_resp.status().as_u16()));
-    }
-    let jwks_text = jwks_resp
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| format!("jwks body: {e}"))?;
+    let expected_iss = iss.clone();
+    let (disc_text, jwks_text) = instrukt_outside::runtime::block_on(async move {
+        let disc_resp = client
+            .get(&disc_url)
+            .send()
+            .await
+            .map_err(|e| format!("disc GET {disc_url}: {e}"))?;
+        if disc_resp.status().as_u16() != 200 {
+            return Err(format!(
+                "discovery returned {}",
+                disc_resp.status().as_u16()
+            ));
+        }
+        let disc_text = disc_resp
+            .text()
+            .await
+            .map_err(|e| format!("disc body: {e}"))?;
+        let disc: Value =
+            serde_json::from_str(&disc_text).map_err(|e| format!("disc json: {e}"))?;
+        if disc["issuer"].as_str() != Some(expected_iss.as_str()) {
+            return Err("discovery issuer mismatch".into());
+        }
+        let jwks_uri = disc["jwks_uri"].as_str().ok_or("missing jwks_uri")?;
+        let jwks_resp = client
+            .get(jwks_uri)
+            .send()
+            .await
+            .map_err(|e| format!("jwks GET {jwks_uri}: {e}"))?;
+        if jwks_resp.status().as_u16() != 200 {
+            return Err(format!("jwks returned {}", jwks_resp.status().as_u16()));
+        }
+        let jwks_text = jwks_resp
+            .text()
+            .await
+            .map_err(|e| format!("jwks body: {e}"))?;
+        Ok::<_, String>((disc_text, jwks_text))
+    })
+    .map_err(|e| format!("runtime: {e}"))??;
+    let _ = disc_text;
     let jwks: jsonwebtoken::jwk::JwkSet =
         serde_json::from_str(&jwks_text).map_err(|e| format!("jwks json: {e}"))?;
     let jwk = header

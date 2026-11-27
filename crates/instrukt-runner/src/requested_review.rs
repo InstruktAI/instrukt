@@ -415,7 +415,7 @@ impl Delivering<'_> {
                     self.head()
                 )));
             }
-            (Delivery::Start, _, _) => self.start(false)?,
+            (Delivery::Start, _, _) => self.start_with_brief(false, &ask.rendering)?,
         };
         self.accepted(ask, &session, true)
     }
@@ -423,8 +423,12 @@ impl Delivering<'_> {
     /// The keyed start of the requested reviewer with the rendering as its
     /// opening input; `successor` succeeds an archived or deleted generation.
     fn start(&self, successor: bool) -> Result<SessionRef, AskError> {
+        self.start_with_brief(successor, &self.rendering.text)
+    }
+
+    fn start_with_brief(&self, successor: bool, brief: &str) -> Result<SessionRef, AskError> {
         let context = self.context;
-        let request = self.request()?;
+        let request = self.request(brief)?;
         let thread = if successor {
             keyed::succeed_owned(
                 self.guard,
@@ -457,7 +461,7 @@ impl Delivering<'_> {
 
     /// The start request: the same construction a standing start uses, in
     /// the registered checkout, under the review procedure's role.
-    fn request(&self) -> Result<RuntimeStart, AskError> {
+    fn request(&self, brief: &str) -> Result<RuntimeStart, AskError> {
         let context = self.context;
         let preferences = crate::agents::role_order(
             context.config,
@@ -486,7 +490,7 @@ impl Delivering<'_> {
                 &head[..head.len().min(12)]
             ),
             key: self.key.to_owned(),
-            brief: self.rendering.text.clone(),
+            brief: brief.to_owned(),
             worktree: None,
             launch_modes: None,
             native_launch: None,
@@ -494,8 +498,8 @@ impl Delivering<'_> {
         })
     }
 
-    /// Sends the rendering under the ask's recorded command identity; the
-    /// runtime accepts one identity once.
+    /// Sends the ask's stored rendering under its recorded command identity;
+    /// the runtime accepts one identity once.
     fn send(&self, ask: &Ask, session: &SessionRef) -> Result<(), AskError> {
         let command = ask.command_id.as_deref().ok_or_else(|| {
             failed(format!(
@@ -505,7 +509,7 @@ impl Delivering<'_> {
             ))
         })?;
         self.adapter
-            .dispatch_send(session, command, &self.rendering.text, &mut || Ok(()))
+            .dispatch_send(session, command, &ask.rendering, &mut || Ok(()))
             .map_err(|error| self.not_accepted("send", &error.into_inner()))
     }
 

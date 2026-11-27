@@ -395,6 +395,13 @@ fn json_shape(shape: Shape, layer: LayerKind) -> serde_json::Value {
              (project/instrukt/spec/feature/configuration/company-homes, The home). Off, it \
              is a project like any other.",
         ),
+        Shape::CompanyDisplayName => described(
+            json!({ "type": "string", "pattern": "^[^\\n\\r]*\\S[^\\n\\r]*$" }),
+            "The name people write the company by: one line of text that is not blank. Valid \
+             only beside `company_repository: true`; with a `project` of the form \
+             `company-<key>` it declares the repository's company identity \
+             (project/instrukt/spec/domain/configuration, The company identity).",
+        ),
         Shape::Apps => json!({"type":"object", "additionalProperties":{"type":"object"}}),
         Shape::Board => json!({
             "anyOf": [{ "const": false }, { "type": "string", "pattern": "^[A-Za-z0-9-]+/[0-9]*[1-9][0-9]*$" }],

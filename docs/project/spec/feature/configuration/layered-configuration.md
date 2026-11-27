@@ -80,8 +80,7 @@ under its revision check and whole-document validation
 `config validate` and `install --check` report it without changing anything
 (`project/instrukt/spec/feature/runner/module-installation`). A project layer
 that arrives with it through a commit is not admitted for automatic review on
-that computer; its other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). The readiness findings need
+that computer; its other capabilities are unaffected. The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
 
@@ -106,8 +105,7 @@ revision check and whole-document validation
 (`project/instrukt/spec/feature/configuration/configuration-editing`).
 `config validate` reports it without changing anything. A project layer that
 arrives with it through a commit is not admitted for reclaiming declared
-output on that computer; the project's other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). Installation inspection reports
+output on that computer; the project's other capabilities are unaffected. Installation inspection reports
 the withheld reclamation
 (`project/instrukt/spec/feature/runner/module-installation`), and no declared
 output is removed without an admitted declaration; the release of a delivered
@@ -162,6 +160,20 @@ and rendered as a company's
 `project/instrukt/spec/feature/publication/agent-entrypoints`, What makes a
 repository a company home).
 
+`company_name` (one line of text that is not blank) is project only and
+valid only beside `company_repository: true`. With a `project` of the form
+`company-<key>`, it declares the repository's company identity: the company's
+key and the name people write the company by
+(`project/instrukt/spec/domain/configuration`, The company identity). A
+company repository without a company identity has a finding naming the key,
+repaired by an `instrukt config patch` of the project layer. It is a finding
+against the project's `modules.events`: `instrukt config validate` reports
+it, a patch that would leave it is refused, and a layer that arrives with it
+withholds the home's event responses, as a module finding withholds its
+module's work (`project/instrukt/spec/feature/runner/work-dispatch`, Admitted
+configuration), since prerequisites are checked where they enter
+(`sdlc/principle/design-fundamentals`, Fail Fast).
+
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
 there is no project-layer `actions` key. CI required checks remain the merge gate.
@@ -180,8 +192,8 @@ has no `redis.cluster.url`, that is a finding at `modules.events`: `config patch
 refuses it, `config validate` and `install --check` report it, and a project layer
 that arrives with it through a commit is not admitted for event responses on that
 computer; its todos and history are unaffected
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters, never discovered by the running runner).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter, never discovered by the running runner).
 
 `ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
 names, by the same kind of ID, the one computer that activates procedures for
@@ -273,7 +285,6 @@ No command/agent verb kind or agent-action exit-status router exists.
 | `schedule_check` | Set, update or clear this agent's one scheduled reply check (`general/procedure/ai-to-ai-operations`) through the runtime's scheduler, at the interval the agent supplies, carrying its own identity so a later run can clear it. |
 | `look_around` | Discover current conversations in the supplied project/scope, including native current-thread metadata search and settled threads where supported. It releases no archive/history search service. |
 | `steer` | Deliver current direction at the target's supported safe input boundary while its turn and children continue; state queued/entry degradation when native interjection is absent. |
-| `discuss` | Open, participate in and close a runner-owned conversation link between two peer threads; the person participates in either thread and the runner relays finished turns with attribution. |
 | `start_thread` | Start a separately addressed conversation with its supplied project, semantic key, display title, initialized brief and placement. Repository todos use a single `<slug>/work` worktree; tasks create no git worktree. A worker uses `dispatch`. |
 | `cancel_child` | Stop this parent's identified child under its existing mandate, retaining its work/evidence and distinguishing accepted cancellation from completion. |
 | `finish_thread` | Dormantly settle an addressed conversation, or this agent's own conversation where the runtime supports it, so it stays wakeable in place with full context: a resting conversation, or the orchestrator thread of a todo that was delivered or withdrawn. Retain open obligations, forbid external agents and runner automation from settling a standing agent (a standing procedure may self-settle when parked dormant), and apply self-settling at its supported turn boundary. |
@@ -309,7 +320,6 @@ agent-facing consumers retrieve the value through its alias.
 | `schedule_check` | Set, update or clear the check with native scheduled tasks bound to this thread and running in its own session, as the `schedule_check` contract above requires. The native wording is owned by the shipped entry, `crates/instrukt-core/src/config/shipped/t3.yaml`. |
 | `look_around` | Use native project thread listing and available current-thread metadata filters. Select the requested project and include settled threads when needed. Retain the runtime's visibility limits for children; listing absence proves no missing child. |
 | `steer` | Use native thread/child input with its supported steering mode. Preserve the running turn and children. For a target that queues rather than interjects, hand over now for its next supported turn. |
-| `discuss` | When asked to open a discussion, use `instrukt discuss open <thread> [--message <text>]`; the native caller is the other member. Use `instrukt discuss close [--message <text>]` to deliver an optional final contribution and close for both members. The running instrukt runner shares finished turns automatically under project/instrukt/spec/feature/runner/conversation-links. |
 | `start_thread` | Use supplied placement.selection profile/kind/instance/model/effort/options for native startup where supported. The host CLI passes --provider and --model and records its effort/options flag gap. For a repository todo, start `t3 thread start <project> - --worktree origin/main --branch <slug>/work --title <display-title>` (on another computer use `--worktree origin/<slug>/work --branch <slug>/work`; legacy un-integrated `<slug>/prepare` branches are carried forward automatically). instrukt derives these names; creation refuses an existing local branch. Native shared children inherit `<slug>/work`. After deliberate native startup, enter `instrukt todo work <slug> --placement-evidence <file\|->` containing native session, key, title, recorded worktree, branch, head and source; shell cwd alone is not placement evidence. Wake a settled retained orchestrator in place. The CLI cannot attach an existing worktree to a replacement thread; resolve that placement or use native MCP existing-worktree start. Ad hoc work uses its own one-off worktree; only the integrator writes main. |
 | `cancel_child` | Use native delegated-task cancellation for the supplied own-child task id, preserving its branch, workspace and unfinished evidence. Read the returned cancellation state before deciding its remaining work. |
 | `finish_thread` | Preserve unfinished obligations. External agents and runner automation never settle a standing agent; a standing procedure may self-settle when parked dormant with no pending work, and other threads, including a resting conversation and a delivered or withdrawn todo's orchestrator thread, use native settling, which applies when the current turn ends. A settled standing thread stays reachable and wakes in place on a message. |

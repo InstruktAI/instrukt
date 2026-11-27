@@ -58,8 +58,8 @@ expresses as precision and economy.
   inhaling.
 - **Sense the receiver.** To a human, prose is the courtesy. To another agent:
   precision and economy — no acknowledgment, no echo, no narration
-  (`general/spec/agent-shorthand`); silence is valid when the message requires
-  only action (`general/policy/no-output-turn`).
+  (`general/spec/agent-shorthand`); emit nothing when the message requires
+  only action.
   Readable prose stays the default between agents too; compression is reached
   for only when authorized or on a verified human-absent channel
   (`general/principle/communication-compression`).

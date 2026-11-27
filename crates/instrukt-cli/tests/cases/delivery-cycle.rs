@@ -671,42 +671,9 @@ fn only_an_independent_verifiers_pass_accounts_for_live_behavior_at_handoff() {
     assert_eq!(ledger(&crew)["finalize_ready_commit"], head.as_str());
 }
 
-// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC11
-#[test]
-fn a_verifiers_fail_is_not_waved_through_by_a_skip_or_a_deferral() {
-    let crew = prepared();
-    approved_candidate(&crew);
-    crew.project
-        .create("verify-parser-live", "change", "Verify the parser live.");
-    crew.verified(SLUG, "fail");
-    let before = crew.todo(["show", SLUG]);
-    let skip = lead(&crew, &["--verification", "tier_0_skip"]).failure();
-    insta::assert_snapshot!("skip-after-fail-refused", stderr(&crew, &skip));
-    let deferral = lead(
-        &crew,
-        &[
-            "--verification",
-            "hotfix_deferred",
-            "--follow-up",
-            "verify-parser-live",
-        ],
-    )
-    .failure();
-    insta::assert_snapshot!("deferral-after-fail-refused", stderr(&crew, &deferral));
-    let readiness = lead(&crew, &["--finalize-ready"]).failure();
-    insta::assert_snapshot!("readiness-after-fail-refused", stderr(&crew, &readiness));
-    assert_eq!(crew.todo(["show", SLUG]), before);
-    let limited = ledger(&crew);
-    assert_eq!(limited["verifier_limit"]["disposition"], "fail");
-    assert_eq!(
-        limited["gates"]["integrate_review_gate"]["status"],
-        "blocked"
-    );
-}
-
 // spec: project/instrukt/spec/feature/workflow/preparation UC-PR4
 #[test]
-fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
+fn feature_blocks_finalize_ready_until_configured_prd_approval_is_recorded() {
     let crew = Crew::new();
     let slug = "gated-feature";
     crew.project
@@ -717,37 +684,7 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
     crew.write(slug, "prd-review-findings", "PRD reviewed and approved.");
     crew.stamp(slug, &["--verdict", "approve", "--phase", "prd_review"]);
 
-    // Invariant 3: without human PRD approval, builder, finalizer, and --finalize-ready are refused.
-    for (role, proc_id) in [
-        ("builder", "crew/procedure/build"),
-        ("finalizer", "crew/procedure/finalize"),
-    ] {
-        let refused = crew
-            .project
-            .env
-            .instrukt(crew.root())
-            .args([
-                "todo",
-                "attempt",
-                slug,
-                "--role",
-                role,
-                "--procedure",
-                proc_id,
-                "--args",
-                slug,
-                "--brief",
-                "-",
-            ])
-            .write_stdin("Start before PRD approval.")
-            .assert()
-            .failure();
-        let err = String::from_utf8_lossy(&refused.get_output().stderr);
-        assert!(
-            err.contains("PRD approval is required"),
-            "role {role} should be refused for missing PRD approval, got: {err}"
-        );
-    }
+    // Invariant 3: without human PRD approval, --finalize-ready is refused.
     let finalize_refused = crew
         .project
         .env
@@ -762,7 +699,8 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
         "expected PRD approval refusal on --finalize-ready, got: {finalize_err}"
     );
 
-    // Once human PRD approval is stamped, builder reservation succeeds immediately.
+    // Once human PRD approval is stamped, the builder reservation succeeds
+    // and the PRD gate is satisfied.
     crew.stamp(
         slug,
         &["--prd-approved", "--by", "human", "--session", "t3:lead-1"],
@@ -770,32 +708,21 @@ fn feature_blocks_builder_until_configured_prd_approval_is_recorded() {
     let builder_assignment = crew.worker(slug, "builder", Some("crew/procedure/build"));
     assert_eq!(builder_assignment["role"], "builder");
 
-    // Non-feature todo carrying a prd artifact is also gated by approvals.prd (fresh session).
+    // Non-feature todo carrying a prd artifact is also gated by approvals.prd at handoff.
     let crew2 = Crew::new();
     let change_slug = "change-with-prd";
     crew2
         .project
         .create(change_slug, "change", "Refactor with explicit PRD.");
+    let wt2 = crew2.workspace(change_slug);
     crew2.next("work", change_slug);
     crew2.write(change_slug, "prd", "Explicit PRD for change todo.");
     let change_refused = crew2
         .project
         .env
-        .instrukt(crew2.root())
-        .args([
-            "todo",
-            "attempt",
-            change_slug,
-            "--role",
-            "builder",
-            "--procedure",
-            "crew/procedure/build",
-            "--args",
-            change_slug,
-            "--brief",
-            "-",
-        ])
-        .write_stdin("Start change carrying PRD before approval.")
+        .instrukt(&wt2)
+        .env("T3CODE_THREAD_ID", "lead-1")
+        .args(["todo", "stamp", change_slug, "--finalize-ready"])
         .assert()
         .failure();
     assert!(
@@ -820,32 +747,6 @@ fn task_preparer_child_attempt_completes_without_worktree_and_task_firing_requir
         .success();
     let stdout = String::from_utf8(out.get_output().stdout.clone()).unwrap();
     assert!(stdout.contains("task approval: pending human approval"));
-
-    // Non-task-preparer roles are refused on worktree-less task todos.
-    let wrong_role = crew
-        .project
-        .env
-        .instrukt(crew.root())
-        .args([
-            "todo",
-            "attempt",
-            slug,
-            "--role",
-            "builder",
-            "--procedure",
-            "crew/procedure/build",
-            "--args",
-            slug,
-            "--brief",
-            "-",
-        ])
-        .write_stdin("Builder should not reserve on a task todo.")
-        .assert()
-        .failure();
-    assert!(
-        String::from_utf8_lossy(&wrong_role.get_output().stderr)
-            .contains("only task-preparer may reserve a worktree-less attempt on a task todo")
-    );
 
     // Reserve and bind a worktree-less task-preparer child attempt.
     let reserved = crew

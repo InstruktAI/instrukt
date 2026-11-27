@@ -4,7 +4,7 @@
 #![allow(clippy::unwrap_used, reason = "isolated feature scenarios")]
 
 use crate::common;
-use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait};
+use crate::fixtures::conversing::{COMPANY, Company, patch_company, wait, wait_for_binding};
 use crate::fixtures::documented;
 use crate::fixtures::slack::Fate;
 use instrukt_company::conversations;
@@ -1093,7 +1093,7 @@ fn failed_work_is_retried_after_a_restart() {
     let successor = started(&c, &before);
     assert_eq!(c.runtime.message_count(&session), 3);
     c.runtime.flag("send-failure", true);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     let session = successor;
     wait_for_answer_fixture(
         "the first successor redelivery is refused by the runtime",
@@ -1166,7 +1166,7 @@ fn a_replacement_reports_the_old_acknowledgement() {
     c.store.unproject_thread(&old);
     std::fs::remove_file(c.runtime.state_dir().join(format!("{old}.hold-show"))).unwrap();
     let successor = started(&c, &[old]);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture(
         "only the current successor receives the retained question",
         || c.runtime.message_count(&successor) == 2,
@@ -1476,7 +1476,7 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
     );
     let successor = started(&c, &[]);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved work reaches one successor", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1511,7 +1511,7 @@ fn archived_and_deleted_conversations_keep_saved_work() {
             .message(&successor, 0)
             .contains("Who kept the notes?")
     );
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved question reaches the successor once", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1567,7 +1567,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         .unwrap_or(false)
     });
     assert_ne!(old, successor);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved question is delivered after deletion", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1597,7 +1597,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
 fn a_member_can_follow_the_status_of_an_unanswered_message() {
     std::thread::scope(|scope| {
         scope.spawn(a_members_status_tracks_start_and_turn_updates);
-        scope.spawn(working_status_clears_for_a_noop_and_carries_queued_turns);
+        scope.spawn(working_status_carries_queued_turns);
         scope.spawn(unavailable_status_clears_when_the_source_or_post_recovers);
         scope.spawn(a_relay_restart_keeps_the_unavailable_interval);
         scope.spawn(observing_a_running_turn_again_clears_its_and_the_queued_status);
@@ -1639,10 +1639,7 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
 }
 
 fn successful_empty_turns_rearm_notices() {
-    std::thread::scope(|scope| {
-        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
-        an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
-    });
+    an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
 }
 
 fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
@@ -1801,32 +1798,9 @@ fn unavailable_status_clears_when_the_source_or_post_recovers() {
     assert_eq!(shown(&c, channel, &unposted), [WORKING, UNAVAILABLE, ""]);
 }
 
-fn working_status_clears_for_a_noop_and_carries_queued_turns() {
+fn working_status_carries_queued_turns() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
-    // A turn that completes with a bare `NOOP` completes its message:
-    // nothing is posted, and the status is cleared without ever saying the
-    // assistant is unavailable.
-    let before = c.sessions();
-    projected(&c);
-    let quiet = c
-        .slack
-        .mention(channel, "USTEVEN", "<@UAGENT> Thanks!", None);
-    let session = started(&c, &before);
-    wait("the working text", || {
-        c.slack.status(channel, &quiet).as_deref() == Some(WORKING)
-    });
-    c.finish_turn(&session, 0, "NOOP");
-    wait("the status cleared", || {
-        shown(&c, channel, &quiet).last().map(String::as_str) == Some("")
-    });
-    assert_eq!(shown(&c, channel, &quiet), [WORKING, ""]);
-    set_clock(
-        &clock,
-        interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
-    );
-    assert_eq!(answers(&c), 0);
-    assert_eq!(notices(&c, "USTEVEN"), 0);
 
     // A second message waits behind the conversation's running turn: the
     // status shows that turn's work, never the unavailable text, and both
@@ -4894,7 +4868,16 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
     let _dm_ts = c.slack.direct("D1", "USTEVEN", "Check DM status.");
     let session = c.session();
     let input0 = c.runtime.message(&session, 0);
-    assert!(input0.contains("[Instrukt Notification]"), "{input0}");
+    let (_, _, after_assignment) = instrukt_runner::control::Control::Assignment
+        .split_leading(&input0)
+        .unwrap_or_else(|| panic!("expected complete assignment frame in {input0}"));
+    let (_, turn0_header, _) = instrukt_runner::control::Control::Notification
+        .split_leading(after_assignment.trim_start_matches('\n'))
+        .unwrap_or_else(|| panic!("expected complete notification frame in {input0}"));
+    assert!(
+        turn0_header.contains("Company conversation turn"),
+        "{input0}"
+    );
     assert!(input0.contains("Connector: desk"), "{input0}");
     assert!(input0.contains("Conversation: D1"), "{input0}");
     assert!(input0.contains("Direct: true"), "{input0}");
@@ -4956,7 +4939,13 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         "company scope must keep one standing session"
     );
     let input1 = c.runtime.message(&session, 1);
-    assert!(input1.contains("[Instrukt Notification]"), "{input1}");
+    let (_, turn1_header, _) = instrukt_runner::control::Control::Notification
+        .split_leading(&input1)
+        .unwrap_or_else(|| panic!("expected complete notification frame in {input1}"));
+    assert!(
+        turn1_header.contains("Company conversation turn"),
+        "{input1}"
+    );
     assert!(input1.contains("Connector: desk"), "{input1}");
     assert!(
         input1.contains(&format!("Conversation: C1/{ch_ts}")),
@@ -4995,14 +4984,17 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         c.runtime.message_count(&session) >= 3
     });
     let input2 = c.runtime.message(&session, 2);
-    let spans = instrukt_runner::envelopes::segment(&input2);
+    let spans = instrukt_company::conversations::envelopes::segment(&input2);
     assert_eq!(
         spans
             .iter()
-            .filter(|span| matches!(span, instrukt_runner::envelopes::Span::Control))
+            .filter(|span| matches!(
+                span,
+                instrukt_company::conversations::envelopes::Span::Member { .. }
+            ))
             .count(),
         1,
-        "hostile display name must not forge extra control envelopes:\n{input2}"
+        "hostile display name must not forge extra member envelopes:\n{input2}"
     );
     assert!(input2.contains("Speaker ID: UBRAM"), "{input2}");
     assert!(input2.contains("Speaker Admin: false"), "{input2}");
@@ -5442,4 +5434,397 @@ fn explicit_reply_mode_suppresses_turn_output_and_delivers_company_reply_as_writ
     );
     assert_eq!(posts2[0].channel, "C1");
     assert_eq!(posts2[0].thread.as_deref(), Some(ch_ts.as_str()));
+}
+
+/// The company home's repository on the fake GitHub.
+const KNOWLEDGE_REPOSITORY: &str = "acme/company-acme";
+
+/// The reviewer App's id on the fake.
+const REVIEWER_APP: u64 = 3;
+
+/// The procedures a company home's knowledge proposals pass through,
+/// published from a docs project of their own: the automatic review, and
+/// the standing integrator woken by `runner.proposal_approved`.
+fn publish_proposal_procedures(env: &common::TestEnv) {
+    let docs = documented::project(
+        env,
+        "proposal-docs",
+        &[
+            (
+                "instrukt.yaml",
+                format!(
+                    "schema_version: {}\nproject: proposal-docs\nmodules: {{history: false, todos: false}}\n",
+                    instrukt_core::config::PROJECT_SCHEMA_VERSION
+                ),
+            ),
+            (
+                "docs/domain/sdlc/procedure/lifecycle/work/review-commits.md",
+                documented::snippet(
+                    "procedure",
+                    "Review Commits",
+                    "Review a committed head independently and record the verdict.",
+                    "role: commit-reviewer\nsubscriptions:\n  - runner.review_needed\nsubscription_home: project\nsubscription_identity: subject\nsubscription_attendance: unattended\n",
+                    &[],
+                    "Review the head.\n",
+                ),
+            ),
+            (
+                "docs/domain/sdlc/procedure/lifecycle/integrate.md",
+                documented::snippet(
+                    "procedure",
+                    "Integrate",
+                    "Integrate exact approved candidates.",
+                    "role: integrator\nsubscription_home: project\ninterruptible: false\nsubscriptions:\n  - runner.proposal_approved\n",
+                    &[],
+                    "Integrate.\n",
+                ),
+            ),
+        ],
+    );
+    documented::sync(env, &docs);
+}
+
+/// Makes the company's home its repository: an adopted project declaring
+/// the company identity, events on and automatic review opted in, with
+/// instrukt's hook sections installed and `main` pushed to a bare `origin`
+/// the fake GitHub knows. Returns the home.
+fn knowledge_repository(
+    c: &Company,
+    github: &crate::common::github::FakeGitHub,
+) -> std::path::PathBuf {
+    let home = c.env.instrukt_home().join("companies").join(COMPANY);
+    let git = |args: &[&str]| c.env.git(&home, args);
+    git(&["init", "--quiet", "--initial-branch=main"]);
+    std::fs::write(
+        home.join(".gitignore"),
+        "/company.yaml\n/secrets.env\n/projects/\n/.instrukt/\n",
+    )
+    .unwrap();
+    std::fs::write(
+        home.join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\nproject: company-{COMPANY}\ncompany_repository: true\ncompany_name: Acme\nmodules: {{events: true, todos: false, history: false}}\nreview: {{automatic: true}}\ngithub: {{repository: {KNOWLEDGE_REPOSITORY}}}\n",
+            instrukt_core::config::PROJECT_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
+    std::fs::create_dir_all(home.join("docs")).unwrap();
+    std::fs::write(home.join("docs/index.yaml"), "expanded: [company.md]\n").unwrap();
+    std::fs::write(
+        home.join("docs/company.md"),
+        "---\ndescription: Who Acme is.\n---\n\n# Acme\n\nAcme builds bicycles.\n",
+    )
+    .unwrap();
+    c.env.run(&home, ["hooks", "install"]).success();
+    git(&["add", "--all"]);
+    git(&[
+        "commit",
+        "--quiet",
+        "-m",
+        "feat: start the company's repository",
+    ]);
+    let origin = c.env.bare_remote("company-acme-origin");
+    git(&["remote", "add", "origin", origin.to_str().unwrap()]);
+    git(&["push", "--quiet", "-u", "origin", "main"]);
+    github.set_branch(
+        KNOWLEDGE_REPOSITORY,
+        "main",
+        git(&["rev-parse", "HEAD"]).trim(),
+    );
+    c.env.run(&home, ["sync"]).success();
+    home
+}
+
+/// Commits `text` as the company's document `docs/{document}`, and with
+/// `outside` also that file, in the worktree at `worktree`, made in the turn
+/// `session` has in progress with that session's environment, through the
+/// installed hook sections. Returns the commit.
+fn commit_in_turn(
+    c: &mut Company,
+    worktree: &std::path::Path,
+    session: &str,
+    document: &str,
+    text: &str,
+    outside: Option<(&str, &str)>,
+) -> String {
+    std::fs::write(
+        worktree.join("docs").join(document),
+        format!("---\ndescription: {document}\n---\n\n# Knowledge\n\n{text}\n"),
+    )
+    .unwrap();
+    let index = format!("expanded: [company.md, {document}]\n");
+    if document != "company.md" {
+        std::fs::write(worktree.join("docs/index.yaml"), index).unwrap();
+    }
+    if let Some((path, contents)) = outside {
+        let mut existing = std::fs::read_to_string(worktree.join(path)).unwrap_or_default();
+        existing.push_str(contents);
+        std::fs::write(worktree.join(path), existing).unwrap();
+    }
+    c.env.set_env("T3CODE_THREAD_ID", session);
+    c.env.git(worktree, ["add", "--all"]);
+    c.env.git(
+        worktree,
+        ["commit", "--quiet", "-m", "docs: change the knowledge"],
+    );
+    c.env.remove_env("T3CODE_THREAD_ID");
+    c.env.git(worktree, ["rev-parse", "HEAD"]).trim().to_owned()
+}
+
+/// The heads of the `event` facts a session's delivered inputs `log` carry,
+/// read from each delivery's JSON event envelope, in delivery order.
+fn delivered_heads(log: &str, event: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|envelope| envelope["type"] == event)
+        .filter_map(|envelope| envelope["data"]["head"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// The fake runtime's threads started for the procedure whose semantic key
+/// names `procedure`.
+fn threads_of(c: &Company, procedure: &str) -> Vec<String> {
+    c.runtime
+        .threads()
+        .into_iter()
+        .filter(|thread| c.runtime.key(thread).contains(procedure))
+        .collect()
+}
+
+// spec: project/instrukt/spec/feature/company/conversations UC-CV25
+#[test]
+fn an_administrators_knowledge_change_reaches_review_and_integration_with_no_person() {
+    let mut env = common::TestEnv::new();
+    let bin = std::path::Path::new(env!("CARGO_BIN_EXE_instrukt"))
+        .parent()
+        .unwrap();
+    let path = format!("{}:{}", bin.display(), env.injected("PATH").unwrap());
+    env.set_env("PATH", &path);
+    let redis = format!("redis:\n  cluster:\n    url: '{}'\n", env.redis_url());
+    let github = crate::common::github::FakeGitHub::start();
+    github.add_repo(KNOWLEDGE_REPOSITORY);
+    let mut c = Company::on(env, ", events: true, history: false", &redis, "");
+    github.configure(&c.env);
+    c.env.set_env("GITHUB_TOKEN", "test-token");
+    github.set_installation_permissions(
+        REVIEWER_APP,
+        serde_json::json!({"contents":"read","pull_requests":"write","statuses":"write","issues":"write","checks":"read"}),
+    );
+    c.slack.set_admin("USTEVEN", true);
+    c.slack.set_admin("UANNA", false);
+    patch_company(
+        &c.env,
+        COMPANY,
+        "members:\n  steven: {name: Steven Sonneveld, email: steven@example.com}\n  anna: {name: Anna, email: anna@example.com}\n",
+    );
+    publish_proposal_procedures(&c.env);
+    let home = knowledge_repository(&c, &github);
+    let worktree = |name: &str, branch: &str| {
+        let path = c.env.path(name);
+        c.env.git(
+            &home,
+            [
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                branch,
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+        path
+    };
+    let (pricing, holidays, settings) = (
+        worktree("pricing", "knowledge/pricing"),
+        worktree("holidays", "knowledge/holidays"),
+        worktree("settings", "knowledge/settings"),
+    );
+
+    // Each member's message is delivered into a session of its own; every
+    // commit is made in that session's turn, still in progress.
+    c.runtime.flag("lifecycle", true);
+    c.run();
+    c.slack.direct("D1", "USTEVEN", "Write down our new prices");
+    let admin = c.session();
+    wait_for_binding(&c.env, &admin);
+    c.slack.direct("D2", "UANNA", "Write down the holidays");
+    let member = c.wait_for_new_session(std::slice::from_ref(&admin));
+    wait_for_binding(&c.env, &member);
+    let a1 = commit_in_turn(
+        &mut c,
+        &pricing,
+        &admin,
+        "pricing.md",
+        "Frames cost 400.",
+        None,
+    );
+    let a2 = commit_in_turn(
+        &mut c,
+        &pricing,
+        &admin,
+        "pricing.md",
+        "Frames cost 420.",
+        None,
+    );
+    let a3 = commit_in_turn(
+        &mut c,
+        &pricing,
+        &admin,
+        "pricing.md",
+        "Frames cost 440.",
+        None,
+    );
+    let b = commit_in_turn(
+        &mut c,
+        &holidays,
+        &member,
+        "holidays.md",
+        "Closed in August.",
+        None,
+    );
+    let settings_head = commit_in_turn(
+        &mut c,
+        &settings,
+        &admin,
+        "settings.md",
+        "Reviews are automatic.",
+        Some(("instrukt.yaml", "# reviewed settings\n")),
+    );
+
+    // No push reaches the remote while a runner is alive.
+    c.stop_runner();
+    // The test's own push of an exact commit to its branch.
+    let push = |c: &Company, branch: &str, commit: &str| {
+        c.env.git(
+            &home,
+            [
+                "push",
+                "--quiet",
+                "--force",
+                "origin",
+                &format!("{commit}:refs/heads/{branch}"),
+            ],
+        );
+        github.set_branch(KNOWLEDGE_REPOSITORY, branch, commit);
+    };
+    push(&c, "knowledge/pricing", &a1);
+    push(&c, "knowledge/holidays", &b);
+    push(&c, "knowledge/settings", &settings_head);
+    let person = github.seed_pull(
+        KNOWLEDGE_REPOSITORY,
+        crate::common::github::PullSeed {
+            title: "The holidays".into(),
+            head: "knowledge/holidays".into(),
+            base: "main".into(),
+            draft: false,
+            login: Some("steven".into()),
+            association: Some("MEMBER".into()),
+            fork: None,
+        },
+    );
+    let start = jiff::Timestamp::now();
+    let tick = |c: &mut Company, minutes: i64| {
+        c.env.set_env(
+            "INSTRUKT_NOW",
+            &(start + jiff::SignedDuration::from_mins(minutes)).to_string(),
+        );
+        c.env.run(c.env.home(), ["tick"]).success();
+        c.env.remove_env("INSTRUKT_NOW");
+    };
+    let record = |c: &Company, thread: &str, head: &str, verdict: &str| {
+        let base = c.env.git(&home, ["merge-base", head, "origin/main"]);
+        c.env
+            .instrukt(&home)
+            .env("T3CODE_THREAD_ID", thread)
+            .args([
+                "review",
+                "record",
+                "--head",
+                head,
+                "--base",
+                base.trim(),
+                "--verdict",
+                verdict,
+                "--report",
+                "-",
+            ])
+            .write_stdin(format!("# Review\n\nVerdict: {verdict}\n"))
+            .assert()
+            .success();
+        c.runtime.set_status(thread, "completed");
+    };
+    // The heads `runner.proposal_approved` delivered to the integrator.
+    let handed_over = |c: &Company| -> Vec<String> {
+        threads_of(c, "integrate")
+            .iter()
+            .flat_map(|thread| {
+                delivered_heads(&c.runtime.input_log(thread), "runner.proposal_approved")
+            })
+            .collect()
+    };
+    // The heads whose review requests reached a reviewer thread.
+    let asked_of = |c: &Company, thread: &str| -> Vec<String> {
+        delivered_heads(&c.runtime.input_log(thread), "runner.review_needed")
+    };
+    let pulls_at = |head: &str| -> Vec<serde_json::Value> {
+        github
+            .pulls(KNOWLEDGE_REPOSITORY)
+            .into_iter()
+            .filter(|pull| pull["head"]["sha"] == head)
+            .collect()
+    };
+
+    // Tick 1: exactly one pull request is opened, for the administrator's
+    // admitted head; the member's change and the change touching the
+    // settings get none. Both pull requests reach automatic review.
+    tick(&mut c, 1);
+    let opened: Vec<serde_json::Value> = github
+        .pulls(KNOWLEDGE_REPOSITORY)
+        .into_iter()
+        .filter(|pull| pull["number"] != person)
+        .collect();
+    let heads: Vec<&serde_json::Value> = opened.iter().map(|pull| &pull["head"]["ref"]).collect();
+    assert_eq!(opened.len(), 1, "one pull request opened: {heads:?}");
+    assert_eq!(opened[0]["head"]["sha"], a1.as_str());
+    assert!(pulls_at(&settings_head).is_empty());
+    let reviewers = threads_of(&c, "review-commits");
+    assert_eq!(reviewers.len(), 2, "both pull requests are reviewed");
+    let reviewer_of = |head: &str| {
+        reviewers
+            .iter()
+            .find(|thread| asked_of(&c, thread) == [head])
+            .unwrap()
+            .clone()
+    };
+    let (ra, rb) = (reviewer_of(&a1), reviewer_of(&b));
+    assert!(handed_over(&c).is_empty(), "nothing is handed over yet");
+    record(&c, &ra, &a1, "needs_work");
+    record(&c, &rb, &b, "approve");
+
+    // Tick 2: neither the change that needs work nor the member's approved
+    // change is handed to the integrator.
+    tick(&mut c, 2);
+    assert!(handed_over(&c).is_empty());
+
+    // Tick 3: the next head is asked for of the same reviewer, and has no
+    // verdict yet.
+    push(&c, "knowledge/pricing", &a2);
+    tick(&mut c, 3);
+    assert_eq!(asked_of(&c, &ra), [a1.as_str(), a2.as_str()]);
+    assert!(handed_over(&c).is_empty());
+    record(&c, &ra, &a2, "approve");
+
+    // Tick 4: an approved commit that is no longer the pull request's head
+    // is not handed over.
+    push(&c, "knowledge/pricing", &a3);
+    tick(&mut c, 4);
+    assert_eq!(asked_of(&c, &ra), [a1.as_str(), a2.as_str(), a3.as_str()]);
+    assert!(handed_over(&c).is_empty());
+    record(&c, &ra, &a3, "approve");
+
+    // Tick 5: the exact approved head reaches the integrator, and nothing
+    // else does.
+    tick(&mut c, 5);
+    assert_eq!(handed_over(&c), [a3.as_str()]);
 }

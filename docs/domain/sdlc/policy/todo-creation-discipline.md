@@ -177,16 +177,16 @@ once, deduplicated, while preserving the existing restoration obligation.
   gate.
 
 
-- **Execute settled code work in context.** When the approach is known,
-  the edit is bounded, and the work needs neither a plan, a builder, nor a
-  handoff, make the change in a short-lived one-off worktree only when an explicit execution request, a
-  bounded brief, or a completed human conversation in which every active
-  participant agreed the outcome and the human released the edit supplies
-  authority. Human presence alone supplies none. Importance does not decide
-  this boundary; remaining judgment does. A small change whose correctness is
-  genuinely contested still belongs in the lifecycle. A `change` todo created
-  despite meeting these criteria may still take the in-context path at prepare
-  entry (`sdlc/procedure/lifecycle/overview`).
+- **Fix bounded findings in context.** An agent that finds a
+  documentation-only change, or a bounded code change of about five minutes
+  (approach known, edit bounded, needing neither a plan, a builder nor a
+  handoff), makes it itself at once in a short-lived one-off worktree and files
+  nothing; finding it supplies the authority. Importance does not decide this
+  boundary; remaining judgment does. A change whose correctness is genuinely
+  contested still belongs in the lifecycle. A company's agent never holds repair
+  authority and reports instead. A `change` todo created despite meeting these
+  criteria may still take the in-context path at prepare entry
+  (`sdlc/procedure/lifecycle/overview`).
 
 - **Use the todo's `log` artifact for a breadcrumb.** A minimal FYI that
   changes neither scope nor a decision does not justify a new todo or a rewrite
@@ -209,8 +209,7 @@ once, deduplicated, while preserving the existing restoration obligation.
 
 - **The creation check belongs to the filing agent.** Face the decisions
   above before `instrukt todo create <slug> <content> --kind <kind> --approved`.
-  Without `--approved`, the command prints the admission questions and creates
-  nothing. Pass it only after facing those questions.
+  The command writes the record only with `--approved`.
   Creation writes the item and its first `input` version together in the
   local record. The runner dispatches eligible work under module enablement,
   pickup policy and the workflow's current obligation; creation supplies no
@@ -301,19 +300,24 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **Check intent by position.** `input` is the intent record for every kind,
   including work with a supplied plan. The first recipient other than its
-  author reads the originating conversation through
-  the configured runtime conversation read instruction and compares outcome-level
-  substance. Confirm the record, clarify expression without changing meaning,
+  author reads the human's actual originating conversation through
+  the configured runtime conversation read instruction — tracing past any
+  relaying or splitting session, and for a grouped child following its parent or
+  recorded origin pointer back to the root human conversation
+  (`general/policy/human-contract`) — and compares outcome-level substance.
+  Reading a relaying or splitting subagent's thread is not an intent check.
+  Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
-  Record `instrukt todo stamp <slug> --intent-checked` bound to that input
-  version, checker and conversation. A current check travels unchanged to
-  later recipients; role names and author membership are not substitutes for
-  the version-bound stamp. The check runs where the conversation is readable,
-  without copying it to GitHub. Unreadable evidence supplies no check, and an
-  author never independently checks their own compression. If the originating
-  conversation is permanently unavailable, return the intent to the human in the
-  responsible thread; a new `input` version from that conversation becomes the checkable
-  basis.
+  Record `instrukt todo stamp <slug> --intent-checked --conversation <origin-session>`
+  with the observed session of the human's originating conversation. The stamp
+  binds that conversation to the current `input` digest. A current check requires
+  both the current digest and the human's actual originating conversation. A
+  valid current check travels unchanged to later recipients. Check the
+  conversation where it is readable and leave its content in the runtime. Unreadable evidence
+  supplies no check, and an author never independently checks their own
+  compression. If the originating conversation is permanently unavailable,
+  return the intent to the human in the responsible thread; a new `input`
+  version from that conversation becomes the checkable basis.
 
 - **Repair before retiring.** Correct the project, input, missing
   documentation, dependencies, or other repairable omission in place. Retire

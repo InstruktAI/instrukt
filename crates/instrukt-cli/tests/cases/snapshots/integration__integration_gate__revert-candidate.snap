@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/integration-gate.rs
-assertion_line: 370
 expression: "work ::\nredact(&\nproject.rt.sent(INTEGRATOR,\n2).replace(&revert, \"<revert>\").replace(&delivered, \"<reverted delivery>\"))"
 ---
 [Instrukt Notification]

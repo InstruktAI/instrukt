@@ -12,9 +12,9 @@ use instrukt_runner::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::_session::{LockWait, Session};
+use super::_session::Session;
 use super::{Attempt, Binding, Outcome, TodoRecord, Work, WorkError};
-use crate::evidence::{PreparationReview, TodoStatus, artifact_names};
+use crate::evidence::TodoStatus;
 
 fn head(root: &Path, revision: &str) -> Result<CommitSha, WorkError> {
     CommitSha::parse(
@@ -115,7 +115,7 @@ fn orchestrator(s: &Session<'_>, index: usize) -> Result<(), WorkError> {
     }
     Ok(())
 }
-/// Whether `assignment`, just reserved on item `index` and flushed, may be
+/// Whether `assignment`, just reserved on item `index`, may be
 /// returned with `dispatch_allowed`: the row the state database holds now,
 /// never the session's copy, must still stand on the calling
 /// orchestrator's claim, active and unheld, with the reservation unbound,
@@ -171,7 +171,7 @@ fn dispatch_admitted(
 
 /// Invariant 3: enforce configured `approvals.prd` before implementation or
 /// finalization for features and any todo carrying a `prd` artifact.
-fn require_prd_approval(
+pub(super) fn require_prd_approval(
     record: &TodoRecord,
     approver: instrukt_core::config::Approver,
 ) -> Result<(), WorkError> {
@@ -436,7 +436,6 @@ impl Work {
                     }
                     Ok(())
                 })?;
-                s.flush(LockWait::No)?;
                 dispatch_admitted(&s, index, &result)?;
             }
             return Ok(ReservedAttempt {
@@ -446,11 +445,6 @@ impl Work {
         }
         let is_task = record.kind == instrukt_runner::interfaces::TodoKind::Task;
         let (lane, worktree, branch, base, assignment_kind) = if is_task {
-            if role.as_str() != "task-preparer" {
-                return Err(WorkError::refused(
-                    "only task-preparer may reserve a worktree-less attempt on a task todo",
-                ));
-            }
             (
                 instrukt_runner::interfaces::Lane::Work,
                 None,
@@ -475,12 +469,6 @@ impl Work {
                 .attempt
                 .lane
                 .unwrap_or(instrukt_runner::interfaces::Lane::Work);
-            if matches!(role.as_str(), "builder" | "finalizer") {
-                let prd_approver = s
-                    .config
-                    .approver(instrukt_core::config::ApprovalGate::Prd)?;
-                require_prd_approval(record, prd_approver)?;
-            }
             let path = driver
                 .worktree
                 .clone()
@@ -562,7 +550,6 @@ impl Work {
             s.items[index].record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         dispatch_admitted(&s, index, &assignment)?;
         Ok(ReservedAttempt {
             assignment,
@@ -666,7 +653,6 @@ impl Work {
             b.session = Some(session.clone());
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
     pub fn resolve_native_attempt(
@@ -771,7 +757,6 @@ impl Work {
             s.items[index].record.bindings[pos] = next.clone();
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: next,
             reflection: s.status(index),
@@ -780,561 +765,118 @@ impl Work {
     }
 }
 
-/// Pure binding selection for `StampRequest::DiagnosisSettled`: resolves the
-/// active or matching-replay `diagnoser` workspace attempt, enforces caller
-/// separation from the bound peer and claim-holder authority while claimed, and
-/// returns `Ok(None)` when Step 1a settles without a diagnoser reservation.
-fn diagnosis_settlement_binding(
-    record: &TodoRecord,
-    caller: Option<&SessionRef>,
-) -> Result<Option<usize>, WorkError> {
-    let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
-        b.role.as_str() == "diagnoser"
-            && matches!(
-                b.attempt.assignment,
-                AssignmentKind::Child | AssignmentKind::Workspace
-            )
-    }) else {
-        return Ok(None);
-    };
-    let current_diagnosis = record.current_digest(artifact_names::DIAGNOSIS);
-    if b.attempt.released_at.is_some() {
-        let matches_current = b.attempt.completion_sequence.is_some_and(|sequence| {
-            record.stamps.iter().any(|stamp| {
-                stamp.sequence == sequence
-                    && matches!(
-                        &stamp.fact,
-                        crate::evidence::StampFact::DiagnosisSettled { diagnosis }
-                            if current_diagnosis == Some(diagnosis)
-                    )
-            })
-        });
-        return Ok(matches_current.then_some(index));
-    }
-    let bound = b.session.as_ref().ok_or_else(|| {
-        WorkError::refused("diagnoser attempt must be bound before settling its diagnosis")
-    })?;
-    if caller == Some(bound) {
-        return Err(WorkError::refused(
-            "diagnoser cannot settle its own diagnosis; the driving session stamps --diagnosis-settled",
-        ));
-    }
-    if let Some(claim) = &record.claim
-        && claim.session.as_ref() != caller
-    {
-        return Err(WorkError::refused(
-            "only the claim-holding orchestrator may settle a bound diagnoser attempt",
-        ));
-    }
-    Ok(Some(index))
-}
-
-/// Pure binding selection for `StampRequest::DriftReviewed`: resolves the
-/// active bound `drift-analyzer` attempt (or its released attempt before any
-/// later child/workspace work starts, for multi-artifact drift stamps and
-/// idempotent replay), enforces caller identity when an attempt is reserved,
-/// and returns `Ok(None)` when no `drift-analyzer` attempt is bound.
-fn drift_review_binding(
-    record: &TodoRecord,
-    caller: Option<&SessionRef>,
-) -> Result<Option<usize>, WorkError> {
-    if let Some((index, b)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
-        b.role.as_str() == "drift-analyzer"
-            && matches!(
-                b.attempt.assignment,
-                AssignmentKind::Child | AssignmentKind::Workspace
-            )
-            && b.attempt.released_at.is_none()
-    }) {
-        let bound = b.session.as_ref().ok_or_else(|| {
-            WorkError::refused("drift-analyzer attempt must be bound before recording drift review")
-        })?;
-        if caller != Some(bound) {
-            return Err(WorkError::refused(
-                "only the bound drift-analyzer session may complete its active drift review attempt",
-            ));
-        }
-        return Ok(Some(index));
-    }
-    let Some(caller) = caller else {
-        return Ok(None);
-    };
-    let Some((index, _)) = record.bindings.iter().enumerate().rev().find(|(_, b)| {
-        b.role.as_str() == "drift-analyzer"
-            && matches!(
-                b.attempt.assignment,
-                AssignmentKind::Child | AssignmentKind::Workspace
-            )
-            && b.session.as_ref() == Some(caller)
-    }) else {
-        return Ok(None);
-    };
-    if record.bindings[index + 1..].iter().any(|later| {
-        matches!(
-            later.attempt.assignment,
-            AssignmentKind::Child | AssignmentKind::Workspace
-        )
-    }) {
-        return Err(WorkError::refused(
-            "superseded drift-analyzer attempt cannot stamp after later work began",
-        ));
-    }
-    Ok(Some(index))
-}
-
-/// The artifact a preparation doc writer owes for its role, or `None` when
-/// the role is not a preparation doc writer.
-pub(super) fn writer_artifact(role: &str) -> Option<&'static str> {
-    match role {
-        "intaker" => Some(artifact_names::PRD),
-        "architect" => Some(artifact_names::ARCHITECTURE),
-        "planner" => Some(artifact_names::IMPLEMENTATION_PLAN),
-        _ => None,
-    }
-}
-
-/// What a completion stamp request completes: the one place a completion
-/// request's admission facts live (`stamps`, which role completes which
-/// request; `state-database`, completion and release per role). A new
-/// completion request is one arm of [`completion`].
-pub(super) struct Completion {
-    /// How admission finds the attempt the request completes.
-    completes: Completes,
-    /// The attempt only reads the shared workspace, so its head must still
-    /// be the one captured when the attempt began.
-    read_only: bool,
-    /// The caller must be a reviewer independent of the orchestrator and
-    /// the writers.
-    independent: bool,
-    /// What a repeat of the request on an already released attempt does.
-    pub(super) repeat: Repeat,
-}
-
-/// How a completion request finds the attempt it completes.
-enum Completes {
-    /// The caller's latest bound attempt of one of `roles`; `unbound` says
-    /// what a caller without one gets.
-    CallerRole {
-        roles: &'static [&'static str],
-        unbound: Unbound,
-    },
-    /// The active or matching-replay `diagnoser` attempt, settled by the
-    /// driving session ([`diagnosis_settlement_binding`]).
-    Diagnoser,
-    /// The active, or still current released, `drift-analyzer` attempt
-    /// ([`drift_review_binding`]).
-    DriftAnalyzer,
-}
-
-/// What a caller without a matching role binding gets.
-#[derive(Clone, Copy)]
-enum Unbound {
-    /// The record-only path: no attempt completes, and the request's own
-    /// admission judges the caller.
-    RecordOnly,
-    /// Refusal: the request completes the caller's bound attempt or nothing.
-    Refused,
-}
-
-/// What a repeat of a completion request on a released attempt does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Repeat {
-    /// The attempt's retained completion stamp answers it.
-    Retained,
-    /// The request's own admission judges it: a drift review stamps each
-    /// drifted artifact under one attempt, and a disposition replays only an
-    /// exact repeat.
-    Admitted,
-}
-
-/// The completion descriptor of `request`, or `None` when the request
-/// completes no attempt.
-pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
-    use super::StampRequest;
-    let completion = match request {
-        StampRequest::RoleComplete => Completion {
-            completes: Completes::CallerRole {
-                roles: &[
-                    "setup",
-                    "finalizer",
-                    "intaker",
-                    "architect",
-                    "planner",
-                    "task-preparer",
-                ],
-                unbound: Unbound::Refused,
-            },
-            read_only: false,
-            independent: false,
-            repeat: Repeat::Retained,
-        },
-        StampRequest::BuildComplete => Completion {
-            completes: Completes::CallerRole {
-                roles: &["builder"],
-                unbound: Unbound::Refused,
-            },
-            read_only: false,
-            independent: false,
-            repeat: Repeat::Retained,
-        },
-        StampRequest::BuildVerdict { verdict } => Completion {
-            completes: Completes::CallerRole {
-                roles: &["build-reviewer"],
-                unbound: Unbound::Refused,
-            },
-            read_only: true,
-            independent: matches!(verdict, crate::evidence::BuildVerdict::Approve),
-            repeat: Repeat::Retained,
-        },
-        StampRequest::DeferralsProcessed => Completion {
-            completes: Completes::CallerRole {
-                roles: &["deferrer"],
-                unbound: Unbound::Refused,
-            },
-            read_only: true,
-            independent: false,
-            repeat: Repeat::Retained,
-        },
-        // Deliberately recorded preparation reviews without native dispatch
-        // remain admissible on the record-only path.
-        StampRequest::PreparationVerdict { phase, .. } => Completion {
-            completes: Completes::CallerRole {
-                roles: match phase {
-                    PreparationReview::PrdReview => &["prd-reviewer"],
-                    PreparationReview::ArchitectureReview => &["architecture-reviewer"],
-                    PreparationReview::PlanReview => &["plan-reviewer"],
-                },
-                unbound: Unbound::RecordOnly,
-            },
-            read_only: true,
-            independent: false,
-            repeat: Repeat::Retained,
-        },
-        // A disposition from a caller with no verifier binding takes the
-        // record-only path, where its admission judges the caller.
-        StampRequest::VerificationDisposition { .. } => Completion {
-            completes: Completes::CallerRole {
-                roles: &[crate::workflow::VERIFIER_ROLE],
-                unbound: Unbound::RecordOnly,
-            },
-            read_only: true,
-            independent: false,
-            repeat: Repeat::Admitted,
-        },
-        StampRequest::DiagnosisSettled => Completion {
-            completes: Completes::Diagnoser,
-            read_only: true,
-            independent: false,
-            repeat: Repeat::Retained,
-        },
-        StampRequest::DriftReviewed { .. } => Completion {
-            completes: Completes::DriftAnalyzer,
-            read_only: true,
-            independent: false,
-            repeat: Repeat::Admitted,
-        },
-        StampRequest::Approval { .. }
-        | StampRequest::CarriedApproval { .. }
-        | StampRequest::IntentChecked
-        | StampRequest::Kickback { .. }
-        | StampRequest::ArchitectureSkipped { .. }
-        | StampRequest::DiagnosisUnresolved { .. }
-        | StampRequest::BuildStarted
-        | StampRequest::FinalizeReady
-        | StampRequest::TaskFiringStarted { .. }
-        | StampRequest::TaskOutcome { .. } => return None,
-    };
-    Some(completion)
-}
-
-/// The caller's latest bound attempt of one of `roles`; a caller without
-/// one takes the record-only path or is refused, as `unbound` says.
-fn caller_role_binding(
-    record: &TodoRecord,
-    caller: Option<&SessionRef>,
-    roles: &[&str],
-    unbound: Unbound,
-) -> Result<Option<usize>, WorkError> {
-    let Some(caller) = caller else {
-        return match unbound {
-            Unbound::RecordOnly => Ok(None),
-            Unbound::Refused => Err(WorkError::refused(
-                "completion requires a bound role session",
-            )),
-        };
-    };
-    let found = record
-        .bindings
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, b)| b.session.as_ref() == Some(caller) && roles.contains(&b.role.as_str()))
-        .map(|(index, _)| index);
-    match (found, unbound) {
-        (Some(index), _) => Ok(Some(index)),
-        (None, Unbound::RecordOnly) => Ok(None),
-        (None, Unbound::Refused) => Err(WorkError::refused("caller has no bound completion role")),
-    }
-}
-
-/// Match completion to the caller's reserved shared workspace: the index of
-/// the attempt `request` completes, or `None` when it completes none.
+/// The caller's open child or workspace attempt, if the stamp completes one.
 pub(super) fn completion_binding(
     record: &TodoRecord,
     caller: Option<&SessionRef>,
-    cwd: &Path,
     request: &super::StampRequest,
-) -> Result<Option<usize>, WorkError> {
-    let Some(completion) = completion(request) else {
-        return Ok(None);
+) -> Option<usize> {
+    completes_attempt(request).then_some(())?;
+    let caller = caller?;
+    record.bindings.iter().rposition(|binding| {
+        binding.is_open_role_attempt() && binding.session.as_ref() == Some(caller)
+    })
+}
+
+pub(super) fn completes_attempt(request: &super::StampRequest) -> bool {
+    use super::StampRequest;
+    matches!(
+        request,
+        StampRequest::RoleComplete
+            | StampRequest::BuildComplete
+            | StampRequest::BuildVerdict { .. }
+            | StampRequest::PreparationVerdict { .. }
+            | StampRequest::DeferralsProcessed
+            | StampRequest::VerificationDisposition { .. }
+            | StampRequest::DiagnosisSettled
+            | StampRequest::DriftReviewed { .. }
+    )
+}
+
+/// The head in the attempt's bound placement, if it has a workspace.
+pub(super) fn completion_head(
+    binding: &Binding,
+    cwd: &Path,
+) -> Result<Option<CommitSha>, WorkError> {
+    let Some(path) = binding.worktree.as_deref() else {
+        return if binding.attempt.assignment == AssignmentKind::Child {
+            Ok(None)
+        } else {
+            Err(WorkError::refused("shared placement missing"))
+        };
     };
-    let selected = match completion.completes {
-        Completes::Diagnoser => diagnosis_settlement_binding(record, caller)?,
-        Completes::DriftAnalyzer => drift_review_binding(record, caller)?,
-        Completes::CallerRole { roles, unbound } => {
-            caller_role_binding(record, caller, roles, unbound)?
-        }
-    };
-    let Some(index) = selected else {
-        return Ok(None);
-    };
-    let b = &record.bindings[index];
-    if completion.independent {
-        let caller =
-            caller.ok_or_else(|| WorkError::refused("completion requires a bound role session"))?;
-        let tuples: Vec<(RoleName, AssignmentKind, Option<&SessionRef>)> = record
-            .bindings
-            .iter()
-            .map(|item| {
-                (
-                    item.role.clone(),
-                    item.attempt.assignment,
-                    item.session.as_ref(),
-                )
-            })
-            .collect();
-        if !crate::workflow::is_independent_reviewer(
-            record.claim.as_ref().and_then(|c| c.session.as_ref()),
-            &tuples,
-            &crate::evidence::Actor::Session(caller.clone()),
-            None,
-        ) {
-            return Err(WorkError::refused(
-                "build approval requires an independent reviewer distinct from the orchestrator and writers",
-            ));
-        }
-    }
-    if b.worktree.is_none()
-        && record.kind == instrukt_runner::interfaces::TodoKind::Task
-        && b.attempt.assignment == AssignmentKind::Child
-    {
-        if b.attempt.released_at.is_some() && b.attempt.completion_sequence.is_none() {
-            return Err(WorkError::refused(
-                "released attempt has no matching completion",
-            ));
-        }
-        return Ok(Some(index));
-    }
-    let path = b
-        .worktree
-        .as_ref()
-        .ok_or_else(|| WorkError::refused("shared placement missing"))?;
-    if canonical(
-        &git::worktree_root(cwd)?
-            .ok_or_else(|| WorkError::refused("caller is outside a worktree"))?,
-    )? != canonical(path)?
-    {
+    if !matches_placement(binding, cwd, path)? {
         return Err(WorkError::refused(
-            "caller is outside its bound shared worktree",
+            "completion requires the bound worktree and branch",
         ));
     }
     clean(path)?;
-    let current = head(path, "HEAD")?;
-    if b.attempt.branch.as_deref() != Some(git::run(path, ["branch", "--show-current"])?.as_str()) {
-        return Err(WorkError::refused(
-            "completion branch differs from the shared assignment",
-        ));
-    }
-    if completion.read_only && b.attempt.base_head.as_ref() != Some(&current) {
-        return Err(WorkError::refused(
-            "read-only attempt changed from its captured head",
-        ));
-    }
-    if b.attempt.released_at.is_some() {
-        if b.attempt.completion_sequence.is_none()
-            || b.attempt.completed_head.as_ref() != Some(&current)
-        {
-            return Err(WorkError::refused(
-                "released attempt has no matching completion",
-            ));
-        }
-        return Ok(Some(index));
-    }
-    if b.role.as_str() == "finalizer"
-        && head(
-            path,
-            &format!(
-                "refs/remotes/origin/{}",
-                record
-                    .branch
-                    .as_deref()
-                    .or(b.attempt.branch.as_deref())
-                    .ok_or_else(|| WorkError::refused("todo branch missing"))?
-            ),
-        )? != current
-    {
-        return Err(WorkError::refused(
-            "finalizer completion needs matching published todo head",
-        ));
-    }
-    if let Some(artifact) = writer_artifact(b.role.as_str())
-        && record.current_digest(artifact).is_none()
-    {
-        return Err(WorkError::refused(format!(
-            "writer completion requires a version of its {artifact} artifact"
-        )));
-    }
-    Ok(Some(index))
+    Ok(Some(head(path, "HEAD")?))
 }
 
-/// The caller's live driver binding on the todo: the binding the
-/// orchestrator records a Tier 0 skip or hotfix deferral under, with no
-/// verifier attempt.
-pub(super) fn live_driver(record: &TodoRecord, caller: &SessionRef) -> Option<usize> {
-    record
-        .bindings
-        .iter()
-        .enumerate()
-        .rev()
-        .find(|(_, b)| {
-            b.session.as_ref() == Some(caller)
-                && b.attempt.assignment == AssignmentKind::Driver
-                && b.attempt.released_at.is_none()
-        })
-        .map(|(index, _)| index)
+pub(super) fn matches_completion(binding: &Binding, cwd: &Path) -> Result<bool, WorkError> {
+    let Some(path) = binding.worktree.as_deref() else {
+        return Ok(binding.attempt.assignment == AssignmentKind::Child);
+    };
+    if !matches_placement(binding, cwd, path)?
+        || binding.attempt.completed_head.as_ref() != Some(&head(path, "HEAD")?)
+    {
+        return Ok(false);
+    }
+    clean(path)?;
+    Ok(true)
 }
 
-/// The workspace a record-only disposition is written over
-/// (`delivery-cycle`, "Live verification disposition"): no workspace
-/// attempt open on the todo's worktree, whose finding it would race; the
-/// caller in the driver binding's shared worktree; that tree clean, so the
-/// head it binds is the candidate.
-pub(super) fn record_only_workspace(
-    record: &TodoRecord,
-    driver: usize,
-    cwd: &Path,
-) -> Result<(), WorkError> {
-    if let Some(open) = record.bindings.iter().find(|b| b.is_open_role_attempt()) {
-        return Err(WorkError::refused(format!(
-            "the {}/{} attempt is open on the todo's worktree; a disposition is recorded after that attempt's release or its recorded failure",
-            open.role, open.attempt.number
-        )));
-    }
-    let path = record.bindings[driver]
-        .worktree
-        .as_ref()
-        .ok_or_else(|| WorkError::refused("shared workspace missing"))?;
-    if canonical(
-        &git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside worktree"))?,
-    )? != canonical(path)?
-    {
-        return Err(WorkError::refused(
-            "a disposition is recorded from the todo's shared worktree, whose head is the candidate; run it there",
-        ));
-    }
-    // `clean`'s own refusal names an outstanding attempt, which this path
-    // has none of; its other failures pass through unchanged.
-    clean(path).map_err(|err| match err {
-        WorkError::Refused(_) => WorkError::refused(
-            "the shared workspace has uncommitted changes or an unfinished Git operation; commit or restore them before recording a disposition",
-        ),
-        other => other,
-    })
+fn matches_placement(binding: &Binding, cwd: &Path, path: &Path) -> Result<bool, WorkError> {
+    let Some(root) = git::worktree_root(cwd)? else {
+        return Ok(false);
+    };
+    Ok(canonical(&root)? == canonical(path)?
+        && binding.attempt.branch.as_deref()
+            == Some(git::run(path, ["branch", "--show-current"])?.as_str()))
 }
 
 pub(super) fn readiness(
     record: &TodoRecord,
-    caller: Option<&SessionRef>,
     cwd: &Path,
     root: &Path,
     prd_approver: instrukt_core::config::Approver,
-) -> Result<(), WorkError> {
-    let caller = caller.ok_or_else(|| {
-        WorkError::refused(
-            "readiness requires the claim-holding orchestrator or retained finalizer",
-        )
-    })?;
-    // Invariant 1: no active unreleased workspace/child attempt.
-    if record.bindings.iter().any(|b| b.is_open_role_attempt()) {
+) -> Result<CommitSha, WorkError> {
+    if record.bindings.iter().any(Binding::is_open_role_attempt) {
         return Err(WorkError::refused(
             "outstanding workspace attempt blocks readiness",
         ));
     }
-    // Invariant 3: configured PRD approval must hold when required.
     require_prd_approval(record, prd_approver)?;
-    // Admissible callers: a retained completed finalizer OR the claim-holding driver orchestrator.
-    let finalizer = record.bindings.iter().rev().find(|b| {
-        b.session.as_ref() == Some(caller)
-            && b.role.as_str() == "finalizer"
-            && b.attempt.completion_sequence.is_some()
-            && b.attempt.failed_at.is_none()
-    });
-    let driver = if finalizer.is_none()
-        && record
-            .claim
-            .as_ref()
-            .is_some_and(|c| c.session.as_ref() == Some(caller))
-    {
-        record.bindings.iter().rev().find(|b| {
-            b.session.as_ref() == Some(caller)
-                && b.attempt.assignment == AssignmentKind::Driver
-                && b.attempt.released_at.is_none()
+    let (binding, path) = record
+        .bindings
+        .iter()
+        .rev()
+        .filter(|b| {
+            record
+                .branch
+                .as_ref()
+                .is_none_or(|branch| b.attempt.branch.as_ref() == Some(branch))
         })
-    } else {
-        None
-    };
-    let b = finalizer.or(driver).ok_or_else(|| {
-        WorkError::refused(
-            "readiness requires the claim-holding orchestrator or a completed finalizer",
-        )
-    })?;
-    let path = b
-        .worktree
-        .as_ref()
+        .find_map(|b| b.worktree.as_deref().map(|path| (b, path)))
         .ok_or_else(|| WorkError::refused("shared workspace missing"))?;
-    let candidate = head(path, "HEAD")?;
-    let branch = record
+    let branch = binding
+        .attempt
         .branch
         .as_deref()
-        .or(b.attempt.branch.as_deref())
         .ok_or_else(|| WorkError::refused("todo branch missing"))?;
+    let candidate = head(path, "HEAD")?;
     clean(path)?;
-    let finalizer_head_ok =
-        finalizer.is_none_or(|f| f.attempt.completed_head.as_ref() == Some(&candidate));
-    if canonical(
-        &git::worktree_root(cwd)?.ok_or_else(|| WorkError::refused("caller outside worktree"))?,
-    )? != canonical(path)?
+    if !matches_placement(binding, cwd, path)?
         || head(root, branch)? != candidate
         || head(root, &format!("refs/remotes/origin/{branch}"))? != candidate
-        || !finalizer_head_ok
     {
         return Err(WorkError::refused(
             "readiness requires matching clean shared, local and published candidate",
         ));
     }
-    // Invariant 2, the independent exact-SHA handoff gate: an independent
-    // reviewer's APPROVE stamp and a current verification disposition that
-    // admits handoff, both bound to this exact commit SHA.
-    if !crate::workflow::readiness_approved(record, root, &candidate, caller) {
-        return Err(WorkError::refused(
-            "readiness requires an independent reviewer's APPROVE stamp bound to this exact commit SHA and current review-findings",
-        ));
-    }
-    crate::workflow::handoff_admitted(record, &candidate, caller).map_err(|why| {
-        WorkError::refused(format!(
-            "readiness requires a current verification disposition admitting handoff at this exact commit SHA — an independent verifier's pass, or the claim-holding orchestrator's tier_0_skip or hotfix_deferred: {why}"
-        ))
-    })
+    crate::workflow::check_handoff_evidence(record, root, &candidate)?;
+    Ok(candidate)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1652,10 +1194,7 @@ impl Work {
         } = *request;
         let mut s = Session::open(self, project)?;
         let index = match s.find(todo, true) {
-            Some(index) => {
-                s.pull_through(index)?;
-                index
-            }
+            Some(index) => index,
             None => s.enter(todo)?,
         };
         let machine = s.machine()?;
@@ -1731,7 +1270,6 @@ impl Work {
                 binding.attempt.released_at = None;
                 Ok(())
             })?;
-            s.flush(LockWait::No)?;
         }
         if admission == Admission::Place {
             let now = s.now;
@@ -1767,7 +1305,6 @@ impl Work {
                 });
                 Ok(())
             })?;
-            s.flush(LockWait::No)?;
         }
         let selection = if admitted {
             None
@@ -1803,11 +1340,9 @@ impl Work {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::evidence::{
-        Actor, ArtifactName, ContentDigest, Grounding, ModelProvenance, StampFact, StampRecord,
-    };
+    use crate::evidence::Actor;
     use crate::work::_model::SCHEMA;
-    use crate::work::{Artifact, Claim, TodoId, Version};
+    use crate::work::{Claim, TodoId};
     use instrukt_core::{ids::ProjectSlug, machine::MachineId};
     use instrukt_runner::interfaces::{CatchUp, TodoKind};
 
@@ -1829,20 +1364,7 @@ mod tests {
             human_involved: None,
             revision: 1,
             sequence: 1,
-            artifacts: vec![Artifact {
-                name: ArtifactName::new(artifact_names::DIAGNOSIS),
-                address: None,
-                versions: vec![Version {
-                    digest: ContentDigest::of("cause-v1"),
-                    writer: Actor::Session(session("diagnoser-1")),
-                    created: jiff::Timestamp::from_second(2).unwrap(),
-                    derived_from: Vec::new(),
-                    sequence: 1,
-                    grounding: Grounding::default(),
-                    remote: None,
-                    content: None,
-                }],
-            }],
+            artifacts: Vec::new(),
             stamps: Vec::new(),
             claim: Some(Claim {
                 machine: MachineId::parse("0123456789abcdef").unwrap(),
@@ -1862,241 +1384,6 @@ mod tests {
             delivery: None,
             removal: None,
         }
-    }
-
-    fn diagnoser_binding(bound: Option<SessionRef>, released: Option<u64>) -> Binding {
-        Binding {
-            role: RoleName::parse("diagnoser").unwrap(),
-            session: bound,
-            worktree: None,
-            attempt: Attempt {
-                assignment: AssignmentKind::Workspace,
-                number: 1,
-                semantic_key: "demo/bug-fix:diagnoser:1".into(),
-                completion_sequence: released,
-                released_at: released.map(|_| jiff::Timestamp::from_second(3).unwrap()),
-                ..Default::default()
-            },
-        }
-    }
-
-    #[test]
-    fn diagnosis_settlement_selects_bound_diagnoser_for_claimant() {
-        let mut record = base_record();
-        record
-            .bindings
-            .push(diagnoser_binding(Some(session("diagnoser-1")), None));
-        let driver = session("driver-1");
-        assert_eq!(
-            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn diagnosis_settlement_refuses_diagnoser_self_settlement() {
-        let mut record = base_record();
-        let peer = session("diagnoser-1");
-        record
-            .bindings
-            .push(diagnoser_binding(Some(peer.clone()), None));
-        assert!(matches!(
-            diagnosis_settlement_binding(&record, Some(&peer)),
-            Err(WorkError::Refused(_))
-        ));
-    }
-
-    #[test]
-    fn diagnosis_settlement_refuses_other_caller_while_claimed() {
-        let mut record = base_record();
-        record
-            .bindings
-            .push(diagnoser_binding(Some(session("diagnoser-1")), None));
-        let outsider = session("other-session");
-        assert!(matches!(
-            diagnosis_settlement_binding(&record, Some(&outsider)),
-            Err(WorkError::Refused(_))
-        ));
-    }
-
-    #[test]
-    fn diagnosis_settlement_refuses_unbound_diagnoser_reservation() {
-        let mut record = base_record();
-        record.bindings.push(diagnoser_binding(None, None));
-        let driver = session("driver-1");
-        assert!(matches!(
-            diagnosis_settlement_binding(&record, Some(&driver)),
-            Err(WorkError::Refused(_))
-        ));
-    }
-
-    #[test]
-    fn diagnosis_settlement_returns_none_without_diagnoser_binding() {
-        let record = base_record();
-        let driver = session("driver-1");
-        assert_eq!(
-            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn diagnosis_settlement_replay_selects_released_binding_for_matching_digest() {
-        let mut record = base_record();
-        let digest = record
-            .current_digest(artifact_names::DIAGNOSIS)
-            .unwrap()
-            .clone();
-        record.stamps.push(StampRecord {
-            source_comment: None,
-            fact: StampFact::DiagnosisSettled { diagnosis: digest },
-            at: jiff::Timestamp::from_second(3).unwrap(),
-            role: None,
-            actor: Actor::Session(session("driver-1")),
-            model: None,
-            eval_fingerprint: None,
-            human_involved: None,
-            sequence: 2,
-            model_provenance: ModelProvenance::default(),
-        });
-        record
-            .bindings
-            .push(diagnoser_binding(Some(session("diagnoser-1")), Some(2)));
-        let driver = session("driver-1");
-        assert_eq!(
-            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn diagnosis_settlement_returns_none_when_released_binding_settled_an_older_digest() {
-        let mut record = base_record();
-        record.stamps.push(StampRecord {
-            source_comment: None,
-            fact: StampFact::DiagnosisSettled {
-                diagnosis: ContentDigest::of("older-cause"),
-            },
-            at: jiff::Timestamp::from_second(3).unwrap(),
-            role: None,
-            actor: Actor::Session(session("driver-1")),
-            model: None,
-            eval_fingerprint: None,
-            human_involved: None,
-            sequence: 2,
-            model_provenance: ModelProvenance::default(),
-        });
-        record
-            .bindings
-            .push(diagnoser_binding(Some(session("diagnoser-1")), Some(2)));
-        let driver = session("driver-1");
-        assert_eq!(
-            diagnosis_settlement_binding(&record, Some(&driver)).unwrap(),
-            None
-        );
-    }
-
-    fn drift_binding(bound: Option<SessionRef>, released: Option<u64>) -> Binding {
-        Binding {
-            role: RoleName::parse("drift-analyzer").unwrap(),
-            session: bound,
-            worktree: None,
-            attempt: Attempt {
-                assignment: AssignmentKind::Child,
-                number: 1,
-                semantic_key: "demo/bug-fix:drift-analyzer:1".into(),
-                completion_sequence: released,
-                released_at: released.map(|_| jiff::Timestamp::from_second(3).unwrap()),
-                ..Default::default()
-            },
-        }
-    }
-
-    #[test]
-    fn drift_review_selects_active_bound_analyzer_for_matching_caller() {
-        let mut record = base_record();
-        let analyzer = session("drift-1");
-        record
-            .bindings
-            .push(drift_binding(Some(analyzer.clone()), None));
-        assert_eq!(
-            drift_review_binding(&record, Some(&analyzer)).unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn drift_review_refuses_wrong_caller_while_analyzer_attempt_is_active() {
-        let mut record = base_record();
-        record
-            .bindings
-            .push(drift_binding(Some(session("drift-1")), None));
-        let other = session("driver-1");
-        assert!(matches!(
-            drift_review_binding(&record, Some(&other)),
-            Err(WorkError::Refused(_))
-        ));
-    }
-
-    #[test]
-    fn drift_review_refuses_unbound_analyzer_reservation() {
-        let mut record = base_record();
-        record.bindings.push(drift_binding(None, None));
-        let caller = session("drift-1");
-        assert!(matches!(
-            drift_review_binding(&record, Some(&caller)),
-            Err(WorkError::Refused(_))
-        ));
-    }
-
-    #[test]
-    fn drift_review_returns_none_without_analyzer_binding() {
-        let record = base_record();
-        let caller = session("driver-1");
-        assert_eq!(drift_review_binding(&record, Some(&caller)).unwrap(), None);
-    }
-
-    #[test]
-    fn drift_review_returns_none_without_caller_when_no_active_analyzer_exists() {
-        let record = base_record();
-        assert_eq!(drift_review_binding(&record, None).unwrap(), None);
-    }
-
-    #[test]
-    fn drift_review_selects_released_analyzer_before_later_attempt_for_multi_artifact_stamps() {
-        let mut record = base_record();
-        let analyzer = session("drift-1");
-        record
-            .bindings
-            .push(drift_binding(Some(analyzer.clone()), Some(4)));
-        assert_eq!(
-            drift_review_binding(&record, Some(&analyzer)).unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn drift_review_refuses_released_analyzer_after_later_workspace_attempt_begins() {
-        let mut record = base_record();
-        let analyzer = session("drift-1");
-        record
-            .bindings
-            .push(drift_binding(Some(analyzer.clone()), Some(4)));
-        record.bindings.push(Binding {
-            role: RoleName::parse("planner").unwrap(),
-            session: Some(session("planner-2")),
-            worktree: None,
-            attempt: Attempt {
-                assignment: AssignmentKind::Workspace,
-                number: 2,
-                semantic_key: "demo/bug-fix:planner:2".into(),
-                ..Default::default()
-            },
-        });
-        assert!(matches!(
-            drift_review_binding(&record, Some(&analyzer)),
-            Err(WorkError::Refused(_))
-        ));
     }
 
     fn worker_binding(role: &str, number: u64, bound: Option<SessionRef>) -> Binding {
@@ -2183,210 +1470,6 @@ mod tests {
         assert_eq!(prior.and_then(|p| p.dispatcher), Some(session("lead-1")));
     }
 
-    /// A task record: its child attempts complete without a shared
-    /// worktree, so admission decides before any Git inspection.
-    fn task_record(bindings: Vec<Binding>) -> TodoRecord {
-        TodoRecord {
-            kind: TodoKind::Task,
-            bindings,
-            ..base_record()
-        }
-    }
-
-    fn child_binding(role: &str, number: u64, bound: &str) -> Binding {
-        let mut binding = worker_binding(role, number, Some(session(bound)));
-        binding.attempt.assignment = AssignmentKind::Child;
-        binding
-    }
-
-    fn admit(
-        record: &TodoRecord,
-        caller: Option<&str>,
-        request: &crate::work::StampRequest,
-    ) -> Result<Option<usize>, WorkError> {
-        let caller = caller.map(session);
-        completion_binding(record, caller.as_ref(), Path::new("/nonexistent"), request)
-    }
-
-    fn preparation_verdict(phase: PreparationReview) -> crate::work::StampRequest {
-        crate::work::StampRequest::PreparationVerdict {
-            phase,
-            verdict: crate::evidence::ReviewVerdict::Approve,
-        }
-    }
-
-    fn disposition() -> crate::work::StampRequest {
-        crate::work::StampRequest::VerificationDisposition {
-            disposition: crate::evidence::VerificationDisposition::Pass,
-            follow_up: None,
-        }
-    }
-
-    fn build_verdict(verdict: crate::evidence::BuildVerdict) -> crate::work::StampRequest {
-        crate::work::StampRequest::BuildVerdict { verdict }
-    }
-
-    fn refused(result: Result<Option<usize>, WorkError>) -> bool {
-        matches!(result, Err(WorkError::Refused(_)))
-    }
-
-    #[test]
-    fn a_request_that_completes_no_attempt_binds_none_of_the_callers_attempts() {
-        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("builder-1"),
-                &crate::work::StampRequest::FinalizeReady
-            )
-            .unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn a_completion_without_a_session_is_refused() {
-        let record = task_record(Vec::new());
-        assert!(refused(admit(
-            &record,
-            None,
-            &crate::work::StampRequest::BuildComplete
-        )));
-    }
-
-    #[test]
-    fn a_record_only_completion_without_a_session_binds_no_attempt() {
-        let record = task_record(Vec::new());
-        assert_eq!(admit(&record, None, &disposition()).unwrap(), None);
-    }
-
-    #[test]
-    fn a_session_without_the_requests_role_is_refused() {
-        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
-        assert!(refused(admit(
-            &record,
-            Some("builder-1"),
-            &crate::work::StampRequest::DeferralsProcessed
-        )));
-    }
-
-    #[test]
-    fn a_record_only_completion_by_a_session_without_its_role_binds_no_attempt() {
-        let record = task_record(vec![child_binding("builder", 1, "builder-1")]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("builder-1"),
-                &preparation_verdict(PreparationReview::PrdReview)
-            )
-            .unwrap(),
-            None
-        );
-    }
-
-    #[test]
-    fn a_completion_completes_the_callers_latest_attempt_of_its_role() {
-        let record = task_record(vec![
-            child_binding("builder", 1, "worker"),
-            child_binding("builder", 2, "worker"),
-            child_binding("builder", 3, "other"),
-        ]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("worker"),
-                &crate::work::StampRequest::BuildComplete
-            )
-            .unwrap(),
-            Some(1)
-        );
-    }
-
-    #[test]
-    fn a_preparation_verdict_completes_the_reviewer_attempt_of_its_phase() {
-        let record = task_record(vec![child_binding("plan-reviewer", 1, "reviewer-1")]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("reviewer-1"),
-                &preparation_verdict(PreparationReview::PlanReview)
-            )
-            .unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn a_build_approval_by_the_claim_holder_is_refused() {
-        // `driver-1` holds the todo's claim (`base_record`).
-        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
-        assert!(refused(admit(
-            &record,
-            Some("driver-1"),
-            &build_verdict(crate::evidence::BuildVerdict::Approve)
-        )));
-    }
-
-    #[test]
-    fn a_build_change_request_by_the_claim_holder_completes_its_attempt() {
-        // `driver-1` holds the todo's claim (`base_record`).
-        let record = task_record(vec![child_binding("build-reviewer", 1, "driver-1")]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("driver-1"),
-                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
-            )
-            .unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn a_build_approval_by_an_independent_reviewer_completes_its_attempt() {
-        let record = task_record(vec![child_binding("build-reviewer", 1, "reviewer-1")]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("reviewer-1"),
-                &build_verdict(crate::evidence::BuildVerdict::Approve)
-            )
-            .unwrap(),
-            Some(0)
-        );
-    }
-
-    fn released_builder(completion_sequence: Option<u64>) -> Binding {
-        let mut released = child_binding("builder", 1, "builder-1");
-        released.attempt.released_at = Some(jiff::Timestamp::from_second(4).unwrap());
-        released.attempt.completion_sequence = completion_sequence;
-        released
-    }
-
-    #[test]
-    fn a_released_attempt_without_its_recorded_completion_is_refused() {
-        let record = task_record(vec![released_builder(None)]);
-        assert!(refused(admit(
-            &record,
-            Some("builder-1"),
-            &crate::work::StampRequest::BuildComplete
-        )));
-    }
-
-    #[test]
-    fn a_released_attempt_with_its_recorded_completion_completes_again() {
-        let record = task_record(vec![released_builder(Some(2))]);
-        assert_eq!(
-            admit(
-                &record,
-                Some("builder-1"),
-                &crate::work::StampRequest::BuildComplete
-            )
-            .unwrap(),
-            Some(0)
-        );
-    }
-
     /// A clean shared worktree on branch `work`: the head an attempt
     /// captured, and the head one further commit moved it to.
     fn shared_worktree() -> (tempfile::TempDir, CommitSha, CommitSha) {
@@ -2421,86 +1504,35 @@ mod tests {
     }
 
     #[test]
-    fn a_read_only_completion_at_its_captured_head_completes_its_attempt() {
-        let (repo, _, moved) = shared_worktree();
-        let tree = repo.path();
-        let record = shared_record("build-reviewer", "reviewer-1", tree, &moved);
+    fn a_workspace_attempt_completes_at_its_current_clean_head() {
+        let (repo, captured, moved) = shared_worktree();
+        let record = shared_record("worker", "worker-1", repo.path(), &captured);
+        let request = crate::work::StampRequest::DeferralsProcessed;
+        assert_eq!(
+            completion_binding(&record, Some(&session("worker-1")), &request),
+            Some(0)
+        );
+        assert_eq!(
+            completion_binding(&record, Some(&session("another-session")), &request),
+            None
+        );
         assert_eq!(
             completion_binding(
                 &record,
-                Some(&session("reviewer-1")),
-                tree,
-                &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
-            )
-            .unwrap(),
-            Some(0)
+                Some(&session("worker-1")),
+                &crate::work::StampRequest::FinalizeReady
+            ),
+            None
         );
-    }
-
-    #[test]
-    fn a_read_only_completion_is_refused_once_the_shared_head_moved_past_its_capture() {
-        let (repo, captured, _) = shared_worktree();
-        let tree = repo.path();
-        let record = shared_record("build-reviewer", "reviewer-1", tree, &captured);
-        assert!(refused(completion_binding(
-            &record,
-            Some(&session("reviewer-1")),
-            tree,
-            &build_verdict(crate::evidence::BuildVerdict::ChangesRequested)
-        )));
-    }
-
-    #[test]
-    fn a_writer_completes_at_the_head_its_own_commits_moved_to() {
-        let (repo, captured, _) = shared_worktree();
-        let tree = repo.path();
-        let record = shared_record("builder", "builder-1", tree, &captured);
         assert_eq!(
-            completion_binding(
-                &record,
-                Some(&session("builder-1")),
-                tree,
-                &crate::work::StampRequest::BuildComplete
-            )
-            .unwrap(),
-            Some(0)
+            completion_head(&record.bindings[0], repo.path()).unwrap(),
+            Some(moved)
         );
-    }
-
-    /// A record holding both a bound `diagnoser` and a bound
-    /// `drift-analyzer` attempt, so each request must reach its own selector.
-    fn diagnoser_and_analyzer_record() -> TodoRecord {
-        task_record(vec![
-            child_binding("diagnoser", 1, "diagnoser-1"),
-            child_binding("drift-analyzer", 2, "analyzer-1"),
-        ])
-    }
-
-    #[test]
-    fn a_diagnosis_settlement_by_the_claimant_completes_the_diagnoser_attempt() {
-        // `driver-1` holds the todo's claim (`base_record`).
-        assert_eq!(
-            admit(
-                &diagnoser_and_analyzer_record(),
-                Some("driver-1"),
-                &crate::work::StampRequest::DiagnosisSettled
-            )
-            .unwrap(),
-            Some(0)
-        );
-    }
-
-    #[test]
-    fn a_drift_review_by_the_bound_analyzer_completes_its_attempt() {
-        let drift = crate::work::StampRequest::DriftReviewed {
-            artifact: ArtifactName::new(artifact_names::PRD),
-            class: crate::evidence::DriftClass::Cosmetic,
-            reason: "wording".into(),
-        };
-        assert_eq!(
-            admit(&diagnoser_and_analyzer_record(), Some("analyzer-1"), &drift).unwrap(),
-            Some(1)
-        );
+        std::fs::write(repo.path().join("uncommitted"), "pending").unwrap();
+        assert!(matches!(
+            completion_head(&record.bindings[0], repo.path()),
+            Err(WorkError::Refused(_))
+        ));
     }
 
     fn this_machine() -> MachineId {
