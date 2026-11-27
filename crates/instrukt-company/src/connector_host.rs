@@ -59,6 +59,53 @@ fn due(until: Timestamp, now: Timestamp) -> bool {
     now >= until
 }
 
+/// The calls the outside gate answered with a wait, each owed until that
+/// wait's moment: the part that made a call honours the wait it was handed,
+/// also when a pass is woken early, whatever the wait's extent.
+struct Owed<K>(HashMap<K, Wait>);
+
+impl<K> Default for Owed<K> {
+    fn default() -> Self {
+        Self(HashMap::new())
+    }
+}
+
+impl<K: Eq + std::hash::Hash> Owed<K> {
+    /// The wait `call` is still owed at `now`, if any; a passed wait is
+    /// forgotten.
+    fn pending(&mut self, call: &K, now: Instant) -> Option<Wait> {
+        match self.0.get(call) {
+            Some(wait) if now < wait.until() => Some(wait.clone()),
+            Some(_) => {
+                self.0.remove(call);
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// What the outside gate answered `call` with: its wait, or none.
+    fn answered(&mut self, call: K, wait: Option<&Wait>) {
+        match wait {
+            Some(wait) => {
+                self.0.insert(call, wait.clone());
+            }
+            None => {
+                self.0.remove(&call);
+            }
+        }
+    }
+}
+
+/// A per-message call of intake.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum IntakeCall {
+    /// Asking the provider about the sender of `(conversation, message)`.
+    Admit(String, String),
+    /// Posting the fixed reply to `(conversation, sender)`.
+    TurnAway(String, String),
+}
+
 /// Sleep until `until` or `stop`, in slices that observe it.
 fn sleep_until(until: Instant, stop: &dyn Fn() -> bool) {
     while Instant::now() < until && !stop() {
@@ -592,6 +639,7 @@ fn connection(
     std::thread::scope(|scope| {
         scope.spawn(move || {
             let _ended = Ended(ended);
+            let mut owed = Owed::default();
             intake_worker(&quit, &nudges, || {
                 let Some(admit) = connector_admit(&reach.current.get(), company, key) else {
                     return IntakeProgress::default();
@@ -606,6 +654,7 @@ fn connection(
                         &admitted,
                         context_nudge,
                         reach.connectors.as_ref(),
+                        &mut owed,
                     )
                 })
             });
@@ -1379,7 +1428,12 @@ struct ContextFlight {
 }
 
 #[derive(Default)]
-struct ContextReads(BTreeMap<(String, String), ContextFlight>);
+/// The context reads in flight, and the reads of `(conversation, message)`
+/// the outside gate answered with a wait, owed until its moment.
+struct ContextReads(
+    BTreeMap<(String, String), ContextFlight>,
+    Owed<(String, String)>,
+);
 
 impl ContextReads {
     fn capture(
@@ -1521,8 +1575,10 @@ fn admit_messages(
     status: &SyncSender<()>,
     context: &SyncSender<()>,
     clock: &dyn Connectors,
+    owed: &mut Owed<IntakeCall>,
 ) -> Result<IntakeProgress, conversations::ConversationError> {
     let mut progress = IntakeProgress::default();
+    let now = Instant::now();
     for unread in conversations::unread(home, company, key)?
         .into_iter()
         .filter(|item| !item.admitted)
@@ -1532,7 +1588,20 @@ fn admit_messages(
             conversations::waiting(home, company, key, &unread, "the message has no sender")?;
             continue;
         };
-        match next_record(connector.admit(sender), admit) {
+        let call = IntakeCall::Admit(unread.conversation.clone(), unread.message.clone());
+        if let Some(wait) = owed.pending(&call, now) {
+            progress.failures.add(Some(&wait));
+            continue;
+        }
+        let next = next_record(connector.admit(sender), admit);
+        owed.answered(
+            call,
+            match &next {
+                Next::Waiting(error) => error.wait.as_ref(),
+                _ => None,
+            },
+        );
+        match next {
             Next::Admitted(admitted) => {
                 conversations::admitted(home, company, key, &unread, &admitted, clock.now())?;
                 let _ = status.try_send(());
@@ -1555,8 +1624,17 @@ fn admit_messages(
             }
         }
     }
-    for refusal in owed(conversations::refusals(home, company, key)?) {
+    for refusal in self::owed(conversations::refusals(home, company, key)?) {
+        let call = IntakeCall::TurnAway(refusal.conversation.clone(), refusal.sender.clone());
+        if let Some(wait) = owed.pending(&call, now) {
+            progress.failures.add(Some(&wait));
+            continue;
+        }
         let outcome = connector.turn_away(&refusal.conversation, refusal.reason);
+        owed.answered(
+            call,
+            outcome.as_ref().err().and_then(|error| error.wait.as_ref()),
+        );
         if let Err(error) = &outcome {
             progress.failures.add(error.wait.as_ref());
         }
@@ -1576,11 +1654,17 @@ fn capture_contexts(
     contexts: &mut ContextReads,
 ) -> Result<IntakeProgress, conversations::ConversationError> {
     let mut progress = IntakeProgress::default();
+    let now = Instant::now();
     for unread in conversations::unread(home, company, key)?
         .into_iter()
         .filter(|item| item.admitted)
     {
-        match contexts.capture(connector, &unread, wakes.context, || {
+        let call = (unread.conversation.clone(), unread.message.clone());
+        if let Some(wait) = contexts.1.pending(&call, now) {
+            progress.failures.add(Some(&wait));
+            continue;
+        }
+        let captured = contexts.capture(connector, &unread, wakes.context, || {
             conversations::context_exclusions(
                 &RunnerState::new(home),
                 company,
@@ -1588,7 +1672,12 @@ fn capture_contexts(
                 &unread.conversation,
             )
             .map_err(Into::into)
-        }) {
+        });
+        if let Some(result) = &captured {
+            let wait = result.as_ref().err().and_then(|error| error.wait.as_ref());
+            contexts.1.answered(call, wait);
+        }
+        match captured {
             Some(Ok(captured)) => {
                 conversations::captured(home, company, key, &unread, Ok(captured), clock.now())?;
                 let _ = wakes.relay.try_send(());
@@ -1645,11 +1734,13 @@ struct StatusPass {
 fn status_pass(
     wanted: &BTreeMap<Place, Status>,
     attempted: &HashMap<Place, (Instant, Status)>,
+    owed: &mut Owed<Place>,
     now: Instant,
     refresh: Option<Duration>,
 ) -> StatusPass {
     let set = wanted
         .iter()
+        .filter(|(place, _)| owed.pending(place, now).is_none())
         .filter(|(place, status)| {
             attempted.get(*place).is_none_or(|(at, shown)| {
                 shown != *status
@@ -1664,6 +1755,7 @@ fn status_pass(
         .filter(|place| !wanted.contains_key(*place))
         .cloned()
         .collect();
+    clear.retain(|place| owed.pending(place, now).is_none());
     clear.sort();
     StatusPass { set, clear }
 }
@@ -1684,6 +1776,7 @@ fn status_worker(
     admitted: &std::sync::mpsc::Receiver<()>,
 ) {
     let mut attempted: HashMap<Place, (Instant, Status)> = HashMap::new();
+    let mut owed = Owed::default();
     let mut failing: Option<String> = None;
     while !stop() {
         let pass = reach
@@ -1706,6 +1799,7 @@ fn status_worker(
                     key,
                     &unfinished,
                     &mut attempted,
+                    &mut owed,
                 );
             }
             // A continuing cause is logged once, when it starts or changes.
@@ -1752,38 +1846,44 @@ fn keep(
     key: &str,
     unfinished: &[conversations::Unfinished],
     attempted: &mut HashMap<Place, (Instant, Status)>,
+    owed: &mut Owed<Place>,
 ) {
     let wanted = wanted(connector, unfinished);
     let now = Instant::now();
-    let pass = status_pass(&wanted, attempted, now, connector.limits().working_refresh);
-    // A call the outside gate answered with a wait stays owed, so the next
-    // tick makes it once the wait is over.
+    let refresh = connector.limits().working_refresh;
+    let pass = status_pass(&wanted, attempted, owed, now, refresh);
+    // A call the outside gate answered with a wait stays owed until that
+    // wait's moment; a later pass makes it then.
     for (place, status) in pass.set {
-        if !call(connector, company, key, &place, Some(&status)) {
-            attempted.insert(place, (now, status));
+        let wait = call(connector, company, key, &place, Some(&status));
+        if wait.is_none() {
+            attempted.insert(place.clone(), (now, status));
         }
+        owed.answered(place, wait.as_ref());
     }
     for place in pass.clear {
-        if !call(connector, company, key, &place, None) {
+        let wait = call(connector, company, key, &place, None);
+        if wait.is_none() {
             attempted.remove(&place);
         }
+        owed.answered(place, wait.as_ref());
     }
 }
 
-/// Show `status` at `place`, best effort; whether the outside gate answered
-/// with a wait, which leaves the call owed.
+/// Show `status` at `place`, best effort; the outside gate's wait when it
+/// answered with one, which leaves the call owed.
 fn call(
     connector: &dyn Connector,
     company: &ProjectSlug,
     key: &str,
     place: &Place,
     status: Option<&Status>,
-) -> bool {
+) -> Option<Wait> {
     match connector.status(place, status) {
-        Ok(()) => false,
+        Ok(()) => None,
         Err(error) => {
             tracing::debug!(target: LOG_TARGET, event = "connector_status_skipped", company = %company, connector = key, error = %error);
-            error.wait.is_some()
+            error.wait
         }
     }
 }
@@ -1906,7 +2006,13 @@ mod tests {
             ]),
         );
         // Nothing set yet: each place with unfinished work is set once.
-        let first = status_pass(&wanted, &HashMap::new(), base, refresh);
+        let first = status_pass(
+            &wanted,
+            &HashMap::new(),
+            &mut Owed::default(),
+            base,
+            refresh,
+        );
         assert_eq!(
             first.set,
             [
@@ -1921,11 +2027,23 @@ mod tests {
             .map(|(place, status)| (place.clone(), (base, status.clone())))
             .collect();
         // Before the interval nothing is set again.
-        let early = status_pass(&wanted, &attempted, base + Duration::from_secs(29), refresh);
+        let early = status_pass(
+            &wanted,
+            &attempted,
+            &mut Owed::default(),
+            base + Duration::from_secs(29),
+            refresh,
+        );
         assert!(early.set.is_empty());
         // A place whose state changed is set at the next pass.
         let changed = BTreeMap::from([(place(&connector, "C1", "1"), Status::Unavailable)]);
-        let next = status_pass(&changed, &attempted, base + Duration::from_secs(1), refresh);
+        let next = status_pass(
+            &changed,
+            &attempted,
+            &mut Owed::default(),
+            base + Duration::from_secs(1),
+            refresh,
+        );
         assert_eq!(
             next.set,
             [(place(&connector, "C1", "1"), Status::Unavailable)]
@@ -1933,12 +2051,24 @@ mod tests {
         // At the interval a place that still has work is set again; one
         // whose work finished is cleared.
         let later = BTreeMap::from([(place(&connector, "C1", "1"), Status::Working)]);
-        let due = status_pass(&later, &attempted, base + Duration::from_secs(30), refresh);
+        let due = status_pass(
+            &later,
+            &attempted,
+            &mut Owed::default(),
+            base + Duration::from_secs(30),
+            refresh,
+        );
         assert_eq!(due.set, [(place(&connector, "C1", "1"), Status::Working)]);
         assert_eq!(due.clear, [place(&connector, "C2", "3")]);
         // Without a refresh interval a set place is never set again.
         attempted.insert(place(&connector, "C1", "1"), (base, Status::Working));
-        let once = status_pass(&later, &attempted, base + Duration::from_secs(600), None);
+        let once = status_pass(
+            &later,
+            &attempted,
+            &mut Owed::default(),
+            base + Duration::from_secs(600),
+            None,
+        );
         assert!(once.set.is_empty());
     }
 
@@ -1949,7 +2079,13 @@ mod tests {
             &connector,
             &unfinished(&[("D1", "1", Status::Working), ("D1", "2", Status::Working)]),
         );
-        let pass = status_pass(&wanted, &HashMap::new(), Instant::now(), None);
+        let pass = status_pass(
+            &wanted,
+            &HashMap::new(),
+            &mut Owed::default(),
+            Instant::now(),
+            None,
+        );
         assert_eq!(pass.set.len(), 2);
     }
 
@@ -1992,6 +2128,38 @@ mod tests {
             instrukt_outside::Attempted::Wait { wait, .. } => wait,
             _ => panic!("a wait"),
         }
+    }
+
+    #[test]
+    fn a_status_call_answered_with_a_wait_is_not_made_again_before_its_moment() {
+        let conn = connector(true);
+        let waiting = place(&conn, "C1", "1.1");
+        let other = place(&conn, "C1", "1.2");
+        let wanted = BTreeMap::from([
+            (waiting.clone(), Status::Working),
+            (other.clone(), Status::Working),
+        ]);
+        let base = Instant::now();
+        let mut owed = Owed::default();
+        owed.answered(
+            waiting.clone(),
+            Some(&wait_after(base, Duration::from_secs(1))),
+        );
+        // A pass woken inside the wait makes no request for the waiting call
+        // and still makes the other one.
+        let early = status_pass(&wanted, &HashMap::new(), &mut owed, base, None);
+        assert_eq!(early.set, [(other.clone(), Status::Working)]);
+        let due = status_pass(
+            &wanted,
+            &HashMap::new(),
+            &mut owed,
+            base + Duration::from_secs(1),
+            None,
+        );
+        assert_eq!(
+            due.set,
+            [(waiting, Status::Working), (other, Status::Working)]
+        );
     }
 
     #[test]
