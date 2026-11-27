@@ -2,6 +2,44 @@
 
 ## 0.1.0
 
+### Ephemeral project working directories move under `.instrukt/`
+
+All instrukt-owned ephemeral project working directories now live under the
+single gitignored `.instrukt/` namespace instead of top-level repository
+folders:
+
+- task workspaces: `.instrukt/workspace/<slug>/`
+- project scratchpads and default `instrukt eval report` output:
+  `.instrukt/scratchpad/` (`.instrukt/scratchpad/eval/index.html`)
+- persistent integration worktree: `.instrukt/trees/_integration/`
+
+Adopting repositories require only `.instrukt/` in `.gitignore`, which
+`instrukt init` already writes. Any in-flight `withdrawal_intents` row
+recorded before upgrading finishes against its stored `workspace_path` without
+manual intervention.
+
+For an existing checkout that still holds untracked instrukt-created root
+directories, move them in this order (run `git worktree list` to check
+whether an integration worktree exists):
+
+1. Verify each candidate root directory is not tracked by git before moving it:
+   `git ls-files <dir>` must print nothing. Leave any tracked project directory
+   untouched.
+2. Relocate an existing integration worktree:
+   `mkdir -p .instrukt/trees && git worktree move trees/_integration .instrukt/trees/_integration && rmdir trees`.
+   If left in place, the standing integrator also relocates an existing
+   `integrate` worktree with `git worktree move` on its next wake.
+3. Relocate existing task workspaces so recurring tasks retain checkpoints and
+   ranked lists:
+   `mkdir -p .instrukt/workspace && mv workspace/* .instrukt/workspace/ && rmdir workspace`.
+4. Relocate any active shared scratchpads:
+   `mkdir -p .instrukt/scratchpad && mv scratchpad/* .instrukt/scratchpad/ && rmdir scratchpad`
+   (or remove disposable `scratchpad/eval/index.html` and `rmdir` the empty
+   directories).
+5. Once every checkout on the machine has moved its root directories, remove
+   any manual `/workspace/`, `/scratchpad/`, or `/trees/` lines added to
+   `.gitignore`, keeping `.instrukt/`.
+
 ### Retired discussion links, control wrappers, bare NOOP suppression, and proxy review recording
 
 The following legacy surfaces have been retired:
