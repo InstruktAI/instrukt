@@ -9,12 +9,12 @@ use instrukt_core::{
     config::{Current, Env},
     home::Home,
 };
+use instrukt_outside::{
+    Attempted, Extent, Gate, Key, Reason, Report, Settings, Tried, Unavailable,
+};
 use tokio::sync::{Mutex, Notify, mpsc, watch};
 
 use crate::{interfaces::CompanyRelayPass, runtime::conversations::SourceWake};
-
-/// The longest wait before T3's conversation source is acquired again.
-const MOST_RETRY: Duration = Duration::from_secs(60);
 
 /// How often the relay checks for retained or out-of-process company work while idle.
 const RETRY_CADENCE: Duration = Duration::from_secs(2);
@@ -103,9 +103,9 @@ impl WakeSlot {
 
 impl Worker {
     /// Spawns the company conversation relay on the shared Tokio runtime.
-    /// When T3's conversation source cannot be acquired or stops notifying, it
-    /// records the failure on `destinations.company` and retries with
-    /// exponential backoff up to [`MOST_RETRY`], cancellable by shutdown.
+    /// Source acquisition and reader failures are judged by `instrukt-outside::Gate`,
+    /// which owns backoff pacing and outage reporting while projecting the
+    /// current failure state onto `destinations.company`.
     pub(crate) fn start(
         home: &Home,
         env: &Env,
@@ -117,38 +117,119 @@ impl Worker {
         let env = env.clone();
         let (shutdown, mut stopping) = watch::channel(false);
         let handle = rt.spawn(async move {
-            let mut failing: Option<String> = None;
-            let mut delay = Duration::from_secs(1);
+            let gate = Gate::new(
+                Arc::new(jiff::Timestamp::now),
+                Arc::new(std::time::Instant::now),
+                Report::log(),
+            );
+            let key = Key::new("t3", ["conversation-source"]).item("relay");
+            let settings = Settings::default();
             loop {
-                match serve(
-                    &home,
-                    &env,
-                    &current,
-                    &destinations,
-                    &mut stopping,
-                    &mut failing,
-                    &mut delay,
-                )
-                .await
-                {
-                    Ok(()) => return,
-                    Err(cause) => {
-                        if failing.as_deref() != Some(cause.as_str()) {
-                            tracing::error!(event = "conversation_source_failed", error = %cause);
-                            tokio::task::block_in_place(|| {
-                                destinations.company.relay_state(&home, Some(&cause));
-                            });
-                            failing = Some(cause);
+                if *stopping.borrow() {
+                    return;
+                }
+                let acquired = gate
+                    .attempt_async(&key, &settings, || async {
+                        match tokio::task::block_in_place(|| {
+                            let runtime = current
+                                .get()
+                                .global()
+                                .runner_runtime()
+                                .map_err(|error| error.to_string())?;
+                            let adapter = crate::runtime::adapter(runtime);
+                            let source = adapter
+                                .conversation_source(&home, &env)
+                                .map_err(|error| error.to_string())?;
+                            let notifications =
+                                source.subscribe().map_err(|error| error.to_string())?;
+                            Ok::<_, String>((adapter, source, notifications))
+                        }) {
+                            Ok(ready) => Tried::Done(ready),
+                            Err(cause) => Tried::Unavailable(
+                                Unavailable {
+                                    reason: Reason::Unreachable,
+                                    extent: Extent::Scope,
+                                    named: None,
+                                },
+                                cause,
+                            ),
                         }
+                    })
+                    .await;
+                let (adapter, source, notifications) = match acquired {
+                    Attempted::Done(ready) => ready,
+                    Attempted::Wait { wait, error } => {
+                        let cause = error.unwrap_or_else(|| {
+                            format!(
+                                "T3 conversation source unavailable; waiting until {}",
+                                wait.at()
+                            )
+                        });
+                        tokio::task::block_in_place(|| {
+                            destinations.company.relay_state(&home, Some(&cause));
+                        });
                         tokio::select! {
                             changed = stopping.changed() => {
                                 if changed.is_err() || *stopping.borrow() {
                                     return;
                                 }
                             }
-                            () = tokio::time::sleep(delay) => {}
+                            () = tokio::time::sleep_until(tokio::time::Instant::from_std(wait.until())) => {}
                         }
-                        delay = (delay * 2).min(MOST_RETRY);
+                        continue;
+                    }
+                    Attempted::Defect(cause) => {
+                        tokio::task::block_in_place(|| {
+                            destinations.company.relay_state(&home, Some(&cause));
+                        });
+                        let _ = stopping.changed().await;
+                        return;
+                    }
+                };
+
+                // The source is acquired: clear any previously recorded relay failure.
+                tokio::task::block_in_place(|| {
+                    destinations.company.relay_state(&home, None);
+                });
+
+                match serve(
+                    &home,
+                    &current,
+                    &destinations,
+                    adapter,
+                    source,
+                    notifications,
+                    &mut stopping,
+                )
+                .await
+                {
+                    Ok(()) => return,
+                    Err(cause) => {
+                        let recorded = gate
+                            .attempt_async(&key, &settings, || async {
+                                Tried::<(), String>::Unavailable(
+                                    Unavailable {
+                                        reason: Reason::Unreachable,
+                                        extent: Extent::Scope,
+                                        named: None,
+                                    },
+                                    cause.clone(),
+                                )
+                            })
+                            .await;
+                        tokio::task::block_in_place(|| {
+                            destinations.company.relay_state(&home, Some(&cause));
+                        });
+                        if let Attempted::Wait { wait, .. } = recorded {
+                            tokio::select! {
+                                changed = stopping.changed() => {
+                                    if changed.is_err() || *stopping.borrow() {
+                                        return;
+                                    }
+                                }
+                                () = tokio::time::sleep_until(tokio::time::Instant::from_std(wait.until())) => {}
+                            }
+                        }
                     }
                 }
             }
@@ -182,42 +263,20 @@ impl Drop for Worker {
     }
 }
 
-/// Acquires T3's conversation source and serves company conversations until
-/// shutdown (`Ok`) or a source failure (`Err`). A successful acquisition
-/// resets the retry delay to its shortest interval.
+/// Serves company conversations on an acquired T3 conversation source until
+/// shutdown (`Ok`) or a notification reader failure (`Err`).
 async fn serve(
     home: &Home,
-    env: &Env,
     current: &Current,
     destinations: &Destinations,
+    adapter: Box<dyn crate::runtime::RuntimeAdapter>,
+    source: Box<dyn crate::runtime::conversations::ConversationSource>,
+    notifications: Box<dyn crate::runtime::conversations::ConversationNotifications>,
     stopping: &mut watch::Receiver<bool>,
-    failing: &mut Option<String>,
-    delay: &mut Duration,
 ) -> Result<(), String> {
     if *stopping.borrow() {
         return Ok(());
     }
-    let (adapter, source, notifications) = tokio::task::block_in_place(|| {
-        let runtime = current
-            .get()
-            .global()
-            .runner_runtime()
-            .map_err(|error| error.to_string())?;
-        let adapter = crate::runtime::adapter(runtime);
-        let source = adapter
-            .conversation_source(home, env)
-            .map_err(|error| error.to_string())?;
-        let notifications = source.subscribe().map_err(|error| error.to_string())?;
-        Ok::<_, String>((adapter, source, notifications))
-    })?;
-    *delay = Duration::from_secs(1);
-    if let Some(cause) = failing.take() {
-        tracing::info!(event = "conversation_relay_recovered", cause = %cause);
-    }
-    // The source is acquired: clear any previously recorded relay failure.
-    tokio::task::block_in_place(|| {
-        destinations.company.relay_state(home, None);
-    });
 
     // Bridge blocking `ConversationNotifications::wait` onto a monotonic
     // coalescing slot so `Changed` can never be dropped behind `ReadAgain`.

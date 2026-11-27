@@ -671,7 +671,6 @@ fn only_an_independent_verifiers_pass_accounts_for_live_behavior_at_handoff() {
     assert_eq!(ledger(&crew)["finalize_ready_commit"], head.as_str());
 }
 
-// spec: project/instrukt/spec/feature/workflow/delivery-cycle UC-DC10
 #[test]
 fn a_verifiers_fail_blocks_finalize_ready() {
     let crew = prepared();

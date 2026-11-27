@@ -1503,6 +1503,7 @@ dependencies = [
  "jiff 0.2.39",
  "jsonwebtoken 9.3.1",
  "notify",
+ "oauth2",
  "octocrab",
  "pem",
  "proptest",

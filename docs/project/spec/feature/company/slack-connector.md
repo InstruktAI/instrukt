@@ -488,6 +488,7 @@ remain opaque to runner. No new required scope is introduced.
 
 ## See Also
 
+- [project/instrukt/adr/0001-slack-socket-mode-transport](../../../adr/0001-slack-socket-mode-transport.md)
 - [project/instrukt/spec/feature/company/conversations](conversations.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.

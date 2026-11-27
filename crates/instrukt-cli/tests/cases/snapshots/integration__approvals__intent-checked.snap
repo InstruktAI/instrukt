@@ -2,7 +2,7 @@
 source: crates/instrukt-cli/tests/cases/approvals.rs
 expression: "redact(&format!(\"{checked}---\\n{received}\"))"
 ---
-stamped nested-lists: intent checked — input <digest 1>
+stamped nested-lists: intent checked — input <digest 1> against conversation t3:author-1
 reflection: reflected to GitHub
 ---
 nested-lists · feature · active
@@ -20,4 +20,4 @@ artifacts:
   input (1 version)
     <digest 1> by session t3:author-1 at <time>
 stamps:
-  #2 <time> intent checked — input <digest 1> — by session t3:checker-2, model unknown
+  #2 <time> intent checked — input <digest 1> against conversation t3:author-1 — by session t3:checker-2, model unknown

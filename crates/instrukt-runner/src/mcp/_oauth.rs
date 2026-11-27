@@ -1435,8 +1435,9 @@ fn verify_oidc_identity(
     Ok((email, Some(sub)))
 }
 
-/// Best-effort RFC 7009 revocation using already-discovered AS metadata and resolved
-/// client credentials (revokes refresh_token when present, else access_token).
+/// Best-effort RFC 7009 revocation using `oauth2::basic::BasicClient` over the
+/// gated `AdmittedOAuthHttpClient` (revokes `refresh_token` when present, else
+/// `access_token`).
 fn revoke_direct(
     auth: &DiscoveredAuth,
     client_id: &str,
@@ -1450,41 +1451,63 @@ fn revoke_direct(
     if !instrukt_core::config::mcp_address_admitted(revocation_endpoint) {
         return;
     }
-    let Ok(http_client) = _http::client(
+    let Ok(oauth_http) = _http::AdmittedOAuthHttpClient::new(
         revocation_endpoint,
         Duration::from_secs(5),
         Duration::from_secs(10),
-        false,
     ) else {
         return;
     };
-    let (token, hint) = match refresh_token {
-        Some(rt) => (rt, "refresh_token"),
-        None => (access_token, "access_token"),
+    // `oauth2::Client::revoke_token` enforces an `https` scheme literally per
+    // RFC 7009 §2; for already-admitted loopback `http://` endpoints (tests and
+    // local development), let `oauth2` build the exact RFC 7009 request under
+    // `https://` and restore the admitted loopback URI inside the HTTP adapter.
+    let builder_url = match revocation_endpoint.strip_prefix("http://") {
+        Some(rest) => format!("https://{rest}"),
+        None => revocation_endpoint.to_owned(),
+    };
+    let Ok(revocation_url) = oauth2::RevocationUrl::new(builder_url) else {
+        return;
+    };
+    let Ok(actual_uri) = revocation_endpoint.parse::<http::Uri>() else {
+        return;
     };
     let methods = auth.token_endpoint_auth_methods();
     let use_post_secret = client_secret.is_some()
         && methods.iter().any(|m| m == "client_secret_post")
         && !methods.iter().any(|m| m == "client_secret_basic");
-    let mut form: Vec<(&str, &str)> = vec![("token", token), ("token_type_hint", hint)];
-    let basic = match (client_secret, use_post_secret) {
-        (Some(secret), false) => Some(_http::form_basic_auth(client_id, secret)),
-        (Some(secret), true) => {
-            form.push(("client_id", client_id));
-            form.push(("client_secret", secret));
-            None
-        }
-        (None, _) => {
-            form.push(("client_id", client_id));
-            None
-        }
+    let mut oauth_client =
+        oauth2::basic::BasicClient::new(oauth2::ClientId::new(client_id.to_owned()))
+            .set_revocation_url(revocation_url);
+    if let Some(secret) = client_secret {
+        oauth_client = oauth_client.set_client_secret(oauth2::ClientSecret::new(secret.to_owned()));
+    }
+    oauth_client = oauth_client.set_auth_type(if use_post_secret || client_secret.is_none() {
+        oauth2::AuthType::RequestBody
+    } else {
+        oauth2::AuthType::BasicAuth
+    });
+    let token: oauth2::StandardRevocableToken = match refresh_token {
+        Some(rt) => oauth2::RefreshToken::new(rt.to_owned()).into(),
+        None => oauth2::AccessToken::new(access_token.to_owned()).into(),
     };
-    let _ = _http::run_async(revocation_endpoint, async {
-        let mut req = http_client.post(revocation_endpoint);
-        if let Some(auth_val) = basic {
-            req = req.header(http::header::AUTHORIZATION, auth_val);
-        }
-        let _ = req.form(&form).send().await;
+    let Ok(request) = oauth_client.revoke_token(token) else {
+        return;
+    };
+    let oauth_http = std::sync::Arc::new(oauth_http);
+    let _ = _http::run_async(revocation_endpoint, async move {
+        let http_adapter = |mut req: oauth2::HttpRequest| {
+            let uri = actual_uri.clone();
+            let http_client = std::sync::Arc::clone(&oauth_http);
+            async move {
+                *req.uri_mut() = uri;
+                http_client
+                    .execute_http(req)
+                    .await
+                    .map_err(|err| std::io::Error::other(err.to_string()))
+            }
+        };
+        let _ = request.request_async(&http_adapter).await;
     });
 }
 

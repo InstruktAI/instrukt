@@ -345,8 +345,6 @@ pub struct RecordRequest {
     pub report: String,
     /// The calling session, when one resolves.
     pub caller: Option<SessionRef>,
-    /// The recorded reviewer when a different session enters the verdict.
-    pub reviewer: Option<SessionRef>,
 }
 
 /// What a recording admitted.
@@ -370,13 +368,11 @@ pub fn record(
     clock: &dyn Fn() -> Timestamp,
 ) -> Result<Recorded, ReviewError> {
     let head = project.commit(&request.head)?;
-    let Some(caller) = request.caller.clone() else {
+    let Some(reviewer) = request.caller.clone() else {
         return Err(refused(
             "no session resolves for this caller; record a verdict from the reviewing agent session the selected runtime recognises",
         ));
     };
-    let reviewer = request.reviewer.clone().unwrap_or_else(|| caller.clone());
-    let entering = (reviewer != caller).then_some(caller);
     if request.report.trim().is_empty() {
         return Err(refused(
             "the report is missing; supply the complete review report with --report",
@@ -452,7 +448,7 @@ pub fn record(
             name: ContentDigest::of(&request.report),
             report: request.report.clone(),
             reviewer: reviewer.clone(),
-            entered_by: entering.clone(),
+            entered_by: None,
             base: pinned.clone(),
             base_on_canonical,
             request: answers,
@@ -1799,7 +1795,6 @@ mod tests {
                 verdict: Verdict::Approve,
                 report: "report".into(),
                 caller: Some(SessionRef::parse("t3:reviewer").unwrap()),
-                reviewer: None,
             },
             &|| at("2026-11-24T00:00:00Z"),
         );

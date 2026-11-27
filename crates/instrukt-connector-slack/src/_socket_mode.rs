@@ -1,8 +1,9 @@
 //! One single-shot native-async Socket Mode connection: `apps.connections.open`
 //! and the WebSocket handshake through Slack's `hello` are judged by the
 //! outside gate under the app token, using `slack-morphism`'s
-//! `SlackEventCallbackBody` while keeping reconnect pacing and failure
-//! reporting exclusively in `connector_host` / `instrukt-outside`.
+//! `SlackEventCallbackBody` while keeping reconnect pacing, `admits_socket`,
+//! `?ticket=` redaction, and failure reporting exclusively in `connector_host`
+//! and `instrukt-outside` (see `project/instrukt/adr/0001-slack-socket-mode-transport`).
 use std::sync::Arc;
 use std::time::Duration;
 

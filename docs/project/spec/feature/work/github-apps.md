@@ -190,8 +190,7 @@ an exemption is not.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|->` | Records the calling session's head verdict of the commits after the base up to the head. |
-| `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|-> --reviewer <session>` | Records the named reviewing session and the session entering its verdict. |
+| `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|->` | Records the calling reviewing session's head verdict of the commits after the base up to the head. |
 | `instrukt review exempt --commit <sha> --basis <text>` | Records an exemption for a commit the canonical branch does not contain yet. |
 | `instrukt review show <sha>` | What this computer holds for the commit: its head verdict with its versions and with whether it stands here, was handed off by an export or was set aside by an import; its exemption and its derived approval, or a derived approval the tick withdrew with the commit found uncovered; each of these with its pinned base and where it was recorded; every publication with its state and the cause of an outstanding or refused one; and a verdict recognised as already published where this computer holds none. |
 | `instrukt review export --to <file>` | Hands the project's review evidence that stands on this computer off into one file (Evidence when the serving computer changes). |
@@ -216,7 +215,7 @@ admission. Recording needs no opt-in; publication does (Verdict publication).
 | Fact | Rule |
 | --- | --- |
 | Repository | `--head` names the full SHA of a commit held by the project repository. |
-| Reviewer | The caller resolves to a native session. The review uses this session unless `--reviewer` supplies another. |
+| Reviewer | The calling session resolves to a native session and records its own verdict directly. |
 | Range | The first verdict pins the request's recorded base, or the head's merge base with the canonical branch. Revisions keep that pinned base. `--base` accepts the pinned base or an ancestor. A pinned base outside the canonical branch is recorded as non-covering. |
 | Independence | The reviewing session must differ from every authoring session named by a `Session:` trailer in the pinned range. The refusal lists matching commits. |
 | Settlement | The first verdict establishes the settlement. The same reviewing session may revise a verdict that stands locally. A different reviewer or a locally handed-off settlement is refused. |
@@ -264,14 +263,6 @@ each tick before anything of the approval is written
 
 A derived approval that GitHub shows as the commit's status is withdrawn by
 nothing.
-
-### Verdict entered for another session
-
-`instrukt review record --reviewer <session>` records the named reviewing
-session and the distinct session entering its result. The head, pinned base,
-verdict and report use the same checks and storage as a verdict entered by
-its reviewer. The command uses commit trailers to check the named reviewer's
-independence.
 
 ### Verdict publication
 

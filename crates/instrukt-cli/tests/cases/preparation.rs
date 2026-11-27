@@ -14,7 +14,6 @@ use instrukt_todos::evidence::artifact_names;
 use support::redact;
 use workflow::Crew;
 
-// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
 #[test]
 fn a_feature_is_released_only_after_current_reviews_and_approval() {
     let crew = Crew::new();
@@ -142,7 +141,6 @@ fn a_feature_is_released_only_after_current_reviews_and_approval() {
     insta::assert_snapshot!("feature-preparation", redact(&steps.join("=====\n")));
 }
 
-// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
 #[test]
 fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_analysis() {
     let crew = Crew::new();
@@ -187,7 +185,6 @@ fn a_feature_grounded_on_unresolved_references_is_released_only_after_drift_anal
     insta::assert_snapshot!("unresolved-grounding", redact(&steps.join("=====\n")));
 }
 
-// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
 #[test]
 fn a_judged_dependency_still_binds_after_its_prerequisite_edge_is_removed() {
     let crew = Crew::new();
@@ -303,7 +300,6 @@ fn pending_docs_reads_use_the_todo_worktree_and_fall_back_after_delivery() {
     );
 }
 
-// spec: project/instrukt/spec/feature/workflow/preparation UC-PR2
 #[test]
 fn rejected_plan_review_surfaces_open_findings_in_factual_ledger_until_revised_and_approved() {
     let crew = Crew::new();

@@ -369,9 +369,9 @@ pub fn run(
     let mut readers: Option<consumers::ConsumerWorkers> = None;
     let mut handover_pending = false;
     let mut history = crate::history::Readers::default();
-    // The relay serves links and, while a company declares a connector and
-    // conversations are on, the connector destination; the connections take
-    // the intake. Both report their unexpected end to this loop at once.
+    // The relay serves connected company conversations while a company
+    // declares a connector; the connections take the intake. Unexpected task
+    // exits wake this supervision loop at once.
     let (supervise, mut supervision) = tokio::sync::mpsc::channel::<()>(8);
     if let Some(company) = &cx.wiring.company
         && let Err(error) = company.maintain_read_back(cx.home, clock())
@@ -381,7 +381,7 @@ pub fn run(
     // The company is hosted when the admitted generation declares a
     // connector: its connections start first, building each connector kind
     // once; a setting a kind refuses stops the runner here. The relay then
-    // serves its conversations beside links.
+    // serves its company conversations.
     let company = cx.wiring.company.as_ref();
     let (arrive, arrivals) = tokio::sync::mpsc::channel::<()>(1);
     let mut connections = match company {

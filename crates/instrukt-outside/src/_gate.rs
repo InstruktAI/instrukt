@@ -354,12 +354,17 @@ impl Gate {
         let monotonic = &self.inner.monotonic;
         let bound = match caller_wait {
             CallerWait::UntilReturns => None,
-            CallerWait::Within(within) => Some(monotonic().checked_add(within)),
+            CallerWait::Within(within) => Some((within, monotonic().checked_add(within))),
         };
         loop {
             let outcome = match bound {
                 None => self.attempt_async(key, settings, &mut try_once).await,
-                Some(deadline) => {
+                Some((within, _)) if within.is_zero() => {
+                    // A zero caller-wait budget performs a single try without
+                    // pausing afterward (`project/instrukt/policy/checks-and-guards`).
+                    return self.attempt_async(key, settings, &mut try_once).await;
+                }
+                Some((_, deadline)) => {
                     let remaining = deadline
                         .map_or(Duration::ZERO, |b| b.saturating_duration_since(monotonic()));
                     if remaining.is_zero() {
@@ -401,7 +406,8 @@ impl Gate {
             };
             match outcome {
                 Attempted::Wait { wait, error } => {
-                    let beyond = bound.is_some_and(|bound| bound.is_none_or(|b| wait.until() > b));
+                    let beyond = bound
+                        .is_some_and(|(_, deadline)| deadline.is_none_or(|b| wait.until() > b));
                     if beyond || stop() {
                         return Attempted::Wait { wait, error };
                     }
@@ -971,5 +977,49 @@ mod tests {
                 error: None
             } if wait.reason() == Reason::TimedOut
         ));
+    }
+
+    #[test]
+    fn call_async_with_zero_caller_wait_tries_once_and_does_not_pause() {
+        let f = Fixture::new();
+        let key = scope().item("single-try");
+        let tries = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let tries_clone = tries.clone();
+        let done = crate::runtime::block_on(f.gate.call_async(
+            &key,
+            &Settings::default(),
+            CallerWait::Within(Duration::ZERO),
+            &|| false,
+            || {
+                tries_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Tried::<(), ()>::Done(()) }
+            },
+        ))
+        .unwrap();
+        assert!(matches!(done, Attempted::Done(())));
+        assert_eq!(tries.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let wait_key = scope().item("single-try-down");
+        let wait_tries = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let wait_tries_clone = wait_tries.clone();
+        let waited = crate::runtime::block_on(f.gate.call_async(
+            &wait_key,
+            &Settings::default(),
+            CallerWait::Within(Duration::ZERO),
+            &|| false,
+            || {
+                wait_tries_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async { Outcome::Down(Extent::Key, None).tried() }
+            },
+        ))
+        .unwrap();
+        assert!(matches!(
+            waited,
+            Attempted::Wait {
+                error: Some(()),
+                ..
+            }
+        ));
+        assert_eq!(wait_tries.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

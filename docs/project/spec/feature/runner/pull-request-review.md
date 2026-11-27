@@ -182,37 +182,17 @@ pull request that has it as its head at that moment. Each further request for
 one commit waits longer than the one before, up to a bound, so a reviewer that
 cannot finish is not started in a loop and the commit is never given up.
 
-Work reads two answers from the runner when it admits a verdict: the first
-always, the second only where the first shows that a request of the commit
-reached the session that offers a revision
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence).
+Work reads one answer from the runner when it admits a verdict: the commit's
+requests from delivery's own records (`project/instrukt/spec/feature/work/github-apps`,
+Admission of review evidence).
 
 | Asked | Answered from |
 | --- | --- |
 | A commit's requests: each one's number, its standing, the session it was handed over to, an ended request's disposition, whether an ended request that delivery selected is still to be handed over, and its pinned base | Delivery's own records. |
-| Which input opened the turn a named session has in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session has in progress and the input that opened it, compared with the frozen content of those handovers. |
-
-The second answer is one of four: a request of that commit opened the turn,
-something else opened it, the session has no turn in progress, or the runtime
-cannot say. It costs one bounded read of the runtime and one keyed read of
-delivery's records, however long the session's history is. It is asked while
-the command that offers the revision runs and is about the turn in progress
-then. A runtime that is unavailable, or that keeps no record of the session's
-turn, cannot say.
-
-The answer is exact where a handover opens the turn it enters: a session
-started with the request,
-only-at-entry delivery, and as-soon-as-possible delivery on a runtime that
-queues a handover for the next turn
-(`project/instrukt/spec/feature/runner/procedure-event-delivery`, Intent,
-capability and bounded batches). A handover that a runtime steers into a
-running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-while a session it was selected for can still take it up, and while a turn it
-opened is in progress. A session of which no kept record says a request of the
-commit reached it is therefore in no turn that such a request opened.
+and while a session it was selected for can still take it up. Request standing
+and live runtime activity do not control verdict admission.
 
 ### Placement and consumer
 
