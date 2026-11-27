@@ -270,7 +270,20 @@ impl Recording {
                 Vec::new()
             }
         };
-        _store::record(home, &entry, &retire).map_err(|e| Unrecorded::Store(e.to_string()))
+        _store::record(home, &entry, &retire).map_err(|e| Unrecorded::Store(e.to_string()))?;
+        let outcome = match entry.asked {
+            Asked::Administrator { .. } => "proposal",
+            Asked::Unestablished { .. } => "unestablished",
+        };
+        tracing::info!(
+            event = "knowledge_proposal_recorded",
+            company = %entry.company,
+            commit = %entry.commit,
+            outcome,
+            retired = retire.len(),
+            "a commit was recorded in the knowledge-proposal store"
+        );
+        Ok(())
     }
 }
 
