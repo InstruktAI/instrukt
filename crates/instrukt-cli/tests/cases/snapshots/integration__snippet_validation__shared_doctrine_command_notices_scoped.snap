@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: scoped.out
+---
+notice: docs/domain/acme/policy/rules.md: command-in-shared-doctrine: instrukt status

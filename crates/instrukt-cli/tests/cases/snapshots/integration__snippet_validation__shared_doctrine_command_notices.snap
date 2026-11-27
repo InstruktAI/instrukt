@@ -1,0 +1,10 @@
+---
+source: crates/instrukt-cli/tests/cases/snippet-validation.rs
+expression: run.out
+---
+notice: docs/domain/acme/policy/rules.md: command-in-shared-doctrine: instrukt status
+notice: docs/domain/acme/policy/rules.next-rules.md: command-in-shared-doctrine: instrukt specs
+notice: docs/general/policy/commands.md: command-in-shared-doctrine: instrukt dev-seed
+notice: docs/general/policy/commands.md: command-in-shared-doctrine: instrukt docs
+notice: docs/general/policy/commands.md: command-in-shared-doctrine: instrukt sync
+notice: docs/general/policy/commands.md: command-in-shared-doctrine: instrukt todo
