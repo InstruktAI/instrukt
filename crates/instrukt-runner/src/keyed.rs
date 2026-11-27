@@ -898,7 +898,7 @@ fn succeed_claimed(
         }
         existing
     };
-    if !is_review_replacement
+    if kind(key) != "review"
         && request.worktree.is_none()
         && let Some(path) = native.existing_worktree.as_ref()
     {

@@ -66,10 +66,15 @@ impl T3 {
                     .map_err(|e| failure("launch", e.to_string()))?;
                 let branch = branch.trim();
                 if branch.is_empty() {
-                    serde_json::json!({"type":"existing_worktree","worktreePath":path})
-                } else {
-                    serde_json::json!({"type":"existing_worktree","worktreePath":path,"branch":branch})
+                    return Err(failure(
+                        "launch",
+                        format!(
+                            "existing worktree {} has no checked-out branch",
+                            path.display()
+                        ),
+                    ));
                 }
+                serde_json::json!({"type":"existing_worktree","worktreePath":path,"branch":branch})
             }
             (None, None) => serde_json::json!({"type":"root"}),
         };

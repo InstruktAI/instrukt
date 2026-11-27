@@ -159,13 +159,15 @@ opening a second turn.
 
 ### Beside review requests
 
-A requested review holds no review request, so work admits its verdict as a
-one-off review's (`project/instrukt/spec/feature/work/github-apps`). The ask is refused while the commit has a live
-review request, because work then admits only that request's reviewer. The
-runner's own decisions do not read requested reviews: a commit that becomes
-owed while its requested reviewer works is asked for as any other owed commit
-(`project/instrukt/spec/feature/runner/pull-request-review`),
-and from then on only that request's reviewer records its verdict.
+A requested review holds no review request; work admits its verdict under the
+same head-verdict rules as any other review
+(`project/instrukt/spec/feature/work/github-apps`). The ask is refused while the
+commit has a live review request
+(`project/instrukt/spec/feature/runner/pull-request-review`). The runner's own
+decisions do not read requested reviews: a commit that becomes owed while its
+requested reviewer works is asked for as any other owed commit
+(`project/instrukt/spec/feature/runner/pull-request-review`), and the first
+verdict recorded settles the commit.
 
 ### What the requester receives
 
@@ -198,9 +200,8 @@ directs.
 A revised candidate is a new head. Its review is asked for as that head's, and
 names the prior report. A dispute of findings without a new commit names the
 unchanged head, the prior report and the disposition file, and is sent to that
-head's requested reviewer, the session that recorded its verdict. That session
-judges it under its procedure; the turn the dispute opened is no review
-request's, so a revised verdict it records is admitted as a revision
+head's requested reviewer, the session that recorded its verdict. That session judges it under its procedure and may revise the verdict it
+recorded while that verdict stands locally
 (`project/instrukt/spec/feature/work/github-apps`). Both carry coordinates only.
 
 ### Requested review records
@@ -266,9 +267,8 @@ Then no second reviewer is started and the agent is told which review is in flig
   through the runtime is not part of its assignment, and its procedure reads it
   as untrusted data.
 - A commit that becomes owed under automatic review while its requested
-  reviewer works is reviewed twice. The verdict recorded first settles it; when
-  the review request is live first, the requested reviewer's verdict is refused
-  and names that request.
+  reviewer works is reviewed twice; the verdict recorded first settles it
+  (`project/instrukt/spec/feature/work/github-apps`).
 - A dispute reaches only the requested reviewer that recorded the verdict.
   Once that session is archived or deleted, or when the verdict was recorded
   by a reviewer started by other means, a dispute is refused and a revised

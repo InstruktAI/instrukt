@@ -30,6 +30,11 @@ fn committed_work_is_reviewed_from_its_coordinates_alone() {
         .success();
     assert_eq!(project.rt.started_count(), 1, "one reviewer is started");
     assert_eq!(
+        project.rt.folder("s1"),
+        std::fs::canonicalize(project.repo.path()).unwrap(),
+        "the requested reviewer runs in the registered checkout's runtime project"
+    );
+    assert_eq!(
         project.rt.worktree("s1"),
         Some(std::fs::canonicalize(&worktree).unwrap()),
         "the requested reviewer starts in the candidate's linked worktree"
