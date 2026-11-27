@@ -731,7 +731,7 @@ Then that change is not admitted and waits for a person
 - A conversation session runs in its company's container and reads what that
   container holds, the home's secrets file among it, and nothing of another
   company or the host
-  (`project/instrukt/spec/feature/runner/company-containers`). A company's
+  (`project/instrukt/spec/feature/company/company-containers`). A company's
   container is not confinement enough for an agent that answers people outside
   the company, and no such agent exists here.
 

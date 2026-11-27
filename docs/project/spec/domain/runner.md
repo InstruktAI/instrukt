@@ -743,8 +743,6 @@ related references.
   — notice unattended failures while keeping questions in their threads.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — use a declared server's tools under the right login and load them only when needed; sign in once, in your own browser, and be answered in the same turn.
-- **Company containers** — [project/instrukt/spec/feature/runner/company-containers](../feature/runner/company-containers.md)
-  — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
 - **Pull-request review** — [project/instrukt/spec/feature/runner/pull-request-review](../feature/runner/pull-request-review.md)
   — have trusted authors' pull-request heads reviewed independently without anyone asking.

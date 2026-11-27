@@ -261,6 +261,8 @@ The company context emits no events.
   — connect a company's Slack workspace without a public address; only a tag reaches the agent.
 - **MCP access** — [project/instrukt/spec/feature/runner/mcp-access](../feature/runner/mcp-access.md)
   — a call carries the login of the person being answered; this context supplies who that person is.
+- **Company containers** — [project/instrukt/spec/feature/company/company-containers](../feature/company/company-containers.md)
+  — run each company apart from the others and from the host, keep its logins and conversations through a replaced container, update its tools without a new image and export and import it.
 
 ## Governing designs and decisions
 
