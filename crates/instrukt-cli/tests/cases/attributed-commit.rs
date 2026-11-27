@@ -9,7 +9,8 @@ use crate::common;
 use std::io::{Read, Write as _};
 use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt as _;
-use std::path::Path;
+use std::os::unix::process::ExitStatusExt as _;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ExitStatus, Output, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -192,6 +193,10 @@ impl Running {
         running
     }
 
+    fn pid(&self) -> rustix::process::Pid {
+        rustix::process::Pid::from_child(&self.child)
+    }
+
     /// instrukt's status, once it has ended.
     fn exited(&mut self) -> std::io::Result<Option<ExitStatus>> {
         if self.status.is_none() {
@@ -264,10 +269,23 @@ impl Drop for Running {
     }
 }
 
-/// Runs `instrukt repo commit <args>` in `repo` while the project's
-/// pre-commit hook holds the commit: once the hook's entry arrives, the
-/// hook is released to end.
-fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
+/// A running `instrukt repo commit` paused inside the project's pre-commit hook.
+struct HeldCommit {
+    running: Running,
+    release: std::fs::File,
+    hook: PathBuf,
+}
+
+/// Installs a FIFO-held `pre-commit` hook in `repo`, starts
+/// `instrukt repo commit <args>`, and waits until the hook signals entry.
+/// When `lock` is given, the hook creates it before signalling entry and
+/// installs POSIX `INT`/`TERM` traps to remove it before exiting.
+fn start_commit_with_a_held_project_hook(
+    env: &TestEnv,
+    repo: &Repo,
+    args: &[&str],
+    lock: Option<&Path>,
+) -> HeldCommit {
     let held = env.path("held");
     std::fs::create_dir_all(&held).unwrap();
     let entered = held.join("entered");
@@ -276,10 +294,19 @@ fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) ->
         nix::unistd::mkfifo(fifo, nix::sys::stat::Mode::S_IRWXU).unwrap();
     }
     let hook = repo.path().join(".git/hooks/pre-commit");
+    let lock_setup = match lock {
+        Some(lock) => {
+            let quoted = instrukt_core::process::shell_quote(&lock.display().to_string());
+            format!(
+                "trap 'rm -f {quoted}; exit 130' INT\ntrap 'rm -f {quoted}; exit 143' TERM\n: > {quoted}\n"
+            )
+        }
+        None => String::new(),
+    };
     std::fs::write(
         &hook,
         format!(
-            "#!/bin/sh\necho entered > {}\nread -r _ < {}\n",
+            "#!/bin/sh\n{lock_setup}echo entered > {}\nread -r _ < {}\n",
             instrukt_core::process::shell_quote(&entered.display().to_string()),
             instrukt_core::process::shell_quote(&release.display().to_string()),
         ),
@@ -288,7 +315,7 @@ fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) ->
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
     // Each pipe is opened for reading and writing: opening waits for no
     // one, reading the entry sees no end before the hook writes, and the
-    // release line stays in its pipe until the hook reads it.
+    // release pipe stays open so the hook blocks in `read` until released.
     let open = |fifo: &Path| {
         std::fs::OpenOptions::new()
             .read(true)
@@ -297,6 +324,7 @@ fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) ->
             .unwrap()
     };
     let mut entry = open(&entered);
+    let release = open(&release);
 
     let mut command = env.instrukt_process(repo.path());
     command.args(["repo", "commit"]).args(args);
@@ -329,13 +357,25 @@ fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) ->
         "the hook's entry arrived"
     );
 
-    let mut released = open(&release);
-    released.write_all(b"go\n").unwrap();
-    let output = running
+    HeldCommit {
+        running,
+        release,
+        hook,
+    }
+}
+
+/// Runs `instrukt repo commit <args>` in `repo` while the project's
+/// pre-commit hook holds the commit: once the hook's entry arrives, the
+/// hook is released to end.
+fn commit_with_a_held_project_hook(env: &TestEnv, repo: &Repo, args: &[&str]) -> Assert {
+    let mut held = start_commit_with_a_held_project_hook(env, repo, args, None);
+    held.release.write_all(b"go\n").unwrap();
+    let output = held
+        .running
         .output_by(Instant::now() + STEP_BOUND)
         .map_err(|missing| format!("{STEP_BOUND:?} after the hook was released, {missing}"))
         .unwrap();
-    std::fs::remove_file(&hook).unwrap();
+    std::fs::remove_file(&held.hook).unwrap();
     Assert::new(output)
 }
 
@@ -431,4 +471,70 @@ fn a_developer_outside_any_session_commits_as_themselves() {
     commit_with_a_held_project_hook(&env, &repo, &["--message", MESSAGE]).success();
     insta::assert_snapshot!("developer-commit", last_commit(&repo));
     insta::assert_snapshot!(commit_paths(&repo), @"notes.md");
+}
+
+// spec: project/instrukt/spec/feature/repository/attributed-commit UC-RC4
+#[test]
+fn an_interrupted_commit_leaves_the_repository_as_it_was() {
+    use rustix::process::Signal;
+
+    for signal in [Signal::INT, Signal::TERM] {
+        let env = TestEnv::new();
+        configure_machine(&env);
+        let repo = env.git_repo("interrupted");
+        repo.write("README.md", "# interrupted\n");
+        repo.commit("the developer's first commit");
+        repo.git(["switch", "-c", "ad-hoc"]);
+
+        repo.write("new.rs", "pub fn staged() {}\n");
+        repo.git(["add", "new.rs"]);
+        let head = repo.head();
+        let staged_before = staged(&repo);
+
+        let lock = env.path("held").join("hook.lock");
+        let mut held = start_commit_with_a_held_project_hook(
+            &env,
+            &repo,
+            &["--message", MESSAGE],
+            Some(&lock),
+        );
+        assert!(
+            lock.exists(),
+            "the hook holds its lock while waiting for release"
+        );
+
+        rustix::process::kill_process(held.running.pid(), signal).unwrap();
+        let output = held
+            .running
+            .output_by(Instant::now() + STEP_BOUND)
+            .map_err(|missing| format!("{STEP_BOUND:?} after {signal:?}, {missing}"))
+            .unwrap();
+        assert_eq!(
+            output.status.signal(),
+            Some(signal.as_raw()),
+            "instrukt ends with the signal it received ({signal:?}); stderr: {}",
+            String::from_utf8_lossy(&output.stderr),
+        );
+        assert!(
+            !lock.exists(),
+            "forwarded {signal:?} let the hook remove its lock before exit"
+        );
+        assert_eq!(repo.head(), head, "nothing was committed");
+        assert!(
+            !repo.path().join(".git/index.lock").exists(),
+            "no git index.lock remains"
+        );
+        assert_eq!(
+            staged(&repo),
+            staged_before,
+            "the staged change remains cleanly staged in the index"
+        );
+
+        std::fs::remove_file(&held.hook).unwrap();
+        env.run(repo.path(), ["repo", "commit", "--message", MESSAGE])
+            .success();
+        insta::allow_duplicates! {
+            insta::assert_snapshot!(commit_paths(&repo), @"new.rs");
+        }
+    }
 }
