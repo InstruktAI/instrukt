@@ -700,7 +700,7 @@ writing a timeout), never touching `state/writer.lock`; a crash between the
 | Owner | The runner; each worker owns its own file (`state/runner-workers/<id>.json` or `state/computer-fleet.json`). |
 | Loss cost | Nothing beyond resetting `since`: the next failing pass records the failure again; no work, intent or external effect is lost. |
 | Medium | One atomic JSON state file per worker under `state/runner-workers/` (and `state/computer-fleet.json`), written via temp-file + fsync + rename. |
-| Write isolation | One file per worker; fixed workers have one writer at a time (`state/runner.lock`), keyed starts serialize per key under `runtime-key-<hash>.lock`, consumer source transitions serialize under their per-consumer status lock; readers take no lock; none acquires `state/writer.lock`. |
+| Write isolation | One file per worker; fixed workers have one writer at a time (`state/runner.lock`), keyed-start findings serialize per key under `runtime-key-<hash>.lock` for in-guard starts (including `instrukt review start`), under `state/runner.lock` for standing delivery findings, and under the target input lock for delivery-project verification (with atomic write-and-rename preventing corruption on any concurrent access), and consumer source transitions serialize under their per-consumer status lock; readers take no lock; none acquires `state/writer.lock`. |
 | Scope | One home (`~/.instrukt`). |
 | Durability | Persisted across restarts while failing so `since` and status survive until recovery; removed on success, shutdown or disable. |
 | Bound and retirement | Zero files while healthy; one ~250-byte file per currently failing worker or start key, removed when that worker or key recovers. |
