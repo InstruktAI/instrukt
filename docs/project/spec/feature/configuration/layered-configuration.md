@@ -124,36 +124,53 @@ demand.
 
 When present, `backup` declares:
 
-- `endpoint` — S3-compatible endpoint URL;
-- `region` — S3 region name;
-- `bucket` — target bucket name;
-- `prefix` — key prefix under which each computer stores its machine-ID
-  namespace;
-- `access_key_id` and `secret_access_key` — exact `${NAME}` secret references
-  resolved exclusively from the selected home's protected `secrets.env`
-  (`project/instrukt/spec/feature/configuration/owned-files`); literal
-  credentials are findings and expanded values are never disclosed in reads or
-  diagnostics;
-- `age_recipient` — valid public `age` recipient string for client-side
-  encryption;
-- `keep` — positive integer generation retention count (default declared by the
-  global schema);
-- `time` — daily local schedule time in `HH:MM` 24-hour form (default declared
-  by the global schema).
+- **Required:**
+  - `endpoint` — S3-compatible endpoint URL: an `https` URL (or loopback
+    `http` for local verification, as in
+    `project/instrukt/spec/feature/runner/mcp-access`) with no embedded
+    credentials or userinfo (`sdlc/policy/security-awareness`);
+  - `region` — non-empty S3 region name;
+  - `bucket` — non-empty target bucket name;
+  - `access_key_id` and `secret_access_key` — exact `${NAME}` secret references
+    resolved exclusively from the selected home's protected `secrets.env`
+    (`project/instrukt/spec/feature/configuration/owned-files`); literal
+    credentials are findings and expanded values are never disclosed in reads
+    or diagnostics;
+  - `age_recipient` — valid public `age` recipient string for client-side
+    encryption.
+- **Optional:**
+  - `prefix` — optional key prefix (no path-traversal segments) under which
+    each computer stores its machine-ID namespace; omitted stores
+    `<machine-id>/...` at the bucket root;
+  - `keep` — positive integer generation retention count (default `14`);
+  - `time` — daily local schedule time in `HH:MM` 24-hour form (default
+    declared by the global schema).
 
 A `backup` declaration in a project layer or company home, a missing required
-field, a literal credential instead of a `${NAME}` reference, an invalid `age`
+field, an invalid `endpoint`, `region`, `bucket`, or `prefix`, a literal
+credential instead of a `${NAME}` reference, a missing, blank, unreadable, or
+insufficiently protected secret value for `access_key_id` or
+`secret_access_key` in `~/.instrukt/secrets.env` (naming the key, reference,
+and `instrukt secrets set` door without disclosing values), an invalid `age`
 recipient, an invalid schedule time, a non-positive retention count, or an
 unknown subkey is a validation finding at `backup` naming the offending key
 (`project/instrukt/policy/checks-and-guards`: prerequisites are checked where
 configuration enters). `config patch` refuses a write that introduces such a
-finding, and `config validate --global` reports it without changing anything.
-Adding `backup` advances the global schema version with forward migration that
-preserves all existing global settings.
+finding; `config validate --global`, `config validate`, and
+`config validate --company <name>` report it in their respective documents
+without changing anything.
+
+An invalid `backup` declaration in a loaded global layer withholds only home
+backup admission on that computer: backup commands refuse with the finding and
+its configuration door, installation inspection reports the withheld backup
+timer without withdrawing an existing owned unit
+(`project/instrukt/spec/feature/runner/module-installation`), and every other
+capability the global layer admits runs unchanged.
 <!-- /planned:instrukt-home-backup -->
 
 ### Layer rules
 
+<!-- planned-change:instrukt-home-backup -->
 | Key | Layer | Meaning owned by |
 | --- | --- | --- |
 | `schema_version` | each document | configuration |
@@ -187,6 +204,42 @@ preserves all existing global settings.
 | `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
 | `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
 | `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- change:instrukt-home-backup -->
+| Key | Layer | Meaning owned by |
+| --- | --- | --- |
+| `schema_version` | each document | configuration |
+| `agents.<name>.git_author` | global only | commit composition |
+| `backup` (required `endpoint`, `region`, `bucket`, `access_key_id`, `secret_access_key`, `age_recipient`; optional `prefix`, `keep`, `time`) | global only | runner home backup |
+| `modules: {blueprint, todos, events, history}` (booleans; history defaults on, others off; core has no switch) | both (project overrides global) | each module |
+| `ci.dependency_branch_prefixes` (list of nonempty strings; `[]` disables dependency-branch observation) | project only | runner CI observation |
+| `events.watch: [{remote, ref}]` | project only | runner |
+| `webhooks.<domain>` | project layer or company home; required `secret`, optional `previous_secret` references, `verify` (native default, github, hmac-sha256), generic `header`, exclusive `name_from` or `name` | runner intake |
+| `company` | company home only; equals the home folder's name | configuration |
+| `members.<member>` (`name`, `email`, `credentials.<tool>` references) | company home only | configuration stores and validates; runner resolves a speaker's tool logins |
+| `profiles` (ordered list of profile names the machine's `agents.yaml` declares) | company home only | configuration validates the names; agent selection uses the order for sessions in that home |
+| `connectors.<name>` (optional `kind` defaulting to `<name>`, optional `role` defaulting to `company-agent`, optional `admit` (`members` \| `admins_only`), optional `session_scope` (`conversation` \| `company`), optional `reply_mode` (`turn_output` \| `explicit`), plus the provider fields that `kind` declares; `slack`'s are in `project/instrukt/spec/feature/company/slack-connector`) | company home only | company conversations |
+| `mcp_clients.<name>` (required `issuer` authorization server URL, required `id` and optional `secret` references into `~/.instrukt/secrets.env`, optional `description`) | global only; reusable host-level OAuth clients pinned to one authorization server issuer that companies reference via `sign_in.client_ref` | runner MCP access |
+| `mcp.<name>` (`url`, `description`; in a company home `speaker_login` (`stored` with `credential`, or `sign-in` with optional `sign_in` mode, scopes, host `client_ref` or local `client` references, and identity request) and a `login` reference; in the global layer a `login` reference) | global layer or company home; a company home's declaration replaces the machine-wide one of the same name for that company | runner MCP access |
+| `issuer` (`enabled` boolean, optional `signing_key` `${NAME}` reference into the company home's `secrets.env`) | company home only; lightweight built-in per-company OIDC issuer for MCP Enterprise-Managed Authorization (`jwt-bearer`) | runner MCP access |
+| `ingress.computer`, `ingress.port`, `ingress.reactions`, `ingress.url` | global only; stable existing machine ID of the ingress, loopback port, stable existing machine ID of the computer that reacts to external facts (default: the ingress), and the public `https` address at which the operator's edge forwards the receiver's paths | runner intake and MCP sign-in |
+| `redis.cluster`, `redis.local` | global only; `url`, optional `username`/`password` references and connection limits/timeouts | runner transport |
+| `ticks` | global only | the runner |
+| `blueprint.engine` | both; the project overrides, but may only name a shipped adapter; the command form is global only | the `blueprint` module |
+| `runner.notify` | global only | the runner |
+| `runner.runtime` (compiled adapter name; unset, the one compiled adapter, initially `t3`) | global only | runner |
+| `runner.archive_finished_after` (retention window) | global only | runner thread retention |
+| `runtimes.<name>` (agent-action instruction values) | global only; complete value set below | configuration and the agent consuming the rendered instruction |
+| `runner.autostart` (boolean or map `{<kind>: bool}`) | both; the project overrides | runner |
+| `project` | project only | docs and publication |
+| `requires` (modules the flavor needs) | project only | publication |
+| `board` (GitHub project `<owner>/<number>`; automatically set up and repaired with views) | project only | the `todos` module |
+| `github.apps` (App/bot public identities and protected private-key references), `github.project_app` (fallback App reference) | global only | work GitHub boundary; configuration stores and validates declarations |
+| `github.approvers` (GitHub logins) | project only | work |
+| `github.repository` (`owner/repo`; default derived from the remote the default branch tracks) | project only | work, runner |
+| `github.api_url` (default `https://api.github.com`) | global only | work, workflow, runner |
+| `approvals.prd`, `approvals.task` (`human` or `peer`, each default `human`) | project only | workflow |
+| `workflow.domain` (published domain name, default `sdlc`; a domain published from some project's `docs/domain/<x>/`) | project only | workflow |
+<!-- /planned-change:instrukt-home-backup -->
 
 `github.org` (the login of a GitHub organisation) is global only. It names the
 organisation that owns the company home repositories this computer adds, and
@@ -466,6 +519,7 @@ references are checked for unresolved keys and cycles without executing commands
 
 ### A machine layer that cannot be loaded
 
+<!-- planned-change:instrukt-home-backup -->
 The machine layer cannot be loaded when it cannot be read, is not YAML, is not
 a mapping, or its `schema_version` is missing or newer than this instrukt
 knows. Then every command fails with exit status 1 and one line naming the
@@ -474,6 +528,17 @@ with the file's own problem and where it is. A layer that loads is never
 judged again by the commands that read it: its validation findings, an
 unknown key among them, are `instrukt config validate`'s, and stop no other
 command.
+<!-- change:instrukt-home-backup -->
+The machine layer cannot be loaded when it cannot be read, is not YAML, is not
+a mapping, or its `schema_version` is missing or newer than this instrukt
+knows. Then every command fails with exit status 1 and one line naming the
+file, the reason and `instrukt config validate --global`; that command fails
+with the file's own problem and where it is. A layer that loads is never
+judged again by the commands that read it: its validation findings, an
+unknown key among them, are `instrukt config validate`'s, and stop no other
+command, except where a feature's own admission-withholding rule applies (such
+as an invalid `backup` declaration withholding only home backup).
+<!-- /planned-change:instrukt-home-backup -->
 
 ### Schema versions and migration
 
@@ -579,6 +644,7 @@ And the configuration is unchanged
 
 ### Configuration value shapes
 
+<!-- planned-change:instrukt-home-backup -->
 | Key | Type / allowed values | Default |
 | --- | --- | --- |
 | `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
@@ -590,6 +656,20 @@ And the configuration is unchanged
 | `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
 | `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
 | `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- change:instrukt-home-backup -->
+| Key | Type / allowed values | Default |
+| --- | --- | --- |
+| `ticks` | `on` or `off` | `on` (installation registers one wake-up only with enabled project demand; `off` selects operator scheduling). |
+| `backup` | global-only mapping with required `endpoint` (`https` URL, or loopback `http`, without credentials), `region`, `bucket`, `access_key_id` and `secret_access_key` (`${NAME}` references resolving to non-blank values in `~/.instrukt/secrets.env`), `age_recipient` (public `age` recipient); optional `prefix`, `keep` (positive integer), `time` (`HH:MM` 24-hour local time) | absent (unconfigured); when present, `keep` defaults to `14`, `prefix` defaults to empty, and `time` follows the published global schema default (`instrukt config schema --global`). |
+| `runner.runtime` | compiled runtime adapter name (`t3`) | absent; the one compiled adapter |
+| `runner.notify` | command string or `off` | the selected runtime’s notification capability when unset |
+| `runner.autostart` | boolean or map of kind to boolean | `false` (manual); in a map, an omitted kind is `false`. |
+| `runner.archive_finished_after` | a positive duration instrukt can represent, in the grammar the published global schema states (`instrukt config schema --global`), or `off` | the published global schema declares it; under it no thread is archived until a person sets a window (`project/instrukt/spec/feature/runner/thread-retention`). |
+| `agents.<name>.git_author` | git author identity string (name and email) | absent; an agent commit without it is refused |
+| `board` | GitHub project reference `<owner>/<number>` | automatically set up and repaired with its views when todos is enabled; absence triggers setup rather than opt-out. |
+| `blueprint.engine` | shipped adapter name (either layer) or command string (global layer only; in the project layer a finding, ignored like project-layer `runner.runtime`) | the shipped adapter |
+| `schema_version` | schema version number written by init | current schema version; the first is `1`. |
+<!-- /planned-change:instrukt-home-backup -->
 
 ### UC-CL5: Configure external state in its owning source
 
@@ -638,10 +718,10 @@ And the project is not admitted for reclaiming that output on the computer
 ### UC-CL10: Configure machine home backup globally with protected credentials
 
 ```gherkin
-Given an operator configures encrypted offsite home backup in the machine's global configuration using secret references stored in the machine's protected secrets file and a valid public encryption recipient
+Given an operator configures encrypted offsite home backup in the machine's global configuration with a secure credential-free endpoint, secret references whose non-blank values exist in the machine's protected secrets file, and a valid public encryption recipient
 When the operator validates or writes the global configuration
 Then the backup declaration is accepted and secret values remain undisclosed
-But when a project configuration or company home declares home backup, or the global declaration embeds literal credentials or an invalid recipient, schedule time or retention count
+But when a project configuration or company home declares home backup, or the global declaration uses an insecure or credential-bearing endpoint, embeds literal credentials, references missing or blank secrets, or supplies an invalid recipient, schedule time, bucket, region, prefix or retention count
 Then validation reports the offending setting and configuration writes refuse it
 ```
 <!-- /planned:instrukt-home-backup -->

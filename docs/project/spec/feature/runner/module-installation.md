@@ -18,6 +18,7 @@ remote routing and user interview are outside this contract.
 
 ### Demand across adopted projects and company homes
 
+<!-- planned-change:instrukt-home-backup -->
 Publication's adopted-project identities and registered checkout paths supply
 the project set. Evaluate project-over-global module settings for each. A global
 default without an adopted enabled project creates no infrastructure demand,
@@ -47,6 +48,41 @@ unused; withdrawal waits for a complete demand read.
 | Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers, the reacting computer included, retain consumers without listeners. |
 | A company home's MCP server declared with sign-in (`project/instrukt/spec/feature/runner/mcp-access`) | On the computer that holds the home: cluster Redis reachable and `ingress.url` set. Without them it is an unmet finding naming the company and the server, with its door: set the missing settings, then `instrukt install`. No receiver on that computer solely for sign-in. |
 | The ingress computer with events enabled and `ingress.url` set | The events dependencies and the receiver/socket service, which serves the sign-in return whether or not a source is declared. |
+<!-- change:instrukt-home-backup -->
+Publication's adopted-project identities and registered checkout paths supply
+the project set. Evaluate project-over-global module settings for each. A global
+default without an adopted enabled project creates no infrastructure demand,
+except through a company home, which follows the machine's global switches
+(`project/instrukt/spec/feature/configuration/company-homes`) — where a nonempty
+valid source map demands events infrastructure and the receiver while events is
+on, a declared connector demands the runner service, and an MCP server declared
+with sign-in demands cluster Redis and a set `ingress.url` on the computer that
+holds that home — and through a global `backup` declaration, which demands one
+owned daily home backup timer independently of adopted projects and module
+switches (`project/instrukt/spec/feature/runner/home-backup`). The ingress
+computer serves the sign-in return whenever events is on there and
+`ingress.url` is set, whichever homes it holds.
+Writing installation reads the registered checkouts and retains their validated
+project settings and resolved repository identities in this computer's own
+installation state. Inspection reads the current repository and those retained
+facts for other projects; it does not traverse other working checkouts. Missing
+retained facts are findings with the `instrukt install` door. An unreadable or
+invalid project's desired state is never proof that its shared resources are
+unused; withdrawal waits for a complete demand read.
+
+| Effective demand | Infrastructure and prerequisites |
+| --- | --- |
+| Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
+| Global `backup` declared (`project/instrukt/spec/feature/runner/home-backup`) | One owned daily OS timer invoking `instrukt backup run` at the configured local time, with valid global `backup` settings and resolved non-blank secret values in `~/.instrukt/secrets.env`. No minute wake-up, Redis, receiver, or runtime solely for backup. |
+| Blueprint enabled | Release-pinned Graphify in the instrukt home via `uv tool install graphifyy==<pin>`; uv is an unmet prerequisite when installation is needed and uv is absent. No wake-up, Redis or receiver solely for blueprint. |
+| History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
+| A company home's declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
+| Todos enabled | One shared minute wake-up unless `ticks: off`; selected capable runtime and existing GitHub repository/access/reflection prerequisites. No Redis or receiver solely for todos. |
+| Events enabled, no sources | Shared wake-up unless off; private local Redis setup or verified operator local Redis; cluster transport check; retained consumer coverage prepared before producers. No receiver. |
+| Events enabled with nonempty valid `webhooks:` in a project or a company home | The events dependencies, plus receiver/socket service on the designated ingress computer only. Other computers, the reacting computer included, retain consumers without listeners. |
+| A company home's MCP server declared with sign-in (`project/instrukt/spec/feature/runner/mcp-access`) | On the computer that holds the home: cluster Redis reachable and `ingress.url` set. Without them it is an unmet finding naming the company and the server, with its door: set the missing settings, then `instrukt install`. No receiver on that computer solely for sign-in. |
+| The ingress computer with events enabled and `ingress.url` set | The events dependencies and the receiver/socket service, which serves the sign-in return whether or not a source is declared. |
+<!-- /planned-change:instrukt-home-backup -->
 
 The local database is created/migrated on commands that need it under its own
 contract. Todos may record finalize-ready events locally while events are off;
@@ -101,6 +137,7 @@ one rule whatever the root is:
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
 | `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress, or with neither an enabled valid source nor `ingress.url` set with events enabled. |
 
+<!-- planned-change:instrukt-home-backup -->
 The optional module filter limits which dependency set is converged or checked;
 it never overrides disabled configuration, ingress placement or other projects'
 demand. Full demand is always read before withdrawing a shared resource. Without
@@ -108,6 +145,19 @@ a filter, obsolete owned resources are included even when all modules are off.
 `install` and `install --check` remain available with modules off. Event
 inspection can report retained infrastructure/failures after disable and creates
 no event workload. Commands' `-h` describes these boundaries and the repair door.
+<!-- change:instrukt-home-backup -->
+The optional module filter limits which dependency set is converged or checked;
+it never overrides disabled configuration, ingress placement or other projects'
+demand. Home backup is not a project module switch: unfiltered `install` and
+`install --check` converge, check, and withdraw the owned daily home backup
+timer alongside all modules, while `--module <name>` converges or checks only
+that module's dependency set and leaves the backup timer untouched. Full demand
+is always read before withdrawing a shared resource. Without a filter, obsolete
+owned resources are included even when all modules are off. `install` and
+`install --check` remain available with modules off. Event inspection can report
+retained infrastructure/failures after disable and creates no event workload.
+Commands' `-h` describes these boundaries and the repair door.
+<!-- /planned-change:instrukt-home-backup -->
 
 The configuration agent records enablement with revision-checked configuration
 commands, calls `instrukt install`, then `instrukt install --check` and relevant
@@ -136,6 +186,16 @@ They report in the same way a retention window the selected runtime cannot
 carry: thread retention is withheld on this computer while the runner's other
 work runs (`project/instrukt/spec/feature/configuration/layered-configuration`).
 The window adds no wake-up demand.
+
+<!-- planned:instrukt-home-backup -->
+They report in the same way a global `backup` declaration that has validation
+findings or whose `access_key_id` or `secret_access_key` secret references are
+missing, blank, unreadable, or insufficiently protected in
+`~/.instrukt/secrets.env` (naming the key, reference, and repair door without
+disclosing values): home backup is withheld as unmet demand on this computer
+while the runner's other work runs, and an existing owned backup timer is not
+withdrawn while `backup` remains present in the global layer.
+<!-- /planned:instrukt-home-backup -->
 
 ### Graphify installation
 
@@ -179,7 +239,8 @@ One wake proves neither delivered activation nor completed task.
 <!-- planned:instrukt-home-backup -->
 ### Daily home backup timer
 
-While the global layer carries a valid `backup` declaration
+While the global layer carries a valid `backup` declaration whose required
+credential references resolve to non-blank values in `~/.instrukt/secrets.env`
 (`project/instrukt/spec/feature/configuration/layered-configuration`),
 installation demands one owned daily OS timer that invokes `instrukt backup run`
 at the configured local time (`project/instrukt/spec/feature/runner/home-backup`),
@@ -194,12 +255,16 @@ agent session.
   Withdrawal and ownership below, carrying a path-derived suffix for homes
   other than `~/.instrukt` and re-writing instrukt's own definition whole on
   every install (`project/instrukt/policy/checks-and-guards`).
+- Missing, blank, unreadable, or insufficiently protected backup secret values
+  in `~/.instrukt/secrets.env` are reported by `instrukt install` and
+  `instrukt install --check` as unmet findings naming the key, reference, and
+  `instrukt secrets set` door without disclosing values.
 - `instrukt install --check` reports a missing, drifted, or unloaded backup
   timer as unmet demand (and an obsolete owned timer when `backup` is absent)
   without creating or mutating files or units.
 - Removing `backup` from the global layer ends the timer demand; the next
-  `instrukt install` withdraws the owned timer without deleting local state,
-  credentials, or remote backups.
+  unfiltered `instrukt install` withdraws the owned timer without deleting
+  local state, credentials, or remote backups.
 <!-- /planned:instrukt-home-backup -->
 
 ### Runner service
@@ -360,6 +425,7 @@ into a new local store-and-forward service.
 
 ### Owned units without a login
 
+<!-- planned-change:instrukt-home-backup -->
 On Linux every owned unit is a systemd user unit that has to run without a
 login: the runner service, the receiver's socket and service, the private local
 Redis service and the minute timer. They need the user's service manager to
@@ -367,6 +433,16 @@ start at boot. Where it does not, installation and `install --check` report
 one unmet prerequisite naming `loginctl enable-linger` and the owned units that
 need it, and installation does not change it. A wake-up registered with cron
 needs no such setting.
+<!-- change:instrukt-home-backup -->
+On Linux every owned unit is a systemd user unit that has to run without a
+login: the runner service, the receiver's socket and service, the private local
+Redis service, the minute timer and the daily home backup timer and service
+pair. They need the user's service manager to start at boot. Where it does not,
+installation and `install --check` report one unmet prerequisite naming
+`loginctl enable-linger` and the owned units that need it, and installation does
+not change it. A wake-up or daily backup timer registered with cron needs no
+such setting.
+<!-- /planned-change:instrukt-home-backup -->
 
 ### Withdrawal and ownership
 
@@ -411,9 +487,16 @@ and are not automatically scanned at login.
 missing means empty, other errors fail. File mode preserves unrelated lines,
 never invokes crontab and reports `file_only`, not active scheduling. Unset uses
 the native executing-account table through crontab, never a guessed spool path.
+<!-- planned-change:instrukt-home-backup -->
 Generated tick/runner/receiver environments retain inherited HOME and propagate
 INSTRUKT_HOME, T3CODE_HOME, selected native runtime variables and all three
 scheduler-location inputs when present. Optional values stay absent when unset.
+<!-- change:instrukt-home-backup -->
+Generated tick/runner/receiver/backup environments retain inherited HOME and
+propagate INSTRUKT_HOME, T3CODE_HOME, selected native runtime variables and all
+three scheduler-location inputs when present. Optional values stay absent when
+unset.
+<!-- /planned-change:instrukt-home-backup -->
 
 ## Use cases
 
@@ -585,12 +668,12 @@ And a second instrukt home on the computer installs under its own names without 
 ### UC-MI16: Converge and withdraw the owned daily home backup timer
 
 ```gherkin
-Given an operator configures home backup in the machine's global configuration
+Given an operator configures home backup in the machine's global configuration with required credentials stored in the machine's protected secrets file
 When the operator runs installation
 Then one owned daily OS timer for home backup is converged for that home, with isolated unit naming for non-default homes and without starting any agent session
 And checking installation reports the timer as met without modifying files or units
-But when the timer is missing or drifted
-Then checking installation reports unmet demand without mutating anything
+But when the timer is missing or drifted, or a required backup credential is missing or blank
+Then checking installation reports unmet demand naming the repair door without mutating anything or disclosing secret values
 When the operator removes home backup from the global configuration and runs installation again
 Then the owned backup timer is withdrawn while local state, credentials and remote backups remain untouched
 ```

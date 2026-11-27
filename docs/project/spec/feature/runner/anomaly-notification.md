@@ -14,12 +14,22 @@ thread, where the runtime shows that input is needed.
 
 ### Routing contract
 
+<!-- planned-change:instrukt-home-backup -->
 | Situation | Surface |
 | --- | --- |
 | An agent needs approval or new intent | The agent asks in its thread; the runtime exposes `needs-input`. |
 | A failed task waits in no thread | An anomaly eligible for runner notification. |
 | The dispatch agent order is exhausted | An anomaly eligible for runner notification. |
 | Main is red and the integrator cannot repair it, with no waiting thread | An anomaly eligible for runner notification. |
+<!-- change:instrukt-home-backup -->
+| Situation | Surface |
+| --- | --- |
+| An agent needs approval or new intent | The agent asks in its thread; the runtime exposes `needs-input`. |
+| A failed task waits in no thread | An anomaly eligible for runner notification. |
+| The dispatch agent order is exhausted | An anomaly eligible for runner notification. |
+| Main is red and the integrator cannot repair it, with no waiting thread | An anomaly eligible for runner notification. |
+| A home backup fails or becomes stale | An anomaly eligible for runner notification (failure notified directly by backup run; staleness notified on runner wakes and surfaced on local inspection). |
+<!-- /planned-change:instrukt-home-backup -->
 
 Notification is for anomalies only. It does not duplicate ordinary questions
 from a waiting thread or supply a separate approval channel.
@@ -62,10 +72,19 @@ except while its todo waits on a person
 The finding persists until the workflow advances or the execution is released.
 
 <!-- planned:instrukt-home-backup -->
-When home backup records a failed run or a stale backup past its staleness
-threshold (`project/instrukt/spec/feature/runner/home-backup`), the runner
-raises an anomaly through `runner.notify` and lists it with its repair door in
-`instrukt events status`, whether or not a notification command is configured,
+When a home backup run fails (`project/instrukt/spec/feature/runner/home-backup`),
+`instrukt backup run` invokes `runner.notify` directly on every host (including
+backup-only hosts with neither `instrukt tick` nor `instrukt run`). When home
+backup is stale past runner's staleness threshold, active runner invocations
+(`instrukt tick` or `instrukt run`) invoke `runner.notify` once per staleness
+episode until a subsequent backup succeeds; on a backup-only host with neither
+`tick` nor `run`, staleness surfaces on local inspection (`instrukt status` and
+`instrukt events status`) rather than via push notification. Because home
+backup runs with neither an agent session nor a work item, `runner.notify`
+receives a non-session home-backup anomaly reference identifying this
+computer's condition (and never secrets or sensitive payload). Every active
+backup failure or staleness condition is listed in `instrukt events status`
+with its repair door, whether or not a notification command is configured,
 until a subsequent backup succeeds (`project/instrukt/policy/checks-and-guards`).
 <!-- /planned:instrukt-home-backup -->
 
@@ -89,6 +108,13 @@ until a subsequent backup succeeds (`project/instrukt/policy/checks-and-guards`)
 - When no session could start (the dispatch order is exhausted), the runner
   releases its own claim and sets no hold; the notification references the
   work item instead of a session.
+
+<!-- planned:instrukt-home-backup -->
+- For a failed or stale home backup, no agent session or work item exists; the
+  notification passes the non-session home-backup anomaly reference instead of
+  a session reference, once per failed run and once per staleness episode until
+  a subsequent backup succeeds.
+<!-- /planned:instrukt-home-backup -->
 
 ## See Also
 

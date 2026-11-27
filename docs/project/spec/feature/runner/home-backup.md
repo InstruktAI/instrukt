@@ -1,5 +1,5 @@
 ---
-description: Encrypted nightly backup and guarded restore of an instrukt home to S3-compatible object storage — dynamic SQLite consistency snapshots, client-side age encryption, per-machine namespacing, staged verification and retention pruning, local bookkeeping, and safe restore.
+description: Encrypted nightly backup and guarded restore of an instrukt home to provider-neutral S3-compatible object storage — dynamic SQLite consistency snapshots, client-side age encryption, per-machine namespacing, staged verification and retention pruning, local standing and bookkeeping, and safe restore.
 delivered_by: [instrukt-home-backup]
 ---
 # Home Backup — Spec
@@ -8,13 +8,13 @@ delivered_by: [instrukt-home-backup]
 
 Home backup protects a computer's irreplaceable instrukt home (`~/.instrukt`, or
 an explicit `INSTRUKT_HOME`) by publishing consistent, client-side encrypted
-snapshots to S3-compatible object storage (such as DigitalOcean Spaces) and
-providing a guarded restore command. It is self-contained inside instrukt with
-no coupling to external deployment tooling.
+snapshots to provider-neutral S3-compatible object storage and providing a
+guarded restore command. It is self-contained inside instrukt with no coupling
+to external deployment tooling.
 
 An operator runs backups on demand or through an owned daily OS timer converged
 by `project/instrukt/spec/feature/runner/module-installation`, inspects remote
-generations per machine, sees local backup standing in
+generations for this computer, sees local backup standing through
 `project/instrukt/spec/feature/publication/instrukt-status`, receives anomaly
 notification when backups fail or go stale through
 `project/instrukt/spec/feature/runner/anomaly-notification`, and restores into
@@ -31,16 +31,18 @@ importing one isolated company container remains owned by
 
 | Command | Contract |
 | --- | --- |
-| `instrukt backup run` | Snapshot irreplaceable home state consistently, compress and encrypt client-side, publish through staged verification into this machine's S3 namespace, prune excess generations for this machine, and record local bookkeeping. |
-| `instrukt backup list [--machine <id>]` | List backup generations in the configured S3 bucket for this machine (or `<id>`), newest first, distinguishing validated from unvalidated generations. |
-| `instrukt backup restore [--from <key>] [--machine <id>] [--into <dir>] [--identity <age-key>] [--yes]` | Download, decrypt, safely extract, verify every restored SQLite database, and restore a backup generation under overwrite and live-home guards. |
+| `instrukt backup run` | Convert any legacy company home settings forward through configuration, snapshot irreplaceable home state consistently, compress and encrypt client-side, publish through staged verification into this machine's namespace, prune excess generations for this machine, and record local bookkeeping. |
+| `instrukt backup list` | List backup generations in the configured bucket for this machine, newest first, distinguishing validated from unvalidated generations. |
+| `instrukt backup restore [--from <key>] [--machine <id>] [--into <dir>] [--identity <path>] [--yes]` | Download, decrypt, safely extract, verify every restored SQLite database, and restore a backup generation under overwrite, disk-headroom, and live-home guards. |
 
 Every subcommand accepts `-h` and prints its own contract without executing.
 Global configuration and entry validation are owned by
 `project/instrukt/spec/feature/configuration/layered-configuration`; when home
-backup is not configured or fails entry validation, backup commands refuse with
-that finding and its configuration door
-(`project/instrukt/policy/checks-and-guards`).
+backup is not configured or is withheld due to a configuration finding, backup
+commands refuse with that finding and its configuration door
+(`project/instrukt/policy/checks-and-guards`). Command capability admission and
+refusal of company-assigned sessions are owned by
+`project/instrukt/spec/feature/configuration/roles-and-capabilities`.
 
 ### Snapshot scope
 
@@ -50,25 +52,34 @@ regenerable, ephemeral, and git-governed trees.
 | Category | Included |
 | --- | --- |
 | Machine SQLite stores | Every `*.db` and `*.sqlite` database discovered dynamically under `state/` (including the work/runner state database, retained history, review stores, requested-review store, connector read-back store, and any future stores added there). |
-| Machine configuration, secrets and durable state | Global `instrukt.yaml`, `agents.yaml`, `secrets.env`, `state/machine-id`, `state/eval-fingerprint/`, `state/agents-deployment.json`, and `state/runner-hosts.json`. |
-| Global research and exploration notes | `git/` (ingested repository research such as `index.md`, `history.md`, and repo-scoped notes) and `explore/` (cross-project exploration reports), included when present and skipped cleanly when absent. |
-| Company home local state | Under `companies/<name>/`: `company.yaml` (and untracked legacy pre-migration `instrukt.yaml` declaring `company`), `secrets.env`, local state under `.instrukt/`, and every `*.db` and `*.sqlite` database discovered dynamically under `.instrukt/` (such as `knowledge-proposals.db`). |
+| Machine configuration, secrets and durable state | Global `instrukt.yaml`, `agents.yaml`, `secrets.env`, `state/machine-id`, `state/eval-fingerprint/`, `state/agents-deployment.json`, `state/known-issues/` (excluding lock files), and `state/company-generation/` when present. |
+| Global research and exploration notes | Durable research notes under `git/` (such as `index.md`, `history.md`, and repo-scoped non-checkout notes) and `explore/` (cross-project exploration reports), included when present and skipped cleanly when absent. |
+| Company home local state | Under `companies/<name>/`, after `configuration`'s owned-shape forward conversion brings any pre-migration settings document to `company.yaml` (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/configuration/company-homes`): `company.yaml`, `secrets.env`, local state under `.instrukt/`, and every `*.db` and `*.sqlite` database discovered dynamically under `.instrukt/` (such as `knowledge-proposals.db`). |
 
 Excluded unconditionally from every snapshot:
 
 - `cache/` (explicitly including `cache/git/`, the fixed cache for re-cloneable
-  external repositories);
+  external repositories) and any raw git working-tree checkout directory
+  containing `.git` under `git/`;
 - published and rendered documentation rebuilt by sync (`docs/`, `rendered/`,
   `state/index.yaml`, `state/publication/`);
 - regenerable and ephemeral state (`state/blueprint/`, `state/configuration/`,
   `state/installation/`, `state/hook-runs/`, `state/redis/`,
-  `state/consumer-locks/`, `locks/`, all `*.lock` files);
+  `state/consumer-locks/`, `state/runner-hosts.json`, `locks/`, all `*.lock`
+  files);
 - live SQLite sidecars (`*-wal`, `*-shm`, `*-journal`), stray recovery copies
   (`*.corrupt.*`, `*.pre-*`, `*.recovered-*`), and ad-hoc local `backups/`;
 - git-tracked company repository working trees under `companies/<name>/`
   (`.git/`, tracked repository files, and `projects/` checkouts), installed
   tool binaries and virtual environments, and disposable runtime state outside
   the home.
+
+**Path confinement:** Snapshot collection confines every collected file and
+SQLite store to real paths inside its owning root (the instrukt home for
+machine state and research, and each company's own folder under
+`companies/<name>/` for company files). Escaping symlinks are never
+dereferenced and symlinks whose targets escape their owning root are refused or
+omitted (`sdlc/policy/security-awareness`).
 
 ### Consistency, encryption and scale
 
@@ -79,17 +90,18 @@ Excluded unconditionally from every snapshot:
   `PRAGMA quick_check` before archiving. Any snapshot or consistency failure
   aborts publication before uploading or pruning clean generations, records the
   failed run locally, and exits non-zero.
-- **Client-side encryption:** The staged snapshot is compressed and encrypted
-  client-side using `age` to the configured public recipient
-  (`project/instrukt/spec/feature/configuration/layered-configuration`), so
-  unattended runs hold no private decryption key on disk
-  (`sdlc/policy/security-awareness`). Credentials and secrets are never written
-  to logs or terminal output.
+- **Client-side encryption and non-disclosure:** The staged snapshot is
+  compressed and encrypted client-side using `age` to the configured public
+  recipient (`project/instrukt/spec/feature/configuration/layered-configuration`),
+  so unattended runs hold no private decryption key on disk
+  (`sdlc/policy/security-awareness`). Secret material and credentials are never
+  written to logs, terminal output, restore diagnostics, persisted local
+  failure summaries, or anomaly notifications
+  (`project/instrukt/spec/feature/configuration/owned-files`).
 - **Multi-GB streaming and headroom:** Archiving, compression, encryption,
   upload, and server-side promotion stream without whole-file memory buffering
-  so multi-GB homes (including multi-GB `state/history.db`) succeed above S3's
-  5 GiB single-object copy limit. Before staging, backup checks available disk
-  space against the shared-machine headroom requirement
+  so multi-GB homes succeed across any archive size. Before staging, backup
+  checks available disk space against the shared-machine headroom requirement
   (`general/policy/shared-machine-resources`) and refuses without writing
   staging data if headroom would be violated; temporary staging files are
   cleaned up on both success and failure.
@@ -102,25 +114,25 @@ Excluded unconditionally from every snapshot:
 ### Offsite publication, verification and retention
 
 - **Per-machine namespace:** Generations live under
-  `<prefix>/<machine-id>/instrukt-home.<timestamp>.tar.<ext>.age` using this
-  computer's `state/machine-id`, so multiple machines share one bucket without
-  colliding.
+  `<prefix>/<machine-id>/instrukt-home.<timestamp>.tar.<ext>.age` (or
+  `<machine-id>/instrukt-home.<timestamp>.tar.<ext>.age` when `prefix` is
+  omitted) using this computer's `state/machine-id`, so multiple machines share
+  one bucket without colliding.
 - **Staged verify-promote-validate protocol:**
   1. Upload the encrypted archive to `_staging/<key>` using SigV4 with plain
-     fixed-length or multipart upload framing compatible with DigitalOcean
-     Spaces (never `aws-chunked` streaming-trailer checksum framing that
-     non-AWS S3 providers mis-store).
+     fixed-length or multipart upload framing without `aws-chunked`
+     streaming-trailer checksums.
   2. Read object metadata (`HEAD`) on `_staging/<key>` and verify an exact byte
      size match against the local encrypted archive. On mismatch or upload
      error, perform best-effort deletion of `_staging/<key>` and refuse to
      publish.
-  3. Promote `_staging/<key>` to `<key>` via in-region server-side copy (single
-     `CopyObject` up to 5 GiB; multipart `UploadPartCopy` above 5 GiB).
+  3. Promote `_staging/<key>` to `<key>` via in-region server-side copy,
+     handling both single-object copy and multipart server-side copy across the
+     provider's single-object copy size limit.
   4. Write the `_validated/<key>` marker object, then delete `_staging/<key>`.
 - **Per-machine retention pruning:** After writing `_validated/<key>`, prune
   only this machine's namespace to the configured generation retention count
-  (whose default is declared in
-  `project/instrukt/spec/feature/configuration/layered-configuration`).
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
   Unvalidated generations are evicted before validated generations, oldest
   first within each group; pruning a validated generation removes its paired
   `_validated/<key>` marker as well. Generations belonging to other machine IDs
@@ -131,14 +143,25 @@ Excluded unconditionally from every snapshot:
 - **Target selection:** Without `--from`, restore selects the newest
   `_validated/` generation for this computer's `machine-id` (or `--machine <id>`
   when recovering another machine's backup). `--from <key>` selects an explicit
-  object key and permits recovering a named legacy or unvalidated generation.
-- **Decryption, safe extraction and full integrity check:** Restore downloads
-  the encrypted archive into temporary staging, decrypts it using the private
-  identity supplied via `--identity <age-key>`, extracts entries while
-  rejecting path traversal, absolute paths, and symlink escapes, and runs
-  `PRAGMA integrity_check` on every restored `*.db` and `*.sqlite` database
-  before modifying the destination. Any decryption, extraction, or integrity
-  failure aborts without touching the destination.
+  object key and permits recovering a named explicit or unvalidated generation.
+- **Identity input:** `--identity <path>` takes the path to an `age` private
+  identity file (or `-` to read from standard input); raw secret keys are never
+  accepted as command-line arguments (`sdlc/policy/security-awareness`). When
+  `--identity` is omitted, restore prompts with echo off if attached to a
+  terminal and refuses fail-closed naming `--identity <path>` in
+  non-interactive sessions.
+- **Headroom, decryption, safe extraction and full integrity check:** Before
+  staging the download and extracted tree, restore checks available disk space
+  against the shared-machine headroom requirement
+  (`general/policy/shared-machine-resources`) and refuses without staging if
+  headroom would be violated. Restore downloads the encrypted archive into
+  temporary staging, decrypts it using the supplied private identity, extracts
+  entries while rejecting path traversal, absolute paths, and symlink escapes,
+  and runs `PRAGMA integrity_check` on every restored `*.db` and `*.sqlite`
+  database before modifying the destination. Any decryption, extraction, or
+  integrity failure aborts without touching the destination. Temporary restore
+  staging is cleaned up unconditionally on success, failure, and declined
+  confirmation.
 - **Live-home lock guard:** When restoring into the active instrukt home
   (without `--into`), restore refuses while active instrukt state locks
   (`runner.lock`, `writer.lock`, or other held home state locks) are held,
@@ -150,22 +173,31 @@ Excluded unconditionally from every snapshot:
 - **Overwrite confirmation:** Restore prompts unconditionally for confirmation
   before modifying the destination unless `--yes` is supplied.
 
-### Local bookkeeping, scheduling and alerting
+### Local bookkeeping, standing query, scheduling and alerting
 
 - **Dedicated local bookkeeping:** Each backup run atomically records its
   outcome (attempt timestamp, success or failure status, published generation
-  key when successful, and failure summary when failed) in a dedicated local
-  state file outside `instrukt.db` and `writer.lock`
-  (`sdlc/policy/state-storage`). `instrukt status` reads this local record
-  without contacting remote storage
-  (`project/instrukt/spec/feature/publication/instrukt-status`).
-- **Failure and staleness detection:** While home backup is configured, a
-  failed backup run or an elapsed interval since the last successful backup
-  beyond the staleness threshold is an active backup anomaly condition,
-  evaluated strictly from local bookkeeping without network calls and cleared
-  once a subsequent backup succeeds. Raising that anomaly through
-  `runner.notify` and listing it with its door in `instrukt events status` is
-  owned by `project/instrukt/spec/feature/runner/anomaly-notification`.
+  key when successful, and redacted failure summary when failed) in a dedicated
+  local state file outside `instrukt.db` and `writer.lock`
+  (`sdlc/policy/state-storage`), preserving the last successful generation when
+  a subsequent attempt fails.
+- **Backup standing query (`runner → publication`):** Runner owns the
+  local-only, lock-free backup standing query consumed by
+  `project/instrukt/spec/feature/publication/instrukt-status`. Evaluating
+  global backup configuration, local bookkeeping, and runner's staleness
+  threshold without contacting remote storage, it returns runner's standing
+  judgment (`unconfigured`, `never_run`, `ok`, `failed`, or `stale`), the last
+  backup timestamp, the last published generation when present, and an
+  unreadable-state error if bookkeeping cannot be read.
+- **Failure and staleness alerting:** Runner owns the staleness threshold past
+  the daily schedule. On backup failure, `instrukt backup run` raises an
+  anomaly directly through
+  `project/instrukt/spec/feature/runner/anomaly-notification` on every host
+  (including hosts with neither `instrukt tick` nor `instrukt run`). Staleness
+  is evaluated from local bookkeeping without network calls: it surfaces on
+  every host via `instrukt status` and `instrukt events status`, and actively
+  notifies through `runner.notify` whenever `instrukt tick` or `instrukt run`
+  runs on the host, clearing once a subsequent backup succeeds.
 - **Daily scheduling:** Convergence, inspection, and withdrawal of the owned
   daily OS timer that invokes `instrukt backup run` without starting an agent
   session belong to `project/instrukt/spec/feature/runner/module-installation`.
@@ -176,10 +208,10 @@ Excluded unconditionally from every snapshot:
 
 ```gherkin
 Given an operator has configured encrypted offsite home backup on their computer
-And the computer's instrukt home holds multiple active SQLite stores, machine settings and secrets, global research and exploration notes, a company home with local state beside its git-tracked checkout, and excluded caches, locks and stray recovery files
+And the computer's instrukt home holds active SQLite stores, machine settings and secrets, durable operational state, global research and exploration notes, a company home with local state beside its git-tracked checkout, and excluded caches, locks, raw git checkouts and stray recovery files
 When the operator runs a home backup
 Then every SQLite store in machine state and company homes is snapshotted consistently and verified before archiving
-And the archive includes the irreplaceable machine state, research notes and company home local state while omitting caches, locks, live database sidecars, recovery copies, published docs and git-tracked company repository trees
+And the archive includes the irreplaceable machine state, research notes and company home local state confined to each owning root while omitting caches, locks, live database sidecars, recovery copies, published docs, raw git checkouts and git-tracked company repository trees
 And the encrypted archive is verified in remote staging, promoted to this computer's namespace, marked validated and cleaned from staging
 And the archive cannot be read without the matching private decryption key
 And local backup bookkeeping records the completed generation
@@ -187,44 +219,38 @@ But when a database fails consistency verification or the staged remote upload f
 Then nothing is published to the computer's namespace, existing validated generations remain intact, staged remote data is cleaned up and the failure is recorded locally
 ```
 
-### UC-HB2: List and prune backup generations per machine
+### UC-HB2: List this computer's backup generations
 
 ```gherkin
-Given an operator's S3 bucket holds backup generations for two different computers under one prefix
-And this computer's namespace holds both validated and unvalidated generations exceeding the configured retention count
-When the operator lists backups for this computer
-Then the listing shows this computer's generations newest first, distinguishing validated from unvalidated, and omits the other computer's generations
-When the operator lists backups for the other computer
-Then the listing shows the other computer's generations
-When a new backup publishes for this computer
-Then pruning retains only the configured number of generations for this computer, removing unvalidated generations before validated ones and removing paired validation markers
-And the other computer's generations are untouched
+Given an operator's configured backup bucket holds generations for two different computers
+And this computer's namespace holds both validated and unvalidated generations
+When the operator lists backups on this computer
+Then the listing shows this computer's generations newest first, distinguishing validated from unvalidated
+And generations belonging to the other computer are omitted
 ```
 
-### UC-HB3: Restore a home backup with integrity and live-home guards
+### UC-HB3: Restore a home backup with integrity, headroom and live-home guards
 
 ```gherkin
-Given an operator has a validated encrypted home backup in remote storage and holds its matching private decryption key
+Given an operator has a validated encrypted home backup in remote storage and holds its matching private decryption identity file
 When the operator restores into a stopped home or an alternate target directory and confirms overwrite
-Then the archive is decrypted, safely extracted and every restored SQLite database passes full integrity verification before the destination is modified
+Then disk headroom is verified before staging, the archive is decrypted and safely extracted, every restored SQLite database passes full integrity verification before the destination is modified, and temporary staging is cleaned up
 And restoring into an alternate directory leaves the live home untouched
 But when the operator attempts to restore into a live home while instrukt services hold active locks
 Then restore refuses before modifying the destination and names the options to stop services or restore into an alternate directory
-And when the archive fails decryption, contains unsafe paths or holds a database that fails integrity verification
-Then restore aborts without modifying the destination
+And when the archive fails decryption, contains unsafe paths, fails database integrity verification or the operator declines overwrite confirmation
+Then restore aborts without modifying the destination and cleans up temporary staging
 ```
 
-### UC-HB4: Record backup failure and staleness from local bookkeeping
+### UC-HB5: Prune excess backup generations per machine without disturbing other machines
 
 ```gherkin
-Given an operator has configured home backup on their computer
-When a backup run fails
-Then local backup bookkeeping records the failed attempt while preserving the last successful generation if one existed
-And home backup reports an active failure condition from local state without contacting remote storage
-When no backup has succeeded within the configured staleness threshold
-Then home backup reports an active staleness condition from local state without contacting remote storage
-When a subsequent backup succeeds
-Then local backup bookkeeping updates to the new successful generation and clears the active backup anomaly condition
+Given an operator's configured backup bucket holds generations for two different computers
+And this computer's namespace already holds both validated and unvalidated generations at the configured retention count
+When the operator runs a home backup on this computer
+Then only the configured number of generations remain for this computer, evicting unvalidated generations before validated ones
+And evicted generations are no longer selectable as validated backups
+And the other computer's generations are untouched
 ```
 
 ## Known caveats
@@ -235,6 +261,11 @@ Then local backup bookkeeping updates to the new successful generation and clear
 - Git-tracked company repositories and project checkouts are intentionally
   excluded from home backup and are recovered from their git remotes; any
   uncommitted local work in those checkouts is not included.
+- On a backup-only host where neither `instrukt tick` nor `instrukt run` is
+  installed, a failed `instrukt backup run` still invokes `runner.notify`,
+  while a missed timer that never started surfaces as stale on local inspection
+  (`instrukt status`, `instrukt events status`) rather than via push
+  notification.
 - Restoring a home backup onto a fresh machine recovers irreplaceable state and
   configuration; regenerable publication outputs, editor schemas, blueprint
   graphs, and owned OS units are rebuilt afterward with `instrukt sync` and
@@ -246,6 +277,7 @@ Then local backup bookkeeping updates to the new successful generation and clear
 - [project/instrukt/spec/feature/configuration/layered-configuration](../configuration/layered-configuration.md)
 - [project/instrukt/spec/feature/configuration/owned-files](../configuration/owned-files.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
+- [project/instrukt/spec/feature/configuration/roles-and-capabilities](../configuration/roles-and-capabilities.md)
 - [project/instrukt/spec/feature/runner/module-installation](module-installation.md)
 - [project/instrukt/spec/feature/runner/anomaly-notification](anomaly-notification.md)
 - [project/instrukt/spec/feature/runner/company-containers](company-containers.md)

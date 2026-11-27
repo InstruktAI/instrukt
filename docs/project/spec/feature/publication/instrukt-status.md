@@ -34,6 +34,7 @@ every visit with it.
 
 ### Sections
 
+<!-- planned-change:instrukt-home-backup -->
 | Section | Reports |
 | --- | --- |
 | `instrukt` | the running binary's version and the path it runs from |
@@ -43,6 +44,18 @@ every visit with it.
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
 | `projects` | every other project publication state records: its slug, checkout path and published commit |
+<!-- change:instrukt-home-backup -->
+| Section | Reports |
+| --- | --- |
+| `instrukt` | the running binary's version and the path it runs from |
+| `machine` | whether the global layer `~/.instrukt/instrukt.yaml` exists, its `schema_version`, and its validation findings (`project/instrukt/spec/feature/configuration/layered-configuration`) |
+| `runtime` | the selected runtime and whether `runner.runtime` chose it or it is the compiled default; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list; `agent_instructions` reports current per-instance native instruction targets and limitations |
+| `modules` | each module (`blueprint`, `todos`, `events`, `history`; history defaults on) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or the unknown runtime name |
+| `backup` | runner's local-only home backup standing: unconfigured, never run, or current standing (`ok`, `failed`, or `stale`) with last timestamp and published generation when present (`project/instrukt/spec/feature/runner/home-backup`) |
+| `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
+| `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
+| `projects` | every other project publication state records: its slug, checkout path and published commit |
+<!-- /planned-change:instrukt-home-backup -->
 
 - The repository is **adopted** when its project layer names a `project` and
   its hook sections are installed; the report states adopted, partly adopted
@@ -74,19 +87,20 @@ an empty configured list. These answers do not fail status or unrelated sections
 ### Backup status
 
 The report carries an additive `backup` section in both text output and
-`instrukt status --json`. It reads only this computer's configuration and local
-backup bookkeeping (`project/instrukt/spec/feature/runner/home-backup`) and
-never contacts remote object storage or acquires backup locks.
+`instrukt status --json`. It consumes runner's local-only, lock-free backup
+standing query (`project/instrukt/spec/feature/runner/home-backup`), adds no
+staleness or backup-state judgment of its own, reads no private runner state
+file directly, and never contacts remote object storage or acquires backup
+locks.
 
-- When home backup is not configured in the global layer, the section reports
-  that backup is unconfigured.
-- When home backup is configured, the section reports whether a run has been
-  recorded, the latest recorded status (success, failed, or stale), the last
-  backup timestamp, and the last published generation identifier when present.
+- It renders runner's standing answer verbatim: unconfigured, never run, or
+  current standing (`ok`, `failed`, or `stale`), together with the last backup
+  timestamp and published generation identifier when present.
 <!-- /planned:instrukt-home-backup -->
 
 ### Reading and failure
 
+<!-- planned-change:instrukt-home-backup -->
 - Except for the bounded instruction-target query, sections use what instrukt
   already records: the configuration layers, publication state, the repository's hook sections
   and its git remotes. Nothing is re-derived from other repositories, and
@@ -100,6 +114,22 @@ never contacts remote object storage or acquires backup locks.
 - With every part read, the exit status is zero whatever the report says:
   an unconfigured computer or an unadopted repository is an answer, not a
   failure.
+<!-- change:instrukt-home-backup -->
+- Except for the bounded instruction-target query, sections use local state
+  only: the configuration layers, publication state, runner's local-only backup
+  standing query, the repository's hook sections and its git remotes. Nothing
+  is re-derived from other repositories, and neither GitHub nor remote backup
+  storage is contacted.
+- A part that cannot be read (an unparsable project layer, unreadable
+  publication state, or unreadable backup standing reported by runner's query)
+  is reported in its section with the path and the reason; the other sections
+  are still reported, and the exit status is non-zero. A machine layer that
+  cannot be loaded stops status as it stops every command
+  (`project/instrukt/spec/feature/configuration/layered-configuration`).
+- With every part read, the exit status is zero whatever the report says:
+  an unconfigured computer, an unconfigured or never-run backup, or an
+  unadopted repository is an answer, not a failure.
+<!-- /planned-change:instrukt-home-backup -->
 
 ## Use cases
 
@@ -151,9 +181,9 @@ And shows that this repository's publication of it would be refused
 ### UC-IS5: See home backup standing in status without contacting remote storage
 
 ```gherkin
-Given an operator's computer has home backup configured and local backup bookkeeping records the latest backup outcome
+Given an operator's computer has home backup configured and runner supplies a local backup standing answer
 When the operator or an agent reads instrukt's status in text or JSON form
-Then the report includes the additive backup section showing the recorded status, timestamp and published generation from local state alone
+Then the report includes the additive backup section showing runner's standing, last timestamp and published generation without adding status-side judgment
 And no remote object storage call is made and no home file is modified
 But when home backup is unconfigured or has not yet run
 Then the backup section reports that state clearly and status still succeeds
