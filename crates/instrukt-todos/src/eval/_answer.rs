@@ -313,24 +313,23 @@ impl EvaluationAnswers for EvaluationAnswering {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
+
+    use jiff::Timestamp;
+    use serde_json::{Value, json};
+
+    use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef, TodoSlug};
+    use instrukt_core::publication::EvalFingerprint;
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+
     use super::{ANSWER_FORMAT, Answer, Wording, answer, decode};
     use crate::eval::_read::{Limitation, ProjectRead, Reading, Stored, Why};
     use crate::eval::Tally;
-    use crate::evidence::StampRecord;
     use crate::evidence::{
         Actor, ContentDigest, ModelIdentity, ModelProvenance, PreparationReview, ReviewVerdict,
-        StampFact,
+        StampFact, StampRecord,
     };
-    use crate::work::TodoId;
-    use crate::work::TodoRecord;
-    use instrukt_core::ids::{CommitSha, ProjectSlug};
-    use instrukt_core::ids::{SessionRef, TodoSlug};
-    use instrukt_core::publication::EvalFingerprint;
-    use instrukt_runner::interfaces::{CatchUp, TodoKind};
-    use jiff::Timestamp;
-    use serde_json::Value;
-    use serde_json::json;
-    use std::collections::BTreeSet;
+    use crate::work::{TodoId, TodoRecord};
 
     fn at(seconds: i64) -> Timestamp {
         Timestamp::from_second(1_900_000_000 + seconds).unwrap()

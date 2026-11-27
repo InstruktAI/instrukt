@@ -10,9 +10,10 @@ use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use instrukt_core::home::Home;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
+
+use instrukt_core::home::Home;
 
 /// The name the computer fleet's failure is shown under, among the runner's
 /// workers.
@@ -170,10 +171,13 @@ pub(crate) fn status(home: &Home) -> Option<serde_json::Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Clock, FailureFile, FailureRecorder, WORKER, path, status};
-    use instrukt_core::home::Home;
-    use jiff::Timestamp;
     use std::sync::{Arc, Mutex};
+
+    use jiff::Timestamp;
+
+    use instrukt_core::home::Home;
+
+    use super::{Clock, FailureFile, FailureRecorder, WORKER, path, status};
 
     fn home() -> (tempfile::TempDir, Home) {
         let dir = instrukt_core::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
