@@ -251,7 +251,7 @@ fn map_init_error(server: &str, url: &str, error: ClientInitializeError) -> McpE
             cause: format_rpc_error(&rpc),
         },
         ClientInitializeError::TransportError { error, .. } => {
-            classify_transport_error(server, url, error.error)
+            classify_transport_error(server, url, error.error.as_ref())
         }
         other => McpError::Server {
             server: server.to_owned(),
@@ -272,7 +272,9 @@ fn map_service_error(server: &str, url: &str, error: ServiceError) -> McpError {
             server: server.to_owned(),
             cause: format_rpc_error(&rpc),
         },
-        ServiceError::TransportSend(error) => classify_transport_error(server, url, error.error),
+        ServiceError::TransportSend(error) => {
+            classify_transport_error(server, url, error.error.as_ref())
+        }
         other => McpError::Server {
             server: server.to_owned(),
             cause: other.to_string(),
@@ -293,30 +295,7 @@ fn map_http_status(server: &str, http_status: &HttpStatusError) -> McpError {
     }
 }
 
-fn classify_reqwest_error(server: &str, url: &str, req_err: reqwest::Error) -> McpError {
-    if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
-        return McpError::Unauthorized {
-            server: server.to_owned(),
-            cause: "HTTP 401 Unauthorized".into(),
-        };
-    }
-    let is_unreachable = req_err.is_connect() || req_err.is_timeout() || req_err.is_request();
-    let cause = req_err.without_url().to_string();
-    if is_unreachable {
-        McpError::Unreachable {
-            server: server.to_owned(),
-            url: _http::redact_url(url),
-            cause,
-        }
-    } else {
-        McpError::Server {
-            server: server.to_owned(),
-            cause,
-        }
-    }
-}
-
-fn classify_borrowed_reqwest(server: &str, url: &str, req_err: &reqwest::Error) -> McpError {
+fn classify_reqwest_error(server: &str, url: &str, req_err: &reqwest::Error) -> McpError {
     if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
         return McpError::Unauthorized {
             server: server.to_owned(),
@@ -329,6 +308,10 @@ fn classify_borrowed_reqwest(server: &str, url: &str, req_err: &reqwest::Error) 
         "HTTP connection failed".into()
     } else if let Some(status) = req_err.status() {
         format!("HTTP {}", status.as_u16())
+    } else if req_err.is_body() {
+        "HTTP response body interrupted".into()
+    } else if req_err.is_decode() {
+        "HTTP response decode failed".into()
     } else {
         "HTTP request failed".into()
     };
@@ -346,51 +329,12 @@ fn classify_borrowed_reqwest(server: &str, url: &str, req_err: &reqwest::Error) 
     }
 }
 
-fn classify_streamable_error(
-    server: &str,
-    url: &str,
-    http_err: StreamableHttpError<reqwest::Error>,
-) -> McpError {
-    match http_err {
-        StreamableHttpError::AuthRequired(auth) => McpError::Unauthorized {
-            server: server.to_owned(),
-            cause: auth.to_string(),
-        },
-        StreamableHttpError::HttpStatus(http_status) => map_http_status(server, &http_status),
-        StreamableHttpError::UnexpectedServerResponse(msg) if msg.starts_with("HTTP 401") => {
-            McpError::Unauthorized {
-                server: server.to_owned(),
-                cause: msg.to_string(),
-            }
-        }
-        StreamableHttpError::Client(req_err) => classify_reqwest_error(server, url, req_err),
-        StreamableHttpError::Io(io_err) => McpError::Unreachable {
-            server: server.to_owned(),
-            url: _http::redact_url(url),
-            cause: io_err.to_string(),
-        },
-        other => McpError::Server {
-            server: server.to_owned(),
-            cause: other.to_string(),
-        },
-    }
-}
-
 fn classify_transport_error(
     server: &str,
     url: &str,
-    root: Box<dyn std::error::Error + Send + Sync>,
+    root: &(dyn std::error::Error + 'static),
 ) -> McpError {
-    let root = match root.downcast::<StreamableHttpError<reqwest::Error>>() {
-        Ok(http_err) => return classify_streamable_error(server, url, *http_err),
-        Err(other) => other,
-    };
-    let root = match root.downcast::<reqwest::Error>() {
-        Ok(req_err) => return classify_reqwest_error(server, url, *req_err),
-        Err(other) => other,
-    };
-
-    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(root.as_ref());
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(root);
     while let Some(err) = current {
         if err.is::<AuthRequiredError>() {
             return McpError::Unauthorized {
@@ -419,7 +363,7 @@ fn classify_transport_error(
                     }
                 }
                 StreamableHttpError::Client(req_err) => {
-                    classify_borrowed_reqwest(server, url, req_err)
+                    classify_reqwest_error(server, url, req_err)
                 }
                 StreamableHttpError::Io(io_err) => McpError::Unreachable {
                     server: server.to_owned(),
@@ -433,7 +377,7 @@ fn classify_transport_error(
             };
         }
         if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
-            return classify_borrowed_reqwest(server, url, req_err);
+            return classify_reqwest_error(server, url, req_err);
         }
         current = err.source();
     }

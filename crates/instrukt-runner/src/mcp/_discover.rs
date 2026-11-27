@@ -117,6 +117,15 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
         resolution,
         captured,
     } = resolve_live(url)?;
+    classify_discovery_resolution(url, resolution, captured)
+}
+
+fn classify_discovery_resolution(
+    url: &str,
+    resolution: Result<rmcp::transport::auth::AuthorizationMetadataResolution, AuthError>,
+    captured: CapturedResourceMetadata,
+) -> Result<DiscoveryReport, McpError> {
+    let safe_url = redact_url(url);
     match resolution {
         Ok(resolved) if resolved.source.is_discovered() => {
             Ok(build_report(url, &captured, &resolved.metadata))
@@ -131,19 +140,20 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
             authorization_servers,
             captured.scopes_supported,
         )),
-        Err(_) => {
-            let servers = if captured.resource.is_some() {
-                captured.authorization_servers
-            } else {
-                Vec::new()
-            };
-            Ok(empty_report(
-                url,
-                captured.resource,
-                servers,
-                captured.scopes_supported,
-            ))
+        Err(error @ (AuthError::DiscoveryRequestFailed { .. } | AuthError::HttpError(_))) => {
+            Err(McpError::Unreachable {
+                server: safe_url.clone(),
+                url: safe_url,
+                cause: sanitize_auth_error(&error),
+            })
         }
+        Err(error) => Err(McpError::Server {
+            server: safe_url,
+            cause: format!(
+                "OAuth metadata discovery failed: {}",
+                sanitize_auth_error(&error)
+            ),
+        }),
     }
 }
 
@@ -377,4 +387,78 @@ fn validate_probe_url(url: &str) -> Result<Url, McpError> {
         server: url.to_owned(),
         cause: format!("invalid URL: {error}"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_request_failure_returns_unreachable_instead_of_empty_report() {
+        let endpoint = "https://user:secret@mcp.example.com/v1?api_key=leak";
+        let metadata_url =
+            Url::parse("https://auth.example.com/.well-known/oauth-authorization-server").unwrap();
+        let error = AuthError::DiscoveryRequestFailed {
+            url: metadata_url,
+            source: Box::new(std::io::Error::other("HTTP 503")),
+        };
+
+        let result = classify_discovery_resolution(
+            endpoint,
+            Err(error),
+            CapturedResourceMetadata::default(),
+        );
+        assert!(
+            matches!(
+                result,
+                Err(McpError::Unreachable { ref url, .. })
+                    if url == "https://mcp.example.com/v1"
+            ),
+            "expected redacted McpError::Unreachable, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn advertised_servers_without_metadata_still_return_empty_capability_report() {
+        let endpoint = "https://mcp.example.com/v1";
+        let prm_url =
+            Url::parse("https://mcp.example.com/.well-known/oauth-protected-resource").unwrap();
+        let error = AuthError::AuthorizationServersUnavailable {
+            resource_metadata_url: prm_url,
+            authorization_servers: vec!["https://auth.example.com".into()],
+        };
+        let captured = CapturedResourceMetadata {
+            resource: Some(endpoint.into()),
+            authorization_servers: vec!["https://auth.example.com".into()],
+            scopes_supported: vec!["read".into()],
+        };
+
+        let report = classify_discovery_resolution(endpoint, Err(error), captured).unwrap();
+        assert_eq!(report.resource.as_deref(), Some(endpoint));
+        assert_eq!(
+            report.authorization_servers,
+            vec!["https://auth.example.com"]
+        );
+        assert_eq!(report.scopes_supported, vec!["read"]);
+        assert!(!report.pkce_s256_supported);
+        assert!(!report.registration_supported);
+    }
+
+    #[test]
+    fn metadata_validation_error_fails_instead_of_returning_empty_report() {
+        let endpoint = "https://mcp.example.com/v1";
+        let error = AuthError::AuthorizationServerMissingIssuer {
+            expected_issuer: "https://auth.example.com".into(),
+        };
+
+        let result = classify_discovery_resolution(
+            endpoint,
+            Err(error),
+            CapturedResourceMetadata::default(),
+        );
+        assert!(
+            matches!(result, Err(McpError::Server { .. })),
+            "expected McpError::Server, got {result:?}"
+        );
+    }
 }

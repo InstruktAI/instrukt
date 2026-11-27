@@ -94,7 +94,7 @@ outcome. Older records convert in memory with no invented checkout or staging
 result; a record in a shape this binary does not know, a newer one included,
 reads as no record and is never refused, and the
 next recorded hook run persists the versioned shape
-(a version gate on rebuildable state is no gate, `general/principle/trust-and-guardrails`). Inspection never rewrites these records. A record belongs to
+(derived hook-run records rebuild on the next run, `sdlc/policy/state-storage`). Inspection never rewrites these records. A record belongs to
 the repository, keyed by a digest of its git common directory and naming the
 repository's path, so it is found without reading the repository's
 configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
