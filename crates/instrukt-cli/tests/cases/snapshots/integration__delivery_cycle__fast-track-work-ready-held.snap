@@ -1,0 +1,30 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "support::redact(&crew.todo([\"show\", slug]))"
+---
+quick-fix · change · active
+identity: <id 1>
+record status: held
+created: <time> by session t3:lead-1
+revision: 5
+intent:
+  Fix off-by-one in small parser helper.
+reflection: reflected to GitHub
+issue: #1
+claim: not held
+hold: work waits for its deliberate start (runner.autostart is off for change) (automatic, by session t3:lead-1, <time>)
+sessions:
+  todo-lead/1: t3:lead-1
+    key: instrukt:todo:demo/<id 1>:todo-lead:1
+    branch: quick-fix/work; base: <commit 1>
+    worktree: [TMP]/team-quick-fix-work
+    released: <time>
+artifacts:
+  input (1 version)
+    <digest 1> by session t3:lead-1 at <time>
+stamps:
+  #2 <time> work ready — waiting for deliberate start — by session t3:lead-1 as todo-lead, model unknown, eval <digest 2>
+workspace:
+  branch: quick-fix/work
+  worktree: [TMP]/team-quick-fix-work (clean)
+  head: <commit 1>

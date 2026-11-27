@@ -1,0 +1,30 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "crew.project.github.issue(support::REPOSITORY, 1).unwrap()[\"labels\"]"
+---
+[
+  {
+    "id": 101300,
+    "name": "instrukt",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 101301,
+    "name": "kind:change",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 101302,
+    "name": "status:active",
+    "color": "ededed",
+    "description": null
+  },
+  {
+    "id": 102003,
+    "name": "hold",
+    "color": "ededed",
+    "description": null
+  }
+]

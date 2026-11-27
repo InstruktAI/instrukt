@@ -1,5 +1,0 @@
----
-source: crates/instrukt-cli/tests/cases/work-dispatch.rs
-expression: "String::from_utf8_lossy(&refused.get_output().stderr)"
----
-instrukt: `runner.autostart` is off for `change` todos and `build-started-only` has not had its deliberate work start; record `instrukt todo stamp build-started-only --work-ready`, release the claim with `instrukt todo update build-started-only --unclaim` and stop. Removing the `hold` label or releasing the hold starts the work

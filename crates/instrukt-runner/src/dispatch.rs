@@ -153,11 +153,17 @@ fn pickup(
     };
     offered
         .iter()
-        .filter(|candidate| candidate.kind != TodoKind::Task || kinds.contains(&TodoKind::Task))
+        .filter(|candidate| pickup_admits_kind(candidate.kind, &kinds))
         .filter_map(|candidate| {
             dispatch_one(cx, config, work, workflow, &index, project, candidate)
         })
         .collect()
+}
+
+/// Whether runner pickup admits `kind` under `autostart` kinds: non-task kinds
+/// always enter preparation; `task` requires `TodoKind::Task` in `autostart`.
+fn pickup_admits_kind(kind: TodoKind, autostart: &[TodoKind]) -> bool {
+    kind != TodoKind::Task || autostart.contains(&TodoKind::Task)
 }
 
 fn dispatch_one(
@@ -662,5 +668,19 @@ mod tests {
         let role = RoleName::parse(TASK_RUNNER_ROLE).unwrap();
         assert_eq!(declared_in(&index, "sdlc", &role), Some(&index.snippets[1]));
         assert_eq!(declared_in(&index, "absent", &role), None);
+    }
+
+    #[test]
+    fn pickup_admits_non_task_kinds_without_autostart_and_gates_tasks() {
+        for kind in [TodoKind::Bug, TodoKind::Change, TodoKind::Feature] {
+            assert!(pickup_admits_kind(kind, &[]));
+            assert!(pickup_admits_kind(kind, &[TodoKind::Task]));
+        }
+        assert!(!pickup_admits_kind(TodoKind::Task, &[]));
+        assert!(!pickup_admits_kind(
+            TodoKind::Task,
+            &[TodoKind::Bug, TodoKind::Change, TodoKind::Feature]
+        ));
+        assert!(pickup_admits_kind(TodoKind::Task, &[TodoKind::Task]));
     }
 }

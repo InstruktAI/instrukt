@@ -367,7 +367,7 @@ fn the_runner_removes_a_delivered_worktree_and_branch_once_no_uncommitted_change
 #[test]
 fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enforces_three_invariants()
  {
-    let crew = Crew::new();
+    let crew = Crew::with_autostart("{change: false}");
     let slug = "quick-fix";
     crew.project
         .create(slug, "change", "Fix off-by-one in small parser helper.");
@@ -375,6 +375,78 @@ fn fast_track_bug_reaches_finalize_ready_without_plan_setup_or_finalizer_and_enf
     let ledger_out = crew.next("work", slug);
     assert!(ledger_out.contains("interference lock: free"));
     assert!(ledger_out.contains("prd approval: not required"));
+
+    // Invariant 3 (deliberate work start): with runner.autostart off for change,
+    // the first builder reservation is refused until --work-ready is stamped and
+    // its automatic dispatch hold is released.
+    let refused_builder = crew
+        .project
+        .env
+        .instrukt(crew.root())
+        .args([
+            "todo",
+            "attempt",
+            slug,
+            "--role",
+            "builder",
+            "--procedure",
+            "crew/procedure/build",
+            "--args",
+            slug,
+            "--brief",
+            "-",
+            "--json",
+        ])
+        .write_stdin("Build the fast-track change.")
+        .assert()
+        .failure();
+    insta::assert_snapshot!(
+        "fast-track-builder-refused-before-work-ready",
+        String::from_utf8_lossy(&refused_builder.get_output().stderr)
+    );
+
+    crew.stamp(slug, &["--work-ready"]);
+    crew.todo(["update", slug, "--unclaim"]);
+    insta::assert_snapshot!(
+        "fast-track-work-ready-held",
+        support::redact(&crew.todo(["show", slug]))
+    );
+    insta::assert_json_snapshot!(
+        "fast-track-work-ready-held-labels",
+        crew.project.github.issue(support::REPOSITORY, 1).unwrap()["labels"]
+    );
+
+    // Entry while held is refused.
+    let (_, entry_while_held_ok) = crew.next_in(&crew.workspace(slug), "work", slug);
+    assert!(!entry_while_held_ok);
+
+    // Collaborator removes the hold label on GitHub; workspace entry pulls the
+    // release and re-claims the todo, admitting the first builder round.
+    crew.project
+        .github
+        .edit_issue(support::REPOSITORY, 1, |issue| {
+            issue.labels.retain(|l| l != "hold");
+        });
+    crew.project.github.seed_event(
+        support::REPOSITORY,
+        1,
+        serde_json::json!({
+            "event": "unlabeled",
+            "label": {"name": "hold"},
+            "actor": {"login": "maintainer"},
+            "created_at": "2026-11-27T00:00:00Z",
+        }),
+    );
+    crew.project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        crate::common::github::CannedResponse {
+            status: 200,
+            headers: vec![],
+            body: serde_json::json!({"permission": "write"}),
+        },
+    );
+    crew.next("work", slug);
 
     // Dispatch builder directly in <slug>/work.
     let builder_assignment = crew.worker(slug, "builder", Some("crew/procedure/build"));

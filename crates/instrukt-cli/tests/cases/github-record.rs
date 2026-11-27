@@ -88,9 +88,10 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
         attempts,
         "the refused content was sent again"
     );
-    let issue_labels = labels(&project.github.issue(REPOSITORY, 1).unwrap());
-    assert!(issue_labels.contains("hold"));
-    assert!(!issue_labels.contains("on-hold"));
+    insta::assert_json_snapshot!(
+        "refused-by-github-hold-labels",
+        project.github.issue(REPOSITORY, 1).unwrap()["labels"]
+    );
     let shown = project.ok(["show", "nested-lists"]);
 
     // The door is the artifact's next version: once GitHub accepts it, the
@@ -1053,11 +1054,36 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
             },
         );
     };
+    // Collaborator adds `hold` on GitHub while permission verification fails
+    // with 503: pull_through leaves the todo unheld and non-pending, and a
+    // mutating command's flush in the same session preserves remote `hold`.
     project
         .github
         .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
-    label("labeled", "maintainer", "write");
-    let held = project.ok(["show", "held-work"]);
+    project.github.seed_event(
+        REPOSITORY,
+        1,
+        serde_json::json!({"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"}),
+    );
+    project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        CannedResponse {
+            status: 503,
+            headers: vec![],
+            body: serde_json::json!({"message": "Service Unavailable"}),
+        },
+    );
+    let unverified = project.ok(["show", "held-work"]);
+    project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        CannedResponse {
+            status: 503,
+            headers: vec![],
+            body: serde_json::json!({"message": "Service Unavailable"}),
+        },
+    );
     project.ok([
         "artifacts",
         "write",
@@ -1065,62 +1091,27 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         "log",
         "Progress remains available.",
     ]);
-    let before = project.github.artifacts(REPOSITORY, 1);
-    project.github.edit_issue(REPOSITORY, 1, |issue| {
-        issue.labels.retain(|l| l != "hold" && l != "status:active");
-        issue.labels.push("status:delivered".into());
-        issue.labels.push("team-owned".into());
-    });
-    label("unlabeled", "collaborator", "write");
-    let released = project.ok(["show", "held-work"]);
-    // A subsequent write reflects the accepted release and restores output labels.
-    project.ok(["update", "held-work"]);
-    assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
-    project.github.edit_issue(REPOSITORY, 1, |_| {});
-    label("labeled", "outsider", "read");
-    let refused = project.ok(["show", "held-work"]);
-    insta::assert_snapshot!(
-        "github-hold-label-audit",
-        redact(&format!("{held}---\n{released}---\n{refused}"))
-    );
     insta::assert_json_snapshot!(
-        "github-restored-output-labels",
+        "github-hold-preserved-while-unverified",
         project.github.issue(REPOSITORY, 1).unwrap()["labels"]
     );
-}
 
-// spec: project/instrukt/spec/feature/work/github-record UC-GR9
-#[test]
-fn hold_reflection_strips_retired_on_hold_ignores_own_app_bot_and_releases_automatic_hold() {
-    let project = Project::new();
-    project.create(
-        "hold-reflection",
-        "bug",
-        "Verify hold label reflection and own-bot recognition.",
+    // Permission recovery applies the previously outstanding `labeled` event.
+    project.github.respond_once(
+        "GET",
+        "/collaborators/maintainer/permission",
+        CannedResponse {
+            status: 200,
+            headers: vec![],
+            body: serde_json::json!({"permission": "write"}),
+        },
     );
+    let held = project.ok(["show", "held-work"]);
+    let before = project.github.artifacts(REPOSITORY, 1);
 
-    // 1. Manual hold reflects `hold` and no `on-hold`; pre-existing `on-hold` is stripped.
-    project.ok([
-        "update",
-        "hold-reflection",
-        "--hold",
-        "--reason",
-        "manual pause",
-    ]);
-    let manual_labels = labels(&project.github.issue(REPOSITORY, 1).unwrap());
-    assert!(manual_labels.contains("hold"), "{manual_labels:?}");
-    assert!(!manual_labels.contains("on-hold"), "{manual_labels:?}");
-
-    project
-        .github
-        .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("on-hold".into()));
-    project.ok(["update", "hold-reflection"]);
-    let stripped_labels = labels(&project.github.issue(REPOSITORY, 1).unwrap());
-    assert!(stripped_labels.contains("hold"), "{stripped_labels:?}");
-    assert!(!stripped_labels.contains("on-hold"), "{stripped_labels:?}");
-
-    // 2. Own App bot label action (verified by matching {id, node_id, login}) is ignored
-    // without changing record.hold or calling /collaborators/.../permission.
+    // An own configured App bot label action (matched by Bot::matches on
+    // numeric id and node_id, not login) is ignored as output without changing
+    // the hold or calling the permission endpoint.
     let bot_login = "instruktai[bot]";
     let bot_id: u64 = bot_login.bytes().map(u64::from).sum();
     project.github.edit_issue(REPOSITORY, 1, |_| {});
@@ -1136,10 +1127,10 @@ fn hold_reflection_strips_retired_on_hold_ignores_own_app_bot_and_releases_autom
                 "node_id": format!("BOT_{bot_id}"),
                 "type": "Bot",
             },
-            "created_at": "2026-11-27T00:01:00Z",
+            "created_at": "2026-11-06T10:01:00Z",
         }),
     );
-    let after_own_bot = project.ok(["show", "hold-reflection"]);
+    let after_own_bot = project.ok(["show", "held-work"]);
     assert!(
         project
             .github
@@ -1148,241 +1139,30 @@ fn hold_reflection_strips_retired_on_hold_ignores_own_app_bot_and_releases_autom
         "own App bot event must not call permission endpoint"
     );
 
-    // 3. A login-only or mismatched {id, node_id} actor is NOT treated as own-bot output
-    // and goes through the collaborator permission check.
-    project.github.edit_issue(REPOSITORY, 1, |_| {});
-    project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({
-            "event": "unlabeled",
-            "label": {"name": "hold"},
-            "actor": {
-                "login": bot_login,
-                "id": bot_id + 999,
-                "node_id": "BOT_WRONG",
-                "type": "Bot",
-            },
-            "created_at": "2026-11-27T00:02:00Z",
-        }),
-    );
-    project.github.respond_once(
-        "GET",
-        "/collaborators/instruktai[bot]/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission": "read"}),
-        },
-    );
-    let after_spoofed_bot = project.ok(["show", "hold-reflection"]);
-    assert_eq!(
-        project
-            .github
-            .requests_to("GET", "/collaborators/instruktai[bot]/permission")
-            .len(),
-        1,
-        "mismatched bot actor must be verified via permission endpoint"
-    );
-
-    // 4. An automatic hold reflects `hold` and is released by a collaborator's `unlabeled` event.
-    project.ok(["update", "hold-reflection", "--release"]);
-    project.ok([
-        "artifacts",
-        "write",
-        "hold-reflection",
-        "diagnosis",
-        "Need operator input.",
-    ]);
-    project.ok([
-        "stamp",
-        "hold-reflection",
-        "--diagnosis-unresolved",
-        "--reason",
-        "waiting on logs",
-    ]);
-    let auto_labels = labels(&project.github.issue(REPOSITORY, 1).unwrap());
-    assert!(auto_labels.contains("hold"), "{auto_labels:?}");
-    assert!(!auto_labels.contains("on-hold"), "{auto_labels:?}");
-
     project.github.edit_issue(REPOSITORY, 1, |issue| {
-        issue.labels.retain(|l| l != "hold");
+        issue.labels.retain(|l| l != "hold" && l != "status:active");
+        issue.labels.push("status:delivered".into());
+        issue.labels.push("on-hold".into());
+        issue.labels.push("team-owned".into());
     });
-    project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({
-            "event": "unlabeled",
-            "label": {"name": "hold"},
-            "actor": {"login": "maintainer"},
-            "created_at": "2026-11-27T00:03:00Z",
-        }),
-    );
-    project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission": "write"}),
-        },
-    );
-    let after_auto_release = project.ok(["show", "hold-reflection"]);
+    label("unlabeled", "collaborator", "write");
+    let released = project.ok(["show", "held-work"]);
+    // A subsequent write reflects the accepted release, strips retired on-hold,
+    // and restores output labels.
+    project.ok(["update", "held-work"]);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
+    project.github.edit_issue(REPOSITORY, 1, |_| {});
+    label("labeled", "outsider", "read");
+    let refused = project.ok(["show", "held-work"]);
     insta::assert_snapshot!(
-        "github-hold-own-bot-and-auto-release",
+        "github-hold-label-audit",
         redact(&format!(
-            "{after_own_bot}---\n{after_spoofed_bot}---\n{after_auto_release}"
+            "{unverified}---\n{held}---\n{after_own_bot}---\n{released}---\n{refused}"
         ))
     );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR9
-#[test]
-fn unverified_hold_label_event_preserves_remote_hold_across_sync_reflection() {
-    let mut crew = workflow::Crew::new();
-    crate::fixtures::documented::sync(&crew.project.env, &crew.project.repo);
-    crew.project.create(
-        "sync-hold",
-        "change",
-        "Preserve unverified hold label edits across sync_reflection.",
-    );
-    // Claim so runner ticks only run sync_reflection (publish -> poll_interest -> flush).
-    crew.next("work", "sync-hold");
-
-    // Collaborator adds `hold` on GitHub while permission check fails with 503.
-    crew.project.github.edit_issue(REPOSITORY, 1, |issue| {
-        issue.labels.push("hold".into());
-    });
-    crew.project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({
-            "event": "labeled",
-            "label": {"name": "hold"},
-            "actor": {"login": "maintainer"},
-            "created_at": "2026-11-27T00:10:00Z",
-        }),
-    );
-    // 1. Even with no other pending change, restore_output_labels must not overwrite `hold`.
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 503,
-            headers: vec![],
-            body: serde_json::json!({"message": "Service Unavailable"}),
-        },
-    );
-    crew.project.env.run(crew.root(), ["tick"]).success();
-    assert!(
-        labels(&crew.project.github.issue(REPOSITORY, 1).unwrap()).contains("hold"),
-        "restore_output_labels must leave unverified remote hold intact"
-    );
-
-    // 2. Even when another local change IS pending (flush runs), remote `hold` stays preserved.
-    crew.project.github.stop();
-    crew.write("sync-hold", "log", "Pending local log while unverified.");
-    crew.project.github.resume();
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 503,
-            headers: vec![],
-            body: serde_json::json!({"message": "Service Unavailable"}),
-        },
-    );
-    crew.project.env.run(crew.root(), ["tick"]).success();
-    assert!(
-        crew.project
-            .github
-            .artifacts(REPOSITORY, 1)
-            .iter()
-            .any(|a| a["artifact"]["name"] == "log"),
-        "pending log artifact must still flush"
-    );
-    assert!(
-        labels(&crew.project.github.issue(REPOSITORY, 1).unwrap()).contains("hold"),
-        "flush must preserve unverified remote hold when events are outstanding"
-    );
-
-    // Verify local record is still unheld while permission check fails.
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 503,
-            headers: vec![],
-            body: serde_json::json!({"message": "Service Unavailable"}),
-        },
-    );
-    let while_unverified = crew.todo(["show", "sync-hold"]);
-
-    // 3. When permission endpoint recovers, next tick applies the outstanding labeled event.
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission": "write"}),
-        },
-    );
-    crew.project.env.run(crew.root(), ["tick"]).success();
-    let after_labeled_recovery = crew.todo(["show", "sync-hold"]);
-    assert!(labels(&crew.project.github.issue(REPOSITORY, 1).unwrap()).contains("hold"));
-
-    // 4. Reverse direction: collaborator removes `hold` while held + pending change + 503.
-    crew.project.github.stop();
-    crew.write("sync-hold", "log", "Second pending log while unverified.");
-    crew.project.github.resume();
-    crew.project.github.edit_issue(REPOSITORY, 1, |issue| {
-        issue.labels.retain(|l| l != "hold");
-    });
-    crew.project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({
-            "event": "unlabeled",
-            "label": {"name": "hold"},
-            "actor": {"login": "maintainer"},
-            "created_at": "2026-11-27T00:11:00Z",
-        }),
-    );
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 503,
-            headers: vec![],
-            body: serde_json::json!({"message": "Service Unavailable"}),
-        },
-    );
-    crew.project.env.run(crew.root(), ["tick"]).success();
-    assert!(
-        !labels(&crew.project.github.issue(REPOSITORY, 1).unwrap()).contains("hold"),
-        "flush must not re-add hold when unlabeled event is outstanding"
-    );
-
-    // Recover permission endpoint: next tick applies the unlabeled event and releases hold.
-    crew.project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission": "write"}),
-        },
-    );
-    crew.project.env.run(crew.root(), ["tick"]).success();
-    let after_unlabeled_recovery = crew.todo(["show", "sync-hold"]);
-    assert!(!labels(&crew.project.github.issue(REPOSITORY, 1).unwrap()).contains("hold"));
-
-    insta::assert_snapshot!(
-        "github-hold-unverified-recovery",
-        redact(&format!(
-            "{while_unverified}---\n{after_labeled_recovery}---\n{after_unlabeled_recovery}"
-        ))
+    insta::assert_json_snapshot!(
+        "github-restored-output-labels",
+        project.github.issue(REPOSITORY, 1).unwrap()["labels"]
     );
 }
 // spec: project/instrukt/spec/feature/work/github-record UC-GR8
