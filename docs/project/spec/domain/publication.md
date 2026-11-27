@@ -687,7 +687,7 @@ This context emits no events.
 - **editor-schemas** — `project/instrukt/spec/feature/publication/editor-schemas` — a developer's editor checks instrukt's YAML files against the rules the installed instrukt validates with.
 - **docs-repositories** — `project/instrukt/spec/feature/publication/docs-repositories` — a computer takes its doctrine from adopted docs repositories, which anyone may fork or replace; instrukt enforces their format and never depends on their wording.
 - **instrukt-status** — `project/instrukt/spec/feature/publication/instrukt-status` — an agent or developer learns in one read where this computer and repository stand with instrukt before changing anything.
-- **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version changes exactly when the knowledge does.
+- **company-plugin** — `project/instrukt/spec/feature/publication/company-plugin` — people and agents who work for a company through Claude without a checkout receive the company's knowledge as a plugin whose version is raised exactly when its rendering changes.
 
 - **compressed-units** — `project/instrukt/spec/feature/publication/compressed-units` — every agent starts with the whole selection its entrypoint makes, compressed, while a prose change reaches agents at once and a repository's automation learns offline exactly which units to renew.
 

@@ -130,8 +130,8 @@ there, never by reading through delivered work.
 ## Governing designs and decisions
 
 - `general/principle/intelligence-boundaries` — code owns facts and integrity invariants; prose owns judgment and routing.
-- `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation, human-owned gates).
-- `general/principle/verification-independence` — a pass, fail or blocked disposition, like a build-review approval, comes only from a session that did not produce the change.
+- `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation).
+- `general/principle/verification-independence` — a change is verified only against a standard that originated outside the session that produced it.
 - `general/policy/human-contract` — human-owned approvals (`approvals.prd`, `approvals.task`) remain enforced where configured.
 
 ## Use cases
