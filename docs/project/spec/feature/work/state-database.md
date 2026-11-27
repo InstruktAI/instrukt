@@ -801,10 +801,11 @@ set-aside mirrors in the same transaction. An input with an unsettled
 reference is retained. A pending verdict notice closed `failed` because its
 session was archived, deleted or succeeded before sending is retired after
 `SET_ASIDE_RETENTION` from its arrival; a verdict notice already `selected` or
-`accepted` when its session is succeeded or archived becomes `unconfirmed` with
-its slot released and is retained. Status reports the retained count and up to
-`SET_ASIDE_STATUS_LIMIT` recent findings, for set-aside inputs and for
-closed verdict notices alike. Wake requests coalesce per target.
+`accepted` when its session is archived, deleted or succeeded becomes
+`unconfirmed` with its slot released and is retained. Status reports the
+retained count and up to `SET_ASIDE_STATUS_LIMIT` recent findings, for
+set-aside inputs and for closed verdict notices alike. Wake requests coalesce
+per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run
 outside transactions; the fixed target and selected input commit before send.
 A lost acknowledgement can repeat input and remains distinguishable from
