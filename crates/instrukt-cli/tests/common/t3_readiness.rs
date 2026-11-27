@@ -653,3 +653,122 @@ pub fn configure(env: &TestEnv, providers: Vec<Value>, instances: Value) {
         snapshot["settings"]["providerInstances"] = instances;
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read as _, Write as _};
+    use std::os::unix::fs::MetadataExt as _;
+
+    fn issue_token(env: &TestEnv, label: &str) -> String {
+        let output = env
+            .command(&env.path("runtime-bin/t3"), env.home())
+            .args([
+                "auth",
+                "session",
+                "issue",
+                "--scope",
+                "orchestration:read",
+                "--ttl",
+                "5m",
+                "--token-only",
+                "--label",
+                label,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "t3 auth session issue ({label}) failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).unwrap().trim().to_owned()
+    }
+
+    fn projects_status(port: u16, token: &str) -> u16 {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        write!(
+            stream,
+            "GET /api/projects HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {token}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn clock_source_is_replaced_atomically_across_concurrent_token_issues() {
+        let mut env = TestEnv::new();
+        // An operator clock well before wall-clock time: any spurious fallback
+        // to jiff::Timestamp::now() immediately treats 5m tokens as expired.
+        let first_now = "2026-11-19T10:10:00Z";
+        let second_now = "2026-11-19T10:11:00Z";
+        env.set_env("INSTRUKT_NOW", first_now);
+        crate::fixtures::t3::FakeT3::create(&env);
+        let runtime: Value =
+            serde_json::from_slice(&std::fs::read(state_file(&env)).unwrap()).unwrap();
+        let port = runtime["port"].as_u64().unwrap() as u16;
+        let dir = env.path("t3-readiness");
+        let clock_source = dir.join("clock-source");
+
+        let token1 = issue_token(&env, "first");
+        assert_eq!(projects_status(port, &token1), 200);
+
+        // Hold an open handle to the first clock-source inode, modelling a
+        // reader in `now(dir)` that opened the file before a concurrent rewrite.
+        let mut held = std::fs::File::open(&clock_source).unwrap();
+        let before_ino = held.metadata().unwrap().ino();
+
+        env.set_env("INSTRUKT_NOW", second_now);
+        let token2 = issue_token(&env, "second");
+        assert_eq!(projects_status(port, &token2), 200);
+
+        // An atomic write-to-temp + rename preserves the old inode's bytes and
+        // replaces the directory entry with a new inode; an in-place O_TRUNC
+        // overwrite mutates the same inode under the reader's open handle.
+        let mut held_contents = String::new();
+        held.read_to_string(&mut held_contents).unwrap();
+        assert_eq!(held_contents, first_now);
+        assert_ne!(std::fs::metadata(&clock_source).unwrap().ino(), before_ino);
+        assert_eq!(std::fs::read_to_string(&clock_source).unwrap(), second_now);
+
+        // Concurrent `t3 auth session issue` subprocesses must not collide on
+        // temp filenames or cause spurious 401 rejections on live requests.
+        std::thread::scope(|scope| {
+            for index in 0..4 {
+                let env_ref = &env;
+                let token_ref = &token1;
+                scope.spawn(move || {
+                    for round in 0..3 {
+                        let issued = issue_token(env_ref, &format!("concurrent-{index}-{round}"));
+                        assert_eq!(projects_status(port, token_ref), 200);
+                        assert_eq!(projects_status(port, &issued), 200);
+                    }
+                });
+            }
+        });
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("clock-source.") && name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "leftover temp files: {leftovers:?}");
+
+        // Without INSTRUKT_NOW, wall-clock fallback still accepts a live token.
+        env.remove_env("INSTRUKT_NOW");
+        let live_token = issue_token(&env, "wall-clock");
+        assert_eq!(projects_status(port, &live_token), 200);
+        assert_eq!(projects_status(port, &token1), 401);
+    }
+}
