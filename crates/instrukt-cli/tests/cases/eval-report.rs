@@ -16,6 +16,7 @@
 
 use crate::common;
 use crate::fixtures::documented;
+use crate::fixtures::history as fleet;
 use crate::fixtures::runtime;
 use crate::fixtures::work as support;
 use crate::fixtures::workflow;
@@ -57,11 +58,35 @@ fn tracked(slug: &str, repository: &str) -> String {
 
 impl Evaluated {
     fn new() -> Self {
+        Self::committing_as(None)
+    }
+
+    /// A computer named `name` whose `flows` and `lists` repositories
+    /// (created after the git-identity overrides) commit as that computer,
+    /// so its flavor commits never share an identity with another computer's
+    /// identical ones, whatever second they are made in; `demo` keeps the
+    /// default identity captured earlier by `Project::with_runtime`.
+    fn on_computer(name: &str) -> Self {
+        Self::committing_as(Some(name))
+    }
+
+    fn committing_as(computer: Option<&str>) -> Self {
         let mut project = Project::with_runtime(Some("T3CODE_THREAD_ID"));
         let runtime = runtime::FakeRuntime::new(&project.env, "t3", false);
         runtime.open_session("s1");
         let model = runtime.state_dir().join("s1.json");
         project.env.set_env("T3CODE_THREAD_ID", "s1");
+        if let Some(name) = computer {
+            let email = format!("{name}@computer.test");
+            for (variable, value) in [
+                ("GIT_AUTHOR_NAME", name),
+                ("GIT_COMMITTER_NAME", name),
+                ("GIT_AUTHOR_EMAIL", email.as_str()),
+                ("GIT_COMMITTER_EMAIL", email.as_str()),
+            ] {
+                project.env.set_env(variable, value);
+            }
+        }
         project.env.set_env("INSTRUKT_NOW", "2030-01-05T08:00:00Z");
         let flavor = workflow::Flavor::publish(&project.env);
         // The eval set: a review policy, published an hour later.
@@ -290,4 +315,138 @@ fn work_recorded_in_a_project_whose_checkout_is_gone_stays_in_the_report() {
 
     insta::assert_snapshot!("checkout-gone-printed", printed);
     insta::assert_snapshot!("checkout-gone-report", page);
+}
+
+/// Records work in `eval`'s project `demo` under both eval sets: a todo
+/// `<todo>-first` under the first with `first_model`, returned once before
+/// it is approved, then, the process changed, a todo `<todo>-second` under
+/// the second with `second_model`, approved at its first review.
+fn records_work(eval: &mut Evaluated, todo: &str, first_model: &str, second_model: &str) {
+    let demo = eval.project.repo.path().to_path_buf();
+    eval.at("2030-01-05T12:00:00Z");
+    documented::sync(&eval.project.env, &eval.project.repo);
+    eval.uses(first_model);
+    eval.at("2030-01-06T09:00:00Z");
+    eval.reviewed(&demo, &format!("{todo}-first"), true);
+    eval.at("2030-01-12T09:00:00Z");
+    eval.change_process("Review every change against its requirements and its tests.");
+    eval.uses(second_model);
+    eval.at("2030-01-13T09:00:00Z");
+    eval.reviewed(&demo, &format!("{todo}-second"), false);
+}
+
+/// `page` with each `flows` commit named by the computer whose flavor
+/// repository made it, and each commits list in name order: the commits'
+/// own identities, and so their sorted order, differ from run to run.
+fn by_computer(page: &str, computers: &[(&str, &Evaluated)]) -> String {
+    let mut page = page.to_owned();
+    for (name, eval) in computers {
+        let log = eval
+            .project
+            .env
+            .git(eval.flavor.repo.path(), ["log", "--format=%H", "--reverse"]);
+        for (number, commit) in log.lines().enumerate() {
+            page = page.replace(commit, &format!("{name}'s commit {}", number + 1));
+        }
+    }
+    let mut out = Vec::new();
+    let mut list: Vec<&str> = Vec::new();
+    let mut in_list = false;
+    for line in page.lines() {
+        if in_list && line.starts_with("<li>") {
+            list.push(line);
+            continue;
+        }
+        list.sort_unstable();
+        out.append(&mut list);
+        in_list = line == "<ul class=\"commits\">";
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
+// spec: project/instrukt/spec/feature/work/eval-report UC-ER2
+#[test]
+fn a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offline_one() {
+    let (a_id, b_id, c_id, d_id) = (
+        "aaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbb",
+        "cccccccccccccccc",
+        "dddddddddddddddd",
+    );
+    // A asks; B runs `instrukt run` with history off; C only ticks; D
+    // ticked once and is offline since.
+    let mut a = Evaluated::on_computer("a");
+    let mut b = Evaluated::on_computer("b");
+    let mut c = Evaluated::on_computer("c");
+    let mut d = Evaluated::on_computer("d");
+    let redis = common::redis::RedisServer::new(&a.project.env);
+    records_work(&mut a, "a", "claude-opus 4.1", "claude-sonnet 4.5");
+    records_work(&mut b, "b", "claude-opus 4.1", "claude-opus 4.1");
+    records_work(&mut c, "c", "claude-sonnet 4.5", "claude-sonnet 4.5");
+    // B also records work in a project only B knows.
+    let lists = b.lists.path().to_path_buf();
+    b.at("2030-01-13T12:00:00Z");
+    documented::sync(&b.project.env, &b.lists);
+    b.reviewed(&lists, "list-markers", false);
+    for (env, id) in [
+        (&a.project.env, a_id),
+        (&b.project.env, b_id),
+        (&c.project.env, c_id),
+        (&d.project.env, d_id),
+    ] {
+        fleet::join_cluster(env, &redis.url, id);
+    }
+    let global = b.project.env.instrukt_home().join("instrukt.yaml");
+    let mut layer = std::fs::read_to_string(&global).unwrap();
+    layer.push_str("modules:\n  history: false\n");
+    std::fs::write(&global, layer).unwrap();
+    d.at("2030-01-14T08:00:00Z");
+    documented::sync(&d.project.env, &d.project.repo);
+    d.project.env.run(d.project.env.home(), ["tick"]).success();
+    c.at("2030-01-15T08:59:00Z");
+    c.project.env.run(c.project.env.home(), ["tick"]).success();
+    b.at("2030-01-15T08:59:00Z");
+    let _b_runner = fleet::evaluation_runner(&b.project.env);
+
+    // A reports on the whole fleet; C answers on its next tick.
+    a.at("2030-01-15T09:00:00Z");
+    let html = a.project.env.path("elsewhere/report.html");
+    let asking = a
+        .project
+        .env
+        .instrukt_process(a.project.repo.path())
+        .args(["eval", "report", "--out", html.to_str().unwrap()])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut conn = fleet::cluster_connection(&a.project.env);
+    common::wait_until(
+        "the report's request on C's queue",
+        std::time::Duration::from_secs(60),
+        || {
+            redis::cmd("LLEN")
+                .arg(format!("instrukt:eval:requests:{c_id}"))
+                .query::<usize>(&mut conn)
+                .unwrap()
+                >= 1
+        },
+    );
+    c.project.env.run(c.project.env.home(), ["tick"]).success();
+    let output = asking.wait_with_output().unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let printed = a.without_tmp(&String::from_utf8(output.stdout).unwrap());
+    let page = std::fs::read_to_string(&html).unwrap();
+    let page = redact(&a.without_tmp(&by_computer(
+        &page,
+        &[("a", &a), ("b", &b), ("c", &c), ("d", &d)],
+    )));
+    insta::assert_snapshot!("fleet-printed", printed);
+    insta::assert_snapshot!("fleet-report", page);
 }

@@ -896,7 +896,8 @@ fn redis_older_than_seven_is_an_unmet_prerequisite_without_mutating_transport() 
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
     insta::assert_json_snapshot!(report["findings"], @r#"
     [
-      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
+      "Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation",
+      "fleet Redis: Redis 7.0 or later is required (server reports 6.2.16); upgrade Redis before installation"
     ]
     "#);
     let after: redis::Value = redis::cmd("XINFO")

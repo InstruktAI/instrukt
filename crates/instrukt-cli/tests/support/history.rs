@@ -863,3 +863,62 @@ pub fn runner(env: &TestEnv) -> Runner {
     });
     Runner(child)
 }
+
+/// Joins the computer of `env` to the cluster Redis at `url`, keeping its
+/// global layer, with the machine id `id`.
+pub fn join_cluster(env: &TestEnv, url: &str, id: &str) {
+    computer(env, id);
+    let path = env.instrukt_home().join("instrukt.yaml");
+    let mut global = std::fs::read_to_string(&path).unwrap();
+    global.push_str(&format!("redis:\n  cluster:\n    url: {url}\n"));
+    std::fs::write(path, global).unwrap();
+}
+
+/// A connection to the cluster Redis `env`'s global layer points at.
+pub fn cluster_connection(env: &TestEnv) -> redis::Connection {
+    let config: Value = serde_yaml_ng::from_str(
+        &std::fs::read_to_string(env.instrukt_home().join("instrukt.yaml")).unwrap(),
+    )
+    .unwrap();
+    redis::Client::open(config["redis"]["cluster"]["url"].as_str().unwrap())
+        .unwrap()
+        .get_connection()
+        .unwrap()
+}
+
+/// `instrukt run` on `env`'s computer, once its evaluation responder has
+/// written its entry on the fleet membership record.
+pub fn evaluation_runner(env: &TestEnv) -> Runner {
+    let mut child = env
+        .command(
+            std::path::Path::new(env!("CARGO_BIN_EXE_instrukt")),
+            env.home(),
+        )
+        .arg("run")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut conn = cluster_connection(env);
+    let id = std::fs::read_to_string(env.instrukt_home().join("state/machine-id")).unwrap();
+    crate::common::wait_until(
+        "evaluation responder startup",
+        Duration::from_secs(30),
+        || {
+            if redis::cmd("HEXISTS")
+                .arg("instrukt:fleet:members")
+                .arg(id.trim())
+                .query::<bool>(&mut conn)
+                .unwrap()
+            {
+                return true;
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "evaluation runner stopped before it kept its membership entry"
+            );
+            false
+        },
+    );
+    Runner(child)
+}

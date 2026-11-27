@@ -57,3 +57,10 @@ threads-required = 6
 [[profile.default.overrides]]
 filter = 'test(=conversations::a_member_is_answered_for_a_message_written_while_the_assistant_was_offline)'
 threads-required = 2
+
+# UC-ER2 waits the fleet query's full 120 s for its offline member, beside
+# three other computers' fixtures and a runner.
+[[profile.default.overrides]]
+filter = 'test(=eval_report::a_fleet_report_pools_every_computers_outcomes_by_eval_set_and_names_an_offline_one)'
+slow-timeout = { period = "10s", terminate-after = 24 }
+threads-required = 4

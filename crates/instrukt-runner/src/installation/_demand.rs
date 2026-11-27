@@ -52,6 +52,9 @@ pub(super) struct Demand {
     /// Company homes declaring a connector while conversations are on, as
     /// `company:<name>`: they demand the runner service.
     pub conversations: Vec<String>,
+    /// Company homes declaring an MCP server with sign-in, as
+    /// `company:<name>`: they demand cluster Redis.
+    pub sign_in: Vec<String>,
     /// Why declared conversation demand cannot be served: a connector's
     /// company whose runtime cannot carry conversations.
     pub conversation_blockers: Vec<String>,
@@ -85,6 +88,7 @@ pub(super) fn read(
         history_owned_redis: vec![],
         sources: vec![],
         conversations: vec![],
+        sign_in: vec![],
         conversation_blockers: vec![],
         unreadable_homes: vec![],
         complete: true,
@@ -254,6 +258,13 @@ fn companies(home: &Home, demand: &mut Demand, report: &mut Report) -> anyhow::R
                 label: format!("company {name}"),
                 module,
             };
+            if config
+                .mcp_servers(instrukt_core::config::LayerKind::Company)?
+                .values()
+                .any(|server| server.speaker_login == instrukt_core::config::SpeakerLogin::SignIn)
+            {
+                demand.sign_in.push(label.clone());
+            }
             if !config.connectors()?.is_empty() {
                 demand.conversations.push(label.clone());
                 let features = [Feature::Conversations];

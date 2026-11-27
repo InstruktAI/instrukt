@@ -144,6 +144,7 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
         workflow: _workflow::assignments(ctx, evidence.clone())?,
         standings: _workflow::standings(ctx, evidence)?,
         company: Some(company()),
+        evaluation: Some(_work::evaluation(ctx)?),
     })
 }
 

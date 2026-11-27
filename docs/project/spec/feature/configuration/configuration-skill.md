@@ -39,7 +39,7 @@ instrukt distributes agreed facts, including any operator-managed dotfiles.
 | --- | --- |
 | `ingress.computer` | All participants use the same existing stable instrukt machine ID for the one ingress. A runtime environment ID or hostname does not substitute for it. |
 | `redis.cluster.url` | All event participants reach the same logical Redis database and stream namespace. URL spellings may differ when they resolve to that same store. |
-| `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store; credentials and reference spellings need not match. |
+| `redis.cluster.username`, `redis.cluster.password` | Machine-local credential references grant the required access to that common store, the fleet query's included (`project/instrukt/spec/feature/runner/module-installation`); credentials and reference spellings need not match. |
 | Project identity and placement | The coordination brief records which computer holds each participating project and its local checkout. Project `project` identity and source declarations identify the same project wherever needed. This is a configuration-management fact, not a new YAML key or a replacement for todo claims. |
 | `ingress.reactions` | All participants use the same existing stable instrukt machine ID for the one computer that reacts to external facts, or all leave it out so the ingress reacts. |
 | Ingress source homes | Every project declaring inbound sources has its adopted checkout on ingress, and every company home declaring them has its `company.yaml` there; their signing references resolve in the owner-only secrets file of the declaring home on the ingress computer. |
