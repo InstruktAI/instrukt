@@ -111,10 +111,16 @@ pub struct Crew {
 
 impl Crew {
     pub fn new() -> Self {
+        Self::with_autostart("{bug: true, change: true, feature: true}")
+    }
+
+    /// A `Crew` project whose global `runner.autostart` YAML value is `autostart`
+    /// (for example `"{change: false}"` or `"{bug: false, change: false, feature: false}"`).
+    pub fn with_autostart(autostart: &str) -> Self {
         let mut project = Project::new();
         let runtime = FakeRuntime::new(&project.env, "agent", false);
         let global = format!(
-            "schema_version: {GLOBAL_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off'}}\n",
+            "schema_version: {GLOBAL_SCHEMA_VERSION}\ngithub:\n  api_url: {}\nrunner: {{runtime: t3, notify: 'off', autostart: {autostart}}}\n",
             project.github.url()
         );
         std::fs::write(project.env.instrukt_home().join("instrukt.yaml"), global).unwrap();

@@ -15,6 +15,10 @@ const COMMENT_CLOSE: &str = " -->";
 /// The label every reflected todo carries.
 pub(crate) const TODO_LABEL: &str = "instrukt";
 
+/// The label reflecting any active dispatch hold on a todo's GitHub issue
+/// (`project/instrukt/spec/feature/work/github-record`).
+pub(crate) const HOLD_LABEL: &str = "hold";
+
 /// The issue as the record shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct IssueFields {
@@ -125,7 +129,7 @@ pub(crate) fn issue(record: &TodoRecord) -> IssueFields {
         format!("status:{}", status_name(record.status)),
     ];
     if record.hold.is_some() {
-        labels.push("on-hold".to_owned());
+        labels.push(HOLD_LABEL.to_owned());
     }
     let (closed, state_reason) = match record.status {
         TodoStatus::Delivered => (true, "completed"),
@@ -261,5 +265,23 @@ mod tests {
         assert_eq!(issue(&record).state_reason, "completed");
         record.status = TodoStatus::Active;
         assert!(!issue(&record).closed);
+    }
+
+    #[test]
+    fn held_record_emits_hold_label_and_unheld_omits_it() {
+        let mut record = record();
+        let unheld = issue(&record).labels;
+        assert!(!unheld.iter().any(|l| l == HOLD_LABEL));
+        assert!(!unheld.iter().any(|l| l == "on-hold"));
+
+        record.hold = Some(crate::evidence::HoldRecord {
+            source: crate::evidence::HoldSource::Automatic,
+            reason: "waiting".into(),
+            by: Actor::Person { name: "dev".into() },
+            at: "2026-11-03T10:05:00Z".parse().unwrap(),
+        });
+        let held = issue(&record).labels;
+        assert!(held.iter().any(|l| l == HOLD_LABEL));
+        assert!(!held.iter().any(|l| l == "on-hold"));
     }
 }

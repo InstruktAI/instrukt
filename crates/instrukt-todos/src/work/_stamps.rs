@@ -58,6 +58,8 @@ pub enum StampRequest {
         class: DriftClass,
         reason: String,
     },
+    /// `--work-ready`.
+    WorkReady,
     /// `--build-started`.
     BuildStarted,
     /// `--build-complete`.
@@ -303,6 +305,7 @@ pub(crate) fn resolve(
             // Captured by the caller, which reads the project's grounding.
             grounding: Grounding::default(),
         }),
+        StampRequest::WorkReady => plain(StampFact::WorkReady {}),
         StampRequest::BuildStarted => {
             let plan = current(record, plan_artifact(record.kind))?;
             // Recovery preserves the original base.

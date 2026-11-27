@@ -542,6 +542,9 @@ pub enum StampFact {
         #[serde(default)]
         grounding: Grounding,
     },
+    /// `--work-ready`: preparation is done and work waits for its deliberate
+    /// start under an automatic dispatch hold (`stamps`, `work-dispatch`).
+    WorkReady {},
     /// `--build-started`: the original base and approved plan digest.
     BuildStarted {
         base: CommitSha,

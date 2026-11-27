@@ -140,6 +140,14 @@ admitted stamp set, rather than instructions to infer additional stamps.
 `instrukt todo stamp <slug> --build-started` records the original base commit
 and approved plan digest before implementation. Reconciliation preserves that base.
 
+<!-- planned:fix-autostart-prepare-work-boundary -->
+`instrukt todo stamp <slug> --work-ready` records, from the claim-holding
+orchestrator, that the todo's work waits for its deliberate start, and places
+an automatic dispatch hold in the same transaction. Workflow consumes this
+stamp and the release of its hold at the first-builder execution gate
+(`project/instrukt/spec/feature/workflow/delivery-cycle`).
+<!-- /planned:fix-autostart-prepare-work-boundary -->
+
 Completion resolves the caller's bound outstanding attempt and verifies the
 shared worktree is clean on the todo branch at the exact stamped head.
 `--build-complete` releases builder attempts; `--role-complete` releases

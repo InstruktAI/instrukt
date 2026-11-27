@@ -3,8 +3,9 @@
 //! schedule"), against the interfaces work and workflow implement.
 //!
 //! Per project with `todos` on, each tick: flush and pull reflection,
-//! purge expired retained records, then — for the kinds
-//! `runner.autostart` enables — take work's pickup candidates in order and
+//! purge expired retained records, then — for every eligible `bug`,
+//! `change` or `feature` and for `task` when `runner.autostart` enables
+//! `task` — take work's pickup candidates in order and
 //! ask workflow for each one's assignment. A lane is dispatched into the
 //! procedure declaring the lane flow's orchestrator role; a due task into
 //! the procedure declaring `task-runner`. Before a session starts the
@@ -67,7 +68,9 @@ pub enum Dispatched {
     },
 }
 
-/// The kinds `runner.autostart` picks up automatically in `config`.
+/// The kinds `runner.autostart` enables in `config` (governing task pickup
+/// here, and the first `builder` boundary in `instrukt-todos` for non-task
+/// kinds).
 pub fn autostart_kinds(config: &Configuration) -> Vec<TodoKind> {
     TodoKind::ALL
         .into_iter()
@@ -141,9 +144,6 @@ fn pickup(
     }
     notify_task_failures(cx, config, project);
     let kinds = autostart_kinds(config);
-    if kinds.is_empty() {
-        return Vec::new();
-    }
     let index = match GlobalIndex::load_readable(cx.home) {
         Ok(index) => index.unwrap_or_default(),
         Err(err) => {
@@ -153,11 +153,17 @@ fn pickup(
     };
     offered
         .iter()
-        .filter(|candidate| kinds.contains(&candidate.kind))
+        .filter(|candidate| pickup_admits_kind(candidate.kind, &kinds))
         .filter_map(|candidate| {
             dispatch_one(cx, config, work, workflow, &index, project, candidate)
         })
         .collect()
+}
+
+/// Whether runner pickup admits `kind` under `autostart` kinds: non-task kinds
+/// always enter preparation; `task` requires `TodoKind::Task` in `autostart`.
+fn pickup_admits_kind(kind: TodoKind, autostart: &[TodoKind]) -> bool {
+    kind != TodoKind::Task || autostart.contains(&TodoKind::Task)
 }
 
 fn dispatch_one(
@@ -662,5 +668,19 @@ mod tests {
         let role = RoleName::parse(TASK_RUNNER_ROLE).unwrap();
         assert_eq!(declared_in(&index, "sdlc", &role), Some(&index.snippets[1]));
         assert_eq!(declared_in(&index, "absent", &role), None);
+    }
+
+    #[test]
+    fn pickup_admits_non_task_kinds_without_autostart_and_gates_tasks() {
+        for kind in [TodoKind::Bug, TodoKind::Change, TodoKind::Feature] {
+            assert!(pickup_admits_kind(kind, &[]));
+            assert!(pickup_admits_kind(kind, &[TodoKind::Task]));
+        }
+        assert!(!pickup_admits_kind(TodoKind::Task, &[]));
+        assert!(!pickup_admits_kind(
+            TodoKind::Task,
+            &[TodoKind::Bug, TodoKind::Change, TodoKind::Feature]
+        ));
+        assert!(pickup_admits_kind(TodoKind::Task, &[TodoKind::Task]));
     }
 }

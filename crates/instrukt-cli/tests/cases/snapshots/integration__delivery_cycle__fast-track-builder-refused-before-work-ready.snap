@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+expression: "String::from_utf8_lossy(&refused_builder.get_output().stderr)"
+---
+instrukt: `runner.autostart` is off for `change` todos and `quick-fix` has not had its deliberate work start; record `instrukt todo stamp quick-fix --work-ready`, release the claim with `instrukt todo update quick-fix --unclaim` and stop. Removing the `hold` label or releasing the hold starts the work

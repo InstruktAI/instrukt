@@ -842,6 +842,42 @@ pub fn task_approval_satisfied(evidence: &TodoEvidence, approver: Approver) -> b
         == Some(digest)
 }
 
+/// Whether a non-task todo may reserve a `builder` attempt under the
+/// deliberate work-start gate (`project/instrukt/spec/feature/workflow/delivery-cycle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkStartDecision {
+    Admitted,
+    NeedsWorkReady,
+    WaitingOnHold,
+}
+
+/// Evaluates the human-owned deliberate work-start gate for a `builder`
+/// reservation (`project/instrukt/spec/feature/workflow/delivery-cycle`):
+/// admits when `autostart` is enabled for the kind, when a prior bound
+/// `builder` round already exists, or when `StampFact::WorkReady` is recorded
+/// with no standing dispatch hold.
+pub fn work_start_decision(evidence: &TodoEvidence, autostart: bool) -> WorkStartDecision {
+    if autostart
+        || evidence
+            .bindings
+            .iter()
+            .any(|b| b.role.as_str() == "builder")
+    {
+        return WorkStartDecision::Admitted;
+    }
+    let has_work_ready = evidence
+        .stamps
+        .iter()
+        .any(|s| matches!(s.fact, StampFact::WorkReady {}));
+    if !has_work_ready {
+        WorkStartDecision::NeedsWorkReady
+    } else if evidence.hold.is_some() {
+        WorkStartDecision::WaitingOnHold
+    } else {
+        WorkStartDecision::Admitted
+    }
+}
+
 /// Whether current evidence still needs a human's approval (for board
 /// `Needs you` reflection and suppressing premature runner re-dispatch).
 pub fn waiting_for_human_approval(evidence: &TodoEvidence, prd: Approver, task: Approver) -> bool {
@@ -1969,5 +2005,75 @@ mod tests {
             .push(stamp(StampFact::BuildComplete { head: head.clone() }, 2));
         assert_eq!(current_finalize_ready(&rebuilt), None);
         assert!(!finalize_handoff_pending(&rebuilt, &observed));
+    }
+
+    #[test]
+    fn work_start_decision_admits_only_enabled_prior_builder_or_released_work_ready() {
+        let role_binding = |role: &str, id: &str| crate::evidence::RoleBinding {
+            role: instrukt_core::ids::RoleName::parse(role).unwrap(),
+            binding: instrukt_runner::interfaces::SessionBinding {
+                title: None,
+                key: format!("demo/add-login:{role}:1"),
+                session: session(id),
+                worktree: None,
+            },
+            attempt: crate::work::Attempt::default(),
+        };
+
+        let base = todo(TodoKind::Change).build();
+        assert_eq!(
+            work_start_decision(&base, true),
+            WorkStartDecision::Admitted
+        );
+        assert_eq!(
+            work_start_decision(&base, false),
+            WorkStartDecision::NeedsWorkReady
+        );
+
+        let build_started_only = todo(TodoKind::Change)
+            .stamped(StampFact::BuildStarted {
+                base: sha('a'),
+                plan: digest("plan"),
+            })
+            .build();
+        assert_eq!(
+            work_start_decision(&build_started_only, false),
+            WorkStartDecision::NeedsWorkReady
+        );
+
+        let mut finalizer_only = todo(TodoKind::Change).build();
+        finalizer_only
+            .bindings
+            .push(role_binding("finalizer", "finalizer-1"));
+        assert_eq!(
+            work_start_decision(&finalizer_only, false),
+            WorkStartDecision::NeedsWorkReady
+        );
+
+        let ready_held = todo(TodoKind::Change)
+            .held()
+            .stamped(StampFact::WorkReady {})
+            .build();
+        assert_eq!(
+            work_start_decision(&ready_held, false),
+            WorkStartDecision::WaitingOnHold
+        );
+
+        let ready_released = todo(TodoKind::Change)
+            .stamped(StampFact::WorkReady {})
+            .build();
+        assert_eq!(
+            work_start_decision(&ready_released, false),
+            WorkStartDecision::Admitted
+        );
+
+        let mut prior_builder = todo(TodoKind::Change).build();
+        prior_builder
+            .bindings
+            .push(role_binding("builder", "builder-1"));
+        assert_eq!(
+            work_start_decision(&prior_builder, false),
+            WorkStartDecision::Admitted
+        );
     }
 }

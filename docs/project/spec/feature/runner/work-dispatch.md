@@ -139,6 +139,7 @@ runner admission predicate or todo hold.
 
 ### Todo pickup
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 `runner.autostart` controls todos only. It is a boolean or a map
 `{<kind>: bool}`, set globally and overridable in a project. These settings
 do not enable or disable standing-agent event activation.
@@ -153,6 +154,32 @@ suppressed from re-dispatch until approval arrives or a kickback/new build reset
 the handoff. The workflow supplies eligibility and assignment facts; the runner
 does not replace workflow facts with a second state machine. A project executes
 through either instrukt's workflow engine or another engine, never both.
+<!-- change:fix-autostart-prepare-work-boundary -->
+`runner.autostart` controls todos only. It is a boolean or a map
+`{<kind>: bool}`, set globally and overridable in a project. For a `bug`,
+`change` or `feature` it governs whether implementation follows preparation
+automatically under workflow's deliberate work-start gate
+(`project/instrukt/spec/feature/workflow/delivery-cycle`); for a `task` it
+decides whether the task is picked up at all. These settings do not enable or
+disable standing-agent event activation.
+
+The runner dispatches every eligible `bug`, `change` and `feature`: for a
+todo's lane it starts the procedure that declares the flavor's `orchestrator`
+role (`todo-orchestrator`,
+`project/instrukt/spec/feature/workflow/workflow-definition`), and that
+session holds the claim and routes primitives in prose from the factual ledger.
+Preparation — intake, diagnosis, architecture, planning and their reviews —
+therefore proceeds automatically for every kind, under the existing holds,
+prerequisites and approvals: `runner.autostart` never governs preparation, and
+a dispatch hold pauses a todo in any phase, preparation included. A `task` is
+picked up only when autostart enables `task`. Unclaimed active todos waiting on
+a dispatch hold, configured human approval or a standing `--finalize-ready`
+handoff are suppressed from re-dispatch until the hold is released, approval
+arrives or a kickback/new build resets the handoff. The workflow supplies
+eligibility and assignment facts; the runner does not replace workflow facts
+with a second state machine. A project executes through either instrukt's
+workflow engine or another engine, never both.
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 Time determines whether an authorized task is due; due status does not replace
 the todo pickup policy. Task timing belongs to
@@ -215,6 +242,7 @@ children, compose their ending notices or turn stamps/verdicts into dispatch eve
 
 ### Deliberate pickup and switched-off modules
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 With `runner.autostart` false, a session picks up work deliberately with
 `instrukt todo work <slug>`, which records the claim as automatic dispatch does.
 Deliberate work entry ensures the `<slug>/work` branch and uses configured
@@ -222,6 +250,20 @@ Deliberate work entry ensures the `<slug>/work` branch and uses configured
 worktree, or wakes its existing bound orchestrator; invoking the record command
 from an unrelated checkout does not place a workspace. A due task keeps its own
 task execution placement.
+<!-- change:fix-autostart-prepare-work-boundary -->
+A session picks up a todo deliberately with `instrukt todo work <slug>`,
+which records the claim as automatic dispatch does. Deliberate entry ensures
+the `<slug>/work` branch and uses configured `runtime.start_thread` to place
+its orchestrator in the todo's one managed worktree, or wakes its existing
+bound orchestrator; invoking the record command from an unrelated checkout does
+not place a workspace. A due task keeps its own task execution placement.
+
+While a todo waits on the automatic dispatch hold placed at workflow's
+deliberate work-start gate
+(`project/instrukt/spec/feature/workflow/delivery-cycle`), the runner does not
+dispatch it; once that hold is released, the runner resumes the todo's recorded
+orchestrator on its next wake.
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 Once the work record passes this computer's unassigned claim to a resuming
 recorded orchestrator (`project/instrukt/spec/feature/work/dependencies-and-holds`),
@@ -245,6 +287,7 @@ work; `eval report` needs no switch and reports only the record it can access.
 
 ### UC-RD1: Delegate todo pickup at the project's chosen pace
 
+<!-- planned-change:fix-autostart-prepare-work-boundary -->
 ```gherkin
 Scenario Outline: Choose how development work is picked up
   Given a developer has adopted instrukt in a project with eligible development work
@@ -257,6 +300,20 @@ Scenario Outline: Choose how development work is picked up
     | automatic  | is dispatched to an agent                |
     | deliberate | awaits the developer's deliberate start  |
 ```
+<!-- change:fix-autostart-prepare-work-boundary -->
+```gherkin
+Scenario Outline: Choose how development work is picked up
+  Given a developer has adopted instrukt in a project with eligible development work
+  And the developer has chosen <pickup> pickup for that kind of work
+  When the runner considers that work
+  Then it is dispatched to an agent for preparation
+
+  Examples:
+    | pickup     |
+    | automatic  |
+    | deliberate |
+```
+<!-- /planned-change:fix-autostart-prepare-work-boundary -->
 
 ### UC-RD2: A developer is told how to enable the runner
 

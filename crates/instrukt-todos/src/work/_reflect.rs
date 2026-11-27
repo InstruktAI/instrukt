@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use instrukt_core::config::BoardRef;
 
-use super::_envelope::{self, TODO_LABEL};
+use super::_envelope::{self, HOLD_LABEL, TODO_LABEL};
 use super::_github::{Fetched, GitHub, GitHubError};
 use super::_model::{TodoRecord, digest_of};
 use super::_store::{IssueRef, KeptRefusal, LocalItem, ReflectionState, RefusedTarget};
@@ -179,7 +179,10 @@ pub(crate) fn read_events(
 /// Writes the item's pending changes to GitHub: its issue, any artifact
 /// versions not yet uploaded and the issue's visible fields; then the
 /// linked pull request and the board. No comment is read or written: the
-/// record lives on this computer only.
+/// record lives on this computer only. When `preserve_remote_hold` is true,
+/// the `"hold"` label on GitHub is preserved as-is rather than overwritten
+/// from the local record (so unread or unverified collaborator label events
+/// are never reverted).
 pub(crate) fn flush(
     gh: &GitHub,
     item: &mut LocalItem,
@@ -187,6 +190,7 @@ pub(crate) fn flush(
     base: &str,
     board: Option<&BoardRef>,
     needs_you: bool,
+    preserve_remote_hold: bool,
 ) -> Result<(), GitHubError> {
     if item.reflection.pending {
         let Some(issue) = ensure_issue(gh, item)? else {
@@ -198,15 +202,11 @@ pub(crate) fn flush(
         upload_artifacts(gh, item, issue)?;
         let mut fields = _envelope::issue(&item.record);
         let snapshot = gh.read(&format!("/issues/{}", issue.number))?;
-        if let Some(labels) = snapshot["labels"].as_array() {
-            fields.labels.extend(
-                labels
-                    .iter()
-                    .filter_map(|l| l["name"].as_str())
-                    .filter(|l| !output_label(l))
-                    .map(str::to_owned),
-            );
-        }
+        let snapshot_labels: Vec<&str> = snapshot["labels"]
+            .as_array()
+            .map(|labels| labels.iter().filter_map(|l| l["name"].as_str()).collect())
+            .unwrap_or_default();
+        fields.labels = merge_issue_labels(fields.labels, &snapshot_labels, preserve_remote_hold);
         let path = format!("/issues/{}", issue.number);
         let body = fields.update_json();
         send(
@@ -917,6 +917,31 @@ pub(super) fn encode(text: &str) -> String {
     out
 }
 
+/// Merges reflected `record_labels` with `snapshot_labels` from GitHub: drops
+/// all `output_label`s (including `HOLD_LABEL` and retired `"on-hold"`) when
+/// `preserve_remote_hold` is false, and preserves GitHub's `HOLD_LABEL`
+/// presence or absence when `preserve_remote_hold` is true.
+fn merge_issue_labels(
+    mut record_labels: Vec<String>,
+    snapshot_labels: &[&str],
+    preserve_remote_hold: bool,
+) -> Vec<String> {
+    if preserve_remote_hold {
+        record_labels.retain(|l| l != HOLD_LABEL);
+    }
+    record_labels.extend(
+        snapshot_labels
+            .iter()
+            .copied()
+            .filter(|l| !output_label(l) || (preserve_remote_hold && *l == HOLD_LABEL))
+            .map(str::to_owned),
+    );
+    record_labels
+}
+
+/// Labels written from the work record on reflection. `HOLD_LABEL` reflects any
+/// active dispatch hold; `"on-hold"` stays in the set so the next flush
+/// strips the retired label from existing issues.
 pub(crate) fn output_label(label: &str) -> bool {
     matches!(
         label,
@@ -932,6 +957,7 @@ pub(crate) fn output_label(label: &str) -> bool {
             | "status:removed"
             | "on-hold"
     ) || label == TODO_LABEL
+        || label == HOLD_LABEL
 }
 
 #[cfg(test)]
@@ -1006,5 +1032,54 @@ mod tests {
         assert!(walk_ends(&[205, 204, 203], true, 204));
         assert!(!walk_ends(&[205, 204, 203], true, 120));
         assert!(!walk_ends(&[205], true, 0));
+    }
+
+    #[test]
+    fn output_labels_and_merge_strip_retired_and_preserve_unverified_remote_hold() {
+        use super::{HOLD_LABEL, merge_issue_labels, output_label};
+
+        assert!(output_label(HOLD_LABEL));
+        assert!(output_label("on-hold"));
+        assert!(!output_label("team-owned"));
+
+        let unheld = vec!["instrukt".to_owned(), "status:active".to_owned()];
+        let held = vec![
+            "instrukt".to_owned(),
+            "status:active".to_owned(),
+            HOLD_LABEL.to_owned(),
+        ];
+
+        // Normal flush (preserve_remote_hold = false): strips remote hold & retired on-hold, keeps collaborator labels.
+        let merged = merge_issue_labels(
+            unheld.clone(),
+            &[
+                "instrukt",
+                "status:delivered",
+                HOLD_LABEL,
+                "on-hold",
+                "team-owned",
+            ],
+            false,
+        );
+        assert_eq!(merged, vec!["instrukt", "status:active", "team-owned"]);
+
+        // preserve_remote_hold = true, labeled direction: unheld record preserves remote HOLD_LABEL.
+        let preserved_present = merge_issue_labels(
+            unheld,
+            &["instrukt", HOLD_LABEL, "on-hold", "team-owned"],
+            true,
+        );
+        assert_eq!(
+            preserved_present,
+            vec!["instrukt", "status:active", HOLD_LABEL, "team-owned"]
+        );
+
+        // preserve_remote_hold = true, unlabeled direction: held record preserves remote absence of HOLD_LABEL.
+        let preserved_absent =
+            merge_issue_labels(held, &["instrukt", "on-hold", "team-owned"], true);
+        assert_eq!(
+            preserved_absent,
+            vec!["instrukt", "status:active", "team-owned"]
+        );
     }
 }

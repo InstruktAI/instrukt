@@ -1,8 +1,8 @@
 //! `project/instrukt/spec/feature/runner/work-dispatch`: a wake-up
-//! dispatches eligible work into the procedure declaring its lane's
-//! orchestrator role when the project chose automatic pickup, and leaves
-//! it for a deliberate start otherwise; with both the todos and events
-//! modules off, the runner's commands refuse and name both switches.
+//! dispatches eligible bugs, changes and features for preparation regardless
+//! of `runner.autostart`, and leaves tasks for autostart; with both the todos
+//! and events modules off, the runner's commands refuse and name both
+//! switches.
 #![allow(clippy::unwrap_used, reason = "test: a failed step fails the test")]
 
 use crate::common;
@@ -105,7 +105,7 @@ fn work_claimed_while_github_is_unreachable_is_dispatched_at_once() {
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
 #[test]
-fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
+fn with_deliberate_pickup_eligible_work_is_dispatched_for_preparation() {
     let project = Tracked::new(false);
     project.todo([
         "create",
@@ -118,11 +118,7 @@ fn with_deliberate_pickup_eligible_work_awaits_the_developers_start() {
 
     project.tick();
 
-    assert!(
-        project.rt.thread_calls().is_empty(),
-        "{:?}",
-        project.rt.calls()
-    );
+    assert_eq!(project.rt.started_count(), 1, "{:?}", project.rt.calls());
 }
 
 // spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD2

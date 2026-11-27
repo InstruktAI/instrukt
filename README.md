@@ -151,7 +151,7 @@ instrukt does not reimplement an agent harness — it pairs cleanly with T3. ins
 Here is how a piece of work moves from idea to `main`:
 
 1. **You ask in plain words.** In any session, tell your agent what you want built. It answers instrukt's admission questions and files the todo: `instrukt todo create rate-limit-api "…" --kind feature --approved`. The work is stored locally and mirrored to a GitHub issue.
-2. **Launch manually, or let the runner pick it up on its tick.** Git and GitHub delivery run on periodic runner ticks — checking git refs, todo state, and GitHub CI with conditional requests and no inbound webhooks required. By default you start work deliberately with `instrukt todo work <slug>`; enable `runner.autostart: true` (globally, per project, or per todo kind) for hands-off pickup. Either way, work launches a `todo-orchestrator` thread in T3 inside its own `<slug>/work` worktree.
+2. **Preparation runs automatically; you decide when implementation starts.** Git and GitHub delivery run on periodic runner ticks — checking git refs, todo state, and GitHub CI with conditional requests and no inbound webhooks required. Eligible `bug`, `change`, and `feature` todos are picked up on runner ticks for automatic preparation inside a `todo-orchestrator` thread in their own `<slug>/work` worktree. By default (`runner.autostart` off), prepared work pauses on an automatic `hold` at the build boundary until you release it (removing the `hold` label on GitHub or running `instrukt todo update <slug> --release`); enable `runner.autostart: true` (globally, per project, or per todo kind) to let prepared work roll straight into build and to enable automatic `task` pickup. `instrukt todo work <slug>` remains available for direct launch or resume.
 3. **Prose routing, not a hard-coded state machine.** The orchestrator reads your published `sdlc` procedures and chooses only the steps the scope earns — fast-tracking a bounded 5-minute bug straight to diagnosis, build, and review, or routing a larger feature through PRD, architecture, and planning first. Every worker runs as a child thread in that worktree.
 4. **Independent, digest-bound review.** Each review verdict is stamped against the exact commit SHA and findings report. Edit one line afterwards and the old approval no longer covers the head. Authoring and review act under separate GitHub App identities, so GitHub's own rule against approving your own work applies to agents too.
 5. **CI-gated merge.** The standing integrator pushes the reviewed candidate to `integrate`, waits for CI, and fast-forwards `main` to that exact commit only when checks pass.
@@ -159,7 +159,7 @@ Here is how a piece of work moves from idea to `main`:
 You can let it run hands-off or step in at any point:
 
 - **Open any thread.** Every orchestrator, builder and reviewer is a live T3 thread — watch it think, or type straight into it to steer.
-- **Control when work starts.** Pickup stays manual (`instrukt todo work <slug>`) until you opt in with `runner.autostart: true`.
+- **Control when work starts.** Preparation proceeds automatically; implementation waits on an automatic `hold` until released (by removing the `hold` label on GitHub or running `instrukt todo update <slug> --release`) unless you opt in with `runner.autostart: true`.
 - **Evolve the process in git.** Want a new review check or a different workflow? Edit the markdown procedure; nothing is hard-coded into the binary.
 
 ---

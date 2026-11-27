@@ -13,7 +13,7 @@ use instrukt_core::state_db::rusqlite::Transaction;
 use instrukt_runner::interfaces::ProjectRef;
 use jiff::{SignedDuration, Timestamp};
 
-use super::_envelope::status_name as status_word;
+use super::_envelope::{HOLD_LABEL, status_name as status_word};
 use super::_error::WorkError;
 use super::_github::{GitHub, GitHubError};
 use super::_inbound;
@@ -113,6 +113,10 @@ pub(crate) struct Session<'w> {
     pub docs_changed: Vec<std::path::PathBuf>,
     /// A group parent's pending documentation owed to its first child.
     pub pending_transfer: Option<(TodoSlug, TodoSlug)>,
+    /// Todos whose label events stayed unread or outstanding during this
+    /// session's pull-through; `flush` preserves GitHub's `"hold"` label for
+    /// them rather than overwriting unverified collaborator actions.
+    hold_events_outstanding: std::collections::BTreeSet<TodoId>,
 }
 
 impl<'w> Session<'w> {
@@ -178,6 +182,7 @@ impl<'w> Session<'w> {
             docs_changed: Vec::new(),
             board_setup_failure: None,
             pending_transfer: None,
+            hold_events_outstanding: std::collections::BTreeSet::new(),
         };
         session.purge()?;
         Ok(session)
@@ -331,8 +336,32 @@ impl<'w> Session<'w> {
             return Ok(());
         }
         let events = self.answer_label_actions(index)?;
+        let (events_page, events_last, events_outstanding) = match &events {
+            Some(events) => {
+                let reflection = &self.items[index].reflection;
+                let (page, last) = super::_positions::next_events_position(
+                    (reflection.events_page, reflection.events_last),
+                    events,
+                );
+                (
+                    page,
+                    last,
+                    events.iter().any(|(_, _, outstanding)| *outstanding),
+                )
+            }
+            None => (
+                self.items[index].reflection.events_page,
+                self.items[index].reflection.events_last,
+                true,
+            ),
+        };
+        if events_outstanding {
+            self.hold_events_outstanding.insert(id.clone());
+        } else {
+            self.hold_events_outstanding.remove(&id);
+        }
         self.answer_commands(index)?;
-        self.restore_output_labels(index, &fresh.issue)?;
+        self.restore_output_labels(index, &fresh.issue, events_outstanding)?;
         let seen = &self.items[index].reflection.commands_seen;
         let comments: Vec<(Timestamp, bool)> = fresh
             .comments
@@ -347,20 +376,6 @@ impl<'w> Session<'w> {
             &comments,
         )
         .map(|at| at.to_string());
-        let (events_page, events_last, events_outstanding) = match &events {
-            Some(events) => {
-                let (page, last) = super::_positions::next_events_position(
-                    (held.events_page, held.events_last),
-                    events,
-                );
-                (
-                    page,
-                    last,
-                    events.iter().any(|(_, _, outstanding)| *outstanding),
-                )
-            }
-            None => (held.events_page, held.events_last, true),
-        };
         let outstanding =
             events_outstanding || comments.iter().any(|(_, outstanding)| *outstanding);
         let etag = (!outstanding).then_some(fresh_etag).flatten();
@@ -597,24 +612,17 @@ impl<'w> Session<'w> {
     }
 
     /// Marks item `index` pending when `snapshot`, its issue as just read,
-    /// carries other output labels than the record shows.
+    /// carries other output labels than the record shows. While label events
+    /// are unread or awaiting actor verification (`events_outstanding`),
+    /// `HOLD_LABEL` is excluded from both sides so an unverified collaborator
+    /// edit is never queued for overwrite.
     fn restore_output_labels(
         &mut self,
         index: usize,
         snapshot: &serde_json::Value,
+        events_outstanding: bool,
     ) -> Result<(), WorkError> {
-        let expected = super::_envelope::issue(&self.items[index].record).labels;
-        let actual = snapshot["labels"]
-            .as_array()
-            .map(|labels| {
-                labels
-                    .iter()
-                    .filter_map(|l| l["name"].as_str())
-                    .filter(|l| super::_reflect::output_label(l))
-                    .collect::<std::collections::BTreeSet<_>>()
-            })
-            .unwrap_or_default();
-        if actual != expected.iter().map(String::as_str).collect() {
+        if output_labels_drifted(&self.items[index].record, snapshot, events_outstanding) {
             self.amend(index, |reflection| reflection.pending = true)?;
         }
         Ok(())
@@ -667,7 +675,9 @@ impl<'w> Session<'w> {
     /// `issue`; `false` while it stays outstanding: its actor's access
     /// could not be verified, GitHub stopped answering, or the todo's
     /// record changed or its withdrawal opened before the outcome was
-    /// recorded.
+    /// recorded. Actions attributed to a configured instrukt App bot
+    /// (verified via `Bot::matches`) are recorded as ignored output without
+    /// changing `record.hold` or checking write access.
     fn answer_label_action(
         &mut self,
         index: usize,
@@ -675,7 +685,7 @@ impl<'w> Session<'w> {
         id: u64,
         action: &serde_json::Value,
     ) -> Result<bool, WorkError> {
-        if action["label"]["name"].as_str() != Some("hold") {
+        if action["label"]["name"].as_str() != Some(HOLD_LABEL) {
             return Ok(true);
         }
         let (Some(login), Some(kind), Some(at)) = (
@@ -703,6 +713,16 @@ impl<'w> Session<'w> {
                 return Ok(true);
             }
         };
+        if is_own_app_bot(self.config.github_apps()?.values(), &action["actor"]) {
+            return self.store.ignore_label(
+                &self.items[index].record,
+                issue.number,
+                id,
+                kind,
+                login,
+                at,
+            );
+        }
         let permission = match &self.remote {
             Remote::Client { gh, down: None } => gh.can_write(login),
             _ => return Ok(false),
@@ -1429,6 +1449,7 @@ impl<'w> Session<'w> {
                         )
                     },
                 )?;
+                let preserve_remote_hold = self.hold_events_outstanding.contains(&id);
                 let result = match &self.remote {
                     Remote::Client { gh, down: None } => Some(_reflect::flush(
                         gh,
@@ -1437,6 +1458,7 @@ impl<'w> Session<'w> {
                         &self.base,
                         board.as_ref(),
                         needs_you,
+                        preserve_remote_hold,
                     )),
                     _ => None,
                 };
@@ -1984,5 +2006,147 @@ pub fn describe(reason: &PendingReason) -> String {
         PendingReason::RateLimited { until: None } => "GitHub rate limited".to_owned(),
         PendingReason::Unauthorized => "GitHub refused the credentials".to_owned(),
         PendingReason::Failed(message) => message.clone(),
+    }
+}
+
+/// Whether `snapshot` carries other output labels than `record` reflects.
+/// When `events_outstanding` is true, `HOLD_LABEL` is excluded from both sides
+/// so unread or unverified collaborator edits are not queued for overwrite.
+fn output_labels_drifted(
+    record: &TodoRecord,
+    snapshot: &serde_json::Value,
+    events_outstanding: bool,
+) -> bool {
+    let expected = super::_envelope::issue(record).labels;
+    let expected_set: std::collections::BTreeSet<&str> = expected
+        .iter()
+        .map(String::as_str)
+        .filter(|l| !(events_outstanding && *l == HOLD_LABEL))
+        .collect();
+    let actual = snapshot["labels"]
+        .as_array()
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(|l| l["name"].as_str())
+                .filter(|l| super::_reflect::output_label(l))
+                .filter(|l| !(events_outstanding && *l == HOLD_LABEL))
+                .collect::<std::collections::BTreeSet<_>>()
+        })
+        .unwrap_or_default();
+    actual != expected_set
+}
+
+/// Whether `actor` matches any configured GitHub App bot via `Bot::matches`
+/// (verifying numeric `id` and `node_id`, not `login`).
+fn is_own_app_bot<'a>(
+    apps: impl IntoIterator<Item = &'a github::App>,
+    actor: &serde_json::Value,
+) -> bool {
+    apps.into_iter().any(|app| app.bot.matches(actor))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HOLD_LABEL, TodoId, TodoRecord, is_own_app_bot, output_labels_drifted};
+    use crate::evidence::{Actor, HoldRecord, HoldSource, TodoStatus};
+    use instrukt_core::github;
+    use instrukt_core::ids::{ProjectSlug, TodoSlug};
+    use instrukt_runner::interfaces::{CatchUp, TodoKind};
+    use serde_json::json;
+
+    fn sample_record(held: bool) -> TodoRecord {
+        TodoRecord {
+            schema: super::super::_model::SCHEMA,
+            id: TodoId::parse(&"cd".repeat(16)).unwrap(),
+            project: ProjectSlug::parse("demo").unwrap(),
+            slug: TodoSlug::parse("sync-hold").unwrap(),
+            prior_slugs: Vec::new(),
+            kind: TodoKind::Change,
+            status: TodoStatus::Active,
+            created: "2026-11-03T10:00:00Z".parse().unwrap(),
+            created_by: Actor::Person { name: "dev".into() },
+            human_involved: None,
+            revision: 1,
+            sequence: 0,
+            artifacts: Vec::new(),
+            stamps: Vec::new(),
+            claim: None,
+            bindings: Vec::new(),
+            hold: held.then(|| HoldRecord {
+                source: HoldSource::Automatic,
+                reason: "waiting".into(),
+                by: Actor::Person { name: "dev".into() },
+                at: "2026-11-03T10:01:00Z".parse().unwrap(),
+            }),
+            hold_history: Vec::new(),
+            label_actions: Vec::new(),
+            after: Vec::new(),
+            group: None,
+            schedule: None,
+            catch_up: CatchUp::Once,
+            agent: None,
+            branch: None,
+            delivery: None,
+            removal: None,
+        }
+    }
+
+    fn snapshot_with(names: &[&str]) -> serde_json::Value {
+        let labels: Vec<_> = names.iter().map(|name| json!({ "name": name })).collect();
+        json!({ "labels": labels })
+    }
+
+    #[test]
+    fn output_labels_drifted_ignores_hold_only_while_events_are_outstanding() {
+        let unheld = sample_record(false);
+        let held = sample_record(true);
+
+        let with_hold = snapshot_with(&["instrukt", "kind:change", "status:active", HOLD_LABEL]);
+        assert!(!output_labels_drifted(&unheld, &with_hold, true));
+        assert!(output_labels_drifted(&unheld, &with_hold, false));
+
+        let without_hold = snapshot_with(&["instrukt", "kind:change", "status:active"]);
+        assert!(!output_labels_drifted(&held, &without_hold, true));
+        assert!(output_labels_drifted(&held, &without_hold, false));
+
+        // Non-hold output label drift is still detected even while events are outstanding.
+        let tampered_status =
+            snapshot_with(&["instrukt", "kind:change", "status:delivered", HOLD_LABEL]);
+        assert!(output_labels_drifted(&unheld, &tampered_status, true));
+        let retired_on_hold =
+            snapshot_with(&["instrukt", "kind:change", "status:active", "on-hold"]);
+        assert!(output_labels_drifted(&unheld, &retired_on_hold, true));
+    }
+
+    #[test]
+    fn is_own_app_bot_matches_configured_id_and_node_id_only() {
+        let apps = [github::App {
+            app_id: 1,
+            slug: "instruktai".into(),
+            bot: github::Bot {
+                id: 1479,
+                node_id: "BOT_1479".into(),
+                login: "instruktai[bot]".into(),
+            },
+            private_key: "${TEST_APP_KEY}".into(),
+        }];
+
+        // Exact {id, node_id} matches (even if login differs, since Bot::matches checks id & node_id).
+        assert!(is_own_app_bot(
+            &apps,
+            &json!({"login": "instruktai[bot]", "id": 1479, "node_id": "BOT_1479"})
+        ));
+        // Login-only actor is rejected.
+        assert!(!is_own_app_bot(&apps, &json!({"login": "instruktai[bot]"})));
+        // Mismatched id or node_id is rejected even with matching login.
+        assert!(!is_own_app_bot(
+            &apps,
+            &json!({"login": "instruktai[bot]", "id": 9999, "node_id": "BOT_1479"})
+        ));
+        assert!(!is_own_app_bot(
+            &apps,
+            &json!({"login": "instruktai[bot]", "id": 1479, "node_id": "BOT_WRONG"})
+        ));
     }
 }
