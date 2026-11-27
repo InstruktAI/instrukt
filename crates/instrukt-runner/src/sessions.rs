@@ -364,7 +364,11 @@ impl<'c> Sessions<'c> {
             checkout,
             title: crate::runtime::thread_title(request.label, &key),
             key,
-            brief: request.message.into(),
+            brief: if crate::control::Control::is_control_only(request.message) {
+                request.message.into()
+            } else {
+                crate::control::Control::Assignment.frame(request.message)
+            },
             worktree,
             launch_modes: None,
             native_launch: None,

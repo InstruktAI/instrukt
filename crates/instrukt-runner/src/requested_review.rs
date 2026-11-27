@@ -378,7 +378,7 @@ impl Delivering<'_> {
     /// delivery while the runtime's acceptance is not recorded; a different
     /// ask is refused.
     fn repeat(&self, ask: &Ask, bound: Option<&SessionRef>) -> Result<Reply, AskError> {
-        if ask.digest != self.rendering.digest && ask.digest != self.rendering.legacy_digest {
+        if ask.digest != self.rendering.digest {
             return Err(refused(
                 Check::Outstanding,
                 format!(

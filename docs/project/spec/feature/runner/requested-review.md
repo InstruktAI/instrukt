@@ -107,7 +107,8 @@ A refused ask starts no reviewer, sends nothing and records nothing.
 ### The reviewer's assignment
 
 instrukt renders the assignment from the admitted coordinates in one fixed
-wording, as a runner-authored assignment input. It holds, in this order:
+wording, as a runner-authored `[Instrukt Assignment]` control frame. It holds,
+in this order:
 
 1. the procedure the reviewer executes, `sdlc/procedure/lifecycle/work/review-commits`,
    read with its closure, for the one-off worktree review it describes;

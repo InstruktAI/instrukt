@@ -4868,6 +4868,7 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
     let _dm_ts = c.slack.direct("D1", "USTEVEN", "Check DM status.");
     let session = c.session();
     let input0 = c.runtime.message(&session, 0);
+    assert!(input0.contains("[Instrukt Notification]"), "{input0}");
     assert!(input0.contains("Company conversation turn"), "{input0}");
     assert!(input0.contains("Connector: desk"), "{input0}");
     assert!(input0.contains("Conversation: D1"), "{input0}");
@@ -4930,6 +4931,7 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         "company scope must keep one standing session"
     );
     let input1 = c.runtime.message(&session, 1);
+    assert!(input1.contains("[Instrukt Notification]"), "{input1}");
     assert!(input1.contains("Company conversation turn"), "{input1}");
     assert!(input1.contains("Connector: desk"), "{input1}");
     assert!(

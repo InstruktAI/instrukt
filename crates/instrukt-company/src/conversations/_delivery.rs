@@ -154,10 +154,10 @@ fn assignment(
         (ReplyMode::Explicit, SessionScope::Conversation) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`)".to_owned(),
         (ReplyMode::Explicit, SessionScope::Company) => "\nReply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --conversation <id> --text <text>`)".to_owned(),
     };
-    Ok(format!(
-        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.",
+    Ok(instrukt_runner::control::Control::Assignment.frame(&format!(
+        "instrukt conversation assignment\nProcedure: {procedure}\nRole: {role}\nResolved role capabilities: {capabilities}\nCompany: {}\nConnector: {}\n{scope_line}{reply_line}\nLoad `instrukt docs get {procedure} --closure` before handling the member's message.\n",
         c.company, c.connector
-    ))
+    )))
 }
 
 /// The position a new session's answers are read from: one over no
@@ -332,7 +332,8 @@ fn prepare_delivery(
                     "Reply command: instrukt company reply --conversation {safe_conversation} --text <text>\n"
                 ));
             }
-            format!("{body}\n{base_content}")
+            let header = instrukt_runner::control::Control::Notification.frame(&body);
+            format!("{header}\n{base_content}")
         }
     };
     let ids = serde_json::to_string(&ids)?;

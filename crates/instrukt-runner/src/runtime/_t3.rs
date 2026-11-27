@@ -599,10 +599,14 @@ impl RuntimeAdapter for T3 {
             .input_evidence(session, None)?
             .into_iter()
             .find(|m| {
+                let body = m
+                    .text
+                    .strip_prefix("[Instrukt Notification]\n")
+                    .or_else(|| m.text.strip_prefix("[Instrukt Assignment]\n"))
+                    .unwrap_or(&m.text);
                 m.state != super::InputState::Consumed
-                    && (m.text.starts_with("instrukt delivery log\n")
-                        || m.text
-                            .starts_with("instrukt system-origin procedure assignment\n"))
+                    && (body.starts_with("instrukt delivery log\n")
+                        || body.starts_with("instrukt system-origin procedure assignment\n"))
             })
             .map(|m| m.text);
         Ok(super::AssignmentEvidence {

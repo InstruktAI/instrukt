@@ -1450,16 +1450,16 @@ pub(crate) fn report_start_finding(
 
 /// Extracts only the runner-authored opening assignment block from a retained
 /// conversation brief so a successor generation never replays member text.
-/// Legacy `[Instrukt Assignment]`-wrapped briefs are accepted only when the
-/// opening tag starts the brief; plain briefs are bounded to the opening
+/// `[Instrukt Assignment]`-wrapped briefs are accepted only when the opening
+/// tag starts the brief; plain briefs are bounded to the opening
 /// `instrukt conversation assignment` paragraph.
 fn conversation_assignment_prefix(brief: &str) -> Option<String> {
-    const LEGACY_OPEN: &str = "[Instrukt Assignment]\n";
-    const LEGACY_CLOSE: &str = "\n[/Instrukt Assignment]";
-    if brief.starts_with(LEGACY_OPEN) {
-        let (assignment, rest) = brief.split_once(LEGACY_CLOSE)?;
+    const FRAMED_OPEN: &str = "[Instrukt Assignment]\n";
+    const FRAMED_CLOSE: &str = "\n[/Instrukt Assignment]";
+    if brief.starts_with(FRAMED_OPEN) {
+        let (assignment, rest) = brief.split_once(FRAMED_CLOSE)?;
         if rest.is_empty() || rest.starts_with('\n') {
-            return Some(format!("{assignment}{LEGACY_CLOSE}"));
+            return Some(format!("{assignment}{FRAMED_CLOSE}"));
         }
         return None;
     }
