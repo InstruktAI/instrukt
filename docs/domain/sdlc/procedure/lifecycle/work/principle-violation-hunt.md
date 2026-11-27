@@ -194,14 +194,21 @@ Patterns to detect:
 
 Per `sdlc/policy/substrate-anchoring`, `general/principle/grounding`, and
 `general/policy/adr-discipline`. External protocols, API clients, auth/OAuth
-flows, formats/grammars, and retry/backoff mechanisms adopt a maintained
-off-the-shelf SDK or library unless a grounded ADR proves a concrete gap.
+flows, and retry/backoff mechanisms adopt a maintained off-the-shelf SDK or
+library unless a grounded ADR proves a concrete gap; externally defined data or
+markup grammars and formats use a conforming implementation unless the change
+declares a project-owned subset and refuses all inputs outside it (or carries a
+grounded ADR).
 
 Patterns to detect:
 
 - Hand-rolled client, protocol, auth/OAuth, or retry/backoff code introduced or
   extended where an established SDK or library exists, without an outward
-  assessment and grounded ADR.
+  assessment and grounded ADR (a "subset" claim never exempts a protocol, API,
+  auth/OAuth, or retry client from ADR grounding).
+- Hand-rolled parser or formatter for an externally defined grammar/format that
+  neither adopts a conforming implementation nor declares and enforces a strict
+  project-owned subset (or carries a grounded ADR).
 - Wrapping or extending pre-existing hand-rolled protocol code, or citing a
   local runtime choice (such as a synchronous-only I/O stack) as the reason to
   skip adopting the maintained ecosystem SDK.

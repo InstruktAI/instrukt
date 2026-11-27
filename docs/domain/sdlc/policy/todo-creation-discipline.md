@@ -309,15 +309,22 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   Reading a relaying or splitting subagent's thread is not an intent check.
   Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
-  Record `instrukt todo stamp <slug> --intent-checked` bound to that input
-  version, checker and conversation. A current check travels unchanged to
-  later recipients; role names and author membership are not substitutes for
-  the version-bound stamp. The check runs where the conversation is readable,
-  without copying it to GitHub. Unreadable evidence supplies no check, and an
-  author never independently checks their own compression. If the originating
-  conversation is permanently unavailable, return the intent to the human in the
-  responsible thread; a new `input` version from that conversation becomes the checkable
-  basis.
+  Record `instrukt todo stamp <slug> --intent-checked` when the stamp binds the
+  human's originating conversation (when the current `input` was authored in
+  that conversation, or when the stamp command accepts and binds that
+  conversation explicitly). When a relaying or splitting session authored the
+  current `input` and `--intent-checked` would bind that relay session instead
+  of the human's originating conversation, do not publish a writer-derived
+  stamp; record the verification — naming the checked `input` digest, checker,
+  and originating human conversation address — in the todo's `log` artifact and
+  review findings so truthful provenance travels downstream. A current check
+  travels unchanged to later recipients; role names and author membership are
+  not substitutes for a version-bound check. The check runs where the
+  conversation is readable, without copying it to GitHub. Unreadable evidence
+  supplies no check, and an author never independently checks their own
+  compression. If the originating conversation is permanently unavailable,
+  return the intent to the human in the responsible thread; a new `input`
+  version from that conversation becomes the checkable basis.
 
 - **Repair before retiring.** Correct the project, input, missing
   documentation, dependencies, or other repairable omission in place. Retire

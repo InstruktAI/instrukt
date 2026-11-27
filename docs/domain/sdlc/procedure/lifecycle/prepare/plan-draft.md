@@ -671,12 +671,18 @@ If the todo stays one delivery, write (using the approved intent artifact and th
 Do not write grounding fields directly. The work record captures provenance; the fact provider derives grounding
 and current worktree facts.
 
-If the todo is grouped instead:
+If the todo is grouped under step 2's release boundary (a `feature` with an
+approved `prd`, or a split the human has released):
 
 - Create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, one per independently deliverable slice.
 - Treat the parent as a stateless holder once children group-reference it. Its retained input artifact is frozen source material; do not plan follow-up writes against the holder.
-- Each child's content carries the relevant subset of the parent's intent artifact and reviewer-approved architecture-snippet context.
+- Each child's `input` copies the human's constraints and originating-conversation pointer verbatim (`general/policy/human-contract`) alongside the relevant subset of the parent's intent artifact and reviewer-approved architecture-snippet context.
 - Treat only the children as prepare/work targets. The parent is a holder and must not be prepared or worked as an implementation item.
+
+If a `change` or `bug` (no approved `prd`) requires splitting and the human has
+not released that split, file no children; return the proposed partition,
+dependency order, and scope/size rationale to `todo-orchestrator` for human
+release per step 2.
 
 ### 6. Enforce boundaries
 
@@ -693,10 +699,12 @@ If the todo is grouped instead:
 
 ### 7. Final step — complete and return to `todo-orchestrator`
 
-When the implementation-plan artifact is written (or child grouping has been
-executed via `instrukt todo create ... --approved --group` and each child's filing outcome
-reports it created), stamp role completion (`instrukt todo stamp {slug} --role-complete`)
-and inspect `instrukt todo show {slug}`.
+When the implementation-plan artifact is written, released child grouping has
+been executed under step 2 (via `instrukt todo create ... --approved --group`
+with each child's filing outcome reporting it created), or an unreleased split
+proposal is ready to return for human release, stamp role completion
+(`instrukt todo stamp {slug} --role-complete`) and inspect
+`instrukt todo show {slug}`.
 
 The dispatching `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
 and dispatches an independent `plan-reviewer` session. The review is done when
@@ -709,8 +717,13 @@ or re-derivation under step 1b.
 
 1. Atomic case:
    `instrukt todo artifacts read {slug} implementation-plan`.
-2. Grouped case:
-   child todos, dependency links, and a stateless holder row with frozen input only.
+2. Released grouped case:
+   child todos carrying the human's constraints and originating-conversation
+   pointer verbatim, dependency links, and a stateless holder row with frozen
+   input only.
+3. Unreleased split case (`change` or `bug` without human-released split):
+   proposed partition and dependency order returned through `todo-orchestrator`
+   for human release, with no children filed.
 
 ## Recovery
 
@@ -721,8 +734,11 @@ or re-derivation under step 1b.
    `bug`, ambiguity resolves through the `diagnosis`, or is held for the human
    only when it concerns the intended behavior, never by inference (step 3c).
 2. If planning reveals the work is not one coherent delivery under the
-   scope-and-size gate (`sdlc/policy/definition-of-ready`), group it into
-   children.
+   scope-and-size gate (`sdlc/policy/definition-of-ready`), apply step 2's
+   release boundary and grouping rules — returning the proposed partition for
+   human release when a `change` or `bug` split is unreleased, and copying the
+   human's constraints and originating-conversation pointer verbatim into every
+   released child.
 3. If a file referenced in an upstream artifact does not exist, verify whether it should be
    created or whether the upstream artifact is stale.
 

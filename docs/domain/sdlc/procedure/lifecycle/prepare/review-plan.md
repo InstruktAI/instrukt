@@ -213,8 +213,13 @@ the configured runtime conversation read instruction — tracing past any relayi
 or splitting session (`general/policy/human-contract`,
 `sdlc/policy/todo-creation-discipline`) — before weighing the plan against
 it. Checking a split child against its splitting agent's thread supplies no
-intent check. Confirm fidelity and record `instrukt todo stamp {slug} --intent-checked`
-against the checked input version and conversation. If expression needs
+intent check. Confirm fidelity and record the check per
+`sdlc/policy/todo-creation-discipline` — using
+`instrukt todo stamp {slug} --intent-checked` only when the stamp binds the
+human's originating conversation, and otherwise recording the checked `input`
+digest, checker, and originating human conversation address in the todo's `log`
+artifact and `plan-review-findings` rather than publishing a writer-derived
+stamp. If expression needs
 clarifying, return it to its author for a new input version; reviewer
 separation still applies. A mistaken interpretation returns to the human in the
 responsible session's thread as one intent question. A conversation required

@@ -254,20 +254,21 @@ Check whether the implementation follows existing codebase paradigms:
 
    The existing path can also be an established solution outside the system
    (`sdlc/policy/substrate-anchoring`, `general/principle/grounding`): an
-   externally defined data or markup grammar, protocol, API client, auth/OAuth
-   flow, format, or retry/backoff mechanism is handled through a conforming
-   off-the-shelf SDK or library, unless the change declares a subset the project
-   owns and refuses everything outside it or carries a grounded ADR
-   (`general/policy/adr-discipline`) proving a concrete gap. Introducing or
-   extending a hand-built implementation of such a specification or client with
-   no grounded outward assessment and ADR is an undeclared parallel
-   (**Critical**), in both plan review (including `change` and `bug` plans where
-   `architecture` is skipped) and build or commit review; pre-existing
-   hand-rolled code in the repository and local runtime choices provide no
-   precedent shield. A constraint offered as the reason to diverge is grounded
-   at its source like any other reason (**Important** when it does not hold). A
-   reviewer checking the change against a canonical implementation of the same
-   specification has already found the existing path.
+   external protocol, API client, auth/OAuth flow, or retry/backoff mechanism
+   adopts a maintained off-the-shelf SDK or library unless a grounded ADR
+   (`general/policy/adr-discipline`) proves a concrete gap that adopting or
+   bridging it cannot satisfy; an externally defined data or markup grammar or
+   format uses a conforming implementation unless the change declares a
+   project-owned subset and refuses everything outside it (or carries a
+   grounded ADR). Introducing or extending a hand-built implementation outside
+   those bounds with no grounded outward assessment and required ADR is an
+   undeclared parallel (**Critical**), in both plan review (including `change`
+   and `bug` plans where `architecture` is skipped) and build or commit review;
+   pre-existing hand-rolled code in the repository and local runtime choices
+   provide no precedent shield. A constraint offered as the reason to diverge
+   is grounded at its source like any other reason (**Important** when it does
+   not hold). A reviewer checking the change against a canonical implementation
+   of the same specification has already found the existing path.
 
 7. **State placement**: Does every piece of durable state the change
    introduces, relocates or changes live where the reviewed design placed it,

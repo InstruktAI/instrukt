@@ -48,8 +48,13 @@ Apply these configured action values to the identified assignment and session.
    human's actual originating conversation with the configured runtime
    conversation read instruction — tracing past any relaying or splitting
    session (`general/policy/human-contract`, `sdlc/policy/todo-creation-discipline`) —
-   and compare outcome-level substance. Confirm fidelity and record
-   `instrukt todo stamp {slug} --intent-checked` for that input version.
+   and compare outcome-level substance. Confirm fidelity and record the check
+   per `sdlc/policy/todo-creation-discipline` (using
+   `instrukt todo stamp {slug} --intent-checked` only when the stamp binds the
+   human's originating conversation, and otherwise recording the checked `input`
+   digest, checker, and originating human conversation address in the todo's
+   `log` artifact and `prd-review-findings` rather than publishing a
+   writer-derived stamp).
    Clarification returns to the author for a new version; a mistaken
    interpretation returns to the human. If the originating conversation is permanently
    unavailable, return the intent to the human in the responsible thread; a new `input`

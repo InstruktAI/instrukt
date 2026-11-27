@@ -16,15 +16,18 @@ description: Before new construction, identify the existing module whose contrac
   nothing by themselves. Reuse the fitting capability; a departure names the
   concrete mismatch and why adapting, adopting or replacing resolves it.
 - **Adopt established off-the-shelf libraries for external protocols and
-  infrastructure.** For an external protocol, API client, auth/OAuth flow,
-  format/grammar, or retry/backoff mechanism, adopt a maintained off-the-shelf
-  SDK or library unless a grounded ADR (`general/policy/adr-discipline`) proves
-  a concrete gap that adopting or bridging the library cannot satisfy. Pre-existing
-  hand-rolled code in the repository or an existing local runtime choice (such
-  as a synchronous-only I/O stack where the maintained ecosystem SDK is async)
-  is not a reason to extend or wrap hand-rolled protocol code. This requirement
-  applies to every change — including `change` and `bug` plans where
-  `architecture` is skipped.
+  infrastructure.** For an external protocol, API client, auth/OAuth flow, or
+  retry/backoff mechanism, adopt a maintained off-the-shelf SDK or library
+  unless a grounded ADR (`general/policy/adr-discipline`) proves a concrete gap
+  that adopting or bridging the library cannot satisfy. For an externally
+  defined data or markup grammar or format, use a conforming implementation
+  unless the change declares an explicit project-owned subset and refuses all
+  inputs outside it (or carries a grounded ADR for a full-grammar divergence).
+  Pre-existing hand-rolled code in the repository or an existing local runtime
+  choice (such as a synchronous-only I/O stack where the maintained ecosystem
+  SDK is async) is not a reason to extend or wrap hand-rolled protocol or
+  infrastructure code. This requirement applies to every change — including
+  `change` and `bug` plans where `architecture` is skipped.
 - **Before new construction, identify the existing module whose actual contract
   covers the work, or record that grounded discovery found none.** Extend an
   existing module when owner, invariant, and reason to change align; otherwise
@@ -89,12 +92,12 @@ with what already exists.
   is returned before review proceeds.
 - A reviewer who finds an existing module whose contract covers the work, an
   existing path that already reaches the work's outcome, or an established
-  external solution (a conforming implementation, SDK, or library for an
-  externally defined grammar, protocol, API, auth/OAuth flow, format, or
-  retry/backoff mechanism under `general/principle/grounding`) where the
-  artifact declares none — or where hand-rolled protocol or infrastructure code
-  is introduced or extended without an outward assessment and grounded ADR
-  (`general/policy/adr-discipline`) — files a **Critical** finding: the work is
+  external solution under `general/principle/grounding` where the artifact
+  declares none — including hand-rolled external protocol, API client,
+  auth/OAuth, or retry/backoff code without an outward assessment and grounded
+  ADR (`general/policy/adr-discipline`), or a hand-rolled grammar/format
+  implementation that neither declares and enforces a strict project-owned
+  subset nor carries a grounded ADR — files a **Critical** finding: the work is
   an undeclared parallel. Pre-existing hand-rolled code in the repository and
   local runtime choices supply no precedent shield.
 - A declared divergence whose stated reason does not hold — same owner, same
