@@ -109,6 +109,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         configured_runtimes: None,
         proposal_recording: Some(Arc::new(instrukt_company::proposals::Recording::new(
             ctx.clock.shared(),
+            Arc::new(instrukt_runner::runtime::adapter),
         ))),
     })
 }

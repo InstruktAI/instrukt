@@ -21,12 +21,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use instrukt_core::config::{CONFIG_FILE_NAME, CompanyIdentity, Configuration, Env};
+use instrukt_core::config::{CONFIG_FILE_NAME, CompanyIdentity, Configuration, Env, Runtime};
 use instrukt_core::git;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_runner::interfaces::{CompanyError, ProposalStoreCondition, UnestablishedProposal};
 use instrukt_runner::mcp::{McpError, Speaker};
+use instrukt_runner::runtime::RuntimeAdapter;
 use jiff::Timestamp;
 
 use _store::Recorded;
@@ -137,12 +138,19 @@ fn retired(facts: &[(String, Holding)]) -> Vec<String> {
 /// fails the commit.
 pub struct Recording {
     clock: Arc<dyn Fn() -> Timestamp + Send + Sync>,
+    adapters: Arc<Adapters>,
 }
 
+/// The runtime adapter for the runtime the machine's configuration selects,
+/// as the composition root supplies it.
+pub type Adapters = dyn Fn(Runtime) -> Box<dyn RuntimeAdapter> + Send + Sync;
+
 impl Recording {
-    /// A recording that stamps each entry with `clock`'s time.
-    pub fn new(clock: Arc<dyn Fn() -> Timestamp + Send + Sync>) -> Self {
-        Self { clock }
+    /// A recording that stamps each entry with `clock`'s time and asks the
+    /// committing turn's speaker through the adapter `adapters` supplies for
+    /// the selected runtime.
+    pub fn new(clock: Arc<dyn Fn() -> Timestamp + Send + Sync>, adapters: Arc<Adapters>) -> Self {
+        Self { clock, adapters }
     }
 
     /// Records the commit just made at `root` as a knowledge proposal when
@@ -180,8 +188,7 @@ impl Recording {
             return Ok(());
         };
         let identity = identity(root)?;
-        let adapter =
-            instrukt_runner::runtime::adapter(global.runner_runtime().map_err(|e| e.to_string())?);
+        let adapter = (self.adapters)(global.runner_runtime().map_err(|e| e.to_string())?);
         let first = Instant::now();
         let asked = loop {
             let answer = crate::conversations::speaker(&inspection, &session, adapter.as_ref());
