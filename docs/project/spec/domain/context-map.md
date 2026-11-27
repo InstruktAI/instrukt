@@ -189,7 +189,7 @@ Home backup adds these crossings; its contract is
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
 | configuration → runner | Customer / Supplier | Admitted global `backup` settings (withheld alone when invalid so other capabilities run unchanged) and company-home settings forward conversion (`project/instrukt/spec/feature/configuration/layered-configuration`, `project/instrukt/spec/feature/configuration/company-homes`) |
-| runner → publication | Customer / Supplier | Local-only, lock-free home backup standing query (standing, timestamps, last generation, admission state, or unreadable-state `path` and `reason`), declared by core and wired by the CLI (`project/instrukt/spec/feature/publication/instrukt-status`) |
+| runner → publication | Customer / Supplier | Local-only, lock-free home backup standing query (standing, last backup timestamp, last published generation, or unreadable-state `path` and `reason`), declared by core and wired by the CLI (`project/instrukt/spec/feature/publication/instrukt-status`) |
 <!-- /planned:instrukt-home-backup -->
 
 Workflow and runner coordinate integration without making the workflow engine

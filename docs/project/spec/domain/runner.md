@@ -147,13 +147,11 @@ Native agent-operation prose is supplied by configuration and rendered through `
 <!-- change:instrukt-home-backup -->
   requested-review store with its file, lock and migrations, holding the
   admitted asks (`project/instrukt/spec/feature/runner/requested-review`);
-  encrypted home backup and guarded restore, its local bookkeeping store
-  (`state/backup-state.json` under `state/backup.lock`), the staleness threshold
-  and runner-owned staleness-notification deduplication mark
-  (`state/backup-staleness-notified.json` under `state/runner.lock`), the
-  local-only lock-free backup standing query, and convergence and withdrawal of
-  the owned daily home backup timer
-  (`project/instrukt/spec/feature/runner/home-backup`).
+  encrypted home backup and guarded restore, its local bookkeeping and
+  staleness-notification stores, its staleness threshold and local standing
+  query, and convergence of the owned daily home backup timer
+  (`project/instrukt/spec/feature/runner/home-backup`,
+  `project/instrukt/spec/feature/runner/module-installation`).
 <!-- /planned-change:instrukt-home-backup -->
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
@@ -240,18 +238,12 @@ admitted value and its validation, owned by configuration
 
 <!-- planned:instrukt-home-backup -->
 The runner also owns encrypted home backup and guarded restore for a computer's
-instrukt home (`project/instrukt/spec/feature/runner/home-backup`): consistent
-SQLite snapshotting and verification, snapshot collection and owning-root path
-confinement, client-side `age` encryption and streaming `zstd` archiving,
-provider-neutral S3-compatible staged publication, per-machine retention
-pruning, local bookkeeping (`state/backup-state.json`), the staleness threshold
-(`36 hours`), runner-owned staleness-notification deduplication
-(`state/backup-staleness-notified.json`), the local-only lock-free standing
-query consumed by publication, anomaly routing for failed and stale runs, and
-convergence and withdrawal of the owned daily OS timer. It does not own global
-`backup` configuration schema, entry validation, or company-home settings
-forward conversion (configuration), `instrukt status` presentation
-(publication), or single-company container export/import (`company-containers`).
+instrukt home (`project/instrukt/spec/feature/runner/home-backup`), distinct
+from runner's single-company container export and import
+(`project/instrukt/spec/feature/runner/company-containers`). It does not own
+global `backup` configuration schema, entry validation, or company-home
+settings resolution and forward conversion (configuration), or `instrukt status`
+rendering (publication).
 <!-- /planned:instrukt-home-backup -->
 
 The runner also owns carrying a company's knowledge proposals to review and
@@ -508,98 +500,80 @@ demand (`project/instrukt/spec/feature/runner/module-installation`).
 
 `instrukt backup run`, `instrukt backup list`, and `instrukt backup restore`
 execute as one-shot CLI invocations speaking provider-neutral S3-compatible
-object storage directly through the S3 SDK with bounded built-in retries and
-`RequestChecksumCalculation::WhenRequired`, never wrapped through
-`instrukt-outside` (`project/instrukt/design/architecture/outside-gate`,
-`project/instrukt/spec/feature/runner/home-backup`). The async S3 client stays
-encapsulated behind a synchronous runner storage boundary.
+object storage directly through an established S3 client with bounded retries
+and plain upload framing, never routed through `instrukt-outside`
+(`project/instrukt/design/architecture/outside-gate`,
+`project/instrukt/spec/feature/runner/home-backup`).
 
-- **Pre-conversion confinement and snapshot collection:** `instrukt backup run`
-  serializes on `state/backup.lock` and never takes `state/writer.lock` or
-  `state/runner.lock`. Before invoking configuration's forward conversion on a
-  company home (`project/instrukt/spec/feature/configuration/company-homes`),
-  runner checks `symlink_metadata` on the company directory and its
-  `company.yaml`, `instrukt.yaml`, and `.gitignore` paths, refusing any symlink
-  that escapes its owning root before configuration reads them. Snapshot
-  collection prunes excluded trees before descent (including regenerable
-  `companies/<name>/.instrukt/schemas/` and `state/.backup-staging-*`) and
-  collects `state/agents-deployment.json` only when present. Every visited
-  symlink whose resolved target escapes its owning root (or cannot be resolved)
-  refuses the backup fail-closed naming the offending path and owning root;
-  symlinks are never written as archive symlink entries.
-- **Reusable SQLite online backup and streaming archive pipeline:** Every
-  discovered `*.db` and `*.sqlite` store under `state/` and
-  `companies/<name>/.instrukt/` is snapshotted via `instrukt-core::state_db`'s
-  reusable SQLite online-backup primitive (`rusqlite::backup::Backup`, admitted
-  through `fsx::open_database`) into an owner-only (`0700`) staging directory
-  under `state/.backup-staging-<rand>/` and checked with `PRAGMA quick_check`.
-  Each verified snapshot streams immediately into a single `tar → zstd`
-  (level 3) → `age` X25519 STREAM (`64 KiB` chunks) pipeline writing
-  `<staging>/archive.tar.zst.age` (`0600`) and is unlinked before the next
-  database is snapshotted, bounding peak staging disk to
-  `max_single_db + archive_size` and peak RAM to constant streaming buffers.
-  Before staging any file, runner verifies available space on the staging
-  filesystem against `20 GiB + max_single_db + raw_snapshot_bytes`
-  (`general/policy/shared-machine-resources`) and removes the staging directory
+- **Snapshot confinement and streaming staging:** `instrukt backup run`
+  serializes on `state/backup.lock` without taking `state/writer.lock` or
+  `state/runner.lock`. Before snapshot collection, runner delegates company
+  settings resolution and forward conversion to configuration (which enforces
+  symlink confinement on its own company documents,
+  `project/instrukt/spec/domain/configuration`). Runner confines its own backup
+  roots and post-conversion snapshot inputs, pruning excluded trees before
+  descent (including regenerable `companies/<name>/.instrukt/schemas/`,
+  `state/.backup-staging-*`, and local backup bookkeeping files) and refusing
+  any visited escaping or unresolvable symlink fail-closed; symlinks are never
+  archived as symlink entries. Each discovered SQLite store is snapshotted
+  through core's reusable online-backup primitive into owner-only staging,
+  verified, streamed immediately into the compressed `age`-encrypted archive,
+  and unlinked before the next database is snapshotted. Pre-staging headroom is
+  enforced against the shared-machine free-space floor
+  (`general/policy/shared-machine-resources`) and staging is removed
   unconditionally on exit.
-- **Staged S3 publication, multi-GB promotion, and cleanup:** Archive names use
-  `<prefix>/<machine-id>/instrukt-home.<timestamp>.tar.zst.age` (or
-  `<machine-id>/...` when `prefix` is omitted). Uploads to `_staging/<key>` use
-  single `PutObject` up to `64 MiB` and multipart `UploadPart` in `64 MiB`
-  chunks above `64 MiB`. After `HeadObject` confirms exact byte length on
-  `_staging/<key>`, promotion to `<key>` uses single `CopyObject` up to `4 GiB`
-  and multipart `UploadPartCopy` (`copy_source_range` in `512 MiB` chunks)
-  above `4 GiB`, writes `_validated/<key>`, and deletes `_staging/<key>`. On
-  upload or promotion failure, runner aborts any open multipart upload and
-  deletes `_staging/<key>` best-effort. After successful promotion and
-  per-machine retention pruning, runner aborts incomplete multipart uploads and
-  deletes orphaned `_staging/` objects older than `24 hours` strictly under
-  this computer's `<machine-id>` namespace.
-- **Guarded restore:** Restore resolves the target key, reads its byte size via
-  `HeadObject`, checks available space on the destination filesystem against
-  `20 GiB + 4 * encrypted_size` before staging (and re-checks the `20 GiB`
-  floor during streaming extraction), downloads into an owner-only (`0700`)
-  staging directory beside the destination, streams `age` decryption and `zstd`
-  decompression, and rejects any tar entry with absolute paths, `..` segments,
-  NUL bytes, escaping paths, or any non-regular/non-directory type (symlinks,
-  hardlinks, devices, FIFOs, sockets). Every restored `*.db` and `*.sqlite`
-  store must pass `PRAGMA integrity_check` (`ok`) before destination writes.
-  `--into <dir>` is canonicalized against active `INSTRUKT_HOME` so an alias or
-  symlink to the live home cannot bypass the live-home lock guard. Live-home
-  restore acquires non-blocking exclusive locks across all home state and
-  company-proposal lock files (`runner.lock`, `writer.lock`, `history.lock`,
-  `reflection.lock`, `withdrawal.lock`, `delivered-release.lock`,
-  `company-generation.lock`, `review*.lock`, `requested-review.lock`,
-  `backup.lock`, `locks/*.lock`, and `companies/*/.instrukt/*.lock`) and holds
-  them across the entire destination swap, refusing with holder detail and
-  recovery doors if any lock is busy. Overwrite confirmation without `--yes`
-  reads `/dev/tty` when `--identity -` consumes stdin on an interactive
-  terminal and fails closed non-interactively. Before moving each restored
-  database into place, restore removes stale `-wal`, `-shm`, and `-journal`
-  sidecars and enforces `0600` on restored `secrets.env` files and `0700` on
-  state directories. Staging is removed unconditionally on success, failure,
-  and declined confirmation.
-- **Local bookkeeping, standing query, staleness, and timer:** `instrukt backup
-  run` atomically updates `state/backup-state.json` (`0600`) under
-  `state/backup.lock`. Runner's `HomeBackupStanding` implementation reads global
-  backup admission and `state/backup-state.json` lock-free with no remote calls:
-  absent global `backup` yields `unconfigured`; present `backup` (admitted or
-  withheld, flagged via `admitted: bool`) yields `never_run` when no run is
-  recorded, `failed` when the latest attempt failed, `stale` when the latest
-  attempt succeeded more than `36 hours` ago, or `ok` otherwise; unreadable
-  bookkeeping returns a structured `(path, reason)` error. On backup failure,
-  `instrukt backup run` invokes `runner.notify` directly with non-session
-  reference `backup:failed:<machine-id>`. During `instrukt tick` and
-  `instrukt run` (under `state/runner.lock`), admitted `stale` standing invokes
-  `runner.notify` once per staleness episode (`backup:stale:<machine-id>`) and
-  persists `state/backup-staleness-notified.json` keyed by `last_success_at`,
-  clearing that mark when a newer `last_success_at` appears; `instrukt events
-  status` surfaces active failed or stale backup conditions directly from
-  `state/backup-state.json` with their repair doors regardless of
-  `runner.notify`. Unfiltered `instrukt install` converges the owned daily
-  timer (`ai.instrukt.backup`, `instrukt-backup.timer`/`.service` with
-  `Persistent=true`, or `# instrukt-backup` crontab marker, each carrying the
-  home suffix for non-default homes).
+- **Publication, post-validation, and bookkeeping errors:** Staged upload,
+  exact-size verification, in-region single-object or multipart server-side
+  promotion, validation marking, per-machine retention pruning, and stale
+  orphan cleanup for this computer's namespace follow
+  `project/instrukt/spec/feature/runner/home-backup`. Once `_validated/<key>`
+  is written, `state/backup-state.json` records the published generation and
+  success timestamp even if subsequent staging deletion, retention pruning, or
+  orphan cleanup fails, while still recording the post-validation error,
+  invoking `runner.notify`, and exiting non-zero. On any failed backup run, a
+  failure writing `state/backup-state.json` never suppresses `runner.notify`
+  and surfaces alongside the primary failure.
+- **Guarded restore:** Restore enforces headroom across every filesystem
+  written during staging and swap, stages on the same filesystem as each target
+  subtree (handling mountpoint targets and symlinked `INSTRUKT_HOME` or
+  `state/` layouts without cross-device rename failures), rejects unsafe tar
+  paths and every non-regular/non-directory entry type, and verifies every
+  restored SQLite store before touching the destination. Canonicalizing
+  `--into` against active `INSTRUKT_HOME` prevents bypassing the live-home lock
+  guard. Live-home restore acquires non-blocking exclusive locks across all
+  fixed home, company, and known-issues locks (creating absent fixed locks) and
+  all dynamically discovered active home locks in deterministic order, holding
+  them across the entire swap. Before any destination mutation, restore
+  enforces component-by-component symlink confinement below the destination
+  root and each company folder. SQLite sidecars (`-wal`, `-shm`, `-journal`)
+  are removed only after the main database's same-filesystem atomic rename
+  succeeds. Any mid-swap failure rolls back already-moved entries from
+  same-filesystem rollback staging; if rollback fails, restore reports the
+  partial state and names the repeat-restore recovery door. Overwrite
+  confirmation without `--yes` reads the controlling terminal when standard
+  input carries the decryption identity and fails closed non-interactively.
+- **Standing, staleness, alerting, and daily timer:** Runner owns the
+  staleness threshold of `36 hours` past the last successful backup timestamp
+  (or past the first recorded attempt timestamp when no backup has succeeded
+  yet), evaluated whenever global `backup` is configured (whether admitted or
+  withheld) and independently of the latest attempt's outcome. The local-only,
+  lock-free standing query reads global backup configuration and
+  `state/backup-state.json` without remote calls, returning standing or a
+  structured `(path, reason)` error. Failure and staleness notifications follow
+  `project/instrukt/spec/feature/runner/anomaly-notification`: failed runs
+  notify directly; `instrukt tick` and `instrukt run` deduplicate staleness
+  notifications under `state/runner.lock` via
+  `state/backup-staleness-notified.json` keyed by episode anchor, recording the
+  mark before invoking `runner.notify`. In `instrukt tick` and `instrukt run`,
+  an unreadable or newer-schema `state/backup-state.json` logs a warning
+  without aborting unrelated runner work and triggers no fabricated staleness
+  notification, and an unreadable or unwritable deduplication mark logs a
+  warning and skips notification rather than looping. `instrukt events status`
+  reads backup standing independently of project/company admission, surfacing
+  both active failure and staleness (and unreadable bookkeeping errors with
+  path and reason) without either masking the other. Owned daily timer
+  convergence and withdrawal follow
+  `project/instrukt/spec/feature/runner/module-installation`.
 <!-- /planned:instrukt-home-backup -->
 
 ### Event naming and producer declarations
