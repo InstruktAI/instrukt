@@ -44,11 +44,19 @@ verdict applies.
 
 Use `instrukt <command> -h` for individual commands.
 
-0. **Audit the handoff.** Read `instrukt todo show {slug}` and the `input`.
-   Apply the entry audit in `sdlc/policy/todo-creation-discipline`. Take a
-   current intent check as given; the first non-author recipient of unchecked
-   input reads its originating conversation through the configured runtime read and
-   records `instrukt todo stamp {slug} --intent-checked`.
+0. **Audit the handoff.** Read `instrukt todo show {slug}`, the `input`, and
+   `log` when present. Apply the entry audit in
+   `sdlc/policy/todo-creation-discipline`. Take a current intent check as given
+   only when it verifies the current `input` version against the human's actual
+   originating conversation (an `--intent-checked` stamp bound to a relaying or
+   splitting session does not satisfy the check). If no valid current check
+   exists and you are the first non-author recipient, read the human's actual
+   originating conversation through the configured runtime read — tracing past
+   any relaying or splitting session — and record the check per
+   `sdlc/policy/todo-creation-discipline` (`instrukt todo stamp {slug} --intent-checked`
+   only when the stamp binds the human's originating conversation, otherwise
+   recording the checked `input` digest, checker, and originating human
+   conversation address in `log`).
    If the originating conversation is permanently unavailable, return the intent to the
    human in the responsible thread; a new `input` version from that conversation becomes
    the checkable basis.

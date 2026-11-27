@@ -204,11 +204,17 @@ artifact quality policy. Do not add an intent-formation lane to the delivery
 review catalogue; build and commit review validate delivery against already
 approved intent and must not re-litigate it.
 
-`input` is the basis this comparison rests on. Inspect its current version
-and intent-checked stamp. A current check is taken as given, regardless of
-which role performed it; rewriting the plan does not invalidate that check.
+`input` is the basis this comparison rests on. Inspect its current version,
+any intent-checked stamp, and `log` per `sdlc/policy/todo-creation-discipline`.
+A valid current check — verifying the current `input` version against the
+human's actual originating conversation, whether by `--intent-checked` stamp
+bound to that conversation or by digest-bound verification recorded in `log` —
+is taken as given, regardless of which role performed it; rewriting the plan
+does not invalidate that check. An `--intent-checked` stamp whose recorded
+conversation is a relaying or splitting session rather than the human's
+originating conversation does not satisfy the check.
 If you are the first recipient other than the current input's author and no
-current check exists, read the human's actual originating conversation through
+valid current check exists, read the human's actual originating conversation through
 the configured runtime conversation read instruction — tracing past any relaying
 or splitting session (`general/policy/human-contract`,
 `sdlc/policy/todo-creation-discipline`) — before weighing the plan against

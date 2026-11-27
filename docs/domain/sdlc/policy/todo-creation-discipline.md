@@ -316,10 +316,17 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
   current `input` and `--intent-checked` would bind that relay session instead
   of the human's originating conversation, do not publish a writer-derived
   stamp; record the verification — naming the checked `input` digest, checker,
-  and originating human conversation address — in the todo's `log` artifact and
-  review findings so truthful provenance travels downstream. A current check
-  travels unchanged to later recipients; role names and author membership are
-  not substitutes for a version-bound check. The check runs where the
+  and originating human conversation address — in the todo's `log` artifact
+  (`instrukt todo artifacts write <slug> log <content>`) and review findings so
+  truthful provenance travels downstream. A current check for the current
+  `input` version is either an `--intent-checked` stamp whose recorded
+  conversation is the human's actual originating conversation, or that
+  digest-bound verification in `log`; an `--intent-checked` stamp bound to a
+  relaying or splitting session rather than the human's originating
+  conversation does not satisfy the check, and the next non-author recipient
+  performs the original-human check. A valid current check travels unchanged to
+  later recipients; role names and author membership are not substitutes for a
+  version-bound check. The check runs where the
   conversation is readable, without copying it to GitHub. Unreadable evidence
   supplies no check, and an author never independently checks their own
   compression. If the originating conversation is permanently unavailable,

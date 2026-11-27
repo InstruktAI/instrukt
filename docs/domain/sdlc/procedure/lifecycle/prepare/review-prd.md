@@ -42,14 +42,19 @@ Apply these configured action values to the identified assignment and session.
 
 1. Discover the todo's artifacts, then read the `input`, the drafted `prd`, and
    any `log` or deferral material that bears on product intent. Load the relevant
-   product and domain snippets. Inspect the current `input` version and its
-   intent-checked stamp. Take a current check as given. If no current check
-   exists and you are the first recipient other than its author, read the
-   human's actual originating conversation with the configured runtime
-   conversation read instruction — tracing past any relaying or splitting
-   session (`general/policy/human-contract`, `sdlc/policy/todo-creation-discipline`) —
-   and compare outcome-level substance. Confirm fidelity and record the check
-   per `sdlc/policy/todo-creation-discipline` (using
+   product and domain snippets. Inspect the current `input` version, any
+   intent-checked stamp, and `log` per `sdlc/policy/todo-creation-discipline`.
+   Take a current check as given only when it verifies the current `input`
+   version against the human's actual originating conversation (an
+   `--intent-checked` stamp bound to a relaying or splitting session rather
+   than the human's originating conversation does not satisfy the check). If no
+   valid current check exists and you are the first recipient other than its
+   author, read the human's actual originating conversation with the configured
+   runtime conversation read instruction — tracing past any relaying or
+   splitting session (`general/policy/human-contract`,
+   `sdlc/policy/todo-creation-discipline`) — and compare outcome-level
+   substance. Confirm fidelity and record the check per
+   `sdlc/policy/todo-creation-discipline` (using
    `instrukt todo stamp {slug} --intent-checked` only when the stamp binds the
    human's originating conversation, and otherwise recording the checked `input`
    digest, checker, and originating human conversation address in the todo's

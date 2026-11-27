@@ -699,19 +699,31 @@ release per step 2.
 
 ### 7. Final step — complete and return to `todo-orchestrator`
 
-When the implementation-plan artifact is written, released child grouping has
-been executed under step 2 (via `instrukt todo create ... --approved --group`
-with each child's filing outcome reporting it created), or an unreleased split
-proposal is ready to return for human release, stamp role completion
-(`instrukt todo stamp {slug} --role-complete`) and inspect
-`instrukt todo show {slug}`.
-
-The dispatching `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
-and dispatches an independent `plan-reviewer` session. The review is done when
-the record carries the current `plan-review-findings` artifact and `plan_review`
-verdict stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
-returns here with `plan-review-findings` for fix, evidence-backed rejection,
-or re-derivation under step 1b.
+- **Atomic plan written:** stamp role completion
+  (`instrukt todo stamp {slug} --role-complete`) and inspect
+  `instrukt todo show {slug}`. The dispatching `todo-orchestrator` reads the
+  factual ledger (`instrukt todo show {slug} --json`) and dispatches an
+  independent `plan-reviewer` session. The review is done when the record
+  carries the current `plan-review-findings` artifact and `plan_review` verdict
+  stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
+  returns here with `plan-review-findings` for fix, evidence-backed rejection,
+  or re-derivation under step 1b.
+- **Released child grouping executed under step 2:** do not stamp
+  `--role-complete` (which binds `implementation-plan` and is refused without
+  one, or would bind a stale seed on the now-frozen holder). Report the created
+  child slugs and dependency order back to `todo-orchestrator`, which closes
+  the `planner` attempt with
+  `instrukt todo attempt {slug} --role planner --attempt <n> --failed --reason "..."`
+  without dispatching `plan-reviewer` against the holder.
+- **Unreleased split proposal awaiting human release:** write the proposed
+  partition, dependency order, and scope/size rationale to `log`
+  (`instrukt todo artifacts write {slug} log <content>`) and stop without
+  filing children or stamping `--role-complete`. `todo-orchestrator` closes the
+  stopped `planner` attempt with
+  `instrukt todo attempt {slug} --role planner --attempt <n> --failed --reason "..."`,
+  presents the proposed partition for human release without dispatching
+  `plan-reviewer`, and keeps its claim or places `--hold` until the human
+  releases the split (`sdlc/procedure/lifecycle/overview`).
 
 ## Outputs
 

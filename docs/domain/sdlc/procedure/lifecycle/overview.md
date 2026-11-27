@@ -107,8 +107,13 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      `architecture-reviewer` are dispatched only for a todo that carries an
      approved `prd`. When `planner` finds a `change` or `bug` fails the
      scope/size gate and needs a multi-child split the human has not released,
-     present the proposed partition to the human and wait for release before
-     filing children (`sdlc/procedure/lifecycle/prepare/plan-draft`).
+     `planner` stops early without writing `implementation-plan`, filing
+     children, or stamping `--role-complete` (`sdlc/procedure/lifecycle/prepare/plan-draft`);
+     resolve the stopped `planner` attempt with
+     `instrukt todo attempt {slug} --role planner --attempt <n> --failed --reason "..."`,
+     present the proposed partition to the human without dispatching
+     `plan-reviewer`, and keep your claim or place `--hold` until human
+     release.
   3. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and
@@ -117,8 +122,10 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      `--finalize-ready` + `--unclaim` → `integrate`.
 
 - **Feature (`kind: feature`):**
-  1. Verify `input` intent (`--intent-checked` when authored by another
-     session).
+  1. Verify `input` intent per `sdlc/policy/todo-creation-discipline` —
+     recording `--intent-checked` only when the stamp binds the human's actual
+     originating conversation, and otherwise recording digest-bound
+     verification in `log` (ignoring any relay-derived stamp).
   2. Dispatch `intaker` (`sdlc/procedure/lifecycle/prepare/intake`) to author
      `prd` (and pending feature-spec scenarios when applicable), then
      independent `prd-reviewer`
