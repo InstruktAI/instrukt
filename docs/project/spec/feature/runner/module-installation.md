@@ -73,7 +73,7 @@ unused; withdrawal waits for a complete demand read.
 | Effective demand | Infrastructure and prerequisites |
 | --- | --- |
 | Core, with history explicitly off and no project with todos/events/history enabled | No periodic wake-up, Redis or receiver installation. Documentation/configuration remain usable without a runtime. |
-| Global `backup` declared (`project/instrukt/spec/feature/runner/home-backup`) | One owned daily OS timer invoking `instrukt backup run` at the configured local time, with valid global `backup` settings and resolved non-blank secret values in `~/.instrukt/secrets.env`. No minute wake-up, Redis, receiver, or runtime solely for backup. |
+| Global `backup` declared (`project/instrukt/spec/feature/runner/home-backup`) | One owned daily OS timer invoking `instrukt backup run` at the configured local time, with admitted global `backup` configuration (`project/instrukt/spec/feature/configuration/layered-configuration`). No minute wake-up, Redis, receiver, or runtime solely for backup. |
 | Blueprint enabled | Release-pinned Graphify in the instrukt home via `uv tool install graphifyy==<pin>`; uv is an unmet prerequisite when installation is needed and uv is absent. No wake-up, Redis or receiver solely for blueprint. |
 | History enabled (default) | Cluster Redis checked for merged-search request/reply, independently of events. Local history commands require no Redis. No minute wake-up, local event Redis, event consumers or receiver solely for history. |
 | A company home's declared connector | A selected capable runtime and the owned runner service that keeps the long-lived `instrukt run` running. No Redis or receiver solely for conversations. |
@@ -188,13 +188,12 @@ work runs (`project/instrukt/spec/feature/configuration/layered-configuration`).
 The window adds no wake-up demand.
 
 <!-- planned:instrukt-home-backup -->
-They report in the same way a global `backup` declaration that has validation
-findings or whose `access_key_id` or `secret_access_key` secret references are
-missing, blank, unreadable, or insufficiently protected in
-`~/.instrukt/secrets.env` (naming the key, reference, and repair door without
-disclosing values): home backup is withheld as unmet demand on this computer
-while the runner's other work runs, and an existing owned backup timer is not
-withdrawn while `backup` remains present in the global layer.
+They report in the same way a global `backup` declaration that configuration
+withholds due to validation or secret-resolution findings
+(`project/instrukt/spec/feature/configuration/layered-configuration`): home
+backup is withheld as unmet demand on this computer while the runner's other
+work runs, and an existing owned backup timer is not withdrawn while `backup`
+remains present in the global layer.
 <!-- /planned:instrukt-home-backup -->
 
 ### Graphify installation
@@ -239,8 +238,7 @@ One wake proves neither delivered activation nor completed task.
 <!-- planned:instrukt-home-backup -->
 ### Daily home backup timer
 
-While the global layer carries a valid `backup` declaration whose required
-credential references resolve to non-blank values in `~/.instrukt/secrets.env`
+While the global layer carries an admitted `backup` declaration
 (`project/instrukt/spec/feature/configuration/layered-configuration`),
 installation demands one owned daily OS timer that invokes `instrukt backup run`
 at the configured local time (`project/instrukt/spec/feature/runner/home-backup`),
@@ -255,10 +253,11 @@ agent session.
   Withdrawal and ownership below, carrying a path-derived suffix for homes
   other than `~/.instrukt` and re-writing instrukt's own definition whole on
   every install without checking proof of earlier writes.
-- Missing, blank, unreadable, or insufficiently protected backup secret values
-  in `~/.instrukt/secrets.env` are reported by `instrukt install` and
-  `instrukt install --check` as unmet findings naming the key, reference, and
-  `instrukt secrets set` door without disclosing values.
+- When configuration withholds global `backup` (including missing, blank,
+  unreadable, or insufficiently protected credential references in
+  `<selected INSTRUKT_HOME>/secrets.env`), `instrukt install` and
+  `instrukt install --check` report those findings as unmet demand without
+  disclosing secret values and without withdrawing an existing owned timer.
 - `instrukt install --check` reports a missing, drifted, or unloaded backup
   timer as unmet demand (and an obsolete owned timer when `backup` is absent)
   without creating or mutating files or units.

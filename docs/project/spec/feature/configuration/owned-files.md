@@ -34,8 +34,16 @@ home's settings resolve only from it
 The file is owner-only and permissions are checked on read. Missing, blank,
 unreadable or insufficiently protected required material refuses the dependent
 operation with the reference and cause, never its value. An operation needing
+<!-- planned-change:instrukt-home-backup -->
 no secret does not require unrelated values to be present. Only
 `instrukt secrets set` and `instrukt secrets generate` write the file. At a
+<!-- change:instrukt-home-backup -->
+no secret does not require unrelated values to be present. Only
+`instrukt secrets set`, `instrukt secrets generate`, and guarded home restore
+(`instrukt backup restore`, restoring backed-up `secrets.env` files with `0600`
+permissions under `project/instrukt/spec/feature/runner/home-backup`) write the
+file. At a
+<!-- /planned-change:instrukt-home-backup -->
 terminal, `secrets set` asks for the value with echo off; from redirected input
 or `--from-file` it reads that. Writes
 are atomic, and values are never echoed or included in diagnostics. Reading,

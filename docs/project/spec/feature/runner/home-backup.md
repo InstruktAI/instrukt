@@ -66,8 +66,10 @@ Excluded unconditionally from every snapshot:
   `state/index.yaml`, `state/publication/`);
 - regenerable and ephemeral state (`state/blueprint/`, `state/configuration/`,
   `state/installation/`, `state/hook-runs/`, `state/redis/`,
-  `state/consumer-locks/`, `state/runner-hosts.json`, `locks/`, all `*.lock`
-  files);
+  `state/consumer-locks/`, `state/runner-hosts.json`, `state/backup-state.json`,
+  `state/backup-staleness-notified.json`, `state/.backup-staging-*`,
+  `state/.backup-restore-staging-*`, `state/.backup-restore-rollback-*`,
+  `locks/`, all `*.lock` files, and `companies/<name>/.instrukt/schemas/`);
 - live SQLite sidecars (`*-wal`, `*-shm`, `*-journal`), stray recovery copies
   (`*.corrupt.*`, `*.pre-*`, `*.recovered-*`), and ad-hoc local `backups/`;
 - git-tracked company repository working trees under `companies/<name>/`
@@ -78,9 +80,9 @@ Excluded unconditionally from every snapshot:
 **Path confinement:** Snapshot collection confines every collected file and
 SQLite store to real paths inside its owning root (the instrukt home for
 machine state and research, and each company's own folder under
-`companies/<name>/` for company files). Escaping symlinks are never
-dereferenced and symlinks whose targets escape their owning root are refused or
-omitted (`sdlc/policy/security-awareness`).
+`companies/<name>/` for company files). Escaping or unresolvable symlinks are
+never dereferenced and are refused fail-closed; symlinks are never archived as
+symlink entries (`sdlc/policy/security-awareness`).
 
 ### Consistency, encryption and scale
 
@@ -131,13 +133,23 @@ omitted (`sdlc/policy/security-awareness`).
      handling both single-object copy and multipart server-side copy across the
      provider's single-object copy size limit.
   4. Write the `_validated/<key>` marker object, then delete `_staging/<key>`.
-- **Per-machine retention pruning:** After writing `_validated/<key>`, prune
-  only this machine's namespace to the configured generation retention count
+- **Per-machine retention pruning and stale orphan cleanup:** After writing
+  `_validated/<key>`, prune only this machine's namespace to the configured
+  generation retention count
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
   Unvalidated generations are evicted before validated generations, oldest
   first within each group; pruning a validated generation removes its paired
-  `_validated/<key>` marker as well. Generations belonging to other machine IDs
-  are never touched.
+  `_validated/<key>` marker as well. Also remove stale orphaned objects under
+  `_staging/<namespace>/` and abort stale incomplete multipart uploads across
+  both `_staging/<namespace>/` and `<namespace>/` aged past 24 hours, scoped
+  strictly to this computer's `machine-id`. Generations, staging objects, and
+  multipart uploads belonging to other machine IDs are never touched.
+- **Post-validation failure accounting:** Once `_validated/<key>` is written,
+  local bookkeeping still advances the recorded last successful timestamp and
+  published generation even if subsequent `_staging/<key>` deletion, retention
+  pruning, or orphan cleanup fails, while recording the post-validation error
+  (redacted), setting the run outcome to `failed`, invoking `runner.notify`,
+  and exiting non-zero.
 
 ### Guarded restore
 
@@ -153,43 +165,75 @@ omitted (`sdlc/policy/security-awareness`).
   non-interactive sessions.
 - **Headroom, decryption, safe extraction and full integrity check:** Before
   staging the download and extracted tree, restore checks available disk space
-  against the shared-machine headroom requirement
+  across every filesystem written during staging and swap against the
+  shared-machine headroom requirement
   (`general/policy/shared-machine-resources`) and refuses without staging if
-  headroom would be violated. Restore downloads the encrypted archive into
-  temporary staging, decrypts it using the supplied private identity, extracts
-  entries while rejecting path traversal, absolute paths, and symlink escapes,
-  and runs `PRAGMA integrity_check` on every restored `*.db` and `*.sqlite`
-  database before modifying the destination. Any decryption, extraction, or
-  integrity failure aborts without touching the destination. Temporary restore
-  staging is cleaned up unconditionally on success, failure, and declined
-  confirmation.
-- **Live-home lock guard:** When restoring into the active instrukt home
-  (without `--into`), restore refuses while active instrukt state locks
-  (`runner.lock`, `writer.lock`, or other held home state locks) are held,
-  naming the holder where known and naming the door: stop instrukt services
-  first, or pass `--into <dir>` to extract beside the live home for inspection
-  or selective recovery (`general/principle/trust-and-guardrails`).
-- **Alternate target (`--into <dir>`):** Extracts the verified backup contents
-  into `<dir>` without acquiring or modifying the live instrukt home.
+  headroom would be violated, re-checking headroom while extracting. Restore
+  stages on the same filesystem as each target subtree (handling mountpoints
+  and symlinked `INSTRUKT_HOME` or `state/` roots without cross-device rename
+  failures), downloads the encrypted archive into owner-only temporary staging,
+  decrypts it using the supplied private identity, extracts entries while
+  rejecting path traversal, absolute paths, and every non-regular/non-directory
+  archive entry type (symlinks, hardlinks, devices, FIFOs, sockets), and runs
+  `PRAGMA integrity_check` on every restored `*.db` and `*.sqlite` database
+  before modifying the destination. Any decryption, extraction, or integrity
+  failure aborts without touching the destination. Temporary restore staging is
+  cleaned up unconditionally on success, failure, and declined confirmation.
+- **Live-home lock guard and destination symlink confinement:** Canonicalizing
+  `--into <dir>` against active `INSTRUKT_HOME` ensures aliases resolving to
+  the live home trigger the live-home lock guard. Before opening or creating
+  any live-home lock file or mutating the destination, restore enforces
+  leaf-inclusive component-by-component symlink confinement below the resolved
+  destination root, resolved `state/` directory, and each company folder. When
+  restoring into the active instrukt home, restore verifies confinement on
+  every fixed and dynamically discovered live-home lock path, then acquires
+  non-blocking exclusive locks across all active home, company, and
+  known-issues locks and holds them across the entire swap; if any lock is
+  held, restore refuses before modifying the destination, naming the holder
+  where known and naming the doors: stop instrukt services first, or pass
+  `--into <dir>` to extract beside the live home for inspection or selective
+  recovery (`general/principle/trust-and-guardrails`). After locks are held and
+  before any swap mutation or permission change, restore enforces the same
+  leaf-inclusive symlink confinement on every restored destination path and its
+  SQLite sidecars.
+- **Rollback-preserving swap:** During swap, replaced destination files are
+  moved into same-filesystem rollback staging before renaming staged files into
+  place, and pre-existing SQLite sidecars (`-wal`, `-shm`, `-journal`) are
+  moved into that same-filesystem rollback staging after each main database's
+  atomic rename succeeds (never unlinking sidecars mid-swap). On any mid-swap
+  failure, restore rolls back replaced files, databases, and matching sidecars
+  from rollback staging; if rollback fails, restore reports the partial state
+  and directs the operator to re-run `instrukt backup restore --from <key>` (or
+  `--into <dir>`). Rollback staging and moved sidecars are deleted only once
+  the entire swap commits.
+- **Alternate target (`--into <dir>`):** When `<dir>` resolves outside the
+  active instrukt home, extracts the verified backup contents into `<dir>`
+  without acquiring or modifying the live instrukt home.
 - **Overwrite confirmation:** Restore prompts unconditionally for confirmation
-  before modifying the destination unless `--yes` is supplied.
+  before modifying the destination unless `--yes` is supplied. When
+  `--identity -` consumes standard input on an interactive terminal,
+  confirmation reads from the controlling terminal; non-interactive sessions
+  without `--yes` fail closed.
 
 ### Local bookkeeping, standing query, scheduling and alerting
 
 - **Dedicated local bookkeeping:** Each backup run atomically records its
-  outcome (attempt timestamp, success or failure status, published generation
-  key when successful, and redacted failure summary when failed) in a dedicated
-  local state file outside `instrukt.db` and `writer.lock`
-  (`sdlc/policy/state-storage`), preserving the last successful generation when
-  a subsequent attempt fails.
+  outcome (`first_attempt_at` preserved from the first attempt,
+  `last_attempt_at`, `last_outcome`, `last_success_at`, `last_generation`, and
+  redacted `last_error`) in a dedicated local state file outside `instrukt.db`
+  and `writer.lock` (`sdlc/policy/state-storage`), preserving the last
+  successful timestamp and generation when a subsequent attempt fails. A
+  failure writing bookkeeping on a failed run never suppresses `runner.notify`
+  and surfaces alongside the primary failure.
 - **Backup standing query (`runner → publication`):** Runner owns the
   local-only, lock-free backup standing query consumed by
   `project/instrukt/spec/feature/publication/instrukt-status`. Evaluating
   global backup configuration, local bookkeeping, and runner's staleness
   threshold without contacting remote storage, it returns runner's standing
-  judgment (`unconfigured`, `never_run`, `ok`, `failed`, or `stale`), the last
-  backup timestamp, the last published generation when present, and an
-  unreadable-state error if bookkeeping cannot be read.
+  judgment (`unconfigured`, `never_run`, `ok`, `failed`, or `stale`),
+  `admitted`, `stale`, `last_attempt_at`, `last_success_at`, `last_generation`,
+  redacted `last_error`, or a structured `(path, reason)` unreadable-state error
+  if bookkeeping cannot be read.
 - **Failure and staleness alerting:** Runner owns the staleness threshold past
   the daily schedule. On backup failure, `instrukt backup run` raises an
   anomaly directly through

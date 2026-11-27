@@ -51,7 +51,7 @@ every visit with it.
 | `machine` | whether the global layer `~/.instrukt/instrukt.yaml` exists, its `schema_version`, and its validation findings (`project/instrukt/spec/feature/configuration/layered-configuration`) |
 | `runtime` | the selected runtime and whether `runner.runtime` chose it or it is the compiled default; the compiled adapter's capabilities and recognised caller identity when available; no verb templates or entry list; `agent_instructions` reports current per-instance native instruction targets and limitations |
 | `modules` | each module (`blueprint`, `todos`, `events`, `history`; history defaults on) on or off in the effective configuration and in which layer that was decided; per runtime-dependent feature, whether the selected adapter supports its required capabilities, naming each missing one or the unknown runtime name |
-| `backup` | runner's local-only home backup standing: unconfigured, never run, or current standing (`ok`, `failed`, or `stale`) with last timestamp and published generation when present (`project/instrukt/spec/feature/runner/home-backup`) |
+| `backup` | runner's local-only home backup standing (`standing`, `admitted`, `stale`, `last_attempt_at`, `last_success_at`, `last_generation`, redacted `last_error`, and structured `(path, reason)` errors when unreadable; `project/instrukt/spec/feature/runner/home-backup`) |
 | `repository` | outside a repository: none. Inside one: the project layer's presence and `project` slug, whether instrukt's hook sections are installed (`instrukt hooks status`), whether its code is on GitHub (the GitHub repository it resolves to, or the remote that is not one; `project/instrukt/spec/feature/work/github-record`), the positions the working tree holds (`docs/general/`, each `docs/domain/<x>/`, `docs/project/`), the commit last published for it and whether its main is ahead of that commit |
 | `published` | each published position on the computer (`general` and each domain): its owner project, the owner's checkout path, the commit published, and for a domain its `index.yaml` description or that it has none |
 | `projects` | every other project publication state records: its slug, checkout path and published commit |
@@ -93,9 +93,11 @@ staleness or backup-state judgment of its own, reads no private runner state
 file directly, and never contacts remote object storage or acquires backup
 locks.
 
-- It renders runner's standing answer verbatim: unconfigured, never run, or
-  current standing (`ok`, `failed`, or `stale`), together with the last backup
-  timestamp and published generation identifier when present.
+- It renders runner's standing answer verbatim: `standing` (`unconfigured`,
+  `never_run`, `ok`, `failed`, or `stale`), `admitted`, `stale`,
+  `last_attempt_at`, `last_success_at`, `last_generation`, redacted
+  `last_error`, and structured `(path, reason)` unreadable-state `errors` when
+  runner's query reports one.
 <!-- /planned:instrukt-home-backup -->
 
 ### Reading and failure

@@ -55,11 +55,22 @@ repository's name, `company-<name>`, while the folder keeps the company's name
   module switches; the settings document carries no module switches. The
   home's project layer switches the repository's modules as every project
   layer does.
+<!-- planned-change:instrukt-home-backup -->
 - **The settings document has its own name.** A home whose settings are still
   the root `instrukt.yaml` declaring `company` has that file converted to
   `company.yaml` with every setting it holds, as every owned shape is
   converted (`project/instrukt/spec/feature/configuration/owned-files`). Where
   the home holds both, neither is changed and validation names both.
+<!-- change:instrukt-home-backup -->
+- **The settings document has its own name.** A home whose settings are still
+  the root `instrukt.yaml` declaring `company` has that file converted to
+  `company.yaml` with every setting it holds, as every owned shape is
+  converted (`project/instrukt/spec/feature/configuration/owned-files`). Where
+  the home holds both, neither is changed and validation names both. A
+  `company.yaml` or legacy root `instrukt.yaml` that is a symbolic link is
+  refused before it is read or converted, naming the path, as `.gitignore` is
+  refused below.
+<!-- /planned-change:instrukt-home-backup -->
 - instrukt never deletes a company home.
 
 
