@@ -170,7 +170,10 @@ pub(super) fn hand_off(
             base,
         };
         match pass.log.log(&handoff) {
-            Ok(_) => {
+            Ok(crate::events::AppendOutcome::AlreadyLogged) => {
+                tracing::debug!(event = "proposal_handoff_unchanged", project = %project, pull = pull.number, head = %pull.head);
+            }
+            Ok(crate::events::AppendOutcome::Appended) => {
                 tracing::info!(event = "proposal_handed_off", project = %project, pull = pull.number, head = %pull.head);
             }
             Err(error) => {
