@@ -12,7 +12,7 @@ fn acme() -> ProjectSlug {
 
 fn speaker(company: &str, is_admin: bool, is_direct: bool) -> Speaker {
     Speaker {
-        company: company.to_owned(),
+        company: ProjectSlug::parse(company).unwrap(),
         identity: Some("U1".to_owned()),
         name: "Ada".to_owned(),
         email: None,

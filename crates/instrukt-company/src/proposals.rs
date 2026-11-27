@@ -65,7 +65,7 @@ fn decide_speaker(
 ) -> SpeakerDecision {
     match answer {
         Ok(None) => SpeakerDecision::NotAProposal,
-        Ok(Some(speaker)) if speaker.company != company.as_str() || !speaker.is_admin => {
+        Ok(Some(speaker)) if speaker.company != *company || !speaker.is_admin => {
             SpeakerDecision::NotAProposal
         }
         Ok(Some(speaker)) => SpeakerDecision::Proposal(speaker),

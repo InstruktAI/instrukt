@@ -4761,6 +4761,12 @@ pub fn speaker(
         row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
             cause: "the turn's addressed message is not one this conversation delivered".into(),
         })?;
+    let company = instrukt_core::ids::ProjectSlug::parse(&company).map_err(|error| {
+        instrukt_core::state_db::StateDbError::invalid(
+            db.path(),
+            format!("a conversation's company `{company}` is no company key: {error}"),
+        )
+    })?;
     Ok(Some(instrukt_runner::mcp::Speaker {
         company,
         name: name

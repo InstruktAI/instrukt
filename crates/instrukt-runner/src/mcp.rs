@@ -123,7 +123,7 @@ pub struct Caller {
 pub struct Speaker {
     /// The company whose conversation the turn belongs to, as the runner
     /// recorded the conversation.
-    pub company: String,
+    pub company: ProjectSlug,
     /// Their identity on the connector.
     pub identity: Option<String>,
     /// Their name as the provider gave it.
