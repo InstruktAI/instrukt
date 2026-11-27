@@ -190,7 +190,15 @@ pub(crate) fn transport_view(
             return Tried::Unavailable(unavailable, api);
         }
     }
-    match http::judge(&HttpAnswer::Transport(error), &Settings::default()) {
+    let failure = match error {
+        ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => {
+            http::TransportFailure::Unreachable
+        }
+        ureq::Error::Timeout(_) | ureq::Error::BodyStalled => http::TransportFailure::TimedOut,
+        ureq::Error::Io(io) => http::TransportFailure::from_io(io),
+        _ => http::TransportFailure::Other,
+    };
+    match http::judge(&HttpAnswer::Transport(failure), &Settings::default()) {
         Judgment::Unavailable(unavailable) => Tried::Unavailable(unavailable, api),
         _ => Tried::Defect(api),
     }

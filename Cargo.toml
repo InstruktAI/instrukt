@@ -35,7 +35,14 @@ instrukt-outside = { path = "crates/instrukt-outside", version = "0.1.0" }
 instrukt-ai-logging = "=0.10.3"
 
 anyhow = "1"
+backon = { version = "1.6", default-features = false, features = ["std", "std-blocking-sleep", "tokio-sleep"] }
 base64 = "0.23"
+http = "1"
+octocrab = { version = "0.54", default-features = false, features = ["follow-redirect", "rustls", "rustls-ring", "jwt-aws-lc-rs", "timeout", "tracing", "default-client"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form", "query", "stream"] }
+rmcp = { version = "3.12", default-features = false, features = ["client", "auth", "reqwest", "transport-streamable-http-client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
+slack-morphism = { version = "2.34", features = ["hyper"] }
+tokio = { version = "1.54", features = ["full"] }
 tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 url = "2"
 clap = { version = "4", features = ["derive", "wrap_help"] }

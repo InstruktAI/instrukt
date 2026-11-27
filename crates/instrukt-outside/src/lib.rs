@@ -19,6 +19,7 @@ mod _http;
 mod _judgment;
 mod _key;
 mod _report;
+mod _runtime;
 
 pub use _gate::{Backoff, BackoffError, CallerWait, Clock, Gate, Monotonic, Settings, Wait};
 pub use _judgment::{Attempted, Extent, Named, Reason, Tried, Unavailable};
@@ -27,5 +28,13 @@ pub use _report::{Episode, Record, Report};
 
 /// The HTTP adapter of the outside gate.
 pub mod http {
-    pub use crate::_http::{HttpAnswer, Judgment, Rule, judge, retry_after};
+    pub use crate::_http::{
+        ClientConfig, HttpAnswer, Judgment, Rule, TransportFailure, build_client, judge,
+        judge_reqwest_error, judge_response, retry_after,
+    };
+}
+
+/// Shared Tokio runtime bridge for sync callers driving async SDK clients.
+pub mod runtime {
+    pub use crate::_runtime::{block_on, runtime};
 }

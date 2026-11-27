@@ -2,9 +2,11 @@
 //! two operations.
 use std::collections::HashMap;
 use std::fmt;
+use std::future::Future;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
+use backon::{BackoffBuilder as _, ExponentialBuilder};
 use jiff::Timestamp;
 
 use crate::_http::Rule;
@@ -55,11 +57,16 @@ impl Backoff {
         Ok(Self { first, longest })
     }
 
-    /// The pause after `before` pauses in a row.
+    /// The pause after `before` pauses in a row, computed through `backon`.
     fn pause(self, before: u32) -> Duration {
-        self.first
-            .saturating_mul(1_u32.checked_shl(before).unwrap_or(u32::MAX))
-            .min(self.longest)
+        ExponentialBuilder::default()
+            .with_min_delay(self.first)
+            .with_max_delay(self.longest)
+            .with_factor(2.0)
+            .without_max_times()
+            .build()
+            .nth(before.min(64) as usize)
+            .unwrap_or(self.longest)
     }
 }
 
@@ -293,6 +300,71 @@ impl Gate {
                     while monotonic() < wait.until() && !stop() {
                         let left = wait.until().saturating_duration_since(monotonic());
                         std::thread::sleep(left.min(PAUSE_SLICE));
+                    }
+                    if stop() {
+                        return Attempted::Wait { wait, error };
+                    }
+                }
+                answered => return answered,
+            }
+        }
+    }
+
+    /// One async try at most, never a pause: a key or scope inside a wait is
+    /// answered with the wait and not tried.
+    pub async fn attempt_async<T, E, Fut>(
+        &self,
+        key: &Key,
+        settings: &Settings<'_>,
+        try_once: impl FnOnce() -> Fut,
+    ) -> Attempted<T, E>
+    where
+        Fut: Future<Output = Tried<T, E>>,
+    {
+        if let Some(wait) = self.waiting(key) {
+            return Attempted::Wait { wait, error: None };
+        }
+        match try_once().await {
+            Tried::Done(value) => {
+                self.succeeded(key);
+                Attempted::Done(value)
+            }
+            Tried::Defect(error) => Attempted::Defect(error),
+            Tried::Unavailable(unavailable, error) => Attempted::Wait {
+                wait: self.failed(key, settings, unavailable),
+                error: Some(error),
+            },
+        }
+    }
+
+    /// Async counterpart to [`Gate::call`]: pauses with `tokio::time::sleep`
+    /// between tries without blocking a Tokio worker thread.
+    pub async fn call_async<T, E, Fut>(
+        &self,
+        key: &Key,
+        settings: &Settings<'_>,
+        caller_wait: CallerWait,
+        stop: &(dyn Fn() -> bool + Sync),
+        mut try_once: impl FnMut() -> Fut,
+    ) -> Attempted<T, E>
+    where
+        Fut: Future<Output = Tried<T, E>>,
+    {
+        let monotonic = &self.inner.monotonic;
+        let bound = match caller_wait {
+            CallerWait::UntilReturns => None,
+            CallerWait::Within(within) => Some(monotonic().checked_add(within)),
+        };
+        loop {
+            match self.attempt_async(key, settings, &mut try_once).await {
+                Attempted::Wait { wait, error } => {
+                    let beyond = bound.is_some_and(|bound| bound.is_none_or(|b| wait.until() > b));
+                    if beyond || stop() {
+                        return Attempted::Wait { wait, error };
+                    }
+                    while monotonic() < wait.until() && !stop() {
+                        let left = wait.until().saturating_duration_since(monotonic());
+                        tokio::time::sleep(left.min(PAUSE_SLICE)).await;
                     }
                     if stop() {
                         return Attempted::Wait { wait, error };
@@ -797,5 +869,40 @@ mod tests {
             Backoff::new(Duration::ZERO, secs(1)),
             Err(BackoffError::ZeroFirst)
         );
+    }
+
+    #[test]
+    fn async_gate_retries_and_reports_through_shared_runtime_bridge() {
+        let f = Fixture::new();
+        let key = scope().item("async-op");
+        let settings = Settings {
+            backoff: Backoff::new(Duration::from_millis(1), Duration::from_millis(4)).unwrap(),
+            ..Settings::default()
+        };
+        let tries = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let tries_clone = tries.clone();
+        let answer = crate::runtime::block_on(f.gate.call_async(
+            &key,
+            &settings,
+            CallerWait::Within(Duration::from_secs(5)),
+            &|| {
+                f.advance_mono(Duration::from_millis(2));
+                false
+            },
+            || {
+                let n = tries_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    if n == 0 {
+                        Outcome::Down(Extent::Key, None).tried()
+                    } else {
+                        Outcome::Done.tried()
+                    }
+                }
+            },
+        ))
+        .unwrap();
+        assert!(matches!(answer, Attempted::Done(())));
+        assert_eq!(tries.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(f.records.lock().unwrap().len(), 2);
     }
 }

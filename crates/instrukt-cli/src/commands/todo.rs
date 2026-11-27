@@ -310,9 +310,14 @@ struct StampArgs {
     /// The session the approval was stated in (`<runtime>:<id>`).
     #[arg(long, value_name = "RUNTIME:ID")]
     session: Option<SessionRef>,
-    /// The current `input` version is checked against its conversation.
+    /// Bind the current `input` version digest as checked, with optional
+    /// `--conversation` for observed originating conversation provenance.
     #[arg(long)]
     intent_checked: bool,
+    /// Explicitly observed originating conversation (`<runtime>:<id>`) for
+    /// `--intent-checked`.
+    #[arg(long, value_name = "RUNTIME:ID", requires = "intent_checked")]
+    conversation: Option<SessionRef>,
     /// Return the work to preparation, with `--reason`.
     #[arg(long, requires = "reason")]
     kickback: bool,
@@ -939,7 +944,9 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         bail!("`--by` and `--carry-from` go with `--prd-approved` or `--task-approved`");
     }
     if args.intent_checked {
-        forms.push(StampRequest::IntentChecked);
+        forms.push(StampRequest::IntentChecked {
+            conversation: args.conversation.clone(),
+        });
     }
     if args.kickback {
         forms.push(StampRequest::Kickback { reason: reason() });
@@ -1528,7 +1535,12 @@ fn fact(fact: &StampFact) -> String {
         StampFact::IntentChecked {
             input,
             conversation,
-        } => format!("intent checked — input {input} against conversation {conversation}"),
+        } => match conversation {
+            Some(conversation) => {
+                format!("intent checked — input {input} against conversation {conversation}")
+            }
+            None => format!("intent checked — input {input}"),
+        },
         StampFact::Kickback {
             reason,
             input,

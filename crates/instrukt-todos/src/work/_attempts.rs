@@ -1035,7 +1035,7 @@ pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
         },
         StampRequest::Approval { .. }
         | StampRequest::CarriedApproval { .. }
-        | StampRequest::IntentChecked
+        | StampRequest::IntentChecked { .. }
         | StampRequest::Kickback { .. }
         | StampRequest::ArchitectureSkipped { .. }
         | StampRequest::DiagnosisUnresolved { .. }

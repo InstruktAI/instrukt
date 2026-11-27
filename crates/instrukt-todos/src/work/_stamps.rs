@@ -42,8 +42,8 @@ pub enum StampRequest {
     /// `--prd-approved|--task-approved --carry-from <stamp-id>`: an earlier
     /// approval carried to the current evidence (`approvals`).
     CarriedApproval { gate: ApprovalGate, from: u64 },
-    /// `--intent-checked`.
-    IntentChecked,
+    /// `--intent-checked [--conversation <runtime:id>]`.
+    IntentChecked { conversation: Option<SessionRef> },
     /// `--kickback --reason <text>`.
     Kickback { reason: String },
     /// `--architecture-skipped <reason>`.
@@ -250,31 +250,10 @@ pub(crate) fn resolve(
                 releases_claim: false,
             }
         }
-        StampRequest::IntentChecked => {
-            let input = record
-                .artifact(artifact_names::INPUT)
-                .and_then(|a| a.versions.last())
-                .ok_or_else(|| missing(artifact_names::INPUT))?;
-            let Actor::Session(conversation) = &input.writer else {
-                return Err(WorkError::refused(
-                    "the current `input` version names no originating conversation to check it against; record a new `input` version from that conversation",
-                ));
-            };
-            let Some(checker) = inputs.session else {
-                return Err(WorkError::refused(
-                    "an intent check is recorded by the checking agent's session; no agent session is active",
-                ));
-            };
-            if checker == conversation {
-                return Err(WorkError::refused(
-                    "the author of this `input` version cannot check it; its first other recipient does",
-                ));
-            }
-            plain(StampFact::IntentChecked {
-                input: input.digest.clone(),
-                conversation: conversation.clone(),
-            })
-        }
+        StampRequest::IntentChecked { conversation } => plain(StampFact::IntentChecked {
+            input: current(record, artifact_names::INPUT)?,
+            conversation: conversation.clone(),
+        }),
         StampRequest::Kickback { reason } => plain(StampFact::Kickback {
             reason: required(reason, "--reason")?,
             input: current(record, artifact_names::INPUT)?,

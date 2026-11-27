@@ -2,18 +2,110 @@
 //! part's service rules, and the moment `Retry-After` names.
 use std::time::Duration;
 
+use http::HeaderMap;
+use http::header::RETRY_AFTER;
 use jiff::Timestamp;
-use ureq::http::HeaderMap;
-use ureq::http::header::RETRY_AFTER;
 
 use crate::_gate::Settings;
 use crate::_judgment::{Extent, Named, Reason, Unavailable};
+
+/// Configuration for the workspace-shared `reqwest::Client` builder.
+#[derive(Debug, Clone)]
+pub struct ClientConfig {
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+    pub user_agent: String,
+    pub follow_redirects: bool,
+}
+
+impl Default for ClientConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(10),
+            request_timeout: Duration::from_secs(30),
+            user_agent: "instrukt".to_owned(),
+            follow_redirects: true,
+        }
+    }
+}
+
+/// Builds a `reqwest::Client` with the workspace's shared timeouts, User-Agent,
+/// TLS (`rustls`), and redirect policy.
+pub fn build_client(config: &ClientConfig) -> Result<reqwest::Client, reqwest::Error> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(config.connect_timeout)
+        .timeout(config.request_timeout)
+        .user_agent(config.user_agent.as_str());
+    if !config.follow_redirects {
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+    builder.build()
+}
+
+/// Classifies a `reqwest::Error` directly through the outside gate's HTTP rules.
+pub fn judge_reqwest_error(error: &reqwest::Error, settings: &Settings<'_>) -> Judgment {
+    judge(
+        &HttpAnswer::Transport(TransportFailure::from_reqwest(error)),
+        settings,
+    )
+}
+
+/// Classifies an HTTP status and headers directly through the outside gate's HTTP rules.
+pub fn judge_response(
+    status: u16,
+    headers: &HeaderMap,
+    received_at: Timestamp,
+    code: Option<&str>,
+    settings: &Settings<'_>,
+) -> Judgment {
+    judge(
+        &HttpAnswer::Response {
+            status,
+            headers,
+            received_at,
+            code,
+        },
+        settings,
+    )
+}
+
+/// A client-agnostic HTTP transport failure brought to the outside gate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportFailure {
+    /// Name not resolved, connection refused/reset, or no connection opened.
+    Unreachable,
+    /// Timed out connecting, waiting for headers, or reading the body.
+    TimedOut,
+    /// Any other client error (bad URI, TLS/config error, body decode): defect.
+    Other,
+}
+
+impl TransportFailure {
+    /// Classifies a `reqwest` client error for the outside gate.
+    pub fn from_reqwest(error: &reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::TimedOut
+        } else if error.is_connect() || error.is_request() || error.is_body() {
+            Self::Unreachable
+        } else {
+            Self::Other
+        }
+    }
+
+    /// Classifies a `std::io::Error` from a transport socket or stream.
+    pub fn from_io(error: &std::io::Error) -> Self {
+        match error.kind() {
+            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => Self::TimedOut,
+            _ => Self::Unreachable,
+        }
+    }
+}
 
 /// One HTTP outcome as the part's client gave it.
 #[derive(Debug, Clone, Copy)]
 pub enum HttpAnswer<'a> {
     /// No answer: the client failed before or while reading it.
-    Transport(&'a ureq::Error),
+    Transport(TransportFailure),
     /// An answer. `code` is the service's own error code, which the part read
     /// from the body; the gate reads no body.
     Response {
@@ -62,7 +154,7 @@ pub fn judge(answer: &HttpAnswer<'_>, settings: &Settings<'_>) -> Judgment {
         })
     };
     match answer {
-        HttpAnswer::Transport(error) => match transport(error) {
+        HttpAnswer::Transport(failure) => match transport(*failure) {
             Some(reason) => unavailable(reason, Extent::Scope),
             None => Judgment::Defect,
         },
@@ -88,15 +180,11 @@ pub fn judge(answer: &HttpAnswer<'_>, settings: &Settings<'_>) -> Judgment {
 
 /// A transport failure that is temporary: no connection, or none that
 /// answered in time.
-fn transport(error: &ureq::Error) -> Option<Reason> {
-    match error {
-        ureq::Error::HostNotFound | ureq::Error::ConnectionFailed => Some(Reason::Unreachable),
-        ureq::Error::Timeout(_) | ureq::Error::BodyStalled => Some(Reason::TimedOut),
-        ureq::Error::Io(error) => Some(match error.kind() {
-            std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => Reason::TimedOut,
-            _ => Reason::Unreachable,
-        }),
-        _ => None,
+fn transport(failure: TransportFailure) -> Option<Reason> {
+    match failure {
+        TransportFailure::Unreachable => Some(Reason::Unreachable),
+        TransportFailure::TimedOut => Some(Reason::TimedOut),
+        TransportFailure::Other => None,
     }
 }
 
@@ -118,12 +206,12 @@ pub fn retry_after(headers: &HeaderMap, received_at: Timestamp) -> Option<Named>
 
 #[cfg(test)]
 mod tests {
-    use super::{HttpAnswer, Judgment, judge, retry_after};
+    use super::{HttpAnswer, Judgment, TransportFailure, judge, retry_after};
     use crate::_gate::Settings;
     use crate::_judgment::{Extent, Named, Reason, Unavailable};
+    use http::HeaderMap;
     use jiff::Timestamp;
     use std::time::Duration;
-    use ureq::http::HeaderMap;
 
     fn now() -> Timestamp {
         "2026-11-20T10:00:00Z".parse().unwrap()
@@ -199,14 +287,14 @@ mod tests {
         assert_eq!(status(404, &headers(None)), Judgment::Defect);
     }
 
-    fn transport(error: &ureq::Error) -> Judgment {
-        judge(&HttpAnswer::Transport(error), &Settings::default())
+    fn transport(failure: TransportFailure) -> Judgment {
+        judge(&HttpAnswer::Transport(failure), &Settings::default())
     }
 
     #[test]
     fn no_connection_makes_the_scope_unreachable() {
         assert_eq!(
-            transport(&ureq::Error::ConnectionFailed),
+            transport(TransportFailure::Unreachable),
             unavailable(Reason::Unreachable, Extent::Scope)
         );
     }
@@ -214,17 +302,16 @@ mod tests {
     #[test]
     fn a_transport_timeout_times_the_scope_out() {
         assert_eq!(
-            transport(&ureq::Error::Io(std::io::ErrorKind::TimedOut.into())),
+            transport(TransportFailure::from_io(
+                &std::io::ErrorKind::TimedOut.into()
+            )),
             unavailable(Reason::TimedOut, Extent::Scope)
         );
     }
 
     #[test]
     fn another_transport_failure_is_a_defect() {
-        assert_eq!(
-            transport(&ureq::Error::BadUri("nonsense".into())),
-            Judgment::Defect
-        );
+        assert_eq!(transport(TransportFailure::Other), Judgment::Defect);
     }
 
     #[test]

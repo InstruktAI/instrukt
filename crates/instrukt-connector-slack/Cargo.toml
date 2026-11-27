@@ -8,13 +8,16 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+http.workspace = true
 instrukt-connector.workspace = true
 instrukt-outside.workspace = true
 jiff.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
+slack-morphism.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
 tracing.workspace = true
 tungstenite.workspace = true
 ureq.workspace = true
