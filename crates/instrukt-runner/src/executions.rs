@@ -544,6 +544,7 @@ impl<'a> Executions<'a> {
                     crate::inputs::outcome(self.state, &execution.session, &recovery_id)?,
                     crate::inputs::InputOutcome::Unconfirmed
                         | crate::inputs::InputOutcome::SetAside
+                        | crate::inputs::InputOutcome::Failed
                 );
             let look = Look {
                 progressed,
@@ -587,7 +588,8 @@ impl<'a> Executions<'a> {
                     }
                     Ok(
                         crate::inputs::InputOutcome::Unconfirmed
-                        | crate::inputs::InputOutcome::SetAside,
+                        | crate::inputs::InputOutcome::SetAside
+                        | crate::inputs::InputOutcome::Failed,
                     ) => {
                         execution.recovery_sent = true;
                         execution.anomaly_raised = true;

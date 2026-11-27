@@ -562,7 +562,11 @@ impl RuntimeAdapter for T3 {
         text: &str,
         now: jiff::Timestamp,
     ) -> Result<super::InputObservation, SessionsError> {
-        self.show(session, 0)?;
+        let shown = self.show(session, 0)?;
+        let thread = shown.thread.decode()?;
+        if thread.presence != super::Presence::Present {
+            return Err(SessionsError::Gone(session.clone()));
+        }
         let inputs = self.input_evidence(session, Some(text))?;
         let message = inputs.into_iter().find(|input| input.text == text);
         Ok(super::InputObservation {

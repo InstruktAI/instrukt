@@ -936,7 +936,8 @@ fn succeed_claimed(
         } else {
             "native terminal target; outstanding owner work retained for successor"
         };
-        tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure=?3 WHERE runtime=?1 AND session=?2 AND state IN ('pending','selected','accepted')",params![session.runtime.as_str(),session.id.as_str(),failure]).map_err(state::sql(&state::db_path(tx)))?;
+        tx.execute("UPDATE runtime_inputs SET state='failed',waiting=0,failure=?3 WHERE runtime=?1 AND session=?2 AND kind!=?4 AND state IN ('pending','selected','accepted')",params![session.runtime.as_str(),session.id.as_str(),failure,crate::inputs::InputKind::Verdict.name()]).map_err(state::sql(&state::db_path(tx)))?;
+        crate::inputs::close_verdict_inputs_on_succession(tx, session, key)?;
         Ok(())
     })?;
     start_with_work(
