@@ -343,6 +343,26 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
     fixture::configure_cluster(&remote, &redis.url);
     fixture::computer(&remote, "bbbbbbbbbbbbbbbb");
     let worker = fixture::runner(&remote);
+    // Ensure local's state database already exists at current schema (just as
+    // remote's does after runner startup) so history's one-time state-db
+    // creation is not what runs here; merged search and Redis reachability
+    // recording must then succeed on both computers with writer.lock held.
+    drop(
+        instrukt_core::state_db::StateDb::open(&instrukt_core::home::Home::at_user_home(
+            local.home().to_path_buf(),
+        ))
+        .unwrap(),
+    );
+    let local_writer = instrukt_core::fsx::LockGuard::acquire(
+        &local.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let remote_writer = instrukt_core::fsx::LockGuard::acquire(
+        &remote.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
     let out = local
         .run(
             local.home(),
@@ -358,6 +378,8 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
             ],
         )
         .failure();
+    drop(local_writer);
+    drop(remote_writer);
     let found: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(found["matches"].as_array().unwrap().len(), 4);
     assert_eq!(found["failures"].as_array().unwrap().len(), 1);

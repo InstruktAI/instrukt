@@ -98,12 +98,13 @@ impl TransportError {
 }
 
 /// Whether a transport's uses of a Redis keep that Redis's reachability
-/// record in the state database.
+/// state file under `state/redis-reachability/`, outside `instrukt.db`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reachability {
-    /// Each use that succeeds or fails to reach the Redis keeps the record.
+    /// Each use that succeeds or fails to reach the Redis keeps its per-source
+    /// reachability file.
     Recorded,
-    /// Its uses write nothing into the state database.
+    /// Its uses write no reachability state file.
     Unrecorded,
 }
 

@@ -159,6 +159,50 @@ fn identical_scope_endpoints_are_read_once_per_consumer() {
 // spec: project/instrukt/spec/feature/runner/event-transport UC-ET6
 #[test]
 fn cluster_outage_leaves_local_source_acceptance_responsive() {
+    use instrukt_core::config::Configuration;
+    use instrukt_core::fsx::LockGuard;
+    use instrukt_core::home::Home;
+    use instrukt_runner::events::EventEnvelope;
+    use instrukt_runner::state::RunnerState;
+    use instrukt_runner::transport::{EventScope, ScopedTransport};
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+    use tracing::field::{Field, Visit};
+
+    struct CaptureEvents(Arc<Mutex<Vec<String>>>);
+    struct EventField(Option<String>);
+    impl Visit for EventField {
+        fn record_str(&mut self, field: &Field, value: &str) {
+            if field.name() == "event" {
+                self.0 = Some(value.to_owned());
+            }
+        }
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "event" {
+                self.0 = Some(format!("{value:?}"));
+            }
+        }
+    }
+    impl tracing::Subscriber for CaptureEvents {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn event(&self, event: &tracing::Event<'_>) {
+            let mut visitor = EventField(None);
+            event.record(&mut visitor);
+            if let Some(name) = visitor.0 {
+                self.0.lock().unwrap().push(name);
+            }
+        }
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
     let computer = Computer::new();
     let mut cluster = RedisServer::new(&computer.env);
     let local = RedisServer::new(&computer.env);
@@ -168,6 +212,38 @@ fn cluster_outage_leaves_local_source_acceptance_responsive() {
     // Use an opaque received occurrence so S3's acceptance is the boundary;
     // subsequent runtime execution is the separate S6 contract.
     let envelope = serde_json::json!({"id":"local-during-outage", "type":"runner.upstream_changed", "source":computer.computer(), "subject":"commit:fork/current", "time":"2026-11-05T00:00:00Z", "data":{}, "home":"project:fork", "home_owner":"unresolved"});
+    let home = Home::at_user_home(computer.env.home().to_path_buf());
+    let state = RunnerState::new(&home);
+    let config = Configuration::load_global(&home).unwrap();
+    let cluster_transport = ScopedTransport::cluster_only(&config, &state).unwrap();
+    let probe = |id: &str| {
+        EventEnvelope::decode(
+            &serde_json::json!({
+                "id": id,
+                "type": "erp.reachability.probe",
+                "source": computer.computer(),
+                "subject": "todo:probe",
+                "time": "2026-11-05T00:00:00Z",
+                "data": {},
+                "home": "project:fork",
+                "home_owner": "unresolved"
+            })
+            .to_string(),
+        )
+        .unwrap()
+    };
+    let cluster_source = cluster_transport
+        .publish(EventScope::Cluster, &probe("probe-up-before-outage"))
+        .unwrap()
+        .source;
+    let reachability_file = home
+        .redis_reachability_dir()
+        .join(format!("{cluster_source}.json"));
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(&reachability_file).unwrap())
+            .unwrap()["reachable"],
+        true
+    );
     redis::cmd("XADD")
         .arg(EVENT_STREAM)
         .arg("*")
@@ -180,6 +256,40 @@ fn cluster_outage_leaves_local_source_acceptance_responsive() {
         .query::<()>(&mut cluster.connection())
         .unwrap();
     cluster.stop();
+    // Exercise reachability loss directly under held state/writer.lock:
+    // transition writes state/redis-reachability/<source>.json and logs once.
+    {
+        let _writer = LockGuard::acquire(&home.writer_lock_file(), Duration::from_secs(1)).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        tracing::subscriber::with_default(CaptureEvents(Arc::clone(&events)), || {
+            assert!(
+                cluster_transport
+                    .publish(EventScope::Cluster, &probe("probe-down-1"))
+                    .is_err()
+            );
+            assert!(
+                cluster_transport
+                    .publish(EventScope::Cluster, &probe("probe-down-2"))
+                    .is_err()
+            );
+        });
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(&reachability_file).unwrap()
+            )
+            .unwrap()["reachable"],
+            false
+        );
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| e.as_str() == "redis_unreachable")
+                .count(),
+            1
+        );
+    }
     redis::cmd("XADD")
         .arg(EVENT_STREAM)
         .arg("*")
@@ -190,6 +300,36 @@ fn cluster_outage_leaves_local_source_acceptance_responsive() {
     computer.tick();
     assert_eq!(computer.accepted(), 1);
     cluster.restart();
+    // Exercise reachability recovery directly under held state/writer.lock:
+    // transition updates state/redis-reachability/<source>.json and logs once.
+    {
+        let _writer = LockGuard::acquire(&home.writer_lock_file(), Duration::from_secs(1)).unwrap();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        tracing::subscriber::with_default(CaptureEvents(Arc::clone(&events)), || {
+            cluster_transport
+                .publish(EventScope::Cluster, &probe("probe-up-1"))
+                .unwrap();
+            cluster_transport
+                .publish(EventScope::Cluster, &probe("probe-up-2"))
+                .unwrap();
+        });
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &std::fs::read(&reachability_file).unwrap()
+            )
+            .unwrap()["reachable"],
+            true
+        );
+        assert_eq!(
+            events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|e| e.as_str() == "redis_reachable")
+                .count(),
+            1
+        );
+    }
     computer.tick();
     computer.tick();
     let pending: redis::streams::StreamPendingReply = redis::cmd("XPENDING")
