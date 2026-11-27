@@ -35,6 +35,7 @@ remains non-authoritative (`general/principle/attunement`).
   execution bookkeeping stay in their session or workflow records. When an
   execution event changes the research or design, retain its substantive
   consequence and evidence, rather than a narrative of the agent's actions.
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 - Shared scratchpad workspaces live under `scratchpad/` at the root of the project's
   canonical checkout, which the adopting project excludes from version control.
 - Harness-provided planning and temporary directories serve the agent's local
@@ -44,6 +45,18 @@ remains non-authoritative (`general/principle/attunement`).
 - Each activity owns one directory named
   `scratchpad/YYYYMMDD-HHMMSS-<topic>/`, using the host's local time and a short
   kebab-case topic.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+- Shared scratchpad workspaces live under `.instrukt/scratchpad/` inside the
+  project's canonical checkout, covered by the `.instrukt/` ignore line
+  `instrukt init` establishes.
+- Harness-provided planning and temporary directories serve the agent's local
+  work. When particular material becomes shared input, only that material is
+  published to the shared workspace or the required artifact store; the local
+  working directory stays local.
+- Each activity owns one directory named
+  `.instrukt/scratchpad/YYYYMMDD-HHMMSS-<topic>/`, using the host's local time
+  and a short kebab-case topic.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 - Every activity directory carries an `index.md` whose content
   `general/procedure/scratchpad-workspace` defines. The procedure using the
   workspace names the other files. Related source, notes, checkpoints, and

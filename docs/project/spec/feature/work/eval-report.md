@@ -18,9 +18,16 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 report uses recorded evidence rather than a separate eval log. There is only
 something to evaluate where work passes through the record.
 
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 `--since <date>` selects the history range. `--out <path>` selects the HTML
 destination, defaulting to the current project’s `scratchpad/eval/index.html`.
 With no recorded work, the report says so.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+`--since <date>` selects the history range. `--out <path>` selects the HTML
+destination, defaulting to the current project’s
+`.instrukt/scratchpad/eval/index.html`. With no recorded work, the report says
+so.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 
 One report covers every project known to this home's publication state,
 grouped by project, with the current project first. Each project's record is

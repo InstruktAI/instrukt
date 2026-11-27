@@ -24,8 +24,15 @@ contributors; the index is a map to the work, not a session diary
 - For the proposed write, a human or another session needs identified working
   material as input to active collaboration or a concrete handoff, under the
   exclusive-use contract in `general/spec/scratchpad-workspaces`.
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 - The project provides a version-control-ignored `scratchpad/` at the root of
   its canonical checkout (`general/spec/scratchpad-workspaces`).
+<!-- change:project-working-dirs-under-dot-instrukt -->
+- The project provides a version-control-ignored `.instrukt/` at the root of
+  its canonical checkout (established by `instrukt init`), under which
+  `.instrukt/scratchpad/` holds shared workspaces
+  (`general/spec/scratchpad-workspaces`).
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 
 ## Steps
 
@@ -40,11 +47,20 @@ Apply these configured action values to the identified assignment and session.
    serves. Apply the exclusive-use contract in
    `general/spec/scratchpad-workspaces`; proceed only when the proposed material
    meets it. Reassess updates to an existing workspace by the same criterion.
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 1. **Join before creating.** List `scratchpad/` for a workspace on the same
    topic — a peer's, or an earlier pass. Join it when it exists; one activity has
    one shared workspace. Otherwise create the directory the spec names. Publish
    the material that collaboration or handoff needs; local working material
    keeps its own environment (`general/spec/scratchpad-workspaces`).
+<!-- change:project-working-dirs-under-dot-instrukt -->
+1. **Join before creating.** List `.instrukt/scratchpad/` for a workspace on the
+   same topic — a peer's, or an earlier pass. Join it when it exists; one
+   activity has one shared workspace. Otherwise create the directory the spec
+   names. Publish the material that collaboration or handoff needs; local
+   working material keeps its own environment
+   (`general/spec/scratchpad-workspaces`).
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
    1a. **Resume from what was last agreed.** On joining a workspace that
    records the human's intent, and on continuing in it after your own context
    was summarized, read **Last agreed** in the index first. The records it
@@ -164,9 +180,15 @@ Status: active
 
 ## Outputs
 
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 - One workspace directory under the project's `scratchpad/` whose `index.md`
   points to reusable subject knowledge and identifies current and superseded
   material.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+- One workspace directory under the project's `.instrukt/scratchpad/` whose
+  `index.md` points to reusable subject knowledge and identifies current and
+  superseded material.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 
 ## Recovery
 
@@ -190,9 +212,15 @@ Status: active
   `unknown`.
 - **A participant's session id cannot be established.** Record the row with
   agent, model, and role, and the id as `unknown`. Never guess an id.
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 - **The project has no ignored `scratchpad/`.** Write no working files into the
   checkout. Keep the material in conversation and report the missing ignore to
   whoever owns the project's setup.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+- **The project has no ignored `.instrukt/`.** Write no working files into the
+  checkout. Keep the material in conversation and report the missing ignore to
+  whoever owns the project's setup.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 
 ## Discipline
 

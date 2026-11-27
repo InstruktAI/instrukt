@@ -197,6 +197,7 @@ above; the active set remains the default.
 preserves intent, artifacts and their history. A dispatch hold is a separate
 fact, owned by `project/instrukt/spec/feature/work/dependencies-and-holds`.
 
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 `instrukt todo remove <slug>` withdraws work from default reads while retaining
 its identity, state, artifacts and versions during a fixed seven-day recovery
 window. Working resources (worktree, branch and workspace) are released
@@ -213,6 +214,24 @@ slug; a live same-slug entry prevents ambiguous restoration. Removal does not
 erase the associated GitHub issue or its history. The withdrawing agent
 removes that slug's pending documentation markers in a doc commit; withdrawal
 does not remove them automatically.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+`instrukt todo remove <slug>` withdraws work from default reads while retaining
+its identity, state, artifacts and versions during a fixed seven-day recovery
+window. Working resources (worktree, branch and workspace) are released
+immediately. A todo's workspace is `<project>/.instrukt/workspace/<slug>/`, the
+directory run-task writes to; an empty workspace is removed. Withdrawal never
+deletes a worktree holding uncommitted changes or a workspace holding files:
+it is refused and names that location. The withdrawal records what it is about to
+release before it releases anything; until it ends, other changes to the todo
+are refused, and a withdrawal interrupted part-way is completed by running
+`instrukt todo remove <slug>` again. The next runner tick or todo command after the window expires
+purges the retained local record; recovery after that window is not promised.
+`instrukt todo reactivate` restores retained work by identity or an unambiguous
+slug; a live same-slug entry prevents ambiguous restoration. Removal does not
+erase the associated GitHub issue or its history. The withdrawing agent
+removes that slug's pending documentation markers in a doc commit; withdrawal
+does not remove them automatically.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 
 `instrukt todo deliver <slug> --commit <sha>` records the confirmed completion evidence.
 Repository-work delivery requires the actual delivered commit, supplied by the

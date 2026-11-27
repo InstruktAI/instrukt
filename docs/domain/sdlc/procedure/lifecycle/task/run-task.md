@@ -53,10 +53,17 @@ non-SDLC work: no build, review, finalize or repository commit.
    person, channel or external recipient, do it through the appropriate
    available capability. If the plan is silent on reporting, send nothing outward.
 
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
    **Deliver to the workspace.** Filesystem outputs go under
    `{project_root}/workspace/{slug}/`, reused across firings. Organize within
    it as the plan requires, including dated subfolders for distinct snapshots.
    Record the output references on the task.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+   **Deliver to the workspace.** Filesystem outputs go under
+   `{project_root}/.instrukt/workspace/{slug}/`, reused across firings. Organize
+   within it as the plan requires, including dated subfolders for distinct
+   snapshots. Record the output references on the task.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 5. **Write the durable record.** Append a concise dated `log` entry: what the
    firing did, output references, recoverable obstacles and the scheduled
    instant satisfied. Preserve platform-written firing entries verbatim,
@@ -82,8 +89,13 @@ non-SDLC work: no build, review, finalize or repository commit.
 
 ## Outputs
 
+<!-- planned-change:project-working-dirs-under-dot-instrukt -->
 - Updated `log` and filesystem deliverables under
   `{project_root}/workspace/{slug}/`.
+<!-- change:project-working-dirs-under-dot-instrukt -->
+- Updated `log` and filesystem deliverables under
+  `{project_root}/.instrukt/workspace/{slug}/`.
+<!-- /planned-change:project-working-dirs-under-dot-instrukt -->
 - A task-record outcome for the firing: success delivers a one-shot or records
   a recurring occurrence; error retains an explicit hold and reason.
 - A waiting session for any human-owned question, or an anomaly reference for
