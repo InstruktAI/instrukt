@@ -45,8 +45,9 @@ use std::path::Path;
 pub use _agents::{
     AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile,
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
-    current_role, overrides_only,
+    current_role,
 };
+pub use _agents_file::{agents_document, agents_revision, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,

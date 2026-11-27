@@ -186,7 +186,7 @@ fn effective(mut file: Value) -> Result<Value, ConfigError> {
 
 /// `file` reduced to the entries that differ from the shipped defaults,
 /// keeping `schema_version` first: the inverse of [`effective`].
-pub fn overrides_only(mut file: Value) -> Result<Value, ConfigError> {
+pub(super) fn overrides_only(mut file: Value) -> Result<Value, ConfigError> {
     let mut base = shipped()?;
     without_empty_keyed_maps(&mut file);
     let version = file
@@ -215,6 +215,12 @@ impl Agents {
     /// file's own `schema_version` names the shape of its overrides, so it is
     /// required and never inherited.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        Self::validated(Self::effective_document(text)?)
+    }
+
+    /// `text` parsed, checked for schema version and coordinator-role conflict,
+    /// with retired grants stripped and merged over the shipped defaults.
+    pub(super) fn effective_document(text: &str) -> Result<Value, ConfigError> {
         let mut value: Value = serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
         match value.get("schema_version") {
             None => {
@@ -250,8 +256,13 @@ impl Agents {
             });
         }
         super::_agents_migrate::retire_session_recover(&mut value);
+        effective(value)
+    }
+
+    /// Validates an already-merged effective selection `document`.
+    pub(super) fn validated(document: Value) -> Result<Self, ConfigError> {
         let result: Self =
-            serde_yaml_ng::from_value(effective(value)?).map_err(|e| invalid(e.to_string()))?;
+            serde_yaml_ng::from_value(document).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(
                 "unsupported agents schema_version; upgrade instrukt",
@@ -326,12 +337,38 @@ impl Agents {
         if home.is_inspection() {
             let existing = read_existing(&home.agents_file())?;
             let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
-            return Self::from_documents(home, existing, global.as_ref());
+            return Self::from_documents(existing, global.as_ref());
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
         Self::converge_file(home)?;
         let existing = read_existing(&home.agents_file())?;
-        Self::from_documents(home, existing, None)
+        Self::from_documents(existing, None)
+    }
+
+    /// The selection document text from `agents.yaml`'s bytes (`None` when
+    /// there is no file) and the global layer as read (`None` when there is
+    /// none), without reading or writing anything: an older `agents.yaml`
+    /// converted in memory, an older global layer's selection carried over
+    /// through `_migrate::carry_into`, and the shipped defaults when neither
+    /// states any.
+    pub(super) fn selection_text(
+        agents: Option<Vec<u8>>,
+        global: Option<&Value>,
+    ) -> Result<String, ConfigError> {
+        let existing = match agents {
+            Some(bytes) => Some(
+                super::_agents_migrate::current(&bytes)?.map_or(bytes, |converted| converted.bytes),
+            ),
+            None => None,
+        };
+        let bytes = match super::_migrate::carried_selection(global)? {
+            Some(carried) => Some(super::_migrate::carry_into(existing, &carried)?),
+            None => existing,
+        };
+        match bytes {
+            Some(bytes) => String::from_utf8(bytes).map_err(|_| invalid("expected UTF-8")),
+            None => Ok(SHIPPED_AGENTS.to_owned()),
+        }
     }
 
     /// The effective selection from `agents.yaml`'s bytes (`None` when there
@@ -341,62 +378,10 @@ impl Agents {
     /// merged over the shipped defaults, and the shipped defaults alone when
     /// neither states any.
     pub(crate) fn from_documents(
-        home: &Home,
         agents: Option<Vec<u8>>,
         global: Option<&Value>,
     ) -> Result<Self, ConfigError> {
-        let path = home.agents_file();
-        let existing = match agents {
-            Some(bytes) => Some(
-                super::_agents_migrate::current(&bytes)?.map_or(bytes, |converted| converted.bytes),
-            ),
-            None => None,
-        };
-        let legacy = match global {
-            Some(value)
-                if value
-                    .get("schema_version")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|v| v < super::GLOBAL_SCHEMA_VERSION) =>
-            {
-                let mut value = value.clone();
-                super::_migrate::selection(home, &super::Layer::Global, &mut value, false)?
-            }
-            _ => None,
-        };
-        if let Some(value) = legacy {
-            let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
-                path: path.clone(),
-                source,
-            })?;
-            if let Some(existing) = existing
-                && serde_yaml_ng::from_slice::<Value>(&existing).map_err(|source| {
-                    ConfigError::Parse {
-                        path: path.clone(),
-                        source,
-                    }
-                })? != value
-            {
-                return Err(ConfigError::InvalidValue {
-                    key: "configuration migration".into(),
-                    message:
-                        "agents.yaml differs from old global selection; reconcile before writing"
-                            .into(),
-                });
-            }
-            return Self::parse(&text);
-        }
-        match existing {
-            Some(bytes) => {
-                Self::parse(
-                    std::str::from_utf8(&bytes).map_err(|_| ConfigError::InvalidValue {
-                        key: "agents.yaml".into(),
-                        message: "expected UTF-8".into(),
-                    })?,
-                )
-            }
-            None => Self::parse(SHIPPED_AGENTS),
-        }
+        Self::parse(&Self::selection_text(agents, global)?)
     }
 
     pub fn undeclared_roles<'a>(&'a self, installed: &[&str]) -> Vec<&'a str> {

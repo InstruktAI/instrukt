@@ -353,7 +353,7 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
                 layer.kind().current_schema_version()
             ));
         }
-        view.value = Some(inspected(home, layer, &path, value)?);
+        view.value = Some(inspected(layer, &path, value)?);
     }
     Ok(view)
 }
@@ -362,13 +362,12 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
 /// it: an older schema converted in memory, an unusable one refused. Nothing
 /// is read or written.
 pub(crate) fn inspected(
-    home: &Home,
     layer: &Layer,
     path: &Path,
     mut value: Value,
 ) -> Result<Value, ConfigError> {
     if let Version::Older(from) = version(&value, layer.kind()) {
-        super::_migrate::selection(home, layer, &mut value, false)?;
+        super::_migrate::selection(layer, &mut value)?;
         value = super::_migrate::upcycle(value, from, layer.kind());
     }
     require_usable(layer, path, &value)?;
@@ -439,7 +438,7 @@ pub fn patch(
     if matches!(layer, Layer::Global | Layer::Company(_))
         && let Version::Older(from) = version(&doc.value, layer.kind())
     {
-        super::_migrate::selection(home, layer, &mut doc.value, true)?;
+        super::_migrate::carry_over(home, layer, &mut doc.value, None)?;
         doc.value = super::_migrate::upcycle(doc.value, from, layer.kind());
         write(&path, &doc.bytes, &doc.value)?;
         doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
@@ -617,7 +616,7 @@ pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
     };
     match version(&doc.value, layer.kind()) {
         Version::Current => Ok(()),
-        Version::Older(_) => inspected(home, layer, &path, doc.value).map(drop),
+        Version::Older(_) => inspected(layer, &path, doc.value).map(drop),
         Version::Newer(found) => Err(ConfigError::NewerSchema {
             path,
             found,
@@ -650,6 +649,29 @@ pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u
     }
 }
 
+/// Acquires `layer`'s write lock when the stored document is of an older
+/// schema version; returns `None` when absent or already current, and refuses
+/// a newer or unknown schema before taking any lock.
+pub(super) fn lock_if_older(home: &Home, layer: &Layer) -> Result<Option<LockGuard>, ConfigError> {
+    let Some((path, doc)) = read_layer(home, layer)? else {
+        return Ok(None);
+    };
+    let current = layer.kind().current_schema_version();
+    match version(&doc.value, layer.kind()) {
+        Version::Current => Ok(None),
+        Version::Older(_) => Ok(Some(LockGuard::acquire(
+            &lock_path(home, &layer.path(home)),
+            WRITE_LOCK_TIMEOUT,
+        )?)),
+        Version::Newer(found) => Err(ConfigError::NewerSchema {
+            path,
+            found,
+            current,
+        }),
+        Version::Unknown => Err(ConfigError::UnknownSchema { path }),
+    }
+}
+
 /// Brings `layer` to its kind's current schema version with its settings kept:
 /// an older document is rewritten through the same atomic write as a
 /// patch; a current one is left untouched; a newer one is refused.
@@ -657,8 +679,19 @@ pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u
 /// machine's layer, [`bring_current`] run this.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
     _company_document::converted(home, layer)?;
+    let lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
+    migrate_holding(home, layer, &lock, None)
+}
+
+/// Migrates `layer` while its write lock is already held, forwarding
+/// `agents_held` so legacy selection carry-over never re-acquires `agents.lock`.
+pub(super) fn migrate_holding(
+    home: &Home,
+    layer: &Layer,
+    _layer_lock: &LockGuard,
+    agents_held: Option<&LockGuard>,
+) -> Result<MigrationOutcome, ConfigError> {
     let started = Instant::now();
-    let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
     let Some((path, doc)) = read_layer(home, layer)? else {
         return Ok(MigrationOutcome::Absent);
     };
@@ -673,7 +706,7 @@ pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigErr
         Version::Unknown => Err(ConfigError::UnknownSchema { path }),
         Version::Older(from) => {
             let mut migrated = doc.value;
-            super::_migrate::selection(home, layer, &mut migrated, true)?;
+            super::_migrate::carry_over(home, layer, &mut migrated, agents_held)?;
             let migrated = super::_migrate::upcycle(migrated, from, layer.kind());
             let revision = write(&path, &doc.bytes, &migrated)?;
             tracing::debug!(

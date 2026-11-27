@@ -1,17 +1,23 @@
 //! The agents file of an instrukt home (`Home::agents_file`) on disk: what
-//! the next writing command does to it and every write to it under its one
-//! lock.
-use super::_agents::{Agents, VERSION};
-use super::ConfigError;
+//! the next writing command does to it, its read and the revision of its
+//! stored bytes, and every write to it under its one lock — the entry's
+//! convergence, and the revision-checked patch that keeps the file to its
+//! overrides of the shipped defaults
+//! (`project/instrukt/spec/feature/configuration/configuration-editing`,
+//! Agents file).
+use super::_agents::{Agents, VERSION, overrides_only};
+use super::_merge::merge_patch;
+use super::{ConfigError, Layer, Revision};
 use crate::{
     fsx::{LockGuard, atomic_write},
     home::Home,
 };
 use serde::Deserialize;
+use serde_yaml_ng::{Mapping, Value};
 use sha2::{Digest, Sha256};
 use std::{
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const DEPLOYMENT_VERSION: u64 = 1;
@@ -22,6 +28,161 @@ const LOCK_TIMEOUT: Duration = Duration::from_secs(10);
 /// The lock every writer of the agents file holds for its read-modify-write.
 pub(super) fn agents_lock(home: &Home) -> PathBuf {
     home.locks_dir().join("agents.lock")
+}
+
+/// The revision of the agents file whose stored bytes are `bytes`; `None`,
+/// no file, has the absent file's revision, the same on every read.
+fn revision_of(bytes: Option<&[u8]>) -> Revision {
+    Revision::of(bytes.unwrap_or_default())
+}
+
+/// The revision of the agents file's stored bytes; without a file, the
+/// absent file's revision, whatever conversion or migration is pending.
+/// Nothing is locked or written.
+pub fn agents_revision(home: &Home) -> Result<Revision, ConfigError> {
+    Ok(revision_of(read_existing(&home.agents_file())?.as_deref()))
+}
+
+/// The effective agent selection as every reading command sees the file —
+/// an older file converted and an older global layer's selection carried
+/// over in memory, merged over the shipped defaults — validated, as literal
+/// data. Nothing is locked or written.
+pub fn agents_document(home: &Home) -> Result<Value, ConfigError> {
+    let stored = read_existing(&home.agents_file())?;
+    let global = super::_layer::read(&home.global_config())?.map(|document| document.value);
+    let text = Agents::selection_text(stored, global.as_ref())?;
+    let document = Agents::effective_document(&text)?;
+    Agents::validated(document.clone())?;
+    Ok(document)
+}
+
+/// Applies merge `patch` to the agents file's overrides, only while its
+/// stored bytes still have revision `expected` and the resulting effective
+/// selection is valid, and stores only what differs from the shipped
+/// defaults: the file is written atomically, or removed when no override
+/// remains. Returns the new revision. A patch that changes the file makes
+/// every other patch from `expected` stale; one that leaves the stored bytes
+/// as they were (such as an empty patch on an absent file) leaves `expected`
+/// current.
+///
+/// As a layer patch does with the machine's layer, the patch first persists,
+/// under the same locks, what the next writing command does to the file —
+/// its shape conversion or recognised-copy removal, and an older global
+/// layer's selection carried into it — and keeps that when it refuses.
+pub fn patch_agents(
+    home: &Home,
+    expected: &Revision,
+    patch: &Value,
+) -> Result<Revision, ConfigError> {
+    if !patch.is_mapping() {
+        return Err(ConfigError::PatchNotAMapping);
+    }
+    let started = Instant::now();
+    // Lock order: the global layer's lock, then the agents file's.
+    let global = super::_layer::lock_if_older(home, &Layer::Global)?;
+    let agents = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
+    let path = home.agents_file();
+    let inspected = revision_of(read_existing(&path)?.as_deref());
+    converge_holding(home, &agents)?;
+    if let Some(ref global_lock) = global {
+        super::_layer::migrate_holding(home, &Layer::Global, global_lock, Some(&agents))?;
+    }
+    let before = read_existing(&path)?;
+    if &inspected != expected {
+        return Err(ConfigError::RevisionMismatch {
+            expected: expected.to_string(),
+            current: revision_of(before.as_deref()).to_string(),
+        });
+    }
+    let (revision, removed) = match stored_overrides(before.as_deref(), patch, &path)? {
+        None => {
+            match crate::fsx::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => {
+                    return Err(crate::fsx::FsError::Write { path, source }.into());
+                }
+            }
+            (revision_of(None), true)
+        }
+        Some(reduced) => (
+            super::_layer::write(&path, before.as_deref().unwrap_or_default(), &reduced)?,
+            false,
+        ),
+    };
+    tracing::debug!(
+        event = "agents_patched",
+        from_revision = %expected,
+        revision = %revision,
+        removed,
+        duration_ms = super::_layer::elapsed_ms(started),
+    );
+    Ok(revision)
+}
+
+/// Applies `patch` to `before` (or a fresh `{schema_version: VERSION}` document
+/// when absent), validates the resulting effective selection, and reduces to
+/// overrides only; returns `None` when nothing beyond `schema_version` remains.
+fn stored_overrides(
+    before: Option<&[u8]>,
+    patch: &Value,
+    path: &Path,
+) -> Result<Option<Value>, ConfigError> {
+    let mut overrides = match before {
+        Some(bytes) => {
+            let parsed: Value =
+                serde_yaml_ng::from_slice(bytes).map_err(|source| ConfigError::Parse {
+                    path: path.to_path_buf(),
+                    source,
+                })?;
+            match parsed {
+                Value::Null => Value::Mapping(Mapping::new()),
+                Value::Mapping(_) => parsed,
+                _ => {
+                    return Err(ConfigError::NotAMapping {
+                        path: path.to_path_buf(),
+                    });
+                }
+            }
+        }
+        None => {
+            let mut doc = Mapping::new();
+            doc.insert("schema_version".into(), VERSION.into());
+            Value::Mapping(doc)
+        }
+    };
+    merge_patch(&mut overrides, patch);
+    let text = super::render_yaml(&overrides).map_err(|source| ConfigError::Render {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let _: Agents = Agents::parse(&text)?;
+    let reduced = overrides_only(overrides)?;
+    let empty = reduced
+        .as_mapping()
+        .is_some_and(|fields| fields.keys().all(|k| k.as_str() == Some("schema_version")));
+    Ok((!empty).then_some(reduced))
+}
+
+fn converge_holding(home: &Home, _agents: &LockGuard) -> Result<(), ConfigError> {
+    let path = home.agents_file();
+    let state = home.agents_deployment_file();
+    let Some(current) = read_existing(&path)? else {
+        return Ok(());
+    };
+    match next_write(&current, Deployment::load(&state).as_ref())? {
+        NextWrite::Keep => {}
+        NextWrite::Remove => remove_copy(&path, &state)?,
+        NextWrite::Convert(converted) => {
+            atomic_write(&path, &converted.bytes)?;
+            tracing::info!(
+                event = "agents_shape_migrated",
+                from_version = converted.from,
+                to_version = VERSION
+            );
+        }
+    }
+    Ok(())
 }
 
 impl Agents {
@@ -39,23 +200,8 @@ impl Agents {
         if next_write(&before, Deployment::load(&state).as_ref())? == NextWrite::Keep {
             return Ok(());
         }
-        let _lock = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
-        let Some(current) = read_existing(&path)? else {
-            return Ok(());
-        };
-        match next_write(&current, Deployment::load(&state).as_ref())? {
-            NextWrite::Keep => {}
-            NextWrite::Remove => remove_copy(&path, &state)?,
-            NextWrite::Convert(converted) => {
-                atomic_write(&path, &converted.bytes)?;
-                tracing::info!(
-                    event = "agents_shape_migrated",
-                    from_version = converted.from,
-                    to_version = VERSION
-                );
-            }
-        }
-        Ok(())
+        let lock = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
+        converge_holding(home, &lock)
     }
 
     /// What a reading command reports about `agents.yaml`: the change the
@@ -209,7 +355,9 @@ impl Deployment {
 
 #[cfg(test)]
 mod tests {
-    use super::super::SHIPPED_AGENTS;
+    use super::super::{_agents::VERSION, SHIPPED_AGENTS};
+    use serde_yaml_ng::Value;
+    use std::path::Path;
 
     /// The deployment record an earlier release kept of `bytes`.
     fn record_of(bytes: &str) -> super::Deployment {
@@ -265,5 +413,36 @@ mod tests {
         });
         assert!(super::Deployment::parse(record.to_string().as_bytes()).is_err());
         assert!(super::Deployment::parse(b"{not a record").is_err());
+    }
+
+    fn yaml(text: &str) -> Value {
+        serde_yaml_ng::from_str(text).unwrap()
+    }
+
+    #[test]
+    fn a_patch_removing_the_last_override_leaves_nothing_to_store() {
+        let before = format!("schema_version: {VERSION}\nroles: {{planner: {{order: [codex]}}}}\n");
+        let patch = yaml("roles: {planner: {order: ~}}");
+        let stored =
+            super::stored_overrides(Some(before.as_bytes()), &patch, Path::new("agents.yaml"))
+                .unwrap();
+        assert_eq!(stored, None);
+    }
+
+    #[test]
+    fn a_patch_on_no_file_stores_only_what_differs_from_the_shipped_defaults() {
+        let shipped = yaml(SHIPPED_AGENTS);
+        let builder = &shipped["roles"]["builder"];
+        let mut reversed = builder["order"].as_sequence().unwrap().clone();
+        reversed.reverse();
+        let mut patch = yaml("roles: {builder: {}}");
+        patch["roles"]["builder"]["tier"] = builder["tier"].clone();
+        patch["roles"]["builder"]["order"] = Value::Sequence(reversed.clone());
+        let mut expected = yaml(&format!(
+            "schema_version: {VERSION}\nroles: {{builder: {{}}}}"
+        ));
+        expected["roles"]["builder"]["order"] = Value::Sequence(reversed);
+        let stored = super::stored_overrides(None, &patch, Path::new("agents.yaml")).unwrap();
+        assert_eq!(stored, Some(expected));
     }
 }
