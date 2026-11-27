@@ -263,6 +263,9 @@ pub enum NoticeCode {
     /// A delivered snippet no `index.yaml` names and no snippet requires:
     /// reachable only through `instrukt docs index`.
     UnreferencedSnippet,
+    /// A `general` or domain snippet invoking an `instrukt <subcommand>`
+    /// inside an inline code span or fenced code block.
+    CommandInSharedDoctrine,
 }
 
 impl NoticeCode {
@@ -271,6 +274,7 @@ impl NoticeCode {
             NoticeCode::DomainWithoutIndex => "domain-without-index",
             NoticeCode::ProjectWithoutIndex => "project-without-index",
             NoticeCode::UnreferencedSnippet => "unreferenced-snippet",
+            NoticeCode::CommandInSharedDoctrine => "command-in-shared-doctrine",
         }
     }
 }

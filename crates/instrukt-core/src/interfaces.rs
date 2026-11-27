@@ -11,9 +11,12 @@
 //! [`FlavorRoles`] — workflow (`instrukt_todos::workflow`); [`FlavorSchema`]
 //! — workflow's `WorkflowSchema`, always wired; [`GraphGeneration`] —
 //! blueprint (`instrukt_blueprint`); [`ConfiguredAgentRuntimes`] — the
-//! selected runtime's adapter (`instrukt_runner::runtime`). The CLI fills
+//! selected runtime's adapter (`instrukt_runner::runtime`);
+//! [`CoreWiring::cli_subcommands`] — top-level CLI subcommand names and
+//! aliases derived from Clap at the CLI composition root. The CLI fills
 //! each slot from its module's wiring file (`crates/instrukt-cli/src/wiring/`).
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -223,6 +226,11 @@ pub struct CoreWiring {
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
     pub configured_runtimes: Option<Arc<dyn ConfiguredAgentRuntimes>>,
+    /// Top-level `instrukt` CLI subcommand names and aliases supplied by the
+    /// CLI composition root from its Clap definition, used by docs validation
+    /// to detect `instrukt <subcommand>` invocations in shared doctrine
+    /// without duplicating the command list.
+    pub cli_subcommands: BTreeSet<String>,
 }
 
 impl std::fmt::Debug for CoreWiring {
@@ -236,6 +244,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .field("configured_runtimes", &self.configured_runtimes.is_some())
+            .field("cli_subcommands", &self.cli_subcommands.len())
             .finish()
     }
 }

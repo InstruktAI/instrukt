@@ -107,6 +107,7 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
         configured_runtimes: None,
+        cli_subcommands: Default::default(),
     })
 }
 
@@ -123,6 +124,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
         configured_runtimes: configured_runtimes(ctx)?,
+        cli_subcommands: Default::default(),
     })
 }
 
