@@ -104,9 +104,7 @@ The following are invalid output:
 - echoing what the other side just said
 - narration that announces work without delivering findings
 
-Linked-output wrappers do not make a message actionable. The wrapped payload is what determines whether the output is valid.
-
-When no valid form applies, the turn still has to close. It closes with the no-output sentinel under `general/policy/no-output-turn`; writing the silence out in prose produces one of the invalid forms above.
+When no valid form applies, do not pad the turn with acknowledgment-only or narration filler.
 
 ## Allowed values
 

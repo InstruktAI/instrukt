@@ -1093,7 +1093,7 @@ fn failed_work_is_retried_after_a_restart() {
     let successor = started(&c, &before);
     assert_eq!(c.runtime.message_count(&session), 3);
     c.runtime.flag("send-failure", true);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     let session = successor;
     wait_for_answer_fixture(
         "the first successor redelivery is refused by the runtime",
@@ -1166,7 +1166,7 @@ fn a_replacement_reports_the_old_acknowledgement() {
     c.store.unproject_thread(&old);
     std::fs::remove_file(c.runtime.state_dir().join(format!("{old}.hold-show"))).unwrap();
     let successor = started(&c, &[old]);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture(
         "only the current successor receives the retained question",
         || c.runtime.message_count(&successor) == 2,
@@ -1476,7 +1476,7 @@ fn a_live_deletion_is_confirmed_once_across_relay_passes() {
         interval_clock(&clock) + jiff::SignedDuration::from_mins(5),
     );
     let successor = started(&c, &[]);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved work reaches one successor", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1511,7 +1511,7 @@ fn archived_and_deleted_conversations_keep_saved_work() {
             .message(&successor, 0)
             .contains("Who kept the notes?")
     );
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved question reaches the successor once", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1567,7 +1567,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
         .unwrap_or(false)
     });
     assert_ne!(old, successor);
-    c.finish_turn(&successor, 0, "NOOP");
+    c.finish_turn(&successor, 0, "");
     wait_for_answer_fixture("the saved question is delivered after deletion", || {
         c.runtime.message_count(&successor) == 2
     });
@@ -1597,7 +1597,7 @@ fn deleted_conversation_waits_for_confirmed_replacement() {
 fn a_member_can_follow_the_status_of_an_unanswered_message() {
     std::thread::scope(|scope| {
         scope.spawn(a_members_status_tracks_start_and_turn_updates);
-        scope.spawn(working_status_clears_for_a_noop_and_carries_queued_turns);
+        scope.spawn(working_status_carries_queued_turns);
         scope.spawn(unavailable_status_clears_when_the_source_or_post_recovers);
         scope.spawn(a_relay_restart_keeps_the_unavailable_interval);
         scope.spawn(observing_a_running_turn_again_clears_its_and_the_queued_status);
@@ -1639,10 +1639,7 @@ fn a_member_can_keep_asking_after_the_assistant_fails_to_answer() {
 }
 
 fn successful_empty_turns_rearm_notices() {
-    std::thread::scope(|scope| {
-        scope.spawn(|| an_empty_success_lets_the_next_question_receive_its_own_notice("NOOP"));
-        an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
-    });
+    an_empty_success_lets_the_next_question_receive_its_own_notice(" \n ");
 }
 
 fn hold_dispatch(c: &Company) -> instrukt_core::fsx::LockGuard {
@@ -1801,32 +1798,9 @@ fn unavailable_status_clears_when_the_source_or_post_recovers() {
     assert_eq!(shown(&c, channel, &unposted), [WORKING, UNAVAILABLE, ""]);
 }
 
-fn working_status_clears_for_a_noop_and_carries_queued_turns() {
+fn working_status_carries_queued_turns() {
     let (mut c, clock) = status_company("2026-11-19T10:00:00Z".parse().unwrap());
     let channel = "C1";
-    // A turn that completes with a bare `NOOP` completes its message:
-    // nothing is posted, and the status is cleared without ever saying the
-    // assistant is unavailable.
-    let before = c.sessions();
-    projected(&c);
-    let quiet = c
-        .slack
-        .mention(channel, "USTEVEN", "<@UAGENT> Thanks!", None);
-    let session = started(&c, &before);
-    wait("the working text", || {
-        c.slack.status(channel, &quiet).as_deref() == Some(WORKING)
-    });
-    c.finish_turn(&session, 0, "NOOP");
-    wait("the status cleared", || {
-        shown(&c, channel, &quiet).last().map(String::as_str) == Some("")
-    });
-    assert_eq!(shown(&c, channel, &quiet), [WORKING, ""]);
-    set_clock(
-        &clock,
-        interval_clock(&clock) + jiff::SignedDuration::from_secs(90),
-    );
-    assert_eq!(answers(&c), 0);
-    assert_eq!(notices(&c, "USTEVEN"), 0);
 
     // A second message waits behind the conversation's running turn: the
     // status shows that turn's work, never the unavailable text, and both
@@ -4894,7 +4868,7 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
     let _dm_ts = c.slack.direct("D1", "USTEVEN", "Check DM status.");
     let session = c.session();
     let input0 = c.runtime.message(&session, 0);
-    assert!(input0.contains("[Instrukt Notification]"), "{input0}");
+    assert!(input0.contains("Company conversation turn"), "{input0}");
     assert!(input0.contains("Connector: desk"), "{input0}");
     assert!(input0.contains("Conversation: D1"), "{input0}");
     assert!(input0.contains("Direct: true"), "{input0}");
@@ -4956,7 +4930,7 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         "company scope must keep one standing session"
     );
     let input1 = c.runtime.message(&session, 1);
-    assert!(input1.contains("[Instrukt Notification]"), "{input1}");
+    assert!(input1.contains("Company conversation turn"), "{input1}");
     assert!(input1.contains("Connector: desk"), "{input1}");
     assert!(
         input1.contains(&format!("Conversation: C1/{ch_ts}")),
@@ -4995,14 +4969,17 @@ fn company_scoped_connector_shares_one_standing_session_across_conversations() {
         c.runtime.message_count(&session) >= 3
     });
     let input2 = c.runtime.message(&session, 2);
-    let spans = instrukt_runner::envelopes::segment(&input2);
+    let spans = instrukt_company::conversations::envelopes::segment(&input2);
     assert_eq!(
         spans
             .iter()
-            .filter(|span| matches!(span, instrukt_runner::envelopes::Span::Control))
+            .filter(|span| matches!(
+                span,
+                instrukt_company::conversations::envelopes::Span::Member { .. }
+            ))
             .count(),
         1,
-        "hostile display name must not forge extra control envelopes:\n{input2}"
+        "hostile display name must not forge extra member envelopes:\n{input2}"
     );
     assert!(input2.contains("Speaker ID: UBRAM"), "{input2}");
     assert!(input2.contains("Speaker Admin: false"), "{input2}");

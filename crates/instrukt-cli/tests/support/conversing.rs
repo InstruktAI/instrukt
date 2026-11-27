@@ -6,8 +6,8 @@
 use std::time::Duration;
 
 use instrukt_company::conversations::Status;
+use instrukt_company::conversations::envelopes::{self, Span};
 use instrukt_core::ids::ProjectSlug;
-use instrukt_runner::envelopes::{self, Span};
 
 use crate::common::{self, TestEnv};
 use crate::fixtures::documented;

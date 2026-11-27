@@ -8,6 +8,7 @@
 
 mod _client;
 mod _discover;
+mod _http;
 mod _issuer;
 mod _logins;
 mod _oauth;
@@ -389,12 +390,12 @@ pub struct Target<'a> {
 
 /// The server's tool catalog.
 pub fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
-    _client::Session::open(target)?.list_tools()
+    _client::list_tools(target)
 }
 
 /// The result of calling `tool` with `arguments`.
 pub fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<Value, McpError> {
-    _client::Session::open(target)?.call(tool, arguments)
+    _client::call(target, tool, arguments)
 }
 
 /// How deep JSON text inside JSON strings is followed.

@@ -169,7 +169,7 @@ user (`user_not_found`, `user_not_visible`), the sender is not one of the
 company's own. When Slack gives no answer about the sender, because the
 request fails, is limited or Slack refuses the app's own token, nothing is
 decided and the message waits; Slack is asked again until it answers
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried).
+(`project/instrukt/design/architecture/outside-gate`).
 
 | Slack's record | Required |
 | --- | --- |
@@ -195,7 +195,7 @@ alike.
 ### While the agent works
 
 From the admission of an addressed message until it is complete — its answer
-posted, or its turn completed with a bare `NOOP` or a successful blank reply —
+posted, or its turn completed with a successful blank reply —
 the connector shows Slack's status line for it, with the text the message's state gives
 (`project/instrukt/spec/feature/company/conversations`):
 
@@ -217,7 +217,7 @@ one.
 | A channel | the conversation's thread | any admitted message of that thread is unfinished |
 | A direct message | the addressed message itself | that one message is unfinished |
 
-A posted answer, a bare `NOOP`, or a successful blank reply completes the message.
+A posted answer or a successful blank reply completes the message.
 A failed turn awaiting redelivery or an answer awaiting posting leaves it
 unfinished.
 
@@ -488,6 +488,7 @@ remain opaque to runner. No new required scope is introduced.
 
 ## See Also
 
+- [project/instrukt/adr/0001-slack-socket-mode-transport](../../../adr/0001-slack-socket-mode-transport.md)
 - [project/instrukt/spec/feature/company/conversations](conversations.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - https://docs.slack.dev/apis/events-api/using-socket-mode/ — Slack's Socket Mode: the app opens the connection and acknowledges each envelope.

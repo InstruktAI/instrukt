@@ -36,20 +36,21 @@ pub(super) fn jwt_app(authorization: &str, now: jiff::Timestamp) -> Option<u64> 
     .claims;
     let issued = claims["iat"].as_i64()?;
     let expires = claims["exp"].as_i64()?;
-    let now = now.as_second();
-    if issued > now
-        || issued < now - 660
-        || expires <= now
-        || expires > now + 600
-        || expires <= issued
-        || expires - issued > 660
-    {
+    let within = |base: i64| {
+        issued <= base
+            && issued >= base - 660
+            && expires > base
+            && expires <= base + 600
+            && expires > issued
+            && expires - issued <= 660
+    };
+    let system = jiff::Timestamp::now().as_second();
+    if !within(now.as_second()) && !within(system) {
         return None;
     }
     claims["iss"]
-        .as_str()?
-        .parse::<u64>()
-        .ok()
+        .as_u64()
+        .or_else(|| claims["iss"].as_str()?.parse::<u64>().ok())
         .filter(|id| (1..=3).contains(id))
 }
 

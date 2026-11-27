@@ -10,7 +10,6 @@ visibility: public
 ## Required reads
 
 - [general/policy/message-identity-headers](../policy/message-identity-headers.md)
-- [general/policy/no-output-turn](../policy/no-output-turn.md)
 - [general/principle/origin-routing](../principle/origin-routing.md)
 - [general/procedure/mcp-server-tools](mcp-server-tools.md)
 
@@ -217,9 +216,7 @@ coordination:
      and any decision owned by the human;
    - keep human-facing summaries free of raw tool traces, command diagnostics,
      and intermediate coordination noise (and in company-facing replies, speak
-     in the company's own terms without exposing host internals);
-   - when nothing is owed, close the turn with bare `NOOP`
-     (`general/policy/no-output-turn`).
+     in the company's own terms without exposing host internals).
 
 ## Outputs
 

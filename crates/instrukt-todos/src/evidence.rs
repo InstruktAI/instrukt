@@ -505,11 +505,12 @@ pub enum StampFact {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reasoning: Option<String>,
     },
-    /// `--intent-checked`: the `input` version checked and the
-    /// conversation it was authored in.
+    /// `--intent-checked [--conversation <runtime:id>]`: the `input` version
+    /// checked, with an explicitly observed originating conversation when given.
     IntentChecked {
         input: ContentDigest,
-        conversation: SessionRef,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        conversation: Option<SessionRef>,
     },
     /// `--kickback --reason`. `invalidated_reviews` are the preparation
     /// reviews it invalidates (`<r>.cleared_by_substantive_drift`): the
@@ -550,11 +551,17 @@ pub enum StampFact {
     /// `--build-complete`: the stamped work-branch head.
     BuildComplete { head: CommitSha },
     RoleComplete {
-        head: CommitSha,
-        role: RoleName,
-        attempt: u64,
-        base: CommitSha,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<CommitSha>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        role: Option<RoleName>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attempt: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        base: Option<CommitSha>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         artifacts: Vec<(ArtifactName, ContentDigest)>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
         commits: Vec<CommitSha>,
     },
     /// `--deferrals-processed`: the deferrals artifact it covers.

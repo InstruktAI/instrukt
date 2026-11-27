@@ -378,7 +378,13 @@ fn the_first_other_recipient_checks_the_recorded_intent_against_its_conversation
     );
 
     project.env.set_env("T3CODE_THREAD_ID", "checker-2");
-    let checked = project.ok(["stamp", "nested-lists", "--intent-checked"]);
+    let checked = project.ok([
+        "stamp",
+        "nested-lists",
+        "--intent-checked",
+        "--conversation",
+        "t3:author-1",
+    ]);
     project.env.set_env("T3CODE_THREAD_ID", "builder-3");
     let received = project.ok(["show", "nested-lists"]);
 

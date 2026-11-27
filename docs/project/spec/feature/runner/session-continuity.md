@@ -37,7 +37,7 @@ creates no replacement session identity.
 | `send` | Native session id, structured input and delivery intent; acknowledges runtime acceptance separately from entry consumption. | Instrukt event/approval delivery and recovery of its own executions. |
 | `read_state` | Scoped native session id; returns semantic state, identity and available metadata with provenance, preserving unknown and unsupported observations. | Keyed reuse, delivery-boundary checks and runner-owned execution observation. |
 | `caller_identity` | Selected adapter plus caller environment; returns the native session id and any verified agent identity, or no caller. Performs no runtime I/O. | Read-time `runtime.session_id`, recorded role/assignment lookup, capability scope and commit attribution. |
-| `conversation_source` | Optional durable changes since an opaque source position, through two reads, each returning the next position; also supplies a native change-notification subscription. The turn read returns, for the conversations a caller names, normalized conversations/messages and native records, native ids and parent links, roles, available timestamps and typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text). The text read returns, over every conversation the source holds, each changed conversation by its native id with its own record, where the source holds one, and its finished messages, except a runtime's report of a background command it ran (for T3, a message whose `notification.source.kind` is `command` or `background_command`; a subagent's, a delegated task's or any other notification is returned), with native ids, roles, available timestamps, text and the native record without that text and without the members of its attached context that hold what the runtime captured; for T3, a `terminal` context record's `text`, a `review-comment` record's `diff`, an `element` record's `htmlPreview` and the `htmlPreview` of each of a `preview-annotation` record's `elements`, while every other member of those records, a review comment's `text` and an annotation's `comment` among them, stays. Each read validates, fingerprints and reads only the source tables it returns from; a read's fingerprint covers every row of those tables, the finished rows it leaves out of what it returns included, so a position of one read holds fingerprints the other does not share. | The independent conversation-link relay (turn read) and history extraction (text read), without owning their storage, indexing or relay behavior. |
+| `conversation_source` | Optional durable changes since an opaque source position, through two reads, each returning the next position; also supplies a native change-notification subscription. The turn read returns, for the conversations a caller names, normalized conversations/messages and native records, native ids and parent links, roles, available timestamps and typed runtime-neutral completed turns (native reference, ordered contributions, author kind/identity and text). The text read returns, over every conversation the source holds, each changed conversation by its native id with its own record, where the source holds one, and its finished messages, except a runtime's report of a background command it ran (for T3, a message whose `notification.source.kind` is `command` or `background_command`; a subagent's, a delegated task's or any other notification is returned), with native ids, roles, available timestamps, text and the native record without that text and without the members of its attached context that hold what the runtime captured; for T3, a `terminal` context record's `text`, a `review-comment` record's `diff`, an `element` record's `htmlPreview` and the `htmlPreview` of each of a `preview-annotation` record's `elements`, while every other member of those records, a review comment's `text` and an annotation's `comment` among them, stays. Each read validates, fingerprints and reads only the source tables it returns from; a read's fingerprint covers every row of those tables, the finished rows it leaves out of what it returns included, so a position of one read holds fingerprints the other does not share. | The connected-conversation answer relay (turn read) and history extraction (text read), without owning their storage, indexing or relay behavior. |
 | `read_conversation` | Optional native recent conversation/terminal read with source, attribution when available and extent; never synthesizes messages from terminal text. | Adapter recovery when supported; agents read natively. Consumption and assignment evidence are separate capabilities. |
 | `notify` | Session or work-item reference and an available deep link; returns acknowledgement or unsupported. Optional capability. | Anomaly notification when no explicit `runner.notify` command is configured. |
 | `finished_threads` | Registered project checkout; returns each thread the runtime lists for that project and reports finished, with its finishing time, its latest activity (a person reading or writing to it included), whether it is quiet (not running, queued, snoozed or waiting on a person's input or approval) and whether a person pinned it. A time the runtime does not report is unknown, never substituted. Optional capability: thread archiving. | Thread retention (`project/instrukt/spec/feature/runner/thread-retention`). |
@@ -53,9 +53,7 @@ consumers are launch, for the root of the work it starts, and installation
 
 Worktree creation, shared native delegation and attachment to an existing
 worktree are distinct runtime capabilities. T3's native MCP path supports shared delegation, existing-worktree attachment and explicit provider/model selection; its unattended native launch adapter supports existing-worktree attachment. Agent workflow requirements use typed native capability metadata;
-unattended consumers use adapter capabilities. Conversation links use the
-runner-owned contract in `project/instrukt/spec/feature/runner/conversation-links`
-and require the durable conversation source with native change notifications and native input delivery. Notification and
+unattended consumers use adapter capabilities. Notification and
 agent/model selection retain their optional capability contracts.
 Availability information, when the runtime supplies it, is adapter metadata;
 there are no configurable `available` or `model` commands. A
@@ -148,11 +146,6 @@ Keyed starts replay their captured native command and thread IDs automatically.
 There is no operator start-resolution or deleted-thread replacement command.
 Manual standing reservations retain the separate `events bind` contract.
 
-`runtime.discuss` directs the agent to `instrukt discuss open <thread> [--message <text>]`
-and `instrukt discuss close [--message <text>]`, using the native caller identity
-and runner-owned links. This is the instrukt route for a runtime without native
-linking; automatic turn-end relay remains with the runner.
-
 Agent-native `run`, `send`, `alive`, `conversation` and `link` facades are absent
 from this surface. Explicit capability-gap fallbacks, if a runtime needs one,
 are named in its configuration instruction; no fallback is enabled for a native
@@ -177,7 +170,6 @@ adapter verb templates.
 | Todo pickup (`modules.todos`) | Keyed orchestrator `start`, `send`, `read_state`, required delivery evidence and caller identity. Worker operations use native instruction entries. Workflow workspace requirements describe native delegation capabilities, separately from unattended adapter capabilities. |
 | Recurring tasks (within `modules.todos`) | Keyed `start`, `read_state` and required start/recovery evidence. |
 | History extraction (`modules.history`, default on) | Optional `conversation_source` with native change notifications; an unknown or unsupported runtime reports extraction unavailable, without selecting one or blocking configuration. |
-| Conversation links | `conversation_source` (read-only durable projections and native change notifications) and native input delivery (`send`), per `project/instrukt/spec/feature/runner/conversation-links`. |
 | Conversations (a company home's declared connector) | Keyed `start` in a company home, `send`, `read_state`, and `conversation_source` with native change notifications for the answer back, per `project/instrukt/spec/feature/company/conversations`. |
 | Requested review (no module switch) | Keyed `start` in the project's registered checkout; `dispatch_send`, native input delivery under a command identity instrukt recorded before the frame, which the runtime accepts once, so sending it again opens no second turn and reports the acceptance (`project/instrukt/spec/feature/runner/t3-contract`); and `read_state` reporting whether a turn is in progress; per `project/instrukt/spec/feature/runner/requested-review`. Without them `instrukt review start` refuses, naming the runtime and the missing capability. |
 | Default anomaly notification | Optional `notify`; an explicit `runner.notify` command is independent. |
@@ -656,8 +648,7 @@ a repeated ending raises an anomaly. Confirmed native archive/deletion with an
 eligible active assignment uses the common successor and work-claim transaction.
 Observation failure retries observation instead. Such an execution is listed in `instrukt events status` until its workflow
 state advances, whether or not a notification command is configured; recovered means
-that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
-cannot resolve goes to the operator). Release claims through work's command contract; ending
+that its state advanced (`project/instrukt/spec/feature/runner/anomaly-notification`). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
 ### Fresh canonical base
@@ -1016,7 +1007,6 @@ And no failed start is reported for the pickup
 ## See Also
 
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
-- [project/instrukt/spec/feature/runner/conversation-links](conversation-links.md)
 - [project/instrukt/spec/feature/work/state-database](../work/state-database.md)
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/runner/procedure-standing-agent](procedure-standing-agent.md)

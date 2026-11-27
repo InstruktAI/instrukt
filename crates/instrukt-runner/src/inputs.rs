@@ -151,10 +151,7 @@ pub(crate) fn compose(
         content.push_str(&format!("\n{remaining} more pending\n"));
     }
     content.push_str(&format!("\n{CLOSING}\n"));
-    Ok((
-        selected,
-        crate::envelopes::Control::Notification.frame(&content),
-    ))
+    Ok((selected, content))
 }
 /// Sources call this in the same transaction as their domain decision.
 pub fn retain(

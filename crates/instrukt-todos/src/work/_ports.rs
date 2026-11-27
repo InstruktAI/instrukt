@@ -120,7 +120,12 @@ impl Claims for Work {
             // as `record_dispatch` assigns it to a started session.
             if let Some(session) = &session
                 && claim.session.is_none()
-                && super::_attempts::live_driver(record, session).is_some()
+                && record.bindings.iter().any(|binding| {
+                    binding.session.as_ref() == Some(session)
+                        && binding.attempt.assignment
+                            == instrukt_runner::interfaces::AssignmentKind::Driver
+                        && binding.attempt.released_at.is_none()
+                })
             {
                 s.commit("claim taken up by its orchestrator", |s| {
                     let claim = s.items[index].record.claim.as_mut().ok_or_else(|| {

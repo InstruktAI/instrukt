@@ -26,4 +26,4 @@ finalize_ready: <commit 1>
 gates:
   interference lock: free
   prd approval: not required
-  handoff gate: blocked (worktree not present; branch head not pushed to origin; build review approve does not match exact current HEAD and findings)
+  handoff gate: blocked (worktree not present; workspace, local and published heads differ; build review approve does not match exact current HEAD and findings)

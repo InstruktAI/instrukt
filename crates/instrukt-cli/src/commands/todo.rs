@@ -70,7 +70,7 @@ enum TodoCommand {
     /// dispatching session where the record holds them. The reply omits it
     /// otherwise.
     Attempt(AttemptArgs),
-    /// Bind a reserved assignment to its native shared child.
+    /// Bind a reserved assignment to a native session.
     Bind(BindArgs),
     /// Record an attributed fact bound to evidence.
     Stamp(StampArgs),
@@ -82,43 +82,62 @@ enum TodoCommand {
 
 #[derive(Debug, clap::Args)]
 struct AttemptArgs {
+    /// The todo's slug.
     slug: TodoSlug,
+    /// The assignment's recorded role.
     #[arg(long)]
     role: RoleName,
+    /// The procedure snippet recorded with the reservation.
     #[arg(long)]
     procedure: Option<SnippetId>,
+    /// The procedure arguments recorded with the reservation.
     #[arg(long, allow_hyphen_values = true)]
     args: Option<String>,
+    /// The brief recorded with the reservation.
     #[arg(long)]
     brief: Option<String>,
+    /// The retained attempt number for a no-start or failure record.
     #[arg(long)]
     attempt: Option<u64>,
+    /// Record that the reservation did not start.
     #[arg(long, conflicts_with="failed", requires_all=["attempt", "reason"])]
     not_started: bool,
+    /// Record the stopped attempt's failure and release.
     #[arg(long, requires_all=["attempt", "reason", "evidence"])]
     failed: bool,
+    /// The reason recorded for a no-start or failure.
     #[arg(long)]
     reason: Option<String>,
+    /// Stopped session evidence as JSON, from a file or `-` for stdin.
     #[arg(long)]
     evidence: Option<String>,
+    /// Output the assignment or attempt as JSON.
     #[arg(long)]
     json: bool,
 }
 #[derive(Debug, clap::Args)]
 struct BindArgs {
+    /// The todo's slug.
     slug: TodoSlug,
+    /// The reservation's role.
     #[arg(long)]
     role: RoleName,
+    /// The reservation's attempt number.
     #[arg(long)]
     attempt: u64,
+    /// The native session bound to the reservation.
     #[arg(long)]
     session: SessionRef,
+    /// The worktree recorded in the workspace reservation.
     #[arg(long)]
     worktree: Option<PathBuf>,
+    /// The branch recorded in the workspace reservation.
     #[arg(long)]
     branch: Option<String>,
+    /// The base commit recorded in the workspace reservation.
     #[arg(long)]
     base: Option<CommitSha>,
+    /// Output the binding as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -159,26 +178,19 @@ struct CreateArgs {
     /// feature, change, bug or task.
     #[arg(long)]
     kind: TodoKind,
-    /// Create it; without this flag the admission questions are printed and
-    /// nothing is created.
+    /// Write the todo record.
     #[arg(long)]
     approved: bool,
-    /// Park work whose outcome has not converged in the icebox, outside the
-    /// lifecycle. Never for a wait on another todo (`--after`) or for
-    /// converged work waiting on a merge or release (`--hold`).
+    /// Set the initial status to iceboxed.
     #[arg(long)]
     icebox: bool,
-    /// File converged work on hold for a concrete condition outside the
-    /// project's todos, such as a one-off branch merge, a binary rollout or
-    /// an external gate; needs `--reason`. The hold commits with the todo.
-    /// Never for a wait on another todo (`--after`).
+    /// Record a dispatch hold with the todo. Requires `--reason`.
     #[arg(long, requires = "reason", conflicts_with = "icebox")]
     hold: bool,
-    /// The condition the held work waits on.
+    /// The reason recorded for the dispatch hold.
     #[arg(long, requires = "hold")]
     reason: Option<String>,
-    /// Prerequisites, comma-separated slugs: the todos this one waits on. It
-    /// is ready once they deliver; never hold or icebox it for them.
+    /// Prerequisite todos, as comma-separated slugs.
     #[arg(long, value_name = "SLUGS")]
     after: Option<String>,
     /// The group parent.
@@ -310,10 +322,15 @@ struct StampArgs {
     /// The session the approval was stated in (`<runtime>:<id>`).
     #[arg(long, value_name = "RUNTIME:ID")]
     session: Option<SessionRef>,
-    /// The current `input` version is checked against its conversation.
+    /// Bind the current `input` version digest as checked, with optional
+    /// `--conversation` for observed originating conversation provenance.
     #[arg(long)]
     intent_checked: bool,
-    /// Return the work to preparation, with `--reason`.
+    /// Explicitly observed originating conversation (`<runtime>:<id>`) for
+    /// `--intent-checked`.
+    #[arg(long, value_name = "RUNTIME:ID", requires = "intent_checked")]
+    conversation: Option<SessionRef>,
+    /// Record a kickback and invalidate the affected plan review.
     #[arg(long, requires = "reason")]
     kickback: bool,
     /// The reason a kickback, unresolved diagnosis, failed outcome or peer
@@ -335,20 +352,20 @@ struct StampArgs {
     /// The build starts from the current plan.
     #[arg(long)]
     build_started: bool,
-    /// The build is complete at the work branch's head.
+    /// Record build completion at the current commit.
     #[arg(long)]
     build_complete: bool,
-    /// Setup or finalizer work is committed and ready for handoff.
+    /// Record completion and release the caller's bound attempt, if present.
     #[arg(long)]
     role_complete: bool,
     /// The current deferrals are processed.
     #[arg(long)]
     deferrals_processed: bool,
-    /// The work branch's head is handed to integration.
+    /// Record the exact head that passed the integration handoff checks.
     #[arg(long)]
     finalize_ready: bool,
-    /// A live verification disposition of the candidate at the clean head,
-    /// bound to the current `verification-findings` report.
+    /// Record a verification disposition for the current commit and
+    /// `verification-findings` digest.
     #[arg(long, value_name = "pass|fail|blocked|tier_0_skip|hotfix_deferred")]
     verification: Option<VerificationArg>,
     /// The tracked follow-up todo a hotfix deferral names.
@@ -360,8 +377,7 @@ struct StampArgs {
     /// A task execution's result.
     #[arg(long, value_name = "success|error")]
     task_outcome: Option<OutcomeArg>,
-    /// The scheduled occurrence a firing start or outcome concerns
-    /// (RFC 3339), as the run's opening message names it.
+    /// The scheduled occurrence associated with a firing start or outcome.
     #[arg(long, value_name = "RFC 3339")]
     occurrence: Option<jiff::Timestamp>,
 }
@@ -689,8 +705,7 @@ impl Session<'_> {
                             )?
                             .message
                         }
-                        None if args.role.as_str() == "setup" => brief,
-                        None => bail!("a non-setup reservation requires --procedure"),
+                        None => brief,
                     };
                     let configuration = config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
                     let env = crate::wiring::environment(ctx)?;
@@ -762,12 +777,13 @@ impl Session<'_> {
             hold: args.hold.then(|| args.reason.unwrap_or_default()),
         };
         if request.kind == TodoKind::Bug {
-            bail!(
-                "a bug is not created as ordinary work: report it through the bug front door, `instrukt bugs report '<description>'`, which puts the questions to face before anything is filed"
-            );
+            bail!("bug records are created by `instrukt bugs report '<description>'`");
         }
         if !args.approved {
-            ctx.out.text(&admission(&args.slug))?;
+            ctx.out.line(&format!(
+                "No todo created for `{}`. Pass --approved to write the record.",
+                args.slug
+            ))?;
             return Ok(ExitCode::SUCCESS);
         }
         let outcome = self.work.create(self.project, request)?;
@@ -937,7 +953,9 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         bail!("`--by` and `--carry-from` go with `--prd-approved` or `--task-approved`");
     }
     if args.intent_checked {
-        forms.push(StampRequest::IntentChecked);
+        forms.push(StampRequest::IntentChecked {
+            conversation: args.conversation.clone(),
+        });
     }
     if args.kickback {
         forms.push(StampRequest::Kickback { reason: reason() });
@@ -1070,24 +1088,6 @@ fn tier(arg: TierArg) -> Tier {
         TierArg::Standard => Tier::Standard,
         TierArg::Light => Tier::Light,
     }
-}
-
-/// The admission questions `create` prints without `--approved`
-/// (`sdlc/policy/todo-creation-discipline`, "Decide before creating").
-fn admission(slug: &TodoSlug) -> String {
-    format!(
-        "Before filing `{slug}`, face these questions; then run the same command with --approved:
-- Is the work already covered? Read `instrukt todo list` and the `input` of each plausible match.
-- Does a small addition belong in an existing todo that has not started build?
-- Has the intended outcome converged, with every contract preparation consumes authored and reviewed? If not, file it with --icebox.
-- Does converged work wait on something? Place it by what it waits on:
-  - on other todos: --after <slugs>; it is ready once they deliver.
-  - on a concrete condition outside the project's todos (a one-off branch merge, a binary rollout, an external gate): --hold --reason <condition>.
-  Never use --hold or --icebox for a wait on another todo, nor --icebox for converged work waiting on a merge or release.
-- Is it documentation-only? That executes in context and needs no todo.
-- Does a defect claim name the contract it breaks and cite the occurrence?
-"
-    )
 }
 
 /// The reflection line every change prints.
@@ -1520,7 +1520,12 @@ fn fact(fact: &StampFact) -> String {
         StampFact::IntentChecked {
             input,
             conversation,
-        } => format!("intent checked — input {input} against conversation {conversation}"),
+        } => match conversation {
+            Some(conversation) => {
+                format!("intent checked — input {input} against conversation {conversation}")
+            }
+            None => format!("intent checked — input {input}"),
+        },
         StampFact::Kickback {
             reason,
             input,
@@ -1572,7 +1577,18 @@ fn fact(fact: &StampFact) -> String {
             role,
             attempt,
             ..
-        } => format!("role complete — {role}/{attempt} head {head}"),
+        } => {
+            let mut text = "role complete".to_owned();
+            if let (Some(role), Some(attempt)) = (role, attempt) {
+                use std::fmt::Write as _;
+                let _ = write!(text, " — {role}/{attempt}");
+            }
+            if let Some(head) = head {
+                use std::fmt::Write as _;
+                let _ = write!(text, " head {head}");
+            }
+            text
+        }
         StampFact::BuildComplete { head } => format!("build complete — head {head}"),
         StampFact::DeferralsProcessed { deferrals } => {
             format!("deferrals processed — deferrals {deferrals}")

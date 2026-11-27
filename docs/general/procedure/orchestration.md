@@ -142,8 +142,7 @@ remains unresolved.
 
 Between rounds, retain available workers for follow-up through their recorded
 session ids. Once the outcome is recorded and no later round or human
-conversation needs the child, record the contribution and handoff. Close
-discussion through the configured runtime discussion instruction. When handing
+conversation needs the child, record the contribution and handoff. When handing
 off a finalized todo to `integrate` (`--finalize-ready` and `--unclaim`) or
 once a todo reaches a terminal state (`delivered` or `withdrawn`), finish its
 recorded orchestrator threads through the configured thread-finishing

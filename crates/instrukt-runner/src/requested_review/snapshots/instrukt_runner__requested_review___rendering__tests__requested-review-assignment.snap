@@ -2,7 +2,6 @@
 source: crates/instrukt-runner/src/requested_review/_rendering.rs
 expression: first.text
 ---
-[Instrukt Assignment]
 Run `instrukt docs get sdlc/procedure/lifecycle/work/review-commits --closure` and execute that procedure for the one-off worktree review it describes.
 role: commit-reviewer
 project: demo
@@ -15,4 +14,3 @@ prior report: /reports/zero.md
 disposition: /reports/dispositions.md
 source: sdlc/policy/rust/core
 source: instrukt@89abcdef0123456789abcdef0123456789abcdef:docs/x.md
-[/Instrukt Assignment]

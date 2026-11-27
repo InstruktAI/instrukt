@@ -1036,8 +1036,8 @@ pub struct CompanyStart<'a> {
     pub env: &'a instrukt_core::config::Env,
     /// The operator's clock, as the connectors read it.
     pub clock: std::sync::Arc<dyn Fn() -> jiff::Timestamp + Send + Sync>,
-    pub wake: std::sync::mpsc::SyncSender<()>,
-    pub supervise: std::sync::mpsc::SyncSender<()>,
+    pub wake: tokio::sync::mpsc::Sender<()>,
+    pub supervise: tokio::sync::mpsc::Sender<()>,
 }
 
 /// The hosted connections, supervised by the run loop; dropping them ends
