@@ -459,4 +459,180 @@ mod tests {
         let stored = super::stored_overrides(None, &patch, Path::new("agents.yaml")).unwrap();
         assert_eq!(stored, Some(expected));
     }
+
+    fn temp_home() -> (tempfile::TempDir, crate::home::Home) {
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::home::Home::at_user_home(dir.path().to_path_buf());
+        std::fs::create_dir_all(home.root()).unwrap();
+        (dir, home)
+    }
+
+    #[test]
+    fn absent_agents_revision_stays_stable_when_an_older_global_layer_carries_a_selection() {
+        let (_dir, home) = temp_home();
+        let absent = super::agents_revision(&home).unwrap();
+        std::fs::write(
+            home.global_config(),
+            "schema_version: 1\nagents:\n  order: [codex, claude]\n",
+        )
+        .unwrap();
+        assert_eq!(super::agents_revision(&home).unwrap(), absent);
+        assert!(!home.agents_file().exists());
+    }
+
+    #[test]
+    fn patching_from_a_stale_revision_is_refused_and_leaves_the_file_unchanged() {
+        let (_dir, home) = temp_home();
+        let absent = super::agents_revision(&home).unwrap();
+        let current =
+            super::patch_agents(&home, &absent, &yaml("roles: {builder: {tier: light}}")).unwrap();
+        let stored = std::fs::read(home.agents_file()).unwrap();
+
+        let refused =
+            super::patch_agents(&home, &absent, &yaml("roles: {builder: {tier: strong}}"));
+        assert!(
+            matches!(
+                &refused,
+                Err(super::ConfigError::RevisionMismatch { expected, current: found })
+                    if expected == absent.as_str() && found == current.as_str()
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(std::fs::read(home.agents_file()).unwrap(), stored);
+    }
+
+    #[test]
+    fn patching_with_an_invalid_profile_is_refused_and_writes_no_file() {
+        let (_dir, home) = temp_home();
+        let absent = super::agents_revision(&home).unwrap();
+        let refused = super::patch_agents(
+            &home,
+            &absent,
+            &yaml("roles: {builder: {order: [missing]}}"),
+        );
+        assert!(
+            matches!(refused, Err(super::ConfigError::InvalidValue { .. })),
+            "{refused:?}"
+        );
+        assert!(!home.agents_file().exists());
+        assert_eq!(super::agents_revision(&home).unwrap(), absent);
+    }
+
+    #[test]
+    fn of_two_concurrent_patches_from_the_absent_revision_over_an_older_global_layer_exactly_one_lands()
+     {
+        let (_dir, home) = temp_home();
+        std::fs::write(
+            home.global_config(),
+            "schema_version: 1\nagents:\n  order: [codex, claude]\n",
+        )
+        .unwrap();
+        let rev = super::agents_revision(&home).unwrap();
+        let outcomes: Vec<Result<super::Revision, super::ConfigError>> =
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = ["builder", "planner"]
+                    .into_iter()
+                    .map(|role| {
+                        let (home, rev) = (&home, &rev);
+                        scope.spawn(move || {
+                            super::patch_agents(
+                                home,
+                                rev,
+                                &yaml(&format!("roles: {{{role}: {{tier: light}}}}")),
+                            )
+                        })
+                    })
+                    .collect();
+                handles.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+        assert_eq!(
+            outcomes.iter().filter(|r| r.is_ok()).count(),
+            1,
+            "{outcomes:?}"
+        );
+        assert_eq!(
+            outcomes
+                .iter()
+                .filter(|r| matches!(r, Err(super::ConfigError::RevisionMismatch { .. })))
+                .count(),
+            1,
+            "{outcomes:?}"
+        );
+        let global = yaml(&std::fs::read_to_string(home.global_config()).unwrap());
+        assert_eq!(
+            global["schema_version"],
+            Value::from(super::super::GLOBAL_SCHEMA_VERSION)
+        );
+        assert_eq!(global.get("agents"), Some(&yaml("{}")));
+        let stored = yaml(&std::fs::read_to_string(home.agents_file()).unwrap());
+        assert_eq!(stored["schema_version"], Value::from(VERSION));
+        assert_eq!(stored["default"], yaml("{order: [codex, claude]}"));
+        assert_eq!(stored["roles"].as_mapping().map(|m| m.len()), Some(1));
+    }
+
+    #[test]
+    fn patching_a_v3_full_copy_converts_it_and_prunes_to_overrides() {
+        let (_dir, home) = temp_home();
+        let mut full = yaml(SHIPPED_AGENTS);
+        full["schema_version"] = Value::from(3_u64);
+        let (other_role, reversed_order) = full["roles"]
+            .as_mapping()
+            .unwrap()
+            .iter()
+            .find_map(|(name, entry)| {
+                let role = name.as_str()?;
+                if role == "builder" {
+                    return None;
+                }
+                let order = entry.get("order")?.as_sequence()?;
+                if order.len() < 2 {
+                    return None;
+                }
+                let mut reversed = order.clone();
+                reversed.reverse();
+                Some((role.to_owned(), reversed))
+            })
+            .unwrap();
+        full["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order.clone());
+        std::fs::write(home.agents_file(), serde_yaml_ng::to_string(&full).unwrap()).unwrap();
+
+        let rev = super::agents_revision(&home).unwrap();
+        super::patch_agents(
+            &home,
+            &rev,
+            &yaml("roles: {builder: {order: [antigravity]}}"),
+        )
+        .unwrap();
+
+        let mut expected = yaml(&format!(
+            "schema_version: {VERSION}\nroles: {{builder: {{order: [antigravity]}}}}\n"
+        ));
+        expected["roles"][other_role.as_str()] = yaml("{}");
+        expected["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order);
+        assert_eq!(
+            yaml(&std::fs::read_to_string(home.agents_file()).unwrap()),
+            expected
+        );
+    }
+
+    #[test]
+    fn agents_value_reads_dotted_paths_literally_without_interpolating_references() {
+        let (_dir, home) = temp_home();
+        let rev = super::agents_revision(&home).unwrap();
+        super::patch_agents(
+            &home,
+            &rev,
+            &yaml("profiles: {codex: {standard: [{model: 'gpt-{project}', effort: high}]}}"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            super::agents_value(&home, Some("profiles.codex.standard.0.model")).unwrap(),
+            Value::String("gpt-{project}".into())
+        );
+        assert!(matches!(
+            super::agents_value(&home, Some("roles.missing")),
+            Err(super::ConfigError::MissingKey { segment, .. }) if segment == "missing"
+        ));
+    }
 }
