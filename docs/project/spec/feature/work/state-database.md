@@ -798,9 +798,11 @@ for seven days (`SET_ASIDE_RETENTION`) from the input's arrival or the
 activation's acceptance. On a wake after the bound, the runner settles any
 dependent standing or approval record before retiring the input and its
 set-aside mirrors in the same transaction. An input with an unsettled
-reference is retained. A verdict notice closed `failed` because its session
-was archived, deleted or succeeded is retired the same seven days after its
-arrival. Status reports the retained count and up to
+reference is retained. A pending verdict notice closed `failed` because its
+session was archived, deleted or succeeded before sending is retired after
+`SET_ASIDE_RETENTION` from its arrival; a verdict notice already `selected` or
+`accepted` when its session is succeeded or archived becomes `unconfirmed` with
+its slot released and is retained. Status reports the retained count and up to
 `SET_ASIDE_STATUS_LIMIT` recent findings, for set-aside inputs and for
 closed verdict notices alike. Wake requests coalesce per target.
 Only-at-entry selection rechecks idleness before handover. Runtime calls run

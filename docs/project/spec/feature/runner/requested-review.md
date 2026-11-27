@@ -261,6 +261,17 @@ When the developer's agent asks for an independent review of that head
 Then no second reviewer is started and the agent is told which review is in flight and where its verdict will show
 ```
 
+<!-- planned:commit-rereview-reuses-reviewer -->
+### UC-RQ4: A developer's agent learns its review's outcome without asking for it
+
+```gherkin
+Given a developer's agent asked for the independent review of a head
+When the reviewer records its verdict
+Then the agent receives the verdict, with where its report is, without checking for it
+And when the reviewer later records a revised verdict for that head, the agent receives that one too
+```
+<!-- /planned:commit-rereview-reuses-reviewer -->
+
 ## Known caveats
 
 - Names inside coordinates — a branch name, a file name, a pointer's path — are

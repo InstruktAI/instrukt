@@ -123,9 +123,10 @@ Native agent-operation prose is supplied by configuration and rendered through `
 **Requested review**
 : An independent review of an exact committed worktree head that an authoring
   session asks for with `instrukt review start`, naming coordinates only; the
-  runner renders the reviewer's assignment, starts the requested reviewer on
-  it or wakes the reviewer that recorded an earlier head's verdict, and
-  returns each verdict recorded for the head to the session that asked. It is no review request and emits no event
+  runner renders the reviewer's assignment, starts a requested reviewer on it
+  or wakes the existing reviewer of record (for a re-review, a dispute or an
+  idle head reviewer), and returns each verdict recorded for the head to the
+  session that asked. It is no review request and emits no event
   (`project/instrukt/spec/feature/runner/requested-review`).
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 
@@ -727,9 +728,9 @@ verdict against and, for a re-review, for the commit whose standing verdict
 has a version with the prior report's digest; it reads the commit's review requests from its own delivery
 records.
 It starts the requested reviewer through the runtime adapter under its own
-start key, or wakes the earlier head's reviewer of record; work admits that
-reviewer's verdict like any other and hands each version it records to the
-runner, which queues a verdict notice for each session that asked
+start key, or wakes the existing reviewer of record under its start key; work
+admits that reviewer's verdict like any other and hands each version it records
+to the runner, which queues a verdict notice for each session that asked
 (`project/instrukt/spec/feature/runner/requested-review`).
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 

@@ -111,11 +111,12 @@ or entry-only realization, as specified in
 `project/instrukt/spec/feature/runner/procedure-event-delivery`. T3 uses queued
 input rather than a required hook. Missing steering creates no finding.
 Runtime acceptance is transport evidence, not entry consumption or completion.
-One session-wide waiting slot combines instrukt event, approval, requested-review verdict and runner-owned recovery deliveries
-while preserving their separate identities. Native agent messages and child
-reports belong to the runtime and do not occupy this instrukt-owned slot.
-Recovery here concerns only instrukt-started orchestrators/tasks, never their
-natively delegated workers.
+All instrukt-owned delivery kinds — event, approval, requested-review verdict
+and runner-owned recovery — share the one session-wide waiting slot defined in
+`project/instrukt/spec/feature/runner/procedure-event-delivery`. Native agent
+messages and child reports belong to the runtime and do not occupy this
+instrukt-owned slot. Recovery here concerns only instrukt-started
+orchestrators/tasks, never their natively delegated workers.
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ### The waiting message is a delivery log
@@ -128,12 +129,11 @@ source time is explicitly unknown; the arrival time never substitutes for it.
 Event entries mark their envelopes as untrusted data. Combining preserves every
 entry and its timestamps; a retry retains the exact composed log and time.
 <!-- change:commit-rereview-reuses-reviewer -->
-The composer places the message composition time at the top. Each delivery is
-one entry, ordered by arrival from oldest at the top to newest at the bottom.
-Every entry retains its source identity, kind (`event`, `approval`, `verdict` or `recovery`), source occurrence time and arrival time. An unavailable
-source time is explicitly unknown; the arrival time never substitutes for it.
-Event entries mark their envelopes as untrusted data. Combining preserves every
-entry and its timestamps; a retry retains the exact composed log and time.
+The delivery-log composer — its composition timestamp, arrival-ordered entries,
+source identity and kind vocabulary (`event`, `approval`, `verdict` or
+`recovery`), explicit unknown source times, untrusted-data framing and
+immutable retry batches — is owned by
+`project/instrukt/spec/feature/runner/procedure-event-delivery`.
 <!-- /planned-change:commit-rereview-reuses-reviewer -->
 
 ### Runtime evidence capabilities
@@ -215,10 +215,10 @@ adapter verb templates.
 | Thread retention (global `runner.archive_finished_after` set) | Thread archiving: `finished_threads` and `archive`. |
 
 <!-- planned:commit-rereview-reuses-reviewer -->
-Requested review also needs `caller_identity`, to record the session that
-asks, and native input delivery (`send`), to return each verdict recorded for
-the head to that session
-(`project/instrukt/spec/feature/runner/requested-review`).
+Requested review also uses `caller_identity` when available, to record the
+session that asks (without refusing a caller that resolves to none), and native
+input delivery (`send`), to return each verdict recorded for the head to that
+session (`project/instrukt/spec/feature/runner/requested-review`).
 <!-- /planned:commit-rereview-reuses-reviewer -->
 
 
