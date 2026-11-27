@@ -8,6 +8,10 @@
 //! taken for that transaction alone, so a runner write never waits on a
 //! work command for longer than the command holds it. The runner lock
 //! `state/runner.lock` serializes runner invocations and guards no data.
+//! Worker failure state lives outside `instrukt.db` in isolated state files
+//! (`state/runner-workers/<id>.json`).
+
+mod _workers;
 
 use std::path::{Path, PathBuf};
 
@@ -15,6 +19,8 @@ use instrukt_core::fsx::{self, FsError};
 use instrukt_core::home::Home;
 use instrukt_core::state_db::rusqlite::{Connection, Transaction};
 use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
+
+pub(crate) use _workers::worker_state;
 
 /// The runner's state could not be read or written.
 #[derive(Debug, thiserror::Error)]
@@ -140,27 +146,6 @@ pub(crate) fn refuse_symlink(path: &Path) -> Result<(), StateError> {
             path: path.to_path_buf(),
             source,
         }),
-    }
-}
-
-/// Records a runner worker's current failure in `runner_workers`, keeping
-/// when it started; `None` removes the worker's row.
-pub(crate) fn worker_state(home: &instrukt_core::home::Home, worker: &str, failure: Option<&str>) {
-    use instrukt_core::state_db::rusqlite::params;
-    let state = RunnerState::new(home);
-    let result = state.write::<_, StateError>(|tx| {
-        match failure {
-            Some(failure) => tx.execute(
-                "INSERT INTO runner_workers(worker,failure,since) VALUES(?1,?2,?3) ON CONFLICT(worker) DO UPDATE SET failure=excluded.failure",
-                params![worker, failure, jiff::Timestamp::now().to_string()],
-            ),
-            None => tx.execute("DELETE FROM runner_workers WHERE worker=?1", params![worker]),
-        }
-        .map_err(sql(&db_path(tx)))?;
-        Ok(())
-    });
-    if let Err(error) = result {
-        tracing::error!(event = "runner_worker_state_unrecorded", worker, error = %error);
     }
 }
 

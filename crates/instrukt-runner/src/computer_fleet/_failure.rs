@@ -38,8 +38,7 @@ pub(crate) struct WorkerRow {
 
 impl FailureRecorder for WorkerRow {
     fn record(&mut self, failure: Option<&str>) -> bool {
-        crate::state::worker_state(&self.home, self.worker, failure);
-        true
+        crate::state::worker_state(&self.home, self.worker, failure)
     }
 }
 
@@ -78,19 +77,20 @@ impl FailureFile {
 
     /// When the failure already in the file began; `None` when there is
     /// none, or it cannot be read.
-    fn since(&self) -> Option<Timestamp> {
+    fn since(&self) -> Result<Option<Timestamp>, String> {
+        crate::state::refuse_symlink(&self.path).map_err(|error| error.to_string())?;
         match std::fs::read(&self.path) {
             Ok(bytes) => match serde_json::from_slice::<Recorded>(&bytes) {
-                Ok(recorded) => Some(recorded.since),
+                Ok(recorded) => Ok(Some(recorded.since)),
                 Err(error) => {
-                    tracing::debug!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
-                    None
+                    tracing::warn!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
+                    Ok(None)
                 }
             },
-            Err(error) if error.kind() == ErrorKind::NotFound => None,
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => {
-                tracing::debug!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
-                None
+                tracing::warn!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
+                Ok(None)
             }
         }
     }
@@ -101,23 +101,25 @@ impl FailureRecorder for FailureFile {
         let written = match failure {
             None if self.note == Note::Healthy => return true,
             Some(failure) if self.note == Note::Failing(failure.to_owned()) => return true,
-            None => match instrukt_core::fsx::remove_file(&self.path) {
-                Ok(()) => Ok(()),
-                Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-                Err(error) => Err(error.to_string()),
-            },
-            Some(failure) => {
+            None => crate::state::refuse_symlink(&self.path)
+                .map_err(|error| error.to_string())
+                .and_then(|()| match instrukt_core::fsx::remove_file(&self.path) {
+                    Ok(()) => Ok(()),
+                    Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                    Err(error) => Err(error.to_string()),
+                }),
+            Some(failure) => self.since().and_then(|existing| {
                 let recorded = Recorded {
                     failure: failure.to_owned(),
-                    since: self.since().unwrap_or_else(|| (self.clock)()),
+                    since: existing.unwrap_or_else(|| (self.clock)()),
                 };
                 serde_json::to_vec(&recorded)
                     .map_err(|error| error.to_string())
                     .and_then(|bytes| {
-                        instrukt_core::fsx::atomic_write(&self.path, &bytes)
+                        crate::state::write_bytes(&self.path, &bytes)
                             .map_err(|error| error.to_string())
                     })
-            }
+            }),
         };
         match written {
             Ok(()) => {
@@ -134,7 +136,7 @@ impl FailureRecorder for FailureFile {
 }
 
 fn path(home: &Home) -> PathBuf {
-    home.state_dir().join("computer-fleet.json")
+    home.computer_fleet_file()
 }
 
 /// The computer fleet's failure as a row of the runner's workers, for
@@ -155,6 +157,9 @@ pub(crate) fn status(home: &Home) -> Option<serde_json::Value> {
             "since": since,
         })
     };
+    if let Err(error) = crate::state::refuse_symlink(&path) {
+        return Some(unreadable(error.to_string()));
+    }
     match std::fs::read(&path) {
         Ok(bytes) => Some(match serde_json::from_slice::<Recorded>(&bytes) {
             Ok(recorded) => serde_json::json!({
