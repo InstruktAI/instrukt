@@ -596,8 +596,12 @@ pub(crate) fn obtain_issuer_login(
     if !(200..300).contains(&status) {
         let code = serde_json::from_str::<Value>(&body_text)
             .ok()
-            .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
-            .unwrap_or_else(|| format!("HTTP {status}"));
+            .and_then(|v| {
+                v.get("error")
+                    .and_then(Value::as_str)
+                    .and_then(super::_http::exact_rfc6749_code)
+            })
+            .map_or_else(|| format!("HTTP {status}"), str::to_owned);
         return Err(McpError::Server {
             server: server.name.to_string(),
             cause: format!("issuer jwt-bearer token exchange refused ({code})"),

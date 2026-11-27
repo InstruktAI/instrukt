@@ -85,15 +85,33 @@ impl DiscoveredAuth {
     }
 }
 
+/// `rmcp` `AuthorizationManager` paired with its outside-gate wait observer so
+/// callers preserve gate reasons and next-try timestamps across SDK errors.
+pub(crate) struct GatedAuthManager {
+    pub(crate) manager: AuthorizationManager,
+    unavailable: Arc<Mutex<Option<String>>>,
+}
+
+impl GatedAuthManager {
+    pub(crate) fn take_unavailable(&self) -> Option<String> {
+        self.unavailable
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.take())
+    }
+}
+
 /// Builds a configured `rmcp` `AuthorizationManager` backed by
 /// `AdmittedOAuthHttpClient` and seeded with discovered `metadata`.
 pub(crate) fn auth_manager(
     server_url: &str,
     auth: &DiscoveredAuth,
-) -> Result<AuthorizationManager, McpError> {
+) -> Result<GatedAuthManager, McpError> {
     let parsed = validate_probe_url(server_url)?;
-    let http = AdmittedOAuthHttpClient::new(server_url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?;
-    run_async(server_url, async {
+    let unavailable = Arc::new(Mutex::new(None));
+    let http = AdmittedOAuthHttpClient::new(server_url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?
+        .with_unavailable_observer(Arc::clone(&unavailable));
+    let manager = run_async(server_url, async {
         let mut manager = AuthorizationManager::new_with_oauth_http_client(parsed, Arc::new(http))
             .await
             .map_err(|error| McpError::Server {
@@ -101,8 +119,12 @@ pub(crate) fn auth_manager(
                 cause: format!("failed to initialize OAuth manager: {error}"),
             })?;
         manager.set_metadata(auth.metadata.clone());
-        Ok(manager)
-    })?
+        Ok::<_, McpError>(manager)
+    })??;
+    Ok(GatedAuthManager {
+        manager,
+        unavailable,
+    })
 }
 
 struct LiveResolution {

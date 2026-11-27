@@ -538,19 +538,31 @@ pub(crate) fn ensure_dynamic_registration(
 
     let return_id = random_hex_128()?;
     let return_address = return_address_for(Some(ingress_url), &return_id);
-    let mut manager = _discover::auth_manager(&auth.report.url, auth)?;
+    let mut gated = _discover::auth_manager(&auth.report.url, auth)?;
     let client_name = format!("instrukt {company}");
-    let registered = _http::run_async(server.as_str(), async {
-        manager
+    let result = _http::run_async(server.as_str(), async {
+        gated
+            .manager
             .register_client(&client_name, &return_address, &[])
             .await
-    })?
-    .map_err(|error| McpError::Server {
-        server: server.to_string(),
-        cause: format!(
-            "dynamic client registration failed ({}); declare `sign_in.client_ref` or `sign_in.client`",
-            _http::sanitize_auth_error(&error)
-        ),
+    })?;
+    let wait = gated.take_unavailable();
+    let registered = result.map_err(|error| {
+        let summary = _http::sanitize_auth_error(&error);
+        if let Some(wait) = wait {
+            McpError::Unreachable {
+                server: server.to_string(),
+                url: endpoint.to_owned(),
+                cause: format!("dynamic client registration failed ({summary}; {wait})"),
+            }
+        } else {
+            McpError::Server {
+                server: server.to_string(),
+                cause: format!(
+                    "dynamic client registration failed ({summary}); declare `sign_in.client_ref` or `sign_in.client`"
+                ),
+            }
+        }
     })?;
     let client_id = registered.client_id;
     let client_secret = registered.client_secret;

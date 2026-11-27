@@ -33,19 +33,29 @@ pub(crate) fn mcp_gate() -> &'static Gate {
     })
 }
 
+const RFC6749_CODES: &[&str] = &[
+    "invalid_client",
+    "invalid_grant",
+    "invalid_request",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+    "access_denied",
+    "server_error",
+    "temporarily_unavailable",
+];
+
 fn rfc6749_code(raw: &str) -> Option<&'static str> {
-    const CODES: &[&str] = &[
-        "invalid_client",
-        "invalid_grant",
-        "invalid_request",
-        "unauthorized_client",
-        "unsupported_grant_type",
-        "invalid_scope",
-        "access_denied",
-        "server_error",
-        "temporarily_unavailable",
-    ];
-    CODES.iter().copied().find(|code| raw.contains(code))
+    RFC6749_CODES
+        .iter()
+        .copied()
+        .find(|code| raw.contains(code))
+}
+
+/// Returns `Some` only when `raw` matches a closed RFC 6749 error code
+/// verbatim so arbitrary provider response strings are never echoed.
+pub(crate) fn exact_rfc6749_code(raw: &str) -> Option<&'static str> {
+    RFC6749_CODES.iter().copied().find(|code| raw == *code)
 }
 
 /// Maps `rmcp::transport::auth::AuthError` to a fixed, credential-safe summary
@@ -218,27 +228,36 @@ impl std::fmt::Display for GatedTextError {
     }
 }
 
+fn classify_body_transport(
+    reqwest_judgment: Judgment,
+    settings: &Settings<'_>,
+) -> Option<instrukt_outside::Unavailable> {
+    match reqwest_judgment {
+        Judgment::Unavailable(unavailable) => Some(unavailable),
+        // `reqwest::Response::chunk()` wraps mid-stream HTTP body/EOF
+        // termination in outer `Decode` (`reqwest` 0.13.5); no JSON or UTF-8
+        // decoding runs here, so any remaining chunk error is a transport
+        // interruption judged through the HTTP adapter.
+        Judgment::Success | Judgment::Defect => match instrukt_outside::http::judge(
+            &instrukt_outside::http::HttpAnswer::Transport(
+                instrukt_outside::http::TransportFailure::Unreachable,
+            ),
+            settings,
+        ) {
+            Judgment::Unavailable(unavailable) => Some(unavailable),
+            Judgment::Success | Judgment::Defect => None,
+        },
+    }
+}
+
 fn judge_body_error(
     error: &BodyReadError,
     settings: &Settings<'_>,
 ) -> Option<instrukt_outside::Unavailable> {
     match error {
-        BodyReadError::Transport(req_err) => match judge_reqwest_error(req_err, settings) {
-            Judgment::Unavailable(unavailable) => Some(unavailable),
-            // `reqwest::Response::chunk()` wraps mid-stream HTTP body/EOF
-            // termination in outer `Decode` (`reqwest` 0.13.5); no JSON or
-            // UTF-8 decoding runs here, so any remaining chunk error is a
-            // transport interruption judged through the HTTP adapter.
-            Judgment::Success | Judgment::Defect => match instrukt_outside::http::judge(
-                &instrukt_outside::http::HttpAnswer::Transport(
-                    instrukt_outside::http::TransportFailure::Unreachable,
-                ),
-                settings,
-            ) {
-                Judgment::Unavailable(unavailable) => Some(unavailable),
-                Judgment::Success | Judgment::Defect => None,
-            },
-        },
+        BodyReadError::Transport(req_err) => {
+            classify_body_transport(judge_reqwest_error(req_err, settings), settings)
+        }
         BodyReadError::TooLarge(_) => None,
     }
 }
@@ -303,22 +322,14 @@ async fn send_gated_text(
         Attempted::Done(answer) | Attempted::Defect(Ok(answer)) => Ok(answer),
         Attempted::Wait {
             wait,
-            error: Some(Ok((status, body_text))),
-        } => {
-            let detail = serde_json::from_str::<Value>(&body_text)
-                .ok()
-                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
-                .map_or_else(
-                    || format!("HTTP {status}"),
-                    |code| format!("HTTP {status}: {code}"),
-                );
-            Err(GatedTextError::Unavailable(format!("{wait} ({detail})")))
-        }
+            error: Some(Ok((status, _))),
+        } => Err(GatedTextError::Unavailable(format!(
+            "{wait} (HTTP {status})"
+        ))),
         Attempted::Wait {
             wait,
-            error: Some(Err(message)),
-        } => Err(GatedTextError::Unavailable(format!("{wait} ({message})"))),
-        Attempted::Wait { wait, error: None } => Err(GatedTextError::Unavailable(wait.to_string())),
+            error: Some(Err(_)) | None,
+        } => Err(GatedTextError::Unavailable(wait.to_string())),
         Attempted::Defect(Err(message)) => Err(GatedTextError::Defect(message)),
     }
 }
@@ -566,8 +577,7 @@ pub(crate) fn string_list(value: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::net::TcpListener;
+    use instrukt_outside::{Extent, Reason, Unavailable};
 
     #[test]
     fn sanitize_auth_error_never_echoes_provider_payloads() {
@@ -578,53 +588,35 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_body_is_judged_unavailable_while_oversized_body_is_defect()
-    -> Result<(), Box<dyn std::error::Error>> {
+    fn exact_rfc6749_code_accepts_only_standard_codes() {
+        assert_eq!(exact_rfc6749_code("invalid_grant"), Some("invalid_grant"));
         assert_eq!(
-            judge_body_error(&BodyReadError::TooLarge(1024), &Settings::default()),
+            exact_rfc6749_code("temporarily_unavailable"),
+            Some("temporarily_unavailable")
+        );
+        assert_eq!(exact_rfc6749_code("invalid_grant: Bearer secret-123"), None);
+        assert_eq!(exact_rfc6749_code("custom_provider_error"), None);
+    }
+
+    #[test]
+    fn body_transport_classification_treats_decode_as_unreachable_and_cap_as_defect() {
+        let settings = Settings::default();
+        assert_eq!(
+            judge_body_error(&BodyReadError::TooLarge(1024), &settings),
             None
         );
 
-        let listener = TcpListener::bind("127.0.0.1:0")?;
-        let addr = listener.local_addr()?;
-        let server = std::thread::spawn(move || {
-            if let Ok((mut stream, _)) = listener.accept() {
-                let mut req = [0u8; 1024];
-                let _ = std::io::Read::read(&mut stream, &mut req);
-                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort");
-                let _ = stream.flush();
-            }
-        });
-        let http = client(
-            "test",
-            Duration::from_secs(2),
-            Duration::from_secs(2),
-            false,
-        )?;
-        let url = format!("http://{addr}/truncated");
-        let outcome = run_async("test", async move {
-            let response = http
-                .get(&url)
-                .send()
-                .await
-                .map_err(BodyReadError::Transport)?;
-            read_bounded_body(response, MAX_OAUTH_BODY_BYTES).await
-        })?;
-        let _ = server.join();
-        let Err(err) = outcome else {
-            return Err("truncated body must fail".into());
+        let timed_out = Unavailable {
+            reason: Reason::TimedOut,
+            extent: Extent::Call,
+            named: None,
         };
-        let unavailable = judge_body_error(&err, &Settings::default());
-        assert!(
-            matches!(
-                unavailable,
-                Some(instrukt_outside::Unavailable {
-                    reason: instrukt_outside::Reason::Unreachable,
-                    ..
-                })
-            ),
-            "expected Unreachable for premature body close, got: {unavailable:?} (err: {err})"
+        assert_eq!(
+            classify_body_transport(Judgment::Unavailable(timed_out), &settings),
+            Some(timed_out)
         );
-        Ok(())
+
+        let decode_fallback = classify_body_transport(Judgment::Defect, &settings);
+        assert_eq!(decode_fallback.map(|u| u.reason), Some(Reason::Unreachable));
     }
 }

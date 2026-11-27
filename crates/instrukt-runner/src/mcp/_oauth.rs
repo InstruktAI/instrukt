@@ -151,8 +151,7 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
                 let response = match http_client.get(&probe_url).send().await {
                     Ok(response) => response,
                     Err(error) => {
-                        let cause =
-                            format!("external callback probe to {ingress_url} failed: {error}");
+                        let cause = format!("external callback probe to {ingress_url} failed");
                         return match instrukt_outside::http::judge_reqwest_error(&error, &settings)
                         {
                             instrukt_outside::http::Judgment::Unavailable(unavailable) => {
@@ -494,9 +493,10 @@ fn start_oauth_authorization(
     nonce: Option<&str>,
 ) -> Result<(String, String, String), McpError> {
     let state_store = InMemoryStateStore::new();
-    let mut manager = _discover::auth_manager(server_url, auth)?;
-    manager.set_state_store(state_store.clone());
-    manager
+    let mut gated = _discover::auth_manager(server_url, auth)?;
+    gated.manager.set_state_store(state_store.clone());
+    gated
+        .manager
         .configure_client(oauth_client_config(registration, client_secret))
         .map_err(|error| McpError::Server {
             server: server_url.to_owned(),
@@ -504,7 +504,8 @@ fn start_oauth_authorization(
         })?;
     let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
     let (mut auth_url, state, pkce_verifier) = _http::run_async(server_url, async {
-        let raw_url = manager
+        let raw_url = gated
+            .manager
             .get_authorization_url(&scope_refs)
             .await
             .map_err(|error| McpError::Server {
@@ -1307,7 +1308,7 @@ fn exchange_code_via_rmcp(
     code: &str,
     received_issuer: Option<&str>,
 ) -> Result<OAuthTokenResponse, String> {
-    let mut manager = _discover::auth_manager(server_url, auth).map_err(|e| e.to_string())?;
+    let mut gated = _discover::auth_manager(server_url, auth).map_err(|e| e.to_string())?;
     let state_store = InMemoryStateStore::new();
     let stored_state: StoredAuthorizationState = serde_json::from_value(json!({
         "pkce_verifier": code_verifier,
@@ -1318,8 +1319,9 @@ fn exchange_code_via_rmcp(
         "requested_scopes": [],
     }))
     .map_err(|error| format!("failed to prepare PKCE authorization state: {error}"))?;
-    manager.set_state_store(state_store.clone());
-    manager
+    gated.manager.set_state_store(state_store.clone());
+    gated
+        .manager
         .configure_client(oauth_client_config(registration, client_secret))
         .map_err(|error| {
             format!(
@@ -1337,15 +1339,18 @@ fn exchange_code_via_rmcp(
                     _http::sanitize_auth_error(&error)
                 )
             })?;
-        manager
+        let outcome = gated
+            .manager
             .exchange_code_for_token_with_issuer(code, csrf_key, received_issuer)
-            .await
-            .map_err(|error| {
-                format!(
-                    "token exchange failed: {}",
-                    _http::sanitize_auth_error(&error)
-                )
-            })
+            .await;
+        outcome.map_err(|error| {
+            let summary = _http::sanitize_auth_error(&error);
+            if let Some(wait) = gated.take_unavailable() {
+                format!("token exchange failed: {summary} ({wait})")
+            } else {
+                format!("token exchange failed: {summary}")
+            }
+        })
     })
     .map_err(|e| e.to_string())?
 }
@@ -1644,6 +1649,7 @@ fn clear_renewal_lease(home: &Home, company: &ProjectSlug, person: &str, server:
 enum RefreshOutcome {
     Refreshed(OAuthTokenResponse),
     Rejected,
+    Unavailable(String),
     Failed(String),
 }
 
@@ -1655,7 +1661,7 @@ fn refresh_via_rmcp(
     existing_access: &str,
     refresh_token: &str,
 ) -> RefreshOutcome {
-    let mut manager = match _discover::auth_manager(server_url, auth) {
+    let mut gated = match _discover::auth_manager(server_url, auth) {
         Ok(m) => m,
         Err(error) => return RefreshOutcome::Failed(error.to_string()),
     };
@@ -1678,20 +1684,32 @@ fn refresh_via_rmcp(
         Vec::new(),
         None,
     );
-    manager.set_credential_store(cred_store.clone());
-    if let Err(error) = manager.configure_client(oauth_client_config(registration, client_secret)) {
+    gated.manager.set_credential_store(cred_store.clone());
+    if let Err(error) = gated
+        .manager
+        .configure_client(oauth_client_config(registration, client_secret))
+    {
         return RefreshOutcome::Failed(format!(
             "failed to configure OAuth client: {}",
             _http::sanitize_auth_error(&error)
         ));
     }
-    match _http::run_async(server_url, async {
+    let result = _http::run_async(server_url, async {
         cred_store.save(stored).await?;
-        manager.refresh_token().await
-    }) {
+        gated.manager.refresh_token().await
+    });
+    let wait = gated.take_unavailable();
+    match result {
         Ok(Ok(token)) => RefreshOutcome::Refreshed(token),
-        Ok(Err(AuthError::TokenRefreshRejected(_))) => RefreshOutcome::Rejected,
-        Ok(Err(error)) => RefreshOutcome::Failed(_http::sanitize_auth_error(&error)),
+        Ok(Err(AuthError::TokenRefreshRejected(_))) if wait.is_none() => RefreshOutcome::Rejected,
+        Ok(Err(error)) => {
+            let summary = _http::sanitize_auth_error(&error);
+            if let Some(wait) = wait {
+                RefreshOutcome::Unavailable(format!("{summary} ({wait})"))
+            } else {
+                RefreshOutcome::Failed(summary)
+            }
+        }
         Err(error) => RefreshOutcome::Failed(error.to_string()),
     }
 }
@@ -1929,6 +1947,14 @@ fn try_refresh_login(
                     Ok(())
                 })?;
                 return Ok(None);
+            }
+            RefreshOutcome::Unavailable(wait) => {
+                clear_renewal_lease(home, company, person, server.name.as_str());
+                return Err(McpError::Unreachable {
+                    server: server.name.to_string(),
+                    url: token_endpoint.to_owned(),
+                    cause: format!("token renewal temporarily unavailable: {wait}"),
+                });
             }
             RefreshOutcome::Failed(cause) => {
                 clear_renewal_lease(home, company, person, server.name.as_str());
