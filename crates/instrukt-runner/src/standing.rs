@@ -362,6 +362,7 @@ fn deliver_group(
             invocation,
             project: project.as_deref(),
             request: &original,
+            existing_worktree: None,
             now,
         };
         if keyed::recorded_session(state, adapter.runtime().name(), &original.key)?.is_none() {
@@ -499,6 +500,7 @@ fn deliver_group(
                 invocation,
                 project: project.as_deref(),
                 request: &request,
+                existing_worktree: None,
                 now,
             },
         )?;
@@ -1241,6 +1243,7 @@ pub(crate) fn replace_deleted(
             invocation,
             project: project.as_deref(),
             request: &request,
+            existing_worktree: None,
             now,
         },
     );

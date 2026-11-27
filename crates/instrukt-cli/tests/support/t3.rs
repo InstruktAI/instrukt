@@ -1057,6 +1057,16 @@ impl FakeT3 {
         let id = resolved.as_str();
         self.read(id)["worktreePath"].as_str().unwrap().into()
     }
+    pub fn worktree_if_present(&self, id: &str) -> Option<PathBuf> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["worktreePath"].as_str().map(Into::into)
+    }
+    pub fn branch(&self, id: &str) -> Option<String> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["branch"].as_str().map(ToOwned::to_owned)
+    }
     pub fn worktree_base(&self, id: &str) -> String {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
