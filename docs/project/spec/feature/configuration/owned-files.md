@@ -40,9 +40,8 @@ no secret does not require unrelated values to be present. Only
 <!-- change:instrukt-home-backup -->
 no secret does not require unrelated values to be present. Only
 `instrukt secrets set`, `instrukt secrets generate`, and guarded home restore
-(`instrukt backup restore`, restoring backed-up `secrets.env` files with `0600`
-permissions under `project/instrukt/spec/feature/runner/home-backup`) write the
-file. At a
+(`instrukt backup restore`, restoring backed-up `secrets.env` files owner-only,
+`project/instrukt/spec/feature/runner/home-backup`) write the file. At a
 <!-- /planned-change:instrukt-home-backup -->
 terminal, `secrets set` asks for the value with echo off; from redirected input
 or `--from-file` it reads that. Writes

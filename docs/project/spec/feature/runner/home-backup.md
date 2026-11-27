@@ -141,8 +141,9 @@ symlink entries (`sdlc/policy/security-awareness`).
   first within each group; pruning a validated generation removes its paired
   `_validated/<key>` marker as well. Also remove stale orphaned objects under
   `_staging/<namespace>/` and abort stale incomplete multipart uploads across
-  both `_staging/<namespace>/` and `<namespace>/` aged past 24 hours, scoped
-  strictly to this computer's `machine-id`. Generations, staging objects, and
+  both `_staging/<namespace>/` and `<namespace>/` aged past runner's
+  orphan-cleanup window, scoped strictly to this computer's `machine-id`.
+  Generations, staging objects, and
   multipart uploads belonging to other machine IDs are never touched.
 - **Post-validation failure accounting:** Once `_validated/<key>` is written,
   local bookkeeping still advances the recorded last successful timestamp and

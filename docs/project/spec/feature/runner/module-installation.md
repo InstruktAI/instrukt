@@ -253,11 +253,6 @@ agent session.
   Withdrawal and ownership below, carrying a path-derived suffix for homes
   other than `~/.instrukt` and re-writing instrukt's own definition whole on
   every install without checking proof of earlier writes.
-- When configuration withholds global `backup` (including missing, blank,
-  unreadable, or insufficiently protected credential references in
-  `<selected INSTRUKT_HOME>/secrets.env`), `instrukt install` and
-  `instrukt install --check` report those findings as unmet demand without
-  disclosing secret values and without withdrawing an existing owned timer.
 - `instrukt install --check` reports a missing, drifted, or unloaded backup
   timer as unmet demand (and an obsolete owned timer when `backup` is absent)
   without creating or mutating files or units.
