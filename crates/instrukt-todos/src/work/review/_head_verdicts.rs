@@ -8,6 +8,7 @@ use instrukt_runner::state::RunnerState;
 use jiff::Timestamp;
 
 use super::{Held, ReviewError, ReviewProject, Verdict, held_here, pinned_base, retention_cutoff};
+use crate::evidence::ContentDigest;
 
 /// Work's answers a requested review is admitted on
 /// (`project/instrukt/spec/feature/runner/requested-review`, Kinds of ask):
@@ -52,6 +53,16 @@ impl HeadVerdictWork {
 impl instrukt_runner::interfaces::HeadVerdicts for HeadVerdictWork {
     fn head_verdict(&self, project: &ProjectRef, head: &CommitSha) -> Result<HeadVerdict, String> {
         self.answer(project, head)
+            .map_err(|error| error.to_string())
+    }
+
+    fn commit_with_report(
+        &self,
+        project: &ProjectRef,
+        report: &str,
+    ) -> Result<Option<CommitSha>, String> {
+        let digest = ContentDigest::of(report);
+        super::_store::commit_with_report(&self.home, &project.slug, &digest)
             .map_err(|error| error.to_string())
     }
 
