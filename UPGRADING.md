@@ -724,8 +724,10 @@ configures `redis.cluster.url` there, in this order:
    `MULTI` and `EXEC`. A user already scoped to `~instrukt:*` needs only the
    commands added, for example
    `ACL SETUSER <user> +hset +hgetall +lpop +llen +rpush +blpop +expire +multi +exec`.
-2. On each such computer, run `instrukt install --check`. It reports a
-   `fleet Redis` finding naming any permission still denied.
+2. On each such computer, run `instrukt install --check`. While any of these
+   permissions is still denied, it reports a `fleet Redis` finding telling you
+   to grant the fleet query's permissions to the cluster Redis user, then run
+   `instrukt install`.
 3. Run `instrukt install`.
 
 Until a computer's user is granted these permissions, reports covering it list
