@@ -5,6 +5,7 @@
 //! covered by one row, decided by comparing identifiers and trees; no
 //! content is judged.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use instrukt_core::git;
@@ -351,9 +352,8 @@ fn reproduced_from_parent(
         ],
     )
     .map_err(|e| e.to_string())?;
-    let mut changed: Vec<String> = changed.lines().map(str::to_owned).collect();
-    changed.sort();
-    let mut reproduced: Vec<String> = touched
+    let changed: Vec<String> = changed.lines().map(str::to_owned).collect();
+    let mut paths: Vec<String> = touched
         .iter()
         .map(|path| {
             path.strip_prefix(&tree_dir)
@@ -362,34 +362,58 @@ fn reproduced_from_parent(
                 .into_owned()
         })
         .collect();
-    reproduced.sort();
-    reproduced.dedup();
-    if reproduced.is_empty() || reproduced != changed {
-        return Ok(false);
-    }
-    for path in &reproduced {
-        if tree_dir.join(path).exists() {
-            let blob =
-                git::run(&tree_dir, ["hash-object", path.as_str()]).map_err(|e| e.to_string())?;
-            let committed = git::run_output(root, ["rev-parse", &format!("{commit}:{path}")])
-                .map_err(|e| e.to_string())?;
-            if !committed.status.success()
-                || String::from_utf8_lossy(&committed.stdout).trim() != blob.trim()
-            {
-                return Ok(false);
-            }
+    paths.sort();
+    paths.dedup();
+    let mut reproduced = Vec::new();
+    let mut committed = BTreeMap::new();
+    for path in paths {
+        // The reproduction's blob of a file it wrote; none for one it
+        // removed. The commit's blob at that path; none where it holds none.
+        let blob = if tree_dir.join(&path).exists() {
+            Some(
+                git::run(&tree_dir, ["hash-object", path.as_str()])
+                    .map_err(|e| e.to_string())?
+                    .trim()
+                    .to_owned(),
+            )
         } else {
-            // `git diff --name-only` lists a deleted path and a modified one
-            // alike: each path the reproduction removes must be absent from
-            // the commit.
-            let present = git::run_output(root, ["cat-file", "-e", &format!("{commit}:{path}")])
-                .map_err(|e| e.to_string())?;
-            if present.status.success() {
-                return Ok(false);
-            }
-        }
+            None
+        };
+        let held = git::run_output(root, ["rev-parse", &format!("{commit}:{path}")])
+            .map_err(|e| e.to_string())?;
+        committed.insert(
+            path.clone(),
+            held.status
+                .success()
+                .then(|| String::from_utf8_lossy(&held.stdout).trim().to_owned()),
+        );
+        reproduced.push((path, blob));
     }
-    Ok(true)
+    Ok(same_change(&reproduced, &changed, &committed))
+}
+
+/// Whether a reproduction that wrote or removed `reproduced` (each path with
+/// the blob it wrote, or none where it removed the file) is exactly a commit
+/// that changed `changed` and holds `committed` (each reproduced path with
+/// the commit's blob, or none where the commit holds no file there): a
+/// non-empty set of the same paths, each with the same blob or absent alike.
+/// `git diff --name-only` lists a deleted path and a modified one alike, so
+/// a removal is matched by the commit holding no file there.
+fn same_change(
+    reproduced: &[(String, Option<String>)],
+    changed: &[String],
+    committed: &BTreeMap<String, Option<String>>,
+) -> bool {
+    let mut paths: Vec<&str> = reproduced.iter().map(|(path, _)| path.as_str()).collect();
+    paths.sort_unstable();
+    paths.dedup();
+    let mut changed: Vec<&str> = changed.iter().map(String::as_str).collect();
+    changed.sort_unstable();
+    !paths.is_empty()
+        && paths == changed
+        && reproduced
+            .iter()
+            .all(|(path, blob)| committed.get(path) == Some(blob))
 }
 
 /// Whether `commit` reverts the failing delivery: the canonical head `based`
@@ -758,120 +782,73 @@ mod tests {
         );
     }
 
-    const COMPANY_LAYER: &str =
-        "schema_version: 6\nproject: company-acme\ncompany_repository: true\ncompany_name: Acme\n";
-
-    /// A repository whose `main` holds the layer `layer` and a company
-    /// index selecting one document, and an `integrate` branch whose
-    /// approved head changes that document; returns the approved head.
-    fn knowledge(repo: &Repo, layer: &str) -> (CommitSha, Evidence) {
-        repo.commit("instrukt.yaml", layer, "the layer");
-        repo.commit("docs/index.yaml", "expanded: [company.md]\n", "the index");
-        repo.git(&["checkout", "-qb", "integrate"]);
-        let approved = repo.commit(
-            "docs/company.md",
-            "---\ndescription: Who Acme is.\n---\n\n# Acme\n",
-            "docs: who Acme is",
-        );
-        let evidence = Evidence {
-            approved: BTreeMap::from([(approved.to_string(), "verdict".into())]),
-            ..Evidence::default()
-        };
-        (approved, evidence)
+    fn written(path: &str, blob: &str) -> (String, Option<String>) {
+        (path.to_owned(), Some(blob.to_owned()))
     }
 
-    /// Renders the agent material into the working tree, as the integrator
-    /// does, then lets `alter` change it before everything is committed.
-    fn render_and_commit(repo: &Repo, alter: impl FnOnce(&Path)) -> CommitSha {
-        let material = instrukt_core::publication::plan_agent_material(repo.path()).unwrap();
-        assert!(!material.has_findings());
-        instrukt_core::publication::write_agent_material(repo.path(), &material).unwrap();
-        alter(repo.path());
-        repo.git(&["add", "-A"]);
-        repo.git(&["commit", "-qm", "chore: render the agent material"]);
-        repo.head()
+    fn holds(entries: &[(&str, Option<&str>)]) -> BTreeMap<String, Option<String>> {
+        entries
+            .iter()
+            .map(|(path, blob)| ((*path).to_owned(), blob.map(str::to_owned)))
+            .collect()
+    }
+
+    fn paths(list: &[&str]) -> Vec<String> {
+        list.iter().map(|path| (*path).to_owned()).collect()
     }
 
     #[test]
-    fn a_reproduced_rendering_of_a_company_repositorys_agent_material_is_covered() {
-        let repo = Repo::new();
-        let (approved, evidence) = knowledge(&repo, COMPANY_LAYER);
-        let rendering = render_and_commit(&repo, |_| {});
-        let coverage = coverage(repo.path(), &rendering, "main", &evidence);
-        assert_eq!(
-            kinds(&coverage),
-            [
-                CoveringKind::AgentMaterialRendering,
-                CoveringKind::ApprovedHead
-            ]
-        );
-        let Coverage::Covered(items) = coverage else {
-            unreachable!()
-        };
-        assert_eq!(items[0].kind.as_str(), "agent_material_rendering");
-        assert_eq!(
-            items[0].reference,
-            format!("rendering of the agent material reproduced from {approved}")
-        );
+    fn the_same_paths_with_the_same_blobs_or_absent_alike_are_the_same_change() {
+        let reproduced = [
+            written("AGENTS.md", "a1"),
+            written("skills/acme/SKILL.md", "s1"),
+            ("skills/acme/references/old.md".to_owned(), None),
+        ];
+        let committed = holds(&[
+            ("AGENTS.md", Some("a1")),
+            ("skills/acme/SKILL.md", Some("s1")),
+            ("skills/acme/references/old.md", None),
+        ]);
+        let changed = paths(&[
+            "skills/acme/references/old.md",
+            "AGENTS.md",
+            "skills/acme/SKILL.md",
+        ]);
+        assert!(same_change(&reproduced, &changed, &committed));
     }
 
     #[test]
-    fn a_commit_of_the_rendered_paths_with_other_content_is_uncovered() {
-        let repo = Repo::new();
-        let (_, evidence) = knowledge(&repo, COMPANY_LAYER);
-        let rendering = render_and_commit(&repo, |root| {
-            for path in ["AGENTS.md", "skills/acme/SKILL.md"] {
-                let mut text = std::fs::read_to_string(root.join(path)).unwrap();
-                text.push_str("\nNot what the rendering writes.\n");
-                std::fs::write(root.join(path), text).unwrap();
-            }
-        });
-        assert_eq!(
-            coverage(repo.path(), &rendering, "main", &evidence),
-            Coverage::Uncovered(rendering)
-        );
+    fn the_same_paths_with_other_content_are_not_the_same_change() {
+        let reproduced = [
+            written("AGENTS.md", "a1"),
+            written("skills/acme/SKILL.md", "s1"),
+        ];
+        let committed = holds(&[
+            ("AGENTS.md", Some("a2")),
+            ("skills/acme/SKILL.md", Some("s1")),
+        ]);
+        let changed = paths(&["AGENTS.md", "skills/acme/SKILL.md"]);
+        assert!(!same_change(&reproduced, &changed, &committed));
     }
 
     #[test]
-    fn a_rendering_commit_that_also_changes_a_document_is_uncovered() {
-        let repo = Repo::new();
-        let (_, evidence) = knowledge(&repo, COMPANY_LAYER);
-        let rendering = render_and_commit(&repo, |root| {
-            std::fs::write(
-                root.join("docs/company.md"),
-                "---\ndescription: Who Acme is.\n---\n\n# Acme Bicycles\n",
-            )
-            .unwrap();
-        });
-        assert_eq!(
-            coverage(repo.path(), &rendering, "main", &evidence),
-            Coverage::Uncovered(rendering)
-        );
+    fn a_commit_changing_a_path_the_reproduction_did_not_is_not_the_same_change() {
+        let reproduced = [written("AGENTS.md", "a1")];
+        let committed = holds(&[("AGENTS.md", Some("a1"))]);
+        let changed = paths(&["AGENTS.md", "docs/company.md"]);
+        assert!(!same_change(&reproduced, &changed, &committed));
     }
 
     #[test]
-    fn the_same_rendering_in_a_project_repository_is_uncovered() {
-        let repo = Repo::new();
-        repo.commit(
-            "instrukt.yaml",
-            "schema_version: 6\nproject: demo\n",
-            "the layer",
-        );
-        repo.commit("docs/project/index.yaml", "expanded: []\n", "the index");
-        repo.git(&["checkout", "-qb", "integrate"]);
-        let approved = repo.commit("a.txt", "a", "change a");
-        let evidence = Evidence {
-            approved: BTreeMap::from([(approved.to_string(), "verdict".into())]),
-            ..Evidence::default()
-        };
-        let rendering = render_and_commit(&repo, |_| {});
-        assert_ne!(
-            rendering, approved,
-            "the project's rendering changes AGENTS.md"
-        );
-        assert_eq!(
-            coverage(repo.path(), &rendering, "main", &evidence),
-            Coverage::Uncovered(rendering)
-        );
+    fn a_removal_the_commit_still_holds_is_not_the_same_change() {
+        let reproduced = [("skills/acme/references/old.md".to_owned(), None)];
+        let committed = holds(&[("skills/acme/references/old.md", Some("o1"))]);
+        let changed = paths(&["skills/acme/references/old.md"]);
+        assert!(!same_change(&reproduced, &changed, &committed));
+    }
+
+    #[test]
+    fn a_reproduction_that_changes_nothing_reproduces_no_commit() {
+        assert!(!same_change(&[], &[], &BTreeMap::new()));
     }
 }
