@@ -332,6 +332,9 @@ struct StampArgs {
     /// A drift judgment: artifact, cosmetic|substantive, reason.
     #[arg(long, num_args = 3, value_names = ["ARTIFACT", "CLASS", "REASON"])]
     drift_reviewed: Option<Vec<String>>,
+    /// Preparation is done; work waits for its deliberate start and places an automatic dispatch hold.
+    #[arg(long)]
+    work_ready: bool,
     /// The build starts from the current plan.
     #[arg(long)]
     build_started: bool,
@@ -971,6 +974,7 @@ fn stamp_request(args: &StampArgs) -> anyhow::Result<StampRequest> {
         });
     }
     for (set, form) in [
+        (args.work_ready, StampRequest::WorkReady),
         (args.build_started, StampRequest::BuildStarted),
         (args.build_complete, StampRequest::BuildComplete),
         (args.role_complete, StampRequest::RoleComplete),
@@ -1561,6 +1565,7 @@ fn fact(fact: &StampFact) -> String {
                 DriftClass::Substantive => "substantive",
             }
         ),
+        StampFact::WorkReady {} => "work ready — waiting for deliberate start".to_owned(),
         StampFact::BuildStarted { base, plan } => {
             format!("build started — base {base}, plan {plan}")
         }

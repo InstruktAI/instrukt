@@ -188,6 +188,34 @@ fn require_prd_approval(
     }
     Ok(())
 }
+/// Enforce claim-holding-orchestrator admission for `StampRequest::WorkReady`
+/// (`stamps`, "Build start, completion and review rounds"): refuses outside-session
+/// callers, unclaimed todos, and non-claimant sessions (including bound child roles),
+/// without requiring `record.hold.is_none()` so an exact retry before unclaim succeeds.
+pub(super) fn require_work_ready_caller(
+    record: &TodoRecord,
+    caller: Option<&SessionRef>,
+    machine: &MachineId,
+) -> Result<(), WorkError> {
+    let caller = caller.ok_or_else(|| {
+        WorkError::refused(
+            "`--work-ready` requires the claim-holding orchestrator session; run it from the orchestrator holding the todo's claim",
+        )
+    })?;
+    let claim = record.claim.as_ref().ok_or_else(|| {
+        WorkError::refused(format!(
+            "`{}` holds no execution claim; claim it from the orchestrator with `instrukt todo work {}` before recording `--work-ready`",
+            record.slug, record.slug
+        ))
+    })?;
+    if claim.machine != *machine || claim.session.as_ref() != Some(caller) {
+        return Err(WorkError::refused(format!(
+            "only the claim-holding orchestrator may record `--work-ready` for `{}`; run it from the session holding the claim",
+            record.slug
+        )));
+    }
+    Ok(())
+}
 /// Invariant 3: enforce configured `approvals.task` before executing a task firing.
 pub(super) fn require_task_approval(
     record: &TodoRecord,
@@ -1039,6 +1067,7 @@ pub(super) fn completion(request: &super::StampRequest) -> Option<Completion> {
         | StampRequest::Kickback { .. }
         | StampRequest::ArchitectureSkipped { .. }
         | StampRequest::DiagnosisUnresolved { .. }
+        | StampRequest::WorkReady
         | StampRequest::BuildStarted
         | StampRequest::FinalizeReady
         | StampRequest::TaskFiringStarted { .. }

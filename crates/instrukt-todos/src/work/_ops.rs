@@ -714,6 +714,9 @@ impl Work {
             }
             disposition_role = Some(role);
         }
+        if matches!(request, StampRequest::WorkReady) {
+            super::_attempts::require_work_ready_caller(&record, session.as_ref(), &s.machine()?)?;
+        }
         if matches!(request, StampRequest::FinalizeReady) {
             let prd_approver = s
                 .config
@@ -904,6 +907,24 @@ impl Work {
                 record.hold = Some(HoldRecord {
                     source: HoldSource::Automatic,
                     reason: format!("diagnosis unresolved: {reason}"),
+                    by: actor.clone(),
+                    at: now,
+                });
+            }
+            if matches!(stamp.fact, StampFact::WorkReady {}) {
+                if let Some(previous) = record.hold.take() {
+                    record.hold_history.push(ReleasedHold {
+                        hold: previous,
+                        released: now,
+                        by: actor.clone(),
+                    });
+                }
+                record.hold = Some(HoldRecord {
+                    source: HoldSource::Automatic,
+                    reason: format!(
+                        "work waits for its deliberate start (runner.autostart is off for {})",
+                        record.kind
+                    ),
                     by: actor.clone(),
                     at: now,
                 });
