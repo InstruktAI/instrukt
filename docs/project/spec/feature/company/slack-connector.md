@@ -48,7 +48,7 @@ A Slack connector is declared under `connectors.<name>` in a company home.
 The company context and this Slack connector publish the Slack kind's
 declaration data (`project/instrukt/spec/domain/company`),
 `project/instrukt/spec/feature/configuration/layered-configuration` validates
-the `connectors:` map and owns the common-field schema and defaults, and
+the `connectors:` map and declares the common-field configuration schema, and
 `instrukt config schema --company <name> connectors.slack` prints the published
 declaration and setup (`project/instrukt/spec/feature/configuration/configuration-editing`).
 Multiple named Slack apps may be declared in one company home with `kind: slack`
@@ -58,7 +58,7 @@ Multiple named Slack apps may be declared in one company home with `kind: slack`
 | --- | --- |
 | `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. |
 | `kind` | Optional registered connector kind (`slack`); defaults to `<name>` when omitted. |
-| `role`, `admit`, `session_scope` | Common connector settings whose behavioral semantics are owned by `project/instrukt/spec/feature/company/conversations` and whose configuration-layer schema and defaults are owned by `project/instrukt/spec/feature/configuration/layered-configuration`. |
+| `role`, `admit`, `session_scope` | Common connector settings whose behavioral semantics (including `admit` and `session_scope` defaults) are owned by `project/instrukt/spec/feature/company/conversations` and whose `connectors:` map validation and common-field schema (with `role` default) are declared in `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | Positive whole number capping how many earlier messages accompany an addressed message. |

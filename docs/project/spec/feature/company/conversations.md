@@ -43,9 +43,9 @@ selected runtime with the capabilities
 <!-- change:thin-live-runtime-boundary -->
 A company home declares its named connectors under `connectors.<name>`
 (`project/instrukt/spec/feature/configuration/layered-configuration`, which
-owns the field schema and defaults for `kind`, `role`, `admit`, and
-`session_scope`). Multiple named connectors of the same provider kind may be
-declared in one company home.
+validates the `connectors:` map and declares the common-field schema for
+`kind`, `role`, `admit`, and `session_scope`). Multiple named connectors of the
+same provider kind may be declared in one company home.
 
 Every company connector uses **explicit frontstage**: replies are posted
 exclusively via `instrukt company reply`, paired with one calm status line and
@@ -341,9 +341,10 @@ the state-database spec.
     1. **Verified active addressed turn:** when live state and turn correlation
        confirm the recorded addressed turn is currently running in that session,
        speaker lookup yields that turn's recorded member speaker.
-    2. **Fail-closed refusal / lookup error:** when the session is `idle`,
-       `failed`, `gone`, or `unobservable` (runtime or durable state cannot
-       answer), or when live turn correlation shows an unmatched addressed or
+    2. **Fail-closed refusal / lookup error:** when the session is
+       `input-ready`, `failed`, or `gone`, when observing live runtime state or
+       reading instrukt-owned durable state fails with an observation or lookup
+       error, or when live turn correlation shows an unmatched addressed or
        adjacent turn (including an adjacent-turn mismatch under
        `session_scope: company`), speaker lookup fails closed with a
        refusal/lookup error — never falling through to no speaker or the
