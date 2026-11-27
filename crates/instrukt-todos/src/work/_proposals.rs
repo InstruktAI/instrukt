@@ -13,9 +13,6 @@ use serde_json::json;
 
 use super::GitHubAccess;
 
-/// The fixed words a proposal's pull request opens with.
-const BODY_LEAD: &str = "This change to the company's knowledge was asked of the company's agent by an administrator of the company. Its commits:";
-
 /// Whether any pull request of `repository`, open or closed, has `head` as
 /// its head commit.
 pub(super) fn heads_pull(
@@ -58,7 +55,7 @@ pub(super) fn open(
     let messages = git::run(proposal.root, ["log", "--format=%B", range.as_str()])
         .map_err(|error| error.to_string())?;
     let body = format!(
-        "{BODY_LEAD}\n\n{}\n",
+        "This change to the company's knowledge was asked of the company's agent by an administrator of the company. Its commits:\n\n{}\n",
         instrukt_core::docs::fenced(&messages)
     );
     let created = gh
