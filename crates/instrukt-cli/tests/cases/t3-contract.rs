@@ -38,10 +38,10 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                 .starts_with(root),
             "contract worker cannot use an installed T3"
         );
-        let result = if stage == "real" {
-            release::real(root)
-        } else {
-            (|| -> anyhow::Result<()> {
+        let result = match stage.as_str() {
+            "real" => release::real(root),
+            "overlay" => release::overlay(root),
+            "fake" => (|| -> anyhow::Result<()> {
                 let readiness = release::readiness()?;
                 release::cli(
                     &["thread", "send", "--", "contract-thread", "-"],
@@ -64,7 +64,8 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                     json!({"adapter":result,"readiness":readiness,"steering":release::fake_steering(root)?,"websocket_dispatch":websocket,"native_launch":native_launch,"retention":retention,"projects":projects}).to_string(),
                 )?;
                 Ok(())
-            })()
+            })(),
+            other => Err(anyhow::anyhow!("unknown contract stage: {other}")),
         };
         assert!(result.is_ok(), "{stage} boundary failed: {result:?}");
         return;
@@ -78,7 +79,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         manifest["release"] =
             serde_json::from_slice(&fs::read(env.path("release.json")).unwrap()).unwrap();
         fs::remove_file(env.path("runtime-bin/t3")).unwrap();
-        std::os::unix::fs::symlink(binary, env.path("runtime-bin/t3")).unwrap();
+        std::os::unix::fs::symlink(&binary, env.path("runtime-bin/t3")).unwrap();
         let t3_base = env.home().join(".t3");
         env.set_env("T3CODE_HOME", t3_base.to_str().unwrap());
         env.set_env("T3CODE_NO_BROWSER", "true");
@@ -86,9 +87,24 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         let project = env.git_repo("project");
         project.write("instrukt.yaml", "schema_version: 6\nproject: contract\n");
         project.commit("feat: disposable contract project");
+        fs::create_dir_all(env.instrukt_home()).unwrap();
+        fs::write(
+            env.instrukt_home().join("instrukt.yaml"),
+            "schema_version: 7\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+        )
+        .unwrap();
+        let mut overlay_env = TestEnv::new();
+        release::stage_binary(&binary, &overlay_env).expect("overlay release binary");
+        let overlay_t3_base = overlay_env.home().join(".t3");
+        overlay_env.set_env("T3CODE_HOME", overlay_t3_base.to_str().unwrap());
+        overlay_env.set_env("T3CODE_NO_BROWSER", "true");
+        overlay_env.set_env("T3CODE_TELEMETRY_ENABLED", "false");
+        let overlay_project = overlay_env.git_repo("project");
+        overlay_project.write("instrukt.yaml", "schema_version: 6\nproject: contract\n");
+        overlay_project.commit("feat: disposable overlay contract project");
         // The owner of `docs/general/` the overlay-link check publishes.
         crate::fixtures::documented::project(
-            &env,
+            &overlay_env,
             "docs-owner",
             &[
                 (
@@ -108,16 +124,48 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
                 ),
             ],
         );
-        fs::create_dir_all(env.instrukt_home()).unwrap();
+        fs::create_dir_all(overlay_env.instrukt_home()).unwrap();
         fs::write(
-            env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 7\nrunner: {runtime: t3}\nmodules: {history: true}\n",
+            overlay_env.instrukt_home().join("instrukt.yaml"),
+            "schema_version: 7\nrunner: {runtime: t3}\n",
         )
         .unwrap();
-        manifest["operation"] = json!("real CLI, readiness, projection and input boundaries");
-        release::worker(&env, "real", &env.path("")).unwrap();
+        manifest["operation"] =
+            json!("real CLI, readiness, projection, input and overlay-link boundaries");
+        let real_command = release::worker_command(&env, "real", &env.path("")).unwrap();
+        let overlay_command =
+            release::worker_command(&overlay_env, "overlay", &overlay_env.path("")).unwrap();
+        let (real_result, overlay_result) = std::thread::scope(|scope| {
+            let real_handle = scope.spawn(|| release::run_worker(real_command, "real"));
+            let overlay_handle = scope.spawn(|| release::run_worker(overlay_command, "overlay"));
+            (
+                real_handle.join().expect("real contract worker thread"),
+                overlay_handle
+                    .join()
+                    .expect("overlay contract worker thread"),
+            )
+        });
+        match (real_result, overlay_result) {
+            (Ok(()), Ok(())) => {}
+            (Err(real_err), Ok(())) => {
+                manifest["operation"] =
+                    json!("real CLI, readiness, projection and input boundaries");
+                panic!("real boundary failed: {real_err:?}");
+            }
+            (Ok(()), Err(overlay_err)) => {
+                manifest["operation"] = json!("real overlay-link boundaries");
+                panic!("overlay boundary failed: {overlay_err:?}");
+            }
+            (Err(real_err), Err(overlay_err)) => {
+                panic!(
+                    "real and overlay boundaries failed:\nreal: {real_err:?}\noverlay: {overlay_err:?}"
+                );
+            }
+        }
         let real: Value =
             serde_json::from_slice(&fs::read(env.path("real.json")).unwrap()).unwrap();
+        let overlay_links: Value =
+            serde_json::from_slice(&fs::read(overlay_env.path("overlay.json")).unwrap()).unwrap();
         let mut fake_env = TestEnv::new();
         let fake_base = fake_env.home().join(".t3");
         fake_env.set_env("T3CODE_HOME", fake_base.to_str().unwrap());
@@ -223,7 +271,7 @@ fn a_release_and_its_fake_are_checked_without_a_model_account() {
         manifest["observations"] = observed;
         manifest["readiness"] = json!({"explicitly_unready":real["readiness"]["explicitly_unready"],"translated":real["readiness"]["translated"],"real_revoked_denied":real["readiness"]["revoked_denied"],"fake_revoked_denied":emulated["readiness"]["revoked_denied"]});
         manifest["configured_homes"] = real["configured"].clone();
-        manifest["overlay_links"] = real["overlay_links"].clone();
+        manifest["overlay_links"] = overlay_links;
         manifest["steering_fixture"] = emulated["steering"].clone();
         manifest["fake_operations"]["version"] = json!(
             "diagnostic response only; content is not compared and release equality is not an adapter gate"
