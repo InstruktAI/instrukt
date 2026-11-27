@@ -1,8 +1,8 @@
-//! The proposal store, `.instrukt/knowledge-proposals.db` in a company's
-//! home under `.instrukt/knowledge-proposals.lock`
-//! (`project/instrukt/spec/domain/company`, Knowledge proposals extend this
-//! boundary, State): written only by recordings a commit waits on, one short
-//! transaction at a time; read from a snapshot, never migrated by a reader.
+//! The proposal store of a company's home, at the database and lock paths
+//! `Home` names for it (`project/instrukt/spec/domain/company`, Knowledge
+//! proposals extend this boundary, State): written only by recordings a
+//! commit waits on, one short transaction at a time; read from a snapshot,
+//! never migrated by a reader.
 
 use std::collections::BTreeMap;
 use std::time::Duration;

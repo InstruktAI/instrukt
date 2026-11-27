@@ -157,17 +157,17 @@ impl Home {
         self.companies_dir().join(company.as_str())
     }
 
-    /// `~/.instrukt/companies/<name>/.instrukt/knowledge-proposals.db` — the
-    /// company's knowledge proposals, kept out of its repository by the
-    /// home's ignore lines (`project/instrukt/spec/domain/company`).
+    /// The database of the company's knowledge proposals, in the home's local
+    /// state folder that its ignore lines keep out of its repository
+    /// (`project/instrukt/spec/domain/company`).
     pub fn knowledge_proposals_db_file(&self, company: &ProjectSlug) -> PathBuf {
         self.company_dir(company)
             .join(".instrukt")
             .join("knowledge-proposals.db")
     }
 
-    /// `~/.instrukt/companies/<name>/.instrukt/knowledge-proposals.lock` —
-    /// the lock the proposal store's recordings take turns on.
+    /// The lock the recordings of the company's proposal store take turns
+    /// on, beside its database.
     pub fn knowledge_proposals_lock_file(&self, company: &ProjectSlug) -> PathBuf {
         self.company_dir(company)
             .join(".instrukt")
