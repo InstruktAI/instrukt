@@ -1035,10 +1035,23 @@ mod test_connector {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{BTreeMap, HashMap};
+    use std::time::{Duration, Instant};
+
+    use instrukt_connector::{
+        Admission, Connector, ConnectorError, Limits, Place, RefusalReason, Sender, Status,
+    };
+    use instrukt_core::config::ConnectorAdmit;
+    use jiff::Timestamp;
+
+    use crate::conversations::{self, Refusal};
+
     use super::super::{RECHECK, wait_after};
     use super::test_connector::TestConnector;
-    use super::*;
-    use instrukt_connector::Limits;
+    use super::{
+        Failures, IntakeProgress, Next, Owed, RETRY, due, next_pass, next_record, owed, shown,
+        status_pass, wanted,
+    };
 
     fn connector(per_message: bool) -> TestConnector {
         TestConnector {
