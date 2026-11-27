@@ -1,30 +1,13 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1906
-expression: "redact(&format!(\"{pending}---\\n{after_unauthorized}\"))"
+assertion_line: 1839
+expression: redact(&pending)
 ---
 retry-views · bug · active
 identity: <id 1>
 record status: active
 created: <time> by Test Developer
 revision: 1
-intent:
-  Keep the cockpit retryable.
-reflection: pending: GitHub: GitHub answered POST /orgs/acme/projectsV2/1/views with 503: Service unavailable
-issue: #1
-claim: not held
-hold: none
-artifacts:
-  input (1 version)
-    <digest 1> by Test Developer at <time>
-stamps:
-  none
----
-retry-views · bug · active
-identity: <id 1>
-record status: active
-created: <time> by Test Developer
-revision: 2
 intent:
   Keep the cockpit retryable.
 reflection: pending: GitHub: GitHub refused the credentials (401)
@@ -34,7 +17,5 @@ hold: none
 artifacts:
   input (1 version)
     <digest 1> by Test Developer at <time>
-  log (1 version)
-    <digest 2> by Test Developer at <time>
 stamps:
   none

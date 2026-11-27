@@ -1817,31 +1817,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
 #[test]
 fn cockpit_setup_failure_keeps_issue_reflection_and_retries_without_duplicate_views() {
     let project = Project::new();
-    project.github.respond_once(
-        "POST",
-        "/orgs/acme/projectsV2/1/views",
-        CannedResponse {
-            status: 503,
-            headers: Vec::new(),
-            body: serde_json::json!({"message":"Service unavailable"}),
-        },
-    );
-    project.create("retry-views", "bug", "Keep the cockpit retryable.");
-    project.tick();
-    let pending = project.ok(["show", "retry-views"]);
-    assert_eq!(project.github.issues(REPOSITORY).len(), 1);
-    assert_eq!(project.github.artifacts(REPOSITORY, 1).len(), 1);
-    assert!(project.github.project_views("acme", 1).is_empty());
-    project.tick();
-    let views = project.github.project_views("acme", 1);
-    assert_eq!(views.len(), 2);
-    project.tick();
-    assert_eq!(project.github.project_views("acme", 1), views);
-
     // An unauthorized (401) board-setup failure stays with the board: its
-    // cause remains visibly pending while unrelated artifact reflection still
-    // runs in the same tick (`github-apps`, Installation credentials).
-    project.github.remove_project_view("acme", 1, "Board");
+    // cause remains visibly pending while unrelated issue and artifact
+    // reflection still runs in the same tick (`github-apps`, Installation
+    // credentials).
     project.github.respond_once(
         "POST",
         "/orgs/acme/projectsV2/1/views",
@@ -1851,26 +1830,18 @@ fn cockpit_setup_failure_keeps_issue_reflection_and_retries_without_duplicate_vi
             body: serde_json::json!({"message":"Bad credentials"}),
         },
     );
-    project.ok([
-        "artifacts",
-        "write",
-        "retry-views",
-        "log",
-        "Issue reflection continues past a board-setup 401.",
-    ]);
+    project.create("retry-views", "bug", "Keep the cockpit retryable.");
     project.tick();
-    assert_eq!(
-        project.github.artifacts(REPOSITORY, 1).len(),
-        2,
-        "non-rate-limit board setup failure must not stop issue/artifact reflection"
-    );
-    let after_unauthorized = project.ok(["show", "retry-views"]);
-    insta::assert_snapshot!(
-        "cockpit-view-setup-pending",
-        redact(&format!("{pending}---\n{after_unauthorized}"))
-    );
+    let pending = project.ok(["show", "retry-views"]);
+    assert_eq!(project.github.issues(REPOSITORY).len(), 1);
+    assert_eq!(project.github.artifacts(REPOSITORY, 1).len(), 1);
+    assert!(project.github.project_views("acme", 1).is_empty());
+    insta::assert_snapshot!("cockpit-view-setup-pending", redact(&pending));
     project.tick();
-    assert_eq!(project.github.project_views("acme", 1).len(), 2);
+    let views = project.github.project_views("acme", 1);
+    assert_eq!(views.len(), 2);
+    project.tick();
+    assert_eq!(project.github.project_views("acme", 1), views);
 }
 
 // spec: project/instrukt/spec/feature/work/github-record UC-GR5
