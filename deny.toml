@@ -8,8 +8,8 @@ ignore = [
   "RUSTSEC-2024-0449",
   # Unmaintained chrono 0.4.45 (not a vulnerability, no safe upgrade available).
   # Required unconditionally by upstream oauth2 5.0.0 (also via rmcp 3.12.0)
-  # and octocrab 0.54.9; instrukt itself uses jiff. Remove once upstream SDKs
-  # migrate off chrono.
+  # and octocrab 0.54.9; instrukt itself uses jiff. Removal once upstream SDKs
+  # migrate off chrono is tracked in todo `retire-chrono-advisory-ignore`.
   "RUSTSEC-2026-0543",
 ]
 
