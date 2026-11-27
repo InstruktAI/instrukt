@@ -2,4 +2,4 @@
 source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
 expression: "stderr(&crew, &writer)"
 ---
-instrukt: a verification disposition is recorded by an independent bound verifier or the claim-holding orchestrator, and this session holds neither a verifier attempt nor the todo's live driver binding: a pass, fail or blocked comes from a new independent `verifier` attempt, and a Tier 0 skip or hotfix deferral from the claim-holding orchestrator
+instrukt: approval and verification pass require an independent session distinct from the claimant, drivers, and writers

@@ -121,8 +121,7 @@ struct RecordArgs {
     /// The complete review report: a file, or `-` for standard input.
     #[arg(long)]
     report: PathBuf,
-    /// Enter the approval this named session reached and returned without
-    /// recording it, as its standing result.
+    /// Session that produced the review being recorded.
     #[arg(long)]
     reviewer: Option<String>,
 }

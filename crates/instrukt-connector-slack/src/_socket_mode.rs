@@ -4,6 +4,7 @@
 //! `SlackEventCallbackBody` while keeping reconnect pacing and failure
 //! reporting exclusively in `connector_host` / `instrukt-outside`.
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use instrukt_connector::{ConnectorError, Inbox, Incoming};
@@ -14,6 +15,7 @@ use tokio::net::TcpStream;
 use tokio::sync::watch;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+use tracing::instrument::WithSubscriber as _;
 
 use crate::_outside::{socket_judgment, token_key};
 use crate::{
@@ -21,6 +23,34 @@ use crate::{
 };
 
 type WsStream = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+/// Bound how long a WebSocket close handshake may stall shutdown.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn close_bounded(stream: &mut WsStream) -> Result<(), String> {
+    match tokio::time::timeout(CLOSE_TIMEOUT, stream.close(None)).await {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("close timed out".into()),
+    }
+}
+
+async fn send_cancellable(
+    stream: &mut WsStream,
+    message: Message,
+    shutdown: &mut watch::Receiver<bool>,
+) -> Result<bool, tokio_tungstenite::tungstenite::Error> {
+    tokio::select! {
+        _ = wait_shutdown(shutdown) => Ok(false),
+        res = tokio::time::timeout(WEB_API_TIMEOUT, stream.send(message)) => match res {
+            Ok(Ok(())) => Ok(true),
+            Ok(Err(error)) => Err(error),
+            Err(_) => Err(tokio_tungstenite::tungstenite::Error::Io(
+                std::io::Error::new(std::io::ErrorKind::TimedOut, "Socket Mode write timed out"),
+            )),
+        }
+    }
+}
 
 async fn wait_shutdown(shutdown: &mut watch::Receiver<bool>) {
     if *shutdown.borrow() {
@@ -40,6 +70,7 @@ async fn open_socket(
     url: &str,
     shutdown: &mut watch::Receiver<bool>,
 ) -> Result<WsStream, ConnectorError> {
+    instrukt_outside::http::ensure_crypto_provider();
     let key = token_key(&api.company, &api.connector, true).item("socket");
     let gate = &api.endpoint.gate;
     let attempted = gate
@@ -59,11 +90,15 @@ async fn open_socket(
                     None => Tried::Defect(message),
                 }
             };
+            // Suppress tracing/log-bridged events during the WebSocket handshake
+            // so `tungstenite`'s trace log never writes the `?ticket=` URL.
+            let connect = tokio_tungstenite::connect_async(url)
+                .with_subscriber(tracing::subscriber::NoSubscriber::default());
             let mut stream = tokio::select! {
                 _ = wait_shutdown(shutdown) => {
                     return Tried::Defect("stopped before Socket Mode connected".into());
                 }
-                res = tokio::time::timeout(WEB_API_TIMEOUT, tokio_tungstenite::connect_async(url)) => {
+                res = tokio::time::timeout(WEB_API_TIMEOUT, connect) => {
                     match res {
                         Ok(Ok((stream, _))) => stream,
                         Ok(Err(error)) => return judged(error),
@@ -84,7 +119,7 @@ async fn open_socket(
             loop {
                 tokio::select! {
                     _ = wait_shutdown(shutdown) => {
-                        let _ = stream.close(None).await;
+                        let _ = close_bounded(&mut stream).await;
                         return Tried::Defect("stopped before Slack's hello".into());
                     }
                     res = tokio::time::timeout_at(deadline, stream.next()) => {
@@ -98,8 +133,13 @@ async fn open_socket(
                                 }
                             }
                             Ok(Some(Ok(Message::Ping(payload)))) => {
-                                if let Err(error) = stream.send(Message::Pong(payload)).await {
-                                    return judged(error);
+                                match send_cancellable(&mut stream, Message::Pong(payload), shutdown).await {
+                                    Ok(true) => {}
+                                    Ok(false) => {
+                                        let _ = close_bounded(&mut stream).await;
+                                        return Tried::Defect("stopped before Slack's hello".into());
+                                    }
+                                    Err(error) => return judged(error),
                                 }
                             }
                             Ok(Some(Ok(Message::Close(_)))) | Ok(None) => {
@@ -115,7 +155,7 @@ async fn open_socket(
                             Ok(Some(Ok(_))) => {}
                             Ok(Some(Err(error))) => return judged(error),
                             Err(_) => {
-                                let _ = stream.close(None).await;
+                                let _ = close_bounded(&mut stream).await;
                                 return Tried::Unavailable(
                                     Unavailable {
                                         reason: Reason::TimedOut,
@@ -154,14 +194,21 @@ pub(crate) async fn session(
     if *shutdown.borrow() {
         return Ok(());
     }
-    let url = api.connection_url().await.map_err(slack_failed)?;
-    let me = api.identity().await.map_err(slack_failed)?;
+    let url = tokio::select! {
+        _ = wait_shutdown(&mut shutdown) => return Ok(()),
+        res = api.connection_url() => res.map_err(slack_failed)?,
+    };
+    let me = tokio::select! {
+        _ = wait_shutdown(&mut shutdown) => return Ok(()),
+        res = api.identity() => res.map_err(slack_failed)?,
+    };
     let mut stream = open_socket(api, &url, &mut shutdown).await?;
     if *shutdown.borrow() {
-        let _ = stream.close(None).await;
+        let _ = close_bounded(&mut stream).await;
         return Ok(());
     }
-    inbox.connected();
+    let connected_inbox = Arc::clone(&inbox);
+    let _ = tokio::task::spawn_blocking(move || connected_inbox.connected()).await;
     tracing::info!(target: LOG_TARGET, event = "connector_connected", company = %api.company, connector = %api.connector);
     let disconnected = |cause: &str| {
         tracing::info!(target: LOG_TARGET, event = "connector_disconnected", company = %api.company, connector = %api.connector, cause);
@@ -170,7 +217,7 @@ pub(crate) async fn session(
     loop {
         let frame = tokio::select! {
             _ = wait_shutdown(&mut shutdown) => {
-                if let Err(error) = stream.close(None).await {
+                if let Err(error) = close_bounded(&mut stream).await {
                     tracing::debug!(target: LOG_TARGET, event = "connector_close_unsent", company = %api.company, connector = %api.connector, %error);
                 }
                 return Ok(());
@@ -187,11 +234,17 @@ pub(crate) async fn session(
         let text = match frame {
             Message::Text(text) => text,
             Message::Ping(payload) => {
-                if let Err(error) = stream.send(Message::Pong(payload)).await {
-                    disconnected(&format!("Socket Mode pong failed: {error}"));
-                    return Ok(());
+                match send_cancellable(&mut stream, Message::Pong(payload), &mut shutdown).await {
+                    Ok(true) => continue,
+                    Ok(false) => {
+                        let _ = close_bounded(&mut stream).await;
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        disconnected(&format!("Socket Mode pong failed: {error}"));
+                        return Ok(());
+                    }
                 }
-                continue;
             }
             Message::Close(_) => return Ok(()),
             _ => continue,
@@ -207,18 +260,28 @@ pub(crate) async fn session(
         let Some(envelope_id) = envelope.get("envelope_id").and_then(Value::as_str) else {
             continue;
         };
+        // Parse synchronously, then run synchronous SQLite retention on the
+        // blocking pool while preserving strict retain-before-ack ordering.
         let retained = if envelope.get("type").and_then(Value::as_str) == Some("events_api") {
             match envelope.pointer("/payload/event") {
                 Some(raw_event) => {
-                    serde_json::from_value::<SlackEventCallbackBody>(raw_event.clone())
+                    match serde_json::from_value::<SlackEventCallbackBody>(raw_event.clone())
                         .map_err(|error| error.to_string())
                         .and_then(|event| receive(&api.connector, &me, event))
-                        .and_then(|incoming| match incoming {
-                            Some(incoming) => {
-                                inbox.retain(incoming).map_err(|error| error.to_string())
+                    {
+                        Ok(Some(incoming)) => {
+                            let retain_inbox = Arc::clone(&inbox);
+                            match tokio::task::spawn_blocking(move || retain_inbox.retain(incoming))
+                                .await
+                            {
+                                Ok(Ok(())) => Ok(()),
+                                Ok(Err(error)) => Err(error.to_string()),
+                                Err(error) => Err(format!("retention task failed: {error}")),
                             }
-                            None => Ok(()),
-                        })
+                        }
+                        Ok(None) => Ok(()),
+                        Err(error) => Err(error),
+                    }
                 }
                 None => Ok(()),
             }
@@ -228,20 +291,32 @@ pub(crate) async fn session(
         match retained {
             Ok(()) => {
                 let ack_json = json!({ "envelope_id": envelope_id }).to_string();
-                if let Err(error) = stream.send(Message::Text(ack_json.into())).await {
-                    disconnected(&format!("Socket Mode acknowledgement: {error}"));
-                    return Ok(());
+                match send_cancellable(&mut stream, Message::Text(ack_json.into()), &mut shutdown)
+                    .await
+                {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        let _ = close_bounded(&mut stream).await;
+                        return Ok(());
+                    }
+                    Err(error) => {
+                        disconnected(&format!("Socket Mode acknowledgement: {error}"));
+                        return Ok(());
+                    }
                 }
                 if unretained {
-                    inbox.connected();
+                    let recovered_inbox = Arc::clone(&inbox);
+                    let _ = tokio::task::spawn_blocking(move || recovered_inbox.connected()).await;
                     unretained = false;
                 }
             }
             Err(error) => {
                 tracing::warn!(target: LOG_TARGET, event = "connector_message_unretained", company = %api.company, connector = %api.connector, %error);
-                inbox.unretained(&format!(
-                    "a message could not be retained and awaits Slack's retry: {error}"
-                ));
+                let unretained_inbox = Arc::clone(&inbox);
+                let message =
+                    format!("a message could not be retained and awaits Slack's retry: {error}");
+                let _ = tokio::task::spawn_blocking(move || unretained_inbox.unretained(&message))
+                    .await;
                 unretained = true;
             }
         }

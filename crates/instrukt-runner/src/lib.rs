@@ -70,8 +70,7 @@ pub use _attention::deliver_approval_attention;
 
 pub mod assignments;
 
-pub mod envelopes;
-pub mod links;
 pub mod mcp;
+pub(crate) mod relay;
 
 pub mod installation;

@@ -1059,6 +1059,17 @@ fn canonical_root(path: &Path) -> Option<PathBuf> {
     Some(absolute.canonicalize().unwrap_or(absolute))
 }
 
+fn t3_gate() -> &'static instrukt_outside::Gate {
+    static GATE: std::sync::OnceLock<instrukt_outside::Gate> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| {
+        instrukt_outside::Gate::new(
+            std::sync::Arc::new(jiff::Timestamp::now),
+            std::sync::Arc::new(std::time::Instant::now),
+            instrukt_outside::Report::log(),
+        )
+    })
+}
+
 /// The live projects `GET /api/projects` lists; deleted ones are left out.
 /// An unreachable server or malformed metadata is a cause, never an empty
 /// table.
@@ -1072,21 +1083,97 @@ pub(super) fn fetch_live_projects(
         .map_err(|_| ExecutionRootCause::MalformedMetadata)?;
     origin.set_path("/api/projects");
     origin.set_query(None);
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .into();
-    let text = agent
-        .get(origin.as_str())
-        .header("Authorization", &format!("Bearer {token}"))
-        .call()
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        request_timeout: TIMEOUT,
+        follow_redirects: false,
+        ..Default::default()
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
+    let url = origin.as_str().to_owned();
+    let bearer = format!("Bearer {token}");
+    let key = instrukt_outside::Key::new("t3", [url.as_str()]).item("projects");
+    let gate = t3_gate();
+    let settings = instrukt_outside::Settings::default();
+    let attempted =
+        instrukt_outside::runtime::block_on(gate.attempt_async(&key, &settings, || async {
+            let response = match client
+                .get(&url)
+                .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(error) => {
+                    return match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
+                        instrukt_outside::http::Judgment::Unavailable(unavailable) => {
+                            instrukt_outside::Tried::Unavailable(unavailable, error.to_string())
+                        }
+                        instrukt_outside::http::Judgment::Success
+                        | instrukt_outside::http::Judgment::Defect => {
+                            instrukt_outside::Tried::Defect(error.to_string())
+                        }
+                    };
+                }
+            };
+            let status = response.status();
+            let headers = response.headers().clone();
+            let now = gate.now();
+            match instrukt_outside::http::judge_response(
+                status.as_u16(),
+                &headers,
+                now,
+                None,
+                &settings,
+            ) {
+                instrukt_outside::http::Judgment::Unavailable(unavailable) => {
+                    return instrukt_outside::Tried::Unavailable(
+                        unavailable,
+                        format!("HTTP {status}"),
+                    );
+                }
+                instrukt_outside::http::Judgment::Defect => {
+                    return instrukt_outside::Tried::Defect(format!("HTTP {status}"));
+                }
+                instrukt_outside::http::Judgment::Success => {}
+            }
+            if !status.is_success() {
+                return instrukt_outside::Tried::Defect(format!("HTTP {status}"));
+            }
+            match response.text().await {
+                Ok(text) => instrukt_outside::Tried::Done(text),
+                Err(error) => {
+                    match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
+                        instrukt_outside::http::Judgment::Unavailable(unavailable) => {
+                            instrukt_outside::Tried::Unavailable(unavailable, error.to_string())
+                        }
+                        instrukt_outside::http::Judgment::Success
+                        | instrukt_outside::http::Judgment::Defect => {
+                            instrukt_outside::Tried::Defect(error.to_string())
+                        }
+                    }
+                }
+            }
+        }))
         .map_err(|error| {
             tracing::warn!(event = "t3_project_snapshot_failed", %error);
             ExecutionRootCause::Unreachable
-        })?
-        .body_mut()
-        .read_to_string()
-        .map_err(|_| ExecutionRootCause::Unreachable)?;
+        })?;
+    let text = match attempted {
+        instrukt_outside::Attempted::Done(text) => text,
+        instrukt_outside::Attempted::Defect(error) => {
+            tracing::warn!(event = "t3_project_snapshot_failed", %error);
+            return Err(ExecutionRootCause::Unreachable);
+        }
+        instrukt_outside::Attempted::Wait { error, .. } => {
+            if let Some(error) = error {
+                tracing::warn!(event = "t3_project_snapshot_failed", %error);
+            }
+            return Err(ExecutionRootCause::Unreachable);
+        }
+    };
     live_projects(&text)
 }
 

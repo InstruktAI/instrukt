@@ -364,9 +364,11 @@ impl<'c> Sessions<'c> {
             checkout,
             title: crate::runtime::thread_title(request.label, &key),
             key,
-            brief: if crate::envelopes::segment(request.message).iter().all(|span| matches!(span, crate::envelopes::Span::Control) || matches!(span, crate::envelopes::Span::Ordinary(text) if text.trim().is_empty())) { request.message.into() } else { crate::envelopes::Control::Assignment.frame(request.message) },
+            brief: request.message.into(),
             worktree,
-            launch_modes: None, native_launch: None, profiles: crate::runtime::Profiles::default(),
+            launch_modes: None,
+            native_launch: None,
+            profiles: crate::runtime::Profiles::default(),
         };
         Ok((input, project))
     }

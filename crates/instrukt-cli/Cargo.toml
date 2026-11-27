@@ -48,7 +48,6 @@ nix.workspace = true
 jsonwebtoken.workspace = true
 pem.workspace = true
 ring.workspace = true
-ureq.workspace = true
 url.workspace = true
 tungstenite.workspace = true
 hmac.workspace = true

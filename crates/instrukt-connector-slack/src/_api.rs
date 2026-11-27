@@ -49,6 +49,7 @@ impl SlackApi {
         app_token: String,
         bot_token: String,
     ) -> Result<Self, SlackError> {
+        instrukt_outside::http::ensure_crypto_provider();
         let tls_builder = HttpsConnectorBuilder::new()
             .with_native_roots()
             .map_err(|error| api_error("client setup", error))?;

@@ -1,5 +1,4 @@
-//! A commit's review requests, their standing and the turn one of them
-//! opened, read from delivery's records.
+//! A commit's review requests and their standing, read from delivery's records.
 
 use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, params};
@@ -8,7 +7,6 @@ use jiff::Timestamp;
 use super::ReviewReadError;
 use crate::consumers::{ACTIVATION_CONSUMER, REPLACEABLE};
 use crate::events::review_request_id;
-use crate::runtime::RuntimeAdapter;
 use crate::state::{self, RunnerState, StateError};
 
 /// Where delivery has a request.
@@ -339,113 +337,6 @@ pub fn observed_red(
         .unwrap_or(false))
 }
 
-/// Which input opened the turn a session has in progress, with regard to a
-/// commit's review requests handed over to it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum TurnOpening {
-    /// The handover of this request opened it.
-    Request(u64),
-    /// Something else opened it.
-    Other,
-    /// The session has no turn in progress.
-    NoTurn,
-    /// The runtime cannot say.
-    CannotSay(String),
-}
-
-/// What opened the turn the runtime's answer `opening` names, compared by
-/// whole text with the frozen content of each request's handover to the
-/// session.
-fn opened_by(opening: Result<Option<&str>, String>, handovers: &[(u64, String)]) -> TurnOpening {
-    let opening = match opening {
-        Ok(Some(opening)) => opening,
-        Ok(None) => return TurnOpening::NoTurn,
-        Err(cause) => return TurnOpening::CannotSay(cause),
-    };
-    handovers
-        .iter()
-        .find(|(_, content)| content == opening)
-        .map_or(TurnOpening::Other, |(number, _)| {
-            TurnOpening::Request(*number)
-        })
-}
-
-/// [`turn_opening_with`] through the selected runtime's adapter.
-pub fn turn_opening(
-    state: &RunnerState,
-    project: &ProjectSlug,
-    head: &CommitSha,
-    session: &SessionRef,
-) -> Result<TurnOpening, ReviewReadError> {
-    let runtime = match instrukt_core::config::Configuration::load_global(state.home())
-        .and_then(|config| config.runner_runtime())
-    {
-        Ok(runtime) => runtime,
-        Err(error) => return Ok(TurnOpening::CannotSay(error.to_string())),
-    };
-    turn_opening_with(
-        state,
-        crate::runtime::adapter(runtime).as_ref(),
-        project,
-        head,
-        session,
-    )
-}
-
-/// Which input opened the turn `session` has in progress, with regard to
-/// `head`'s requests handed over to it: one read of the runtime and one
-/// keyed read of delivery's records.
-pub fn turn_opening_with(
-    state: &RunnerState,
-    adapter: &dyn RuntimeAdapter,
-    project: &ProjectSlug,
-    head: &CommitSha,
-    session: &SessionRef,
-) -> Result<TurnOpening, ReviewReadError> {
-    let opening = adapter
-        .active_turn_input(session)
-        .map_err(|error| error.to_string());
-    let target = session.to_string();
-    let handovers = state
-        .read(|conn, path| {
-            let sql = state::sql(path);
-            let mut found = Vec::new();
-            for number in 1.. {
-                let id = review_request_id(project, head, number);
-                let known = conn
-                    .query_row("SELECT 1 FROM events WHERE id = ?1", params![id], |_| Ok(()))
-                    .optional()
-                    .map_err(&sql)?;
-                if known.is_none() {
-                    break;
-                }
-                let mut statement = conn
-                    .prepare(
-                        "SELECT l.selected_content FROM standing_deliveries d
-                         JOIN runtime_inputs i ON i.input_id=d.input_id AND (i.runtime || ':' || i.session)=d.target
-                         JOIN runtime_inputs l ON l.runtime=i.runtime AND l.session=i.session AND l.input_id=i.group_id
-                         WHERE d.event_id=?1 AND d.procedure=?2 AND d.target=?3 AND l.selected_content IS NOT NULL",
-                    )
-                    .map_err(&sql)?;
-                let contents = statement
-                    .query_map(
-                        params![id, instrukt_core::config::REVIEW_PROCEDURE, target],
-                        |row| row.get::<_, String>(0),
-                    )
-                    .map_err(&sql)?
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(&sql)?;
-                found.extend(contents.into_iter().map(|content| (number, content)));
-            }
-            Ok(found)
-        })?
-        .unwrap_or_default();
-    Ok(opened_by(
-        opening.as_ref().map(Option::as_deref).map_err(Clone::clone),
-        &handovers,
-    ))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -573,36 +464,5 @@ mod tests {
     fn no_request_waits_longer_than_the_bound() {
         let late = [requested(9, "2026-11-24T10:00:00Z")];
         assert!(due(&late, "2026-11-24T14:00:00Z".parse().unwrap()));
-    }
-
-    #[test]
-    fn a_handover_of_the_request_opened_the_turn() {
-        let handovers = [(1, "first".to_owned()), (2, "second".to_owned())];
-        assert_eq!(
-            opened_by(Ok(Some("second")), &handovers),
-            TurnOpening::Request(2)
-        );
-    }
-
-    #[test]
-    fn another_input_opened_the_turn() {
-        let handovers = [(1, "first".to_owned())];
-        assert_eq!(
-            opened_by(Ok(Some("unrelated")), &handovers),
-            TurnOpening::Other
-        );
-    }
-
-    #[test]
-    fn a_session_without_a_turn_has_no_opening() {
-        assert_eq!(opened_by(Ok(None), &[]), TurnOpening::NoTurn);
-    }
-
-    #[test]
-    fn a_runtime_that_cannot_read_the_session_cannot_say() {
-        assert!(matches!(
-            opened_by(Err("unreadable".into()), &[(1, "first".to_owned())]),
-            TurnOpening::CannotSay(_)
-        ));
     }
 }

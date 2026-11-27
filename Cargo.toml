@@ -24,6 +24,7 @@ darwin-libproc = "=0.1.2"
 jsonwebtoken = "=9.3.1"
 pem = "=3.0.6"
 ring = "=0.17.14"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 instrukt-core = { path = "crates/instrukt-core", version = "0.1.0" }
 instrukt-blueprint = { path = "crates/instrukt-blueprint", version = "0.1.0" }
 instrukt-runner = { path = "crates/instrukt-runner", version = "0.1.0" }
@@ -71,7 +72,6 @@ sha2 = "=0.10.9"
 tempfile = "3"
 thiserror = "2"
 tracing = "0.1"
-ureq = "3"
 walkdir = "2"
 
 # test-only

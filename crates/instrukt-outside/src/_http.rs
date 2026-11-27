@@ -29,9 +29,17 @@ impl Default for ClientConfig {
     }
 }
 
+/// Installs the workspace's `rustls` `ring` crypto provider once so mixed
+/// transitive crate features (`ring` + `aws-lc-rs`) never panic when a TLS
+/// client initializes.
+pub fn ensure_crypto_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 /// Builds a `reqwest::Client` with the workspace's shared timeouts, User-Agent,
 /// TLS (`rustls`), and redirect policy.
 pub fn build_client(config: &ClientConfig) -> Result<reqwest::Client, reqwest::Error> {
+    ensure_crypto_provider();
     let mut builder = reqwest::Client::builder()
         .connect_timeout(config.connect_timeout)
         .timeout(config.request_timeout)

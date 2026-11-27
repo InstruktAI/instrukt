@@ -32,6 +32,21 @@ pub(crate) fn mcp_gate() -> &'static Gate {
     })
 }
 
+fn rfc6749_code(raw: &str) -> Option<&'static str> {
+    const CODES: &[&str] = &[
+        "invalid_client",
+        "invalid_grant",
+        "invalid_request",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+        "access_denied",
+        "server_error",
+        "temporarily_unavailable",
+    ];
+    CODES.iter().copied().find(|code| raw.contains(code))
+}
+
 /// Maps `rmcp::transport::auth::AuthError` to a fixed, credential-safe summary
 /// before persisting to SQLite (`mcp_sign_ins.failure`) or returning to callers,
 /// never echoing provider `error_description` bodies or reflected credentials.
@@ -39,11 +54,18 @@ pub(crate) fn sanitize_auth_error(error: &AuthError) -> String {
     match error {
         AuthError::AuthorizationRequired => "OAuth authorization required".into(),
         AuthError::AuthorizationFailed(_) => "OAuth authorization failed".into(),
-        AuthError::TokenExchangeFailed(_) => {
-            "OAuth token exchange rejected by authorization server".into()
-        }
-        AuthError::TokenRefreshFailed(_) => "OAuth token refresh failed".into(),
-        AuthError::TokenRefreshRejected(_) => "OAuth refresh token was rejected".into(),
+        AuthError::TokenExchangeFailed(raw) => match rfc6749_code(raw) {
+            Some(code) => format!("OAuth token exchange rejected ({code})"),
+            None => "OAuth token exchange rejected by authorization server".into(),
+        },
+        AuthError::TokenRefreshFailed(raw) => match rfc6749_code(raw) {
+            Some(code) => format!("OAuth token refresh failed ({code})"),
+            None => "OAuth token refresh failed".into(),
+        },
+        AuthError::TokenRefreshRejected(raw) => match rfc6749_code(raw) {
+            Some(code) => format!("OAuth refresh token rejected ({code})"),
+            None => "OAuth refresh token was rejected".into(),
+        },
         AuthError::CredentialStoreError(_) => "OAuth credential store error".into(),
         AuthError::HttpError(err) => match err.status() {
             Some(status) => format!("OAuth HTTP error ({})", status.as_u16()),

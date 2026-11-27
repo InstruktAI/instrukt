@@ -245,8 +245,8 @@ fn readiness_error(error: super::GitHubError) -> AppError {
     }
 }
 
-fn permissions_map(operation: Operation) -> HashMap<String, String> {
-    let entries: &[(&str, &str)] = match operation {
+fn permissions_list(operation: Operation) -> &'static [(&'static str, &'static str)] {
+    match operation {
         Operation::Record => &[
             ("issues", "write"),
             ("contents", "read"),
@@ -264,8 +264,11 @@ fn permissions_map(operation: Operation) -> HashMap<String, String> {
         Operation::ReviewPublish => &[("pull_requests", "write"), ("statuses", "write")],
         Operation::CompanyRepository => &[("administration", "write")],
         Operation::ProposalOpen => &[("pull_requests", "write"), ("contents", "read")],
-    };
-    entries
+    }
+}
+
+fn permissions_map(operation: Operation) -> HashMap<String, String> {
+    permissions_list(operation)
         .iter()
         .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
         .collect()
@@ -635,8 +638,9 @@ impl Apps {
             .as_u64()
             .filter(|_| installation["app_id"].as_u64() == Some(app.app_id))
             .ok_or_else(|| setup("repository installation does not match selected App"))?;
+        let required_list = permissions_list(op);
         let required_permissions = permissions_map(op);
-        check_permissions(&installation["permissions"], &required_permissions)?;
+        check_permissions(&installation["permissions"], required_list)?;
         let unscoped = op == Operation::Board || organisation;
         let mut token_request = octocrab::models::apps::CreateInstallationAccessToken {
             permissions: Some(required_permissions.clone()),
@@ -654,7 +658,7 @@ impl Apps {
             &token_request,
             clock,
         )?;
-        check_permissions(&response["permissions"], &required_permissions)?;
+        check_permissions(&response["permissions"], required_list)?;
         let expires: Timestamp = response["expires_at"]
             .as_str()
             .and_then(|s| s.parse::<Timestamp>().ok())
@@ -941,9 +945,9 @@ pub(super) fn public_get(api: &str, route: &str) -> Result<(u16, http::HeaderMap
     .map_err(|err| err.to_string())?
 }
 
-fn check_permissions(actual: &Value, required: &HashMap<String, String>) -> Result<(), AppError> {
-    for (name, wanted) in required {
-        if actual[name] != wanted.as_str() && !(wanted == "read" && actual[name] == "write") {
+fn check_permissions(actual: &Value, required: &[(&str, &str)]) -> Result<(), AppError> {
+    for &(name, wanted) in required {
+        if actual[name] != wanted && !(wanted == "read" && actual[name] == "write") {
             return Err(setup(&format!(
                 "installation credential lacks required {name} permission"
             )));

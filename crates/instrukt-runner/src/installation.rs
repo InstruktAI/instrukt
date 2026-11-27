@@ -924,8 +924,6 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
     let runner = state.read(|conn, path| {
         conn.query_row("SELECT at,outcome FROM runner_admission WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"outcome":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))
     })?.flatten();
-    let links = crate::links::status(request.home)
-        .map_err(|e| inspection_error("conversation links", e))?;
     let conversations = request
         .company
         .map(|company| company.status(request.home, request.now))
@@ -936,7 +934,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         "runner": runner, "workers": workers, "skipped_wake": skipped_wake,
         "activation_failures": failures, "consumers": consumers,
         "stopped_executions": stopped_executions, "input_findings": input_findings,
-        "set_aside": set_aside, "links": links, "conversations": conversations
+        "set_aside": set_aside, "conversations": conversations
     }))
 }
 

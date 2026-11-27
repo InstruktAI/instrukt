@@ -251,10 +251,10 @@ satisfy this condition. Conviction is the judgment that applies that standard; i
 is never the standard itself, which is why a plan reviewer can re-run it later against the
 same text.
 
-After the peer completes the artifact revision being interrogated, the driving session stamps
-the settled cause with `instrukt todo stamp {slug} --diagnosis-settled`. The driver's lifecycle
-claim remains unchanged before and after peer revisions. The stamp binds to the artifact's
-current digest, so a later revision invalidates it and the cause must be settled again.
+After the peer completes the artifact revision being interrogated and releases its own attempt,
+the driving session stamps the settled cause with `instrukt todo stamp {slug} --diagnosis-settled`.
+The driver's lifecycle claim remains unchanged before and after peer revisions. The stamp binds to
+the artifact's current digest, so a later revision invalidates it and the cause must be settled again.
 
 Then inspect `instrukt todo show {slug}` to verify the settled diagnosis in the ledger.
 from the settled evidence; the planner consumes the root cause and derives the fix.

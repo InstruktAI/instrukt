@@ -465,7 +465,7 @@ fn a_bug_filed_as_ordinary_work_is_sent_to_the_front_door() {
         }
         let refused = project.todo(args).failure().code(1);
         insta::allow_duplicates! {
-            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: a bug is not created as ordinary work: report it through the bug front door, `instrukt bugs report '<description>'`, which puts the questions to face before anything is filed");
+            insta::assert_snapshot!(stderr(&project, &refused), @"instrukt: bug records are created by `instrukt bugs report '<description>'`");
         }
     }
     insta::assert_snapshot!(project.ok(["list"]), @"no todos");
@@ -626,7 +626,7 @@ fn a_further_round_keeps_the_worker_that_did_the_earlier_one() {
     insta::assert_snapshot!("continued-worker-record", redact(&shown));
 }
 
-// spec: project/instrukt/spec/feature/work/todos UC-TD14
+// spec: project/instrukt/spec/feature/work/todos UC-TD7
 #[test]
 fn a_worker_bound_in_one_role_is_refused_a_binding_of_another() {
     let crew = Crew::new();

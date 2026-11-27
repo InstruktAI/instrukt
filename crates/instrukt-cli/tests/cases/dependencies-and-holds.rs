@@ -451,6 +451,14 @@ fn a_filing_under_a_todo_whose_implementation_has_started_is_refused_naming_why(
         "artifacts",
         "write",
         "list-depth",
+        "prd",
+        "Track list depth.",
+    ]);
+    project.ok(["stamp", "list-depth", "--prd-approved", "--by", "human"]);
+    project.ok([
+        "artifacts",
+        "write",
+        "list-depth",
         "implementation-plan",
         "Track list depth.",
     ]);

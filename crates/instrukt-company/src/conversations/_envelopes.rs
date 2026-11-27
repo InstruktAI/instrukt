@@ -349,6 +349,53 @@ fn minute(at: Option<jiff::Timestamp>) -> String {
     .unwrap_or_else(|| "unknown".into())
 }
 
+/// One addressed message framed for its own turn: the context envelope and
+/// the member envelope naming its sender, sharing one fresh boundary token
+/// that occurs nowhere in what they frame.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn framed(
+    connector: &str,
+    conversation: &str,
+    sender: &str,
+    is_admin: bool,
+    is_direct: bool,
+    written_at: jiff::Timestamp,
+    text: &str,
+    accompanying: &instrukt_connector::Accompanying,
+) -> Result<(String, String), super::ConversationError> {
+    let mut scanned: Vec<&str> = vec![text, connector, conversation, sender];
+    for entry in &accompanying.messages {
+        scanned.push(&entry.text);
+        scanned.push(&entry.speaker);
+    }
+    let token = delivery_boundary(&scanned)?;
+    let entries: Vec<ContextEntry<'_>> = accompanying
+        .messages
+        .iter()
+        .map(|e| ContextEntry {
+            speaker: &e.speaker,
+            own: e.own,
+            at: e.at,
+            text: &e.text,
+        })
+        .collect();
+    let input = format!(
+        "{}\n{}",
+        context(&token, &entries, accompanying.left_out),
+        member(&MemberEnvelope {
+            connector,
+            conversation,
+            member: sender,
+            is_admin,
+            is_direct,
+            at: Some(written_at),
+            token: &token,
+            text,
+        })
+    );
+    Ok((token, input))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ContextEntry, MemberEnvelope, Span, context, context_body, member, segment};

@@ -1,23 +1,22 @@
 //! The requested reviewer's assignment
 //! (`project/instrukt/spec/feature/runner/requested-review`, The reviewer's
-//! assignment): one fixed wording rendered from the admitted coordinates, as
-//! a runner-authored `[Instrukt Assignment]` control envelope
-//! (`project/instrukt/spec/feature/runner/conversation-links`). It holds
-//! nothing the requester composed: no requester identity, no timestamp, no
-//! other envelope.
+//! assignment): one fixed wording rendered from the admitted coordinates. It
+//! holds nothing the requester composed: no requester identity, no timestamp,
+//! no other envelope.
 
 use instrukt_core::config::REVIEW_PROCEDURE;
 use instrukt_core::ids::ProjectSlug;
 
 use super::_admission::Coordinates;
-use crate::envelopes::Control;
 
 /// A rendering and its SHA-256 digest: the same coordinates always render
-/// the same text.
+/// the same text. `legacy_digest` matches pre-retirement asks stored with the
+/// `[Instrukt Assignment]` wrapper so in-flight retries remain recoverable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Rendering {
     pub text: String,
     pub digest: String,
+    pub legacy_digest: String,
 }
 
 /// Renders the assignment for `coordinates` in `project`: the procedure,
@@ -32,9 +31,15 @@ pub(super) fn render(project: &ProjectSlug, coordinates: &Coordinates) -> Render
     for (name, value) in coordinates.named() {
         body.push_str(&format!("{name}: {value}\n"));
     }
-    let text = Control::Assignment.frame(&body);
+    let text = body.trim_end_matches('\n').to_owned();
     let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
-    Rendering { text, digest }
+    let legacy = format!("[Instrukt Assignment]\n{text}\n[/Instrukt Assignment]");
+    let legacy_digest = format!("{:x}", Sha256::digest(legacy.as_bytes()));
+    Rendering {
+        text,
+        digest,
+        legacy_digest,
+    }
 }
 
 #[cfg(test)]

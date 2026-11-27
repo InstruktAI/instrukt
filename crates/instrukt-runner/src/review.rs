@@ -24,10 +24,7 @@ use crate::state::RunnerState;
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
 pub use _proposals::ProposalReports;
 pub(crate) use _requests::live;
-pub use _requests::{
-    Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
-    turn_opening_with,
-};
+pub use _requests::{Disposition, Request, Standing, observed_red, requests};
 
 /// A review answer could not be read.
 #[derive(Debug, thiserror::Error)]
