@@ -201,6 +201,23 @@ pub(crate) async fn read_bounded_body(
     Ok(body)
 }
 
+/// Typed failure from [`get_json_text`] / [`post_form_text`] keeping temporary
+/// gate unavailability (carrying the gate's `Wait`) distinct from permanent
+/// defects.
+#[derive(Debug)]
+pub(crate) enum GatedTextError {
+    Unavailable(String),
+    Defect(String),
+}
+
+impl std::fmt::Display for GatedTextError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Unavailable(msg) | Self::Defect(msg) => f.write_str(msg),
+        }
+    }
+}
+
 fn judge_body_error(
     error: &BodyReadError,
     settings: &Settings<'_>,
@@ -208,7 +225,19 @@ fn judge_body_error(
     match error {
         BodyReadError::Transport(req_err) => match judge_reqwest_error(req_err, settings) {
             Judgment::Unavailable(unavailable) => Some(unavailable),
-            Judgment::Success | Judgment::Defect => None,
+            // `reqwest::Response::chunk()` wraps mid-stream HTTP body/EOF
+            // termination in outer `Decode` (`reqwest` 0.13.5); no JSON or
+            // UTF-8 decoding runs here, so any remaining chunk error is a
+            // transport interruption judged through the HTTP adapter.
+            Judgment::Success | Judgment::Defect => match instrukt_outside::http::judge(
+                &instrukt_outside::http::HttpAnswer::Transport(
+                    instrukt_outside::http::TransportFailure::Unreachable,
+                ),
+                settings,
+            ) {
+                Judgment::Unavailable(unavailable) => Some(unavailable),
+                Judgment::Success | Judgment::Defect => None,
+            },
         },
         BodyReadError::TooLarge(_) => None,
     }
@@ -217,9 +246,11 @@ fn judge_body_error(
 async fn send_gated_text(
     url: &str,
     build: impl FnOnce() -> reqwest::RequestBuilder,
-) -> Result<(u16, String), String> {
+) -> Result<(u16, String), GatedTextError> {
     if !instrukt_core::config::mcp_address_admitted(url) {
-        return Err("endpoint address must be https (or loopback http)".into());
+        return Err(GatedTextError::Defect(
+            "endpoint address must be https (or loopback http)".into(),
+        ));
     }
     let (origin, path) = gate_scope(url);
     let key = Key::new("mcp-oauth", [origin.as_str()]).item(path.as_str());
@@ -269,18 +300,26 @@ async fn send_gated_text(
         })
         .await;
     match attempted {
-        Attempted::Done(answer)
-        | Attempted::Defect(Ok(answer))
-        | Attempted::Wait {
-            error: Some(Ok(answer)),
-            ..
-        } => Ok(answer),
+        Attempted::Done(answer) | Attempted::Defect(Ok(answer)) => Ok(answer),
         Attempted::Wait {
-            error: Some(Err(message)),
-            ..
+            wait,
+            error: Some(Ok((status, body_text))),
+        } => {
+            let detail = serde_json::from_str::<Value>(&body_text)
+                .ok()
+                .and_then(|v| v.get("error").and_then(Value::as_str).map(str::to_owned))
+                .map_or_else(
+                    || format!("HTTP {status}"),
+                    |code| format!("HTTP {status}: {code}"),
+                );
+            Err(GatedTextError::Unavailable(format!("{wait} ({detail})")))
         }
-        | Attempted::Defect(Err(message)) => Err(message),
-        Attempted::Wait { wait, error: None } => Err(wait.to_string()),
+        Attempted::Wait {
+            wait,
+            error: Some(Err(message)),
+        } => Err(GatedTextError::Unavailable(format!("{wait} ({message})"))),
+        Attempted::Wait { wait, error: None } => Err(GatedTextError::Unavailable(wait.to_string())),
+        Attempted::Defect(Err(message)) => Err(GatedTextError::Defect(message)),
     }
 }
 
@@ -290,7 +329,7 @@ pub(crate) async fn get_json_text(
     client: &reqwest::Client,
     url: &str,
     bearer_token: Option<&str>,
-) -> Result<(u16, String), String> {
+) -> Result<(u16, String), GatedTextError> {
     send_gated_text(url, || {
         let mut request = client.get(url).header(ACCEPT, "application/json");
         if let Some(token) = bearer_token {
@@ -308,7 +347,7 @@ pub(crate) async fn post_form_text(
     client: &reqwest::Client,
     url: &str,
     form: &[(&str, &str)],
-) -> Result<(u16, String), String> {
+) -> Result<(u16, String), GatedTextError> {
     send_gated_text(url, || {
         client
             .post(url)
@@ -493,10 +532,11 @@ impl AdmittedOAuthHttpClient {
                 ..
             } => Ok(response),
             Attempted::Wait {
+                wait,
                 error: Some(Err(error)),
-                ..
-            }
-            | Attempted::Defect(Err(error)) => Err(error),
+            } => Err(Box::new(std::io::Error::other(format!("{wait} ({error})")))
+                as OAuthHttpClientError),
+            Attempted::Defect(Err(error)) => Err(error),
             Attempted::Wait { wait, error: None } => Err(Box::new(std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
                 wait.to_string(),
@@ -526,6 +566,8 @@ pub(crate) fn string_list(value: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::net::TcpListener;
 
     #[test]
     fn sanitize_auth_error_never_echoes_provider_payloads() {
@@ -533,5 +575,56 @@ mod tests {
         let msg = sanitize_auth_error(&err);
         assert!(!msg.contains("secret-token-leaked-in-body"), "{msg}");
         assert!(msg.contains("token exchange"), "{msg}");
+    }
+
+    #[test]
+    fn interrupted_body_is_judged_unavailable_while_oversized_body_is_defect()
+    -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            judge_body_error(&BodyReadError::TooLarge(1024), &Settings::default()),
+            None
+        );
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let addr = listener.local_addr()?;
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut req = [0u8; 1024];
+                let _ = std::io::Read::read(&mut stream, &mut req);
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort");
+                let _ = stream.flush();
+            }
+        });
+        let http = client(
+            "test",
+            Duration::from_secs(2),
+            Duration::from_secs(2),
+            false,
+        )?;
+        let url = format!("http://{addr}/truncated");
+        let outcome = run_async("test", async move {
+            let response = http
+                .get(&url)
+                .send()
+                .await
+                .map_err(BodyReadError::Transport)?;
+            read_bounded_body(response, MAX_OAUTH_BODY_BYTES).await
+        })?;
+        let _ = server.join();
+        let Err(err) = outcome else {
+            return Err("truncated body must fail".into());
+        };
+        let unavailable = judge_body_error(&err, &Settings::default());
+        assert!(
+            matches!(
+                unavailable,
+                Some(instrukt_outside::Unavailable {
+                    reason: instrukt_outside::Reason::Unreachable,
+                    ..
+                })
+            ),
+            "expected Unreachable for premature body close, got: {unavailable:?} (err: {err})"
+        );
+        Ok(())
     }
 }

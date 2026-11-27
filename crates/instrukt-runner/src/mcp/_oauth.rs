@@ -182,24 +182,36 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
             .await;
         match attempted {
             instrukt_outside::Attempted::Done(status)
-            | instrukt_outside::Attempted::Defect(Ok(status))
-            | instrukt_outside::Attempted::Wait {
-                error: Some(Ok(status)),
-                ..
-            } => Ok(status),
+            | instrukt_outside::Attempted::Defect(Ok(status)) => Ok(status),
             instrukt_outside::Attempted::Wait {
-                error: Some(Err(cause)),
-                ..
+                wait,
+                error: Some(Ok(status)),
+            } => {
+                let _ = claim_sign_in_return(&transport, &state_digest);
+                Err(McpError::Unreachable {
+                    server: "ingress".into(),
+                    url: ingress_url.clone(),
+                    cause: format!(
+                        "external callback probe to {ingress_url}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200): {wait}"
+                    ),
+                })
             }
-            | instrukt_outside::Attempted::Defect(Err(cause)) => Err(McpError::Unreachable {
+            instrukt_outside::Attempted::Wait {
+                wait,
+                error: Some(Err(cause)),
+            } => Err(McpError::Unreachable {
                 server: "ingress".into(),
                 url: ingress_url.clone(),
-                cause,
+                cause: format!("{cause}: {wait}"),
             }),
             instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
                 server: "ingress".into(),
                 url: ingress_url.clone(),
                 cause: format!("external callback probe to {ingress_url} delayed: {wait}"),
+            }),
+            instrukt_outside::Attempted::Defect(Err(cause)) => Err(McpError::Server {
+                server: "ingress".into(),
+                cause,
             }),
         }
     })??;
@@ -1350,7 +1362,9 @@ fn verify_declared_identity(
     )
     .map_err(|e| e.to_string())?;
     let (status, body_text) = _http::run_async(&identity.url, async {
-        _http::get_json_text(&http_client, &identity.url, Some(access_token)).await
+        _http::get_json_text(&http_client, &identity.url, Some(access_token))
+            .await
+            .map_err(|e| format!("identity request failed: {e}"))
     })
     .map_err(|e| e.to_string())??;
     if status != 200 {
@@ -1386,7 +1400,9 @@ fn fetch_userinfo_json(userinfo_endpoint: &str, access_token: &str) -> Result<Va
     )
     .map_err(|e| e.to_string())?;
     let (status, text) = _http::run_async(userinfo_endpoint, async {
-        _http::get_json_text(&http_client, userinfo_endpoint, Some(access_token)).await
+        _http::get_json_text(&http_client, userinfo_endpoint, Some(access_token))
+            .await
+            .map_err(|e| format!("UserInfo endpoint failed: {e}"))
     })
     .map_err(|e| e.to_string())??;
     if status != 200 {
@@ -1440,7 +1456,9 @@ fn verify_oidc_identity(
     )
     .map_err(|e| e.to_string())?;
     let (jwks_status, jwks_text) = _http::run_async(jwks_uri, async {
-        _http::get_json_text(&http_client, jwks_uri, None).await
+        _http::get_json_text(&http_client, jwks_uri, None)
+            .await
+            .map_err(|e| format!("JWKS endpoint failed: {e}"))
     })
     .map_err(|e| e.to_string())??;
     if jwks_status != 200 {

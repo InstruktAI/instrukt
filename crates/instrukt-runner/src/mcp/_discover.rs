@@ -182,24 +182,33 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
         captured,
         unavailable,
     } = resolve_live(url)?;
-    let resolved = resolution.map_err(|error| {
-        if let Some(cause) = unavailable {
-            McpError::Unreachable {
-                server: url.to_owned(),
-                url: url.to_owned(),
-                cause,
+    let resolved = match resolution {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            if let Some(cause) = unavailable {
+                return Err(McpError::Unreachable {
+                    server: url.to_owned(),
+                    url: url.to_owned(),
+                    cause,
+                });
             }
-        } else {
-            McpError::Server {
+            return Err(McpError::Server {
                 server: url.to_owned(),
                 cause: format!(
                     "OAuth metadata discovery failed: {}",
                     sanitize_auth_error(&error)
                 ),
-            }
+            });
         }
-    })?;
+    };
     if resolved.source != AuthorizationMetadataSource::ProtectedResourceMetadata {
+        if let Some(cause) = unavailable {
+            return Err(McpError::Unreachable {
+                server: url.to_owned(),
+                url: url.to_owned(),
+                cause,
+            });
+        }
         return Err(McpError::Server {
             server: url.to_owned(),
             cause: "server published no readable RFC 9728 protected resource metadata".into(),

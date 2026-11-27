@@ -581,10 +581,16 @@ pub(crate) fn obtain_issuer_login(
     let (status, body_text) = super::_http::run_async(server.name.as_str(), async {
         super::_http::post_form_text(&http_client, token_endpoint, &form)
             .await
-            .map_err(|error| McpError::Unreachable {
-                server: server.name.to_string(),
-                url: token_endpoint.to_owned(),
-                cause: format!("issuer token exchange failed: {error}"),
+            .map_err(|error| match error {
+                super::_http::GatedTextError::Unavailable(detail) => McpError::Unreachable {
+                    server: server.name.to_string(),
+                    url: token_endpoint.to_owned(),
+                    cause: format!("issuer token exchange failed: {detail}"),
+                },
+                super::_http::GatedTextError::Defect(detail) => McpError::Server {
+                    server: server.name.to_string(),
+                    cause: format!("issuer token exchange failed: {detail}"),
+                },
             })
     })??;
     if !(200..300).contains(&status) {
