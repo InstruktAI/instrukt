@@ -1059,17 +1059,6 @@ fn canonical_root(path: &Path) -> Option<PathBuf> {
     Some(absolute.canonicalize().unwrap_or(absolute))
 }
 
-fn t3_gate() -> &'static instrukt_outside::Gate {
-    static GATE: std::sync::OnceLock<instrukt_outside::Gate> = std::sync::OnceLock::new();
-    GATE.get_or_init(|| {
-        instrukt_outside::Gate::new(
-            std::sync::Arc::new(jiff::Timestamp::now),
-            std::sync::Arc::new(std::time::Instant::now),
-            instrukt_outside::Report::log(),
-        )
-    })
-}
-
 /// The live projects `GET /api/projects` lists; deleted ones are left out.
 /// An unreachable server or malformed metadata is a cause, never an empty
 /// table.
@@ -1094,86 +1083,30 @@ pub(super) fn fetch_live_projects(
     })?;
     let url = origin.as_str().to_owned();
     let bearer = format!("Bearer {token}");
-    let key = instrukt_outside::Key::new("t3", [url.as_str()]).item("projects");
-    let gate = t3_gate();
-    let settings = instrukt_outside::Settings::default();
-    let attempted =
-        instrukt_outside::runtime::block_on(gate.attempt_async(&key, &settings, || async {
-            let response = match client
-                .get(&url)
-                .header(reqwest::header::AUTHORIZATION, bearer.as_str())
-                .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(error) => {
-                    return match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
-                        instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                            instrukt_outside::Tried::Unavailable(unavailable, error.to_string())
-                        }
-                        instrukt_outside::http::Judgment::Success
-                        | instrukt_outside::http::Judgment::Defect => {
-                            instrukt_outside::Tried::Defect(error.to_string())
-                        }
-                    };
-                }
-            };
-            let status = response.status();
-            let headers = response.headers().clone();
-            let now = gate.now();
-            match instrukt_outside::http::judge_response(
-                status.as_u16(),
-                &headers,
-                now,
-                None,
-                &settings,
-            ) {
-                instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                    return instrukt_outside::Tried::Unavailable(
-                        unavailable,
-                        format!("HTTP {status}"),
-                    );
-                }
-                instrukt_outside::http::Judgment::Defect => {
-                    return instrukt_outside::Tried::Defect(format!("HTTP {status}"));
-                }
-                instrukt_outside::http::Judgment::Success => {}
-            }
-            if !status.is_success() {
-                return instrukt_outside::Tried::Defect(format!("HTTP {status}"));
-            }
-            match response.text().await {
-                Ok(text) => instrukt_outside::Tried::Done(text),
-                Err(error) => {
-                    match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
-                        instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                            instrukt_outside::Tried::Unavailable(unavailable, error.to_string())
-                        }
-                        instrukt_outside::http::Judgment::Success
-                        | instrukt_outside::http::Judgment::Defect => {
-                            instrukt_outside::Tried::Defect(error.to_string())
-                        }
-                    }
-                }
-            }
-        }))
-        .map_err(|error| {
-            tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            ExecutionRootCause::Unreachable
-        })?;
-    let text = match attempted {
-        instrukt_outside::Attempted::Done(text) => text,
-        instrukt_outside::Attempted::Defect(error) => {
-            tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            return Err(ExecutionRootCause::Unreachable);
+    let text = instrukt_outside::runtime::block_on(async {
+        let response = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+            .send()
+            .await
+            .map_err(|error| error.without_url().to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
         }
-        instrukt_outside::Attempted::Wait { error, .. } => {
-            if let Some(error) = error {
-                tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            }
-            return Err(ExecutionRootCause::Unreachable);
-        }
-    };
+        response
+            .text()
+            .await
+            .map_err(|error| error.without_url().to_string())
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
     live_projects(&text)
 }
 

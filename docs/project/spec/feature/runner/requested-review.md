@@ -182,7 +182,7 @@ records its verdict. The reply does not wait for the review.
 When the runtime does not accept the start or the send within the command's
 wait, the ask is refused, naming the runtime and its door: the same command.
 It replays the ask with the identities the first one recorded
-(`project/instrukt/policy/checks-and-guards`). A send is sent again under its
+(`project/instrukt/spec/feature/runner/session-continuity`). A send is sent again under its
 command identity, which the runtime accepts once: a send it already accepted
 opens no second turn and is reported accepted
 (`project/instrukt/spec/feature/runner/t3-contract`). Nothing recognises a send

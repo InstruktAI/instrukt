@@ -80,8 +80,7 @@ under its revision check and whole-document validation
 `config validate` and `install --check` report it without changing anything
 (`project/instrukt/spec/feature/runner/module-installation`). A project layer
 that arrives with it through a commit is not admitted for automatic review on
-that computer; its other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). The readiness findings need
+that computer; its other capabilities are unaffected. The readiness findings need
 GitHub; while GitHub cannot be asked, admission waits and retries rather than
 refusing or admitting.
 
@@ -106,8 +105,7 @@ revision check and whole-document validation
 (`project/instrukt/spec/feature/configuration/configuration-editing`).
 `config validate` reports it without changing anything. A project layer that
 arrives with it through a commit is not admitted for reclaiming declared
-output on that computer; the project's other capabilities are unaffected
-(`project/instrukt/policy/checks-and-guards`). Installation inspection reports
+output on that computer; the project's other capabilities are unaffected. Installation inspection reports
 the withheld reclamation
 (`project/instrukt/spec/feature/runner/module-installation`), and no declared
 output is removed without an admitted declaration; the release of a delivered
@@ -173,8 +171,8 @@ against the project's `modules.events`: `instrukt config validate` reports
 it, a patch that would leave it is refused, and a layer that arrives with it
 withholds the home's event responses, as a module finding withholds its
 module's work (`project/instrukt/spec/feature/runner/work-dispatch`, Admitted
-configuration), since a prerequisite is checked where it enters
-(`project/instrukt/policy/checks-and-guards`).
+configuration), since prerequisites are checked where they enter
+(`sdlc/principle/design-fundamentals`, Fail Fast).
 
 Runtime choice is global-only: a cloned repository does not decide which runtime
 executes on the machine. Procedures run checks as the project documents them;
@@ -194,8 +192,8 @@ has no `redis.cluster.url`, that is a finding at `modules.events`: `config patch
 refuses it, `config validate` and `install --check` report it, and a project layer
 that arrives with it through a commit is not admitted for event responses on that
 computer; its todos and history are unaffected
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters, never discovered by the running runner).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter, never discovered by the running runner).
 
 `ingress.computer` is the existing stable instrukt machine ID. `ingress.reactions`
 names, by the same kind of ID, the one computer that activates procedures for

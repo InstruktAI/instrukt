@@ -1,5 +1,5 @@
 ---
-description: The outside gate — the mechanism a part brings each call to an outside service through, which judges a failure temporary or a defect, decides how long to wait and tells the operator once, while the part keeps the client best fitted to its service.
+description: The outside gate — internal daemon utility (`instrukt-outside`) through which long-lived retrying loops share in-process cooldowns, judge outages versus defects, and report waits once per episode while keeping each service's established client.
 ---
 
 # Outside Gate — Design
@@ -7,23 +7,28 @@ description: The outside gate — the mechanism a part brings each call to an ou
 ## Required reads
 
 - [project/instrukt/design/architecture/overview](overview.md)
-- [project/instrukt/policy/checks-and-guards](../../policy/checks-and-guards.md)
 
 ## Purpose
 
-A part that depends on a service outside instrukt brings each call's outcome to
-the outside gate. The gate turns what the service said into a judgment —
-temporarily unavailable or a defect — decides when the next try may happen, and
-tells the operator once that it waits and why. Which parts use it, and the rules
-they follow in doing so, are `project/instrukt/policy/checks-and-guards`'s.
+Long-lived daemon loops that talk to external services across repeated passes
+or transports (such as company connectors, the conversation relay, and
+background runner pollers) use the outside gate to coordinate availability. The
+gate turns what the service said into a judgment — temporarily unavailable or a
+defect — holds shared in-process cooldowns across callers of the same scope or
+key, decides when the next try may happen, and tells the operator once per
+outage episode.
 
-The gate governs availability, not transport. The part's own client makes the
-request; the gate never sends one. HTTP status semantics are one adapter of the
-gate.
+The gate governs availability for long-lived daemon loops, not transport and
+not one-shot CLI invocations. Each caller talks to its service through an
+established off-the-shelf SDK, protocol client, or CLI
+(`sdlc/policy/substrate-anchoring`) and never wraps or fights an SDK just to
+route through the gate. One-shot CLI commands exit immediately (so an
+in-process wait table carries no cross-call value) and use their client
+directly with ordinary error handling. HTTP status semantics are one adapter of
+the gate.
 
-The term is always "the outside gate". "Gate" alone keeps its meaning in
-`project/instrukt/policy/checks-and-guards`: an entry check that refuses with
-its door.
+The term is always "the outside gate". "Gate" alone refers to an entry or
+integrity check that refuses with its door (`general/principle/trust-and-guardrails`).
 
 ## Inputs/Outputs
 

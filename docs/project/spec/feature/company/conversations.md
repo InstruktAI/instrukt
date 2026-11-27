@@ -373,8 +373,7 @@ gives.
 ### What a person experiences
 
 A person in a conversation hears about their request and their own world, never
-about instrukt's internals (`project/instrukt/policy/checks-and-guards`: a person
-is told only what belongs to their world):
+about instrukt's internals:
 
 | Moment | What the person sees |
 | --- | --- |
@@ -445,8 +444,7 @@ A connector reads back what was written while it was not connected
 within the answering bound that is addressed and not yet retained is admitted and
 answered like a live one. An older one is not answered and is named to the
 operator in `instrukt events status` for the reporting period, once per message
-(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
-the operator).
+(`project/instrukt/spec/feature/runner/anomaly-notification`).
 
 Read-back runs alongside the connection and intake. A repeated read skips
 messages by provider identity. An admitted offline message uses the same

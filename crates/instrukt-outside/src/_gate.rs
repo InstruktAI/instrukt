@@ -361,7 +361,7 @@ impl Gate {
                 None => self.attempt_async(key, settings, &mut try_once).await,
                 Some((within, _)) if within.is_zero() => {
                     // A zero caller-wait budget performs a single try without
-                    // pausing afterward (`project/instrukt/policy/checks-and-guards`).
+                    // pausing afterward.
                     return self.attempt_async(key, settings, &mut try_once).await;
                 }
                 Some((_, deadline)) => {

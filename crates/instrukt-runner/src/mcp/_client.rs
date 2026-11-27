@@ -6,10 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use http::{
-    HeaderMap, HeaderName, HeaderValue,
-    header::{AUTHORIZATION, RETRY_AFTER},
-};
+use http::{HeaderName, HeaderValue, header::AUTHORIZATION};
 use rmcp::ServiceExt;
 use rmcp::model::{
     CallToolRequestParams, CallToolResult, ClientCapabilities, ClientConfig, ContentBlock,
@@ -53,29 +50,10 @@ pub struct Tool {
     pub input_schema: Value,
 }
 
-/// Typed HTTP status metadata captured from `rmcp`'s [`HttpStatusError`] so
-/// `Retry-After` reaches `instrukt_outside::http::judge_response`.
-struct StatusFailure {
-    status: u16,
-    retry_after: Option<String>,
-    received_at: jiff::Timestamp,
-}
-
-enum SessionFailure {
-    HttpStatus(StatusFailure),
-    Other(McpError),
-}
-
-impl From<McpError> for SessionFailure {
-    fn from(error: McpError) -> Self {
-        Self::Other(error)
-    }
-}
-
 /// The server's whole tool catalog, every page of it.
 pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
     let (client, config, name, url) = prepare_transport(target)?;
-    run_gated(target.name, target.url, "list_tools", async move {
+    _http::run_async(target.name, async move {
         let running = open_session(client, config, &name, &url).await?;
         let outcome = running
             .peer()
@@ -86,12 +64,12 @@ pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
                 listed
                     .items
                     .into_iter()
-                    .map(|tool| convert_tool(&name, tool).map_err(SessionFailure::from))
+                    .map(|tool| convert_tool(&name, tool))
                     .collect()
             });
         let _ = running.cancel().await;
         outcome
-    })
+    })?
 }
 
 /// The result of calling `tool`; a result the server marks as an error
@@ -99,7 +77,7 @@ pub(super) fn list_tools(target: &Target<'_>) -> Result<Vec<Tool>, McpError> {
 pub(super) fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<Value, McpError> {
     let (client, config, name, url) = prepare_transport(target)?;
     let tool_name = tool.to_owned();
-    run_gated(target.name, target.url, "call", async move {
+    _http::run_async(target.name, async move {
         let running = open_session(client, config, &name, &url).await?;
         let mut params = CallToolRequestParams::new(tool_name);
         if let Some(map) = arguments.as_object() {
@@ -111,148 +89,19 @@ pub(super) fn call(target: &Target<'_>, tool: &str, arguments: Value) -> Result<
             .map_err(|error| map_service_error(&name, &url, error))
             .and_then(|result| {
                 if result.is_error == Some(true) {
-                    return Err(SessionFailure::from(McpError::Server {
+                    return Err(McpError::Server {
                         server: name.clone(),
                         cause: cause_of_tool_error(&result),
-                    }));
+                    });
                 }
-                serde_json::to_value(&result).map_err(|error| {
-                    SessionFailure::from(McpError::Server {
-                        server: name.clone(),
-                        cause: format!("failed to serialize tool result: {error}"),
-                    })
+                serde_json::to_value(&result).map_err(|error| McpError::Server {
+                    server: name.clone(),
+                    cause: format!("failed to serialize tool result: {error}"),
                 })
             });
         let _ = running.cancel().await;
         outcome
-    })
-}
-
-/// Runs one MCP session operation through `instrukt-outside`'s shared gate
-/// (single attempt, never retrying mutations automatically) so unreachable,
-/// timed-out, 429 (with `Retry-After`), and 5xx outages are judged and reported once.
-fn run_gated<T, F>(server: &str, url: &str, op: &str, future: F) -> Result<T, McpError>
-where
-    F: std::future::Future<Output = Result<T, SessionFailure>> + Send,
-    T: Send,
-{
-    let (origin, path) = _http::gate_scope(url);
-    let key = instrukt_outside::Key::new("mcp", [origin.as_str(), path.as_str()]).item(op);
-    let settings = instrukt_outside::Settings::default();
-    let server_name = server.to_owned();
-    let attempted = _http::run_async(server, async move {
-        _http::mcp_gate()
-            .attempt_async(&key, &settings, || async move {
-                match future.await {
-                    Ok(value) => instrukt_outside::Tried::Done(value),
-                    Err(failure) => classify_for_gate(&server_name, failure, &settings),
-                }
-            })
-            .await
-    })?;
-    match attempted {
-        instrukt_outside::Attempted::Done(value) => Ok(value),
-        instrukt_outside::Attempted::Defect(error) => Err(error),
-        instrukt_outside::Attempted::Wait {
-            wait,
-            error: Some(error),
-        } => match error {
-            McpError::Unreachable { server, url, cause } => Err(McpError::Unreachable {
-                server,
-                url,
-                cause: format!("{wait} ({cause})"),
-            }),
-            McpError::Server { server, cause } => Err(McpError::Server {
-                server,
-                cause: format!("{wait} ({cause})"),
-            }),
-            other => Err(other),
-        },
-        instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
-            server: server.to_owned(),
-            url: _http::redact_url(url),
-            cause: wait.to_string(),
-        }),
-    }
-}
-
-fn classify_for_gate<T>(
-    server: &str,
-    failure: SessionFailure,
-    settings: &instrukt_outside::Settings<'_>,
-) -> instrukt_outside::Tried<T, McpError> {
-    match failure {
-        SessionFailure::HttpStatus(StatusFailure {
-            status,
-            retry_after,
-            received_at,
-        }) => {
-            let mut headers = HeaderMap::new();
-            if let Some(raw) = retry_after
-                && let Ok(value) = HeaderValue::from_str(&raw)
-            {
-                headers.insert(RETRY_AFTER, value);
-            }
-            let error = McpError::Server {
-                server: server.to_owned(),
-                cause: format!("HTTP {status}"),
-            };
-            match instrukt_outside::http::judge_response(
-                status,
-                &headers,
-                received_at,
-                None,
-                settings,
-            ) {
-                instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                    instrukt_outside::Tried::Unavailable(unavailable, error)
-                }
-                instrukt_outside::http::Judgment::Success
-                | instrukt_outside::http::Judgment::Defect => {
-                    instrukt_outside::Tried::Defect(error)
-                }
-            }
-        }
-        SessionFailure::Other(error) => match &error {
-            McpError::Unreachable { cause, .. } => instrukt_outside::Tried::Unavailable(
-                instrukt_outside::Unavailable {
-                    reason: if cause.contains("timed out") {
-                        instrukt_outside::Reason::TimedOut
-                    } else {
-                        instrukt_outside::Reason::Unreachable
-                    },
-                    extent: instrukt_outside::Extent::Scope,
-                    named: None,
-                },
-                error,
-            ),
-            McpError::Server { cause, .. } if cause.starts_with("HTTP 429") => {
-                instrukt_outside::Tried::Unavailable(
-                    instrukt_outside::Unavailable {
-                        reason: instrukt_outside::Reason::RateLimited,
-                        extent: instrukt_outside::Extent::Key,
-                        named: None,
-                    },
-                    error,
-                )
-            }
-            McpError::Server { cause, .. } if cause.starts_with("HTTP 5") => {
-                let status = cause
-                    .strip_prefix("HTTP ")
-                    .and_then(|s| s.get(..3))
-                    .and_then(|s| s.parse::<u16>().ok());
-                instrukt_outside::Tried::Unavailable(
-                    instrukt_outside::Unavailable {
-                        reason: instrukt_outside::Reason::Unavailable { status },
-                        extent: instrukt_outside::Extent::Scope,
-                        named: None,
-                    },
-                    error,
-                )
-            }
-            _ => instrukt_outside::Tried::Defect(error),
-        },
-    }
+    })?
 }
 
 fn prepare_transport(
@@ -310,7 +159,7 @@ async fn open_session(
     config: StreamableHttpClientTransportConfig,
     server: &str,
     url: &str,
-) -> Result<RunningService<RoleClient, ClientConfig>, SessionFailure> {
+) -> Result<RunningService<RoleClient, ClientConfig>, McpError> {
     let transport = StreamableHttpClientTransport::with_client(client, config);
     let client_config = ClientConfig::new(
         ClientCapabilities::default(),
@@ -332,13 +181,13 @@ async fn open_session(
     {
         let version = answered.unwrap_or_else(|| "none".to_owned());
         let _ = running.cancel().await;
-        return Err(SessionFailure::from(McpError::Server {
+        return Err(McpError::Server {
             server: server.to_owned(),
             cause: format!(
                 "it answers protocol version {version}, and instrukt speaks {}",
                 PROTOCOL_VERSIONS.join(", ")
             ),
-        }));
+        });
     }
 
     Ok(running)
@@ -389,74 +238,100 @@ fn format_rpc_error(error: &ErrorData) -> String {
     }
 }
 
-fn map_init_error(server: &str, url: &str, error: ClientInitializeError) -> SessionFailure {
+fn map_init_error(server: &str, url: &str, error: ClientInitializeError) -> McpError {
     if error.is_authorization_required() {
-        return SessionFailure::from(McpError::Unauthorized {
+        return McpError::Unauthorized {
             server: server.to_owned(),
             cause: error.to_string(),
-        });
+        };
     }
     match error {
-        ClientInitializeError::JsonRpcError(rpc) => SessionFailure::from(McpError::Server {
+        ClientInitializeError::JsonRpcError(rpc) => McpError::Server {
             server: server.to_owned(),
             cause: format_rpc_error(&rpc),
-        }),
+        },
         ClientInitializeError::TransportError { error, .. } => {
-            classify_transport_error(server, url, error.error.as_ref(), _http::mcp_gate().now())
+            classify_transport_error(server, url, error.error)
         }
-        other => SessionFailure::from(McpError::Server {
+        other => McpError::Server {
             server: server.to_owned(),
             cause: other.to_string(),
-        }),
+        },
     }
 }
 
-fn map_service_error(server: &str, url: &str, error: ServiceError) -> SessionFailure {
+fn map_service_error(server: &str, url: &str, error: ServiceError) -> McpError {
     if error.is_authorization_required() {
-        return SessionFailure::from(McpError::Unauthorized {
+        return McpError::Unauthorized {
             server: server.to_owned(),
             cause: error.to_string(),
-        });
+        };
     }
     match error {
-        ServiceError::McpError(rpc) => SessionFailure::from(McpError::Server {
+        ServiceError::McpError(rpc) => McpError::Server {
             server: server.to_owned(),
             cause: format_rpc_error(&rpc),
-        }),
-        ServiceError::TransportSend(error) => {
-            classify_transport_error(server, url, error.error.as_ref(), _http::mcp_gate().now())
-        }
-        other => SessionFailure::from(McpError::Server {
+        },
+        ServiceError::TransportSend(error) => classify_transport_error(server, url, error.error),
+        other => McpError::Server {
             server: server.to_owned(),
             cause: other.to_string(),
-        }),
+        },
     }
 }
 
-fn safe_reqwest_cause(error: &reqwest::Error) -> String {
-    if error.is_timeout() {
-        "HTTP request timed out".into()
-    } else if error.is_connect() {
-        "HTTP connection failed".into()
-    } else if let Some(status) = error.status() {
-        format!("HTTP {}", status.as_u16())
-    } else if error.is_body() {
-        "HTTP response body interrupted".into()
-    } else if error.is_decode() {
-        "HTTP response decode failed".into()
-    } else {
-        "HTTP request failed".into()
+fn map_http_status(server: &str, http_status: &HttpStatusError) -> McpError {
+    if http_status.status == 401 {
+        return McpError::Unauthorized {
+            server: server.to_owned(),
+            cause: "HTTP 401 Unauthorized".into(),
+        };
+    }
+    McpError::Server {
+        server: server.to_owned(),
+        cause: format!("HTTP {}", http_status.status),
     }
 }
 
-fn classify_reqwest_error(server: &str, url: &str, req_err: &reqwest::Error) -> McpError {
+fn classify_reqwest_error(server: &str, url: &str, req_err: reqwest::Error) -> McpError {
     if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
         return McpError::Unauthorized {
             server: server.to_owned(),
             cause: "HTTP 401 Unauthorized".into(),
         };
     }
-    let cause = safe_reqwest_cause(req_err);
+    let is_unreachable = req_err.is_connect() || req_err.is_timeout() || req_err.is_request();
+    let cause = req_err.without_url().to_string();
+    if is_unreachable {
+        McpError::Unreachable {
+            server: server.to_owned(),
+            url: _http::redact_url(url),
+            cause,
+        }
+    } else {
+        McpError::Server {
+            server: server.to_owned(),
+            cause,
+        }
+    }
+}
+
+fn classify_borrowed_reqwest(server: &str, url: &str, req_err: &reqwest::Error) -> McpError {
+    if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+        return McpError::Unauthorized {
+            server: server.to_owned(),
+            cause: "HTTP 401 Unauthorized".into(),
+        };
+    }
+    let cause = if req_err.is_timeout() {
+        "HTTP request timed out".into()
+    } else if req_err.is_connect() {
+        "HTTP connection failed".into()
+    } else if let Some(status) = req_err.status() {
+        format!("HTTP {}", status.as_u16())
+    } else {
+        "HTTP request failed".into()
+    };
     if req_err.is_connect() || req_err.is_timeout() || req_err.is_request() {
         McpError::Unreachable {
             server: server.to_owned(),
@@ -471,137 +346,99 @@ fn classify_reqwest_error(server: &str, url: &str, req_err: &reqwest::Error) -> 
     }
 }
 
+fn classify_streamable_error(
+    server: &str,
+    url: &str,
+    http_err: StreamableHttpError<reqwest::Error>,
+) -> McpError {
+    match http_err {
+        StreamableHttpError::AuthRequired(auth) => McpError::Unauthorized {
+            server: server.to_owned(),
+            cause: auth.to_string(),
+        },
+        StreamableHttpError::HttpStatus(http_status) => map_http_status(server, &http_status),
+        StreamableHttpError::UnexpectedServerResponse(msg) if msg.starts_with("HTTP 401") => {
+            McpError::Unauthorized {
+                server: server.to_owned(),
+                cause: msg.to_string(),
+            }
+        }
+        StreamableHttpError::Client(req_err) => classify_reqwest_error(server, url, req_err),
+        StreamableHttpError::Io(io_err) => McpError::Unreachable {
+            server: server.to_owned(),
+            url: _http::redact_url(url),
+            cause: io_err.to_string(),
+        },
+        other => McpError::Server {
+            server: server.to_owned(),
+            cause: other.to_string(),
+        },
+    }
+}
+
 fn classify_transport_error(
     server: &str,
     url: &str,
-    root: &(dyn std::error::Error + 'static),
-    received_at: jiff::Timestamp,
-) -> SessionFailure {
-    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(root);
+    root: Box<dyn std::error::Error + Send + Sync>,
+) -> McpError {
+    let root = match root.downcast::<StreamableHttpError<reqwest::Error>>() {
+        Ok(http_err) => return classify_streamable_error(server, url, *http_err),
+        Err(other) => other,
+    };
+    let root = match root.downcast::<reqwest::Error>() {
+        Ok(req_err) => return classify_reqwest_error(server, url, *req_err),
+        Err(other) => other,
+    };
+
+    let mut current: Option<&(dyn std::error::Error + 'static)> = Some(root.as_ref());
     while let Some(err) = current {
         if err.is::<AuthRequiredError>() {
-            return SessionFailure::from(McpError::Unauthorized {
+            return McpError::Unauthorized {
                 server: server.to_owned(),
                 cause: err.to_string(),
-            });
+            };
         }
         if let Some(http_status) = err.downcast_ref::<HttpStatusError>() {
-            return SessionFailure::HttpStatus(StatusFailure {
-                status: http_status.status,
-                retry_after: http_status.retry_after.clone(),
-                received_at,
-            });
+            return map_http_status(server, http_status);
         }
         if let Some(http_err) = err.downcast_ref::<StreamableHttpError<reqwest::Error>>() {
             return match http_err {
-                StreamableHttpError::AuthRequired(auth) => {
-                    SessionFailure::from(McpError::Unauthorized {
-                        server: server.to_owned(),
-                        cause: auth.to_string(),
-                    })
-                }
+                StreamableHttpError::AuthRequired(auth) => McpError::Unauthorized {
+                    server: server.to_owned(),
+                    cause: auth.to_string(),
+                },
                 StreamableHttpError::HttpStatus(http_status) => {
-                    SessionFailure::HttpStatus(StatusFailure {
-                        status: http_status.status,
-                        retry_after: http_status.retry_after.clone(),
-                        received_at,
-                    })
+                    map_http_status(server, http_status)
                 }
                 StreamableHttpError::UnexpectedServerResponse(msg)
                     if msg.starts_with("HTTP 401") =>
                 {
-                    SessionFailure::from(McpError::Unauthorized {
+                    McpError::Unauthorized {
                         server: server.to_owned(),
                         cause: msg.to_string(),
-                    })
+                    }
                 }
                 StreamableHttpError::Client(req_err) => {
-                    SessionFailure::from(classify_reqwest_error(server, url, req_err))
+                    classify_borrowed_reqwest(server, url, req_err)
                 }
-                StreamableHttpError::Io(io_err) => SessionFailure::from(McpError::Unreachable {
+                StreamableHttpError::Io(io_err) => McpError::Unreachable {
                     server: server.to_owned(),
                     url: _http::redact_url(url),
                     cause: io_err.to_string(),
-                }),
-                other => SessionFailure::from(McpError::Server {
+                },
+                other => McpError::Server {
                     server: server.to_owned(),
                     cause: other.to_string(),
-                }),
+                },
             };
         }
         if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
-            return SessionFailure::from(classify_reqwest_error(server, url, req_err));
+            return classify_borrowed_reqwest(server, url, req_err);
         }
         current = err.source();
     }
-    SessionFailure::from(McpError::Server {
+    McpError::Server {
         server: server.to_owned(),
         cause: root.to_string(),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use instrukt_outside::{Named, Reason, Settings, Tried};
-
-    #[test]
-    fn streamable_http_status_honors_retry_after_through_outside_judge() -> Result<(), String> {
-        let received_at =
-            jiff::Timestamp::from_second(1_764_000_000).map_err(|error| error.to_string())?;
-        let settings = Settings::default();
-
-        let rate_limited = StreamableHttpError::<reqwest::Error>::HttpStatus(HttpStatusError::new(
-            429,
-            Some("120".into()),
-        ));
-        let failure = classify_transport_error(
-            "gitlab",
-            "https://gitlab.example.com/api/v4/mcp?token=secret",
-            &rate_limited,
-            received_at,
-        );
-        let Tried::Unavailable(unavailable, McpError::Server { server, .. }) =
-            classify_for_gate::<()>("gitlab", failure, &settings)
-        else {
-            return Err("expected Tried::Unavailable for HTTP 429 with Retry-After".into());
-        };
-        assert_eq!(server, "gitlab");
-        assert_eq!(unavailable.reason, Reason::RateLimited);
-        assert_eq!(
-            unavailable.named,
-            Some(Named::After {
-                delay: Duration::from_secs(120),
-                received_at,
-            })
-        );
-
-        let unavailable_err = StreamableHttpError::<reqwest::Error>::HttpStatus(
-            HttpStatusError::new(503, Some("45".into())),
-        );
-        let failure = classify_transport_error(
-            "gitlab",
-            "https://gitlab.example.com/api/v4/mcp",
-            &unavailable_err,
-            received_at,
-        );
-        let Tried::Unavailable(unavailable, McpError::Server { server, .. }) =
-            classify_for_gate::<()>("gitlab", failure, &settings)
-        else {
-            return Err("expected Tried::Unavailable for HTTP 503 with Retry-After".into());
-        };
-        assert_eq!(server, "gitlab");
-        assert_eq!(
-            unavailable.reason,
-            Reason::Unavailable { status: Some(503) }
-        );
-        assert_eq!(
-            unavailable.named,
-            Some(Named::After {
-                delay: Duration::from_secs(45),
-                received_at,
-            })
-        );
-        Ok(())
     }
 }

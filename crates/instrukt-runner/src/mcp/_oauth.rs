@@ -141,87 +141,27 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
 
     let http_client = _http::client("ingress", PROBE_TIMEOUT, PROBE_TIMEOUT, false)?;
     let safe_ingress = _http::redact_url(&ingress_url);
-    let (origin, _) = _http::gate_scope(&ingress_url);
-    let key =
-        instrukt_outside::Key::new("mcp-ingress", [origin.as_str()]).item("/hooks/inbound/sign-in");
-    let settings = instrukt_outside::Settings::default();
-    let status = _http::run_async("ingress", async {
-        let gate = _http::mcp_gate();
-        let attempted = gate
-            .attempt_async(&key, &settings, || async {
-                let response = match http_client.get(&probe_url).send().await {
-                    Ok(response) => response,
-                    Err(error) => {
-                        let cause = format!("external callback probe to {safe_ingress} failed");
-                        return match instrukt_outside::http::judge_reqwest_error(&error, &settings)
-                        {
-                            instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                                instrukt_outside::Tried::Unavailable(unavailable, Err(cause))
-                            }
-                            instrukt_outside::http::Judgment::Success
-                            | instrukt_outside::http::Judgment::Defect => {
-                                instrukt_outside::Tried::Defect(Err(cause))
-                            }
-                        };
-                    }
-                };
-                let status = response.status().as_u16();
-                let headers = response.headers().clone();
-                let now = gate.now();
-                match instrukt_outside::http::judge_response(status, &headers, now, None, &settings)
-                {
-                    instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                        instrukt_outside::Tried::Unavailable(unavailable, Ok(status))
-                    }
-                    instrukt_outside::http::Judgment::Success
-                    | instrukt_outside::http::Judgment::Defect => {
-                        instrukt_outside::Tried::Done(status)
-                    }
-                }
-            })
-            .await;
-        match attempted {
-            instrukt_outside::Attempted::Done(status)
-            | instrukt_outside::Attempted::Defect(Ok(status)) => Ok(status),
-            instrukt_outside::Attempted::Wait {
-                wait,
-                error: Some(Ok(status)),
-            } => {
-                let _ = claim_sign_in_return(&transport, &state_digest);
-                Err(McpError::Unreachable {
+    let status =
+        _http::run_async("ingress", async {
+            let response = http_client.get(&probe_url).send().await.map_err(|error| {
+                McpError::Unreachable {
                     server: "ingress".into(),
                     url: safe_ingress.clone(),
                     cause: format!(
-                        "external callback probe to {}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200): {wait}",
-                        safe_ingress.trim_end_matches('/')
+                        "external callback probe to {safe_ingress} failed: {}",
+                        error.without_url()
                     ),
-                })
-            }
-            instrukt_outside::Attempted::Wait {
-                wait,
-                error: Some(Err(cause)),
-            } => Err(McpError::Unreachable {
-                server: "ingress".into(),
-                url: safe_ingress.clone(),
-                cause: format!("{cause}: {wait}"),
-            }),
-            instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
-                server: "ingress".into(),
-                url: safe_ingress.clone(),
-                cause: format!("external callback probe to {safe_ingress} delayed: {wait}"),
-            }),
-            instrukt_outside::Attempted::Defect(Err(cause)) => Err(McpError::Server {
-                server: "ingress".into(),
-                cause,
-            }),
-        }
-    })??;
+                }
+            })?;
+            Ok::<_, McpError>(response.status().as_u16())
+        })??;
     if status != 200 {
         let _ = claim_sign_in_return(&transport, &state_digest);
         return Err(McpError::Server {
             server: "ingress".into(),
             cause: format!(
-                "external callback probe to {ingress_url}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200)"
+                "external callback probe to {}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200)",
+                safe_ingress.trim_end_matches('/')
             ),
         });
     }
@@ -495,10 +435,9 @@ fn start_oauth_authorization(
     nonce: Option<&str>,
 ) -> Result<(String, String, String), McpError> {
     let state_store = InMemoryStateStore::new();
-    let mut gated = _discover::auth_manager(server_url, auth)?;
-    gated.manager.set_state_store(state_store.clone());
-    gated
-        .manager
+    let mut manager = _discover::auth_manager(server_url, auth)?;
+    manager.set_state_store(state_store.clone());
+    manager
         .configure_client(oauth_client_config(registration, client_secret))
         .map_err(|error| McpError::Server {
             server: server_url.to_owned(),
@@ -506,8 +445,7 @@ fn start_oauth_authorization(
         })?;
     let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
     let (mut auth_url, state, pkce_verifier) = _http::run_async(server_url, async {
-        let raw_url = gated
-            .manager
+        let raw_url = manager
             .get_authorization_url(&scope_refs)
             .await
             .map_err(|error| McpError::Server {
@@ -1310,7 +1248,7 @@ fn exchange_code_via_rmcp(
     code: &str,
     received_issuer: Option<&str>,
 ) -> Result<OAuthTokenResponse, String> {
-    let mut gated = _discover::auth_manager(server_url, auth).map_err(|e| e.to_string())?;
+    let mut manager = _discover::auth_manager(server_url, auth).map_err(|e| e.to_string())?;
     let state_store = InMemoryStateStore::new();
     let stored_state: StoredAuthorizationState = serde_json::from_value(json!({
         "pkce_verifier": code_verifier,
@@ -1321,9 +1259,8 @@ fn exchange_code_via_rmcp(
         "requested_scopes": [],
     }))
     .map_err(|error| format!("failed to prepare PKCE authorization state: {error}"))?;
-    gated.manager.set_state_store(state_store.clone());
-    gated
-        .manager
+    manager.set_state_store(state_store.clone());
+    manager
         .configure_client(oauth_client_config(registration, client_secret))
         .map_err(|error| {
             format!(
@@ -1341,18 +1278,15 @@ fn exchange_code_via_rmcp(
                     _http::sanitize_auth_error(&error)
                 )
             })?;
-        let outcome = gated
-            .manager
+        manager
             .exchange_code_for_token_with_issuer(code, csrf_key, received_issuer)
-            .await;
-        outcome.map_err(|error| {
-            let summary = _http::sanitize_auth_error(&error);
-            if let Some(wait) = gated.take_unavailable() {
-                format!("token exchange failed: {summary} ({wait})")
-            } else {
-                format!("token exchange failed: {summary}")
-            }
-        })
+            .await
+            .map_err(|error| {
+                format!(
+                    "token exchange failed: {}",
+                    _http::sanitize_auth_error(&error)
+                )
+            })
     })
     .map_err(|e| e.to_string())?
 }
@@ -1651,7 +1585,6 @@ fn clear_renewal_lease(home: &Home, company: &ProjectSlug, person: &str, server:
 enum RefreshOutcome {
     Refreshed(OAuthTokenResponse),
     Rejected,
-    Unavailable(String),
     Failed(String),
 }
 
@@ -1663,7 +1596,7 @@ fn refresh_via_rmcp(
     existing_access: &str,
     refresh_token: &str,
 ) -> RefreshOutcome {
-    let mut gated = match _discover::auth_manager(server_url, auth) {
+    let mut manager = match _discover::auth_manager(server_url, auth) {
         Ok(m) => m,
         Err(error) => return RefreshOutcome::Failed(error.to_string()),
     };
@@ -1686,11 +1619,8 @@ fn refresh_via_rmcp(
         Vec::new(),
         None,
     );
-    gated.manager.set_credential_store(cred_store.clone());
-    if let Err(error) = gated
-        .manager
-        .configure_client(oauth_client_config(registration, client_secret))
-    {
+    manager.set_credential_store(cred_store.clone());
+    if let Err(error) = manager.configure_client(oauth_client_config(registration, client_secret)) {
         return RefreshOutcome::Failed(format!(
             "failed to configure OAuth client: {}",
             _http::sanitize_auth_error(&error)
@@ -1698,20 +1628,12 @@ fn refresh_via_rmcp(
     }
     let result = _http::run_async(server_url, async {
         cred_store.save(stored).await?;
-        gated.manager.refresh_token().await
+        manager.refresh_token().await
     });
-    let wait = gated.take_unavailable();
     match result {
         Ok(Ok(token)) => RefreshOutcome::Refreshed(token),
-        Ok(Err(AuthError::TokenRefreshRejected(_))) if wait.is_none() => RefreshOutcome::Rejected,
-        Ok(Err(error)) => {
-            let summary = _http::sanitize_auth_error(&error);
-            if let Some(wait) = wait {
-                RefreshOutcome::Unavailable(format!("{summary} ({wait})"))
-            } else {
-                RefreshOutcome::Failed(summary)
-            }
-        }
+        Ok(Err(AuthError::TokenRefreshRejected(_))) => RefreshOutcome::Rejected,
+        Ok(Err(error)) => RefreshOutcome::Failed(_http::sanitize_auth_error(&error)),
         Err(error) => RefreshOutcome::Failed(error.to_string()),
     }
 }
@@ -1949,14 +1871,6 @@ fn try_refresh_login(
                     Ok(())
                 })?;
                 return Ok(None);
-            }
-            RefreshOutcome::Unavailable(wait) => {
-                clear_renewal_lease(home, company, person, server.name.as_str());
-                return Err(McpError::Unreachable {
-                    server: server.name.to_string(),
-                    url: _http::redact_url(token_endpoint),
-                    cause: format!("token renewal temporarily unavailable: {wait}"),
-                });
             }
             RefreshOutcome::Failed(cause) => {
                 clear_renewal_lease(home, company, person, server.name.as_str());

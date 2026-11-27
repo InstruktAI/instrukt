@@ -47,8 +47,8 @@ admitted with thread retention withheld, as
 `project/instrukt/spec/feature/configuration/layered-configuration` decides.
 No part
 of the runner reads those files on its own
-(`project/instrukt/policy/checks-and-guards`: a prerequisite is checked where it
-enters; nothing running handles a missing one).
+(`sdlc/principle/design-fundamentals`, Fail Fast: prerequisites are checked
+where they enter; nothing running handles a missing one).
 
 Company connections and the conversation relay follow the admitted generation
 as it changes. Adding a connector starts it, changing its settings or tokens
@@ -67,8 +67,8 @@ measures the limits of started programs
 (`project/instrukt/spec/feature/configuration/layered-configuration`). The
 runner ends only when it cannot start: no home, the runner lock held by another
 runner, a state database it cannot open or one newer than it knows
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried, a
-defect is fixed in the code).
+(`project/instrukt/design/architecture/outside-gate`: transient outside outages
+are retried while code defects are fixed in code).
 
 | Capability | Runner responsibility |
 | --- | --- |

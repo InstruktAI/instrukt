@@ -169,7 +169,7 @@ user (`user_not_found`, `user_not_visible`), the sender is not one of the
 company's own. When Slack gives no answer about the sender, because the
 request fails, is limited or Slack refuses the app's own token, nothing is
 decided and the message waits; Slack is asked again until it answers
-(`project/instrukt/policy/checks-and-guards`: an outside failure is retried).
+(`project/instrukt/design/architecture/outside-gate`).
 
 | Slack's record | Required |
 | --- | --- |

@@ -54,7 +54,7 @@ conversions. The file
 overrides everything it names
 (`project/instrukt/spec/feature/configuration/agent-selection`), and a
 person's stated choices and restrictions are migrated, never discarded
-(`project/instrukt/policy/checks-and-guards`); the conversion takes no value
+(`project/instrukt/spec/feature/configuration/owned-files`); the conversion takes no value
 from the shipped defaults. A file that holds both entries is refused with its
 source intact, naming both, until one is removed. A file that names neither
 entry takes the new version and no other change.

@@ -648,8 +648,7 @@ a repeated ending raises an anomaly. Confirmed native archive/deletion with an
 eligible active assignment uses the common successor and work-claim transaction.
 Observation failure retries observation instead. Such an execution is listed in `instrukt events status` until its workflow
 state advances, whether or not a notification command is configured; recovered means
-that its state advanced (`project/instrukt/policy/checks-and-guards`: what instrukt
-cannot resolve goes to the operator). Release claims through work's command contract; ending
+that its state advanced (`project/instrukt/spec/feature/runner/anomaly-notification`). Release claims through work's command contract; ending
 conversations remains the runtime's responsibility.
 
 ### Fresh canonical base

@@ -251,7 +251,7 @@ Opening proposal pull requests, and nothing else, needs the proposal
 pull-request credential, whose readiness work answers: met, unmet with a
 finding, or GitHub cannot be asked
 (`project/instrukt/spec/feature/work/github-apps`, Company repositories). It is
-checked where it enters (`project/instrukt/policy/checks-and-guards`):
+checked where it enters (`sdlc/principle/design-fundamentals`, Fail Fast):
 
 - **At entry.** `instrukt install` and `instrukt install --check` ask it for
   each company home admitted for automatic review, beside automatic review's
@@ -268,7 +268,7 @@ Automatic review of the home's other pull requests, the handoff of heads
 already approved and CI observation never wait on this credential. An opening
 GitHub or the runtime cannot answer is warned and tried again on the next tick
 (Availability). An opening GitHub refuses while the credential is met is a
-defect of the part (`project/instrukt/policy/checks-and-guards`): a warning
+defect of the part: a warning
 carries GitHub's answer. Neither writes any state.
 
 ### Enablement
@@ -296,7 +296,7 @@ publishes the status and does not change branch protection.
 
 When GitHub or the runtime is unavailable, observation, activation and
 publication retry until the service returns, and the unavailable service is
-reported to the operator (`project/instrukt/policy/checks-and-guards`).
+reported to the operator (`project/instrukt/design/architecture/outside-gate`).
 
 ## Use cases
 
@@ -383,4 +383,3 @@ Then no review is started for it
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/work/github-apps](../work/github-apps.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
-- [project/instrukt/policy/checks-and-guards](../../../policy/checks-and-guards.md)

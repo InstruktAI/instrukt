@@ -264,8 +264,7 @@ already approved and CI observation never wait on this credential. An opening
 GitHub or the runtime cannot answer falls under
 `project/instrukt/spec/feature/runner/pull-request-review`, Availability: a
 warning is logged and the next tick tries again. An opening GitHub refuses
-while the credential is met is a defect of the part
-(`project/instrukt/policy/checks-and-guards`): a warning carries GitHub's
+while the credential is met is a defect of the part: a warning carries GitHub's
 answer, as the review pass warns of its own failures. Neither writes any
 state. The verdict is work's,
 and what the integrator does with the head is workflow's integrator's.
@@ -297,10 +296,10 @@ responsibility is distinct from its configured role class.
 - **Invariants:** Execution follows the enabled modules. Todo pickup mode
   controls todos only; event activation remains independently switchable.
   One process handles those enabled responsibilities. It runs only with the
-  prerequisites it admitted at its start or at a later wake; a part that depends
-  on a service outside instrukt retries inside itself until that service returns
-  (`project/instrukt/policy/checks-and-guards`: a prerequisite is gated, an
-  outside failure is retried).
+  prerequisites it admitted at its start or at a later wake
+  (`sdlc/principle/design-fundamentals`, Fail Fast); a long-lived runner part
+  that depends on a service outside instrukt retries transient outages until
+  that service returns (`project/instrukt/design/architecture/outside-gate`).
 - **Identifier:** The invocation itself; no new durable invocation identifier
   is established by this contract.
 - **Lifecycle:** Begins at a runner entry point and ends when that invocation

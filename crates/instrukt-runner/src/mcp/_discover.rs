@@ -14,8 +14,8 @@ use serde_json::Value;
 use url::Url;
 
 use super::_http::{
-    AdmittedOAuthHttpClient, CapturedResourceMetadata, client as http_client, run_async,
-    sanitize_auth_error, string_list,
+    AdmittedOAuthHttpClient, CapturedResourceMetadata, client as http_client, redact_url,
+    run_async, sanitize_auth_error, string_list,
 };
 use super::McpError;
 
@@ -85,33 +85,15 @@ impl DiscoveredAuth {
     }
 }
 
-/// `rmcp` `AuthorizationManager` paired with its outside-gate wait observer so
-/// callers preserve gate reasons and next-try timestamps across SDK errors.
-pub(crate) struct GatedAuthManager {
-    pub(crate) manager: AuthorizationManager,
-    unavailable: Arc<Mutex<Option<String>>>,
-}
-
-impl GatedAuthManager {
-    pub(crate) fn take_unavailable(&self) -> Option<String> {
-        self.unavailable
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take())
-    }
-}
-
 /// Builds a configured `rmcp` `AuthorizationManager` backed by
 /// `AdmittedOAuthHttpClient` and seeded with discovered `metadata`.
 pub(crate) fn auth_manager(
     server_url: &str,
     auth: &DiscoveredAuth,
-) -> Result<GatedAuthManager, McpError> {
+) -> Result<AuthorizationManager, McpError> {
     let parsed = validate_probe_url(server_url)?;
-    let unavailable = Arc::new(Mutex::new(None));
-    let http = AdmittedOAuthHttpClient::new(server_url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?
-        .with_unavailable_observer(Arc::clone(&unavailable));
-    let manager = run_async(server_url, async {
+    let http = AdmittedOAuthHttpClient::new(server_url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?;
+    run_async(server_url, async {
         let mut manager = AuthorizationManager::new_with_oauth_http_client(parsed, Arc::new(http))
             .await
             .map_err(|error| McpError::Server {
@@ -120,17 +102,12 @@ pub(crate) fn auth_manager(
             })?;
         manager.set_metadata(auth.metadata.clone());
         Ok::<_, McpError>(manager)
-    })??;
-    Ok(GatedAuthManager {
-        manager,
-        unavailable,
-    })
+    })?
 }
 
 struct LiveResolution {
     resolution: Result<rmcp::transport::auth::AuthorizationMetadataResolution, AuthError>,
     captured: CapturedResourceMetadata,
-    unavailable: Option<String>,
 }
 
 /// Probe a remote MCP server's HTTPS (or loopback HTTP) URL live and report
@@ -139,49 +116,22 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
     let LiveResolution {
         resolution,
         captured,
-        unavailable,
     } = resolve_live(url)?;
-    let safe_url = super::_http::redact_url(url);
     match resolution {
         Ok(resolved) if resolved.source.is_discovered() => {
             Ok(build_report(url, &captured, &resolved.metadata))
         }
-        Ok(_) => {
-            if let Some(cause) = unavailable {
-                return Err(McpError::Unreachable {
-                    server: safe_url.clone(),
-                    url: safe_url,
-                    cause,
-                });
-            }
-            Ok(empty_report(url, None, Vec::new(), Vec::new()))
-        }
+        Ok(_) => Ok(empty_report(url, None, Vec::new(), Vec::new())),
         Err(AuthError::AuthorizationServersUnavailable {
             authorization_servers,
             ..
-        }) => {
-            if let Some(cause) = unavailable {
-                return Err(McpError::Unreachable {
-                    server: safe_url.clone(),
-                    url: safe_url,
-                    cause,
-                });
-            }
-            Ok(empty_report(
-                url,
-                captured.resource,
-                authorization_servers,
-                captured.scopes_supported,
-            ))
-        }
+        }) => Ok(empty_report(
+            url,
+            captured.resource,
+            authorization_servers,
+            captured.scopes_supported,
+        )),
         Err(_) => {
-            if let Some(cause) = unavailable {
-                return Err(McpError::Unreachable {
-                    server: safe_url.clone(),
-                    url: safe_url,
-                    cause,
-                });
-            }
             let servers = if captured.resource.is_some() {
                 captured.authorization_servers
             } else {
@@ -203,36 +153,16 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
     let LiveResolution {
         resolution,
         captured,
-        unavailable,
     } = resolve_live(url)?;
-    let safe_url = super::_http::redact_url(url);
-    let resolved = match resolution {
-        Ok(resolved) => resolved,
-        Err(error) => {
-            if let Some(cause) = unavailable {
-                return Err(McpError::Unreachable {
-                    server: safe_url.clone(),
-                    url: safe_url,
-                    cause,
-                });
-            }
-            return Err(McpError::Server {
-                server: safe_url,
-                cause: format!(
-                    "OAuth metadata discovery failed: {}",
-                    sanitize_auth_error(&error)
-                ),
-            });
-        }
-    };
+    let safe_url = redact_url(url);
+    let resolved = resolution.map_err(|error| McpError::Server {
+        server: safe_url.clone(),
+        cause: format!(
+            "OAuth metadata discovery failed: {}",
+            sanitize_auth_error(&error)
+        ),
+    })?;
     if resolved.source != AuthorizationMetadataSource::ProtectedResourceMetadata {
-        if let Some(cause) = unavailable {
-            return Err(McpError::Unreachable {
-                server: safe_url.clone(),
-                url: safe_url,
-                cause,
-            });
-        }
         return Err(McpError::Server {
             server: safe_url,
             cause: "server published no readable RFC 9728 protected resource metadata".into(),
@@ -265,10 +195,10 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
     })
 }
 
-/// Probes the MCP endpoint with an unauthenticated `POST initialize` through
-/// `mcp_gate()` so servers advertising RFC 9728 `WWW-Authenticate` challenges
-/// only on POST requests are discovered, while unreachable/5xx/429 responses
-/// surface as `McpError::Unreachable` rather than looking like a non-OAuth server.
+/// Probes the MCP endpoint with an unauthenticated `POST initialize` so servers
+/// advertising RFC 9728 `WWW-Authenticate` challenges only on POST requests are
+/// discovered, while unreachable/5xx/429 responses surface as
+/// `McpError::Unreachable` rather than looking like a non-OAuth server.
 async fn probe_post_initialize_challenge(url: &str) -> Result<Option<String>, McpError> {
     let client = http_client(url, CONNECT_TIMEOUT, REQUEST_TIMEOUT, false)?;
     let init_body = serde_json::json!({
@@ -284,94 +214,49 @@ async fn probe_post_initialize_challenge(url: &str) -> Result<Option<String>, Mc
             }
         }
     });
-    let (origin, path) = super::_http::gate_scope(url);
-    let key = instrukt_outside::Key::new("mcp-oauth", [origin.as_str()]).item(path.as_str());
-    let gate = super::_http::mcp_gate();
-    let settings = instrukt_outside::Settings::default();
-    let attempted = gate
-        .attempt_async(&key, &settings, || async {
-            let response = match client
-                .post(url)
-                .header(http::header::ACCEPT, "application/json, text/event-stream")
-                .json(&init_body)
-                .send()
-                .await
-            {
-                Ok(response) => response,
-                Err(error) => {
-                    return match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
-                        instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                            instrukt_outside::Tried::Unavailable(
-                                unavailable,
-                                "HTTP request failed".into(),
-                            )
-                        }
-                        instrukt_outside::http::Judgment::Success
-                        | instrukt_outside::http::Judgment::Defect => {
-                            instrukt_outside::Tried::Defect("HTTP request failed".into())
-                        }
-                    };
-                }
+    let safe_url = redact_url(url);
+    let response = client
+        .post(url)
+        .header(http::header::ACCEPT, "application/json, text/event-stream")
+        .json(&init_body)
+        .send()
+        .await
+        .map_err(|error| McpError::Unreachable {
+            server: safe_url.clone(),
+            url: safe_url.clone(),
+            cause: error.without_url().to_string(),
+        })?;
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        let mut fallback = None;
+        for value in response.headers().get_all(http::header::WWW_AUTHENTICATE) {
+            let Ok(text) = value.to_str() else {
+                continue;
             };
-            let status = response.status();
-            let headers = response.headers().clone();
-            let now = gate.now();
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                let mut fallback = None;
-                for value in headers.get_all(http::header::WWW_AUTHENTICATE) {
-                    let Ok(text) = value.to_str() else {
-                        continue;
-                    };
-                    if text.contains("resource_metadata") {
-                        return instrukt_outside::Tried::Done(Some(text.to_owned()));
-                    }
-                    if fallback.is_none() {
-                        fallback = Some(text.to_owned());
-                    }
-                }
-                return instrukt_outside::Tried::Done(fallback);
+            if text.contains("resource_metadata") {
+                return Ok(Some(text.to_owned()));
             }
-            match instrukt_outside::http::judge_response(
-                status.as_u16(),
-                &headers,
-                now,
-                None,
-                &settings,
-            ) {
-                instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                    instrukt_outside::Tried::Unavailable(unavailable, format!("HTTP {status}"))
-                }
-                instrukt_outside::http::Judgment::Success
-                | instrukt_outside::http::Judgment::Defect => instrukt_outside::Tried::Done(None),
+            if fallback.is_none() {
+                fallback = Some(text.to_owned());
             }
-        })
-        .await;
-    let safe_url = super::_http::redact_url(url);
-    match attempted {
-        instrukt_outside::Attempted::Done(challenge) => Ok(challenge),
-        instrukt_outside::Attempted::Defect(cause) => Err(McpError::Unreachable {
-            server: safe_url.clone(),
-            url: safe_url,
-            cause,
-        }),
-        instrukt_outside::Attempted::Wait { wait, error } => Err(McpError::Unreachable {
-            server: safe_url.clone(),
-            url: safe_url,
-            cause: match error {
-                Some(cause) => format!("{wait} ({cause})"),
-                None => wait.to_string(),
-            },
-        }),
+        }
+        return Ok(fallback);
     }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS || status.is_server_error() {
+        return Err(McpError::Unreachable {
+            server: safe_url.clone(),
+            url: safe_url,
+            cause: format!("HTTP {}", status.as_u16()),
+        });
+    }
+    Ok(None)
 }
 
 fn resolve_live(url: &str) -> Result<LiveResolution, McpError> {
     let parsed = validate_probe_url(url)?;
     let prm_slot = Arc::new(Mutex::new(None));
-    let unavailable_slot = Arc::new(Mutex::new(None));
     let http = AdmittedOAuthHttpClient::new(url, CONNECT_TIMEOUT, REQUEST_TIMEOUT)?
-        .with_prm_observer(Arc::clone(&prm_slot))
-        .with_unavailable_observer(Arc::clone(&unavailable_slot));
+        .with_prm_observer(Arc::clone(&prm_slot));
     let resolution = run_async(url, async {
         let challenge = probe_post_initialize_challenge(url).await?;
         let manager = AuthorizationManager::new_with_oauth_http_client(parsed, Arc::new(http))
@@ -394,11 +279,9 @@ fn resolve_live(url: &str) -> Result<LiveResolution, McpError> {
         .ok()
         .and_then(|guard| guard.clone())
         .unwrap_or_default();
-    let unavailable = unavailable_slot.lock().ok().and_then(|guard| guard.clone());
     Ok(LiveResolution {
         resolution,
         captured,
-        unavailable,
     })
 }
 
