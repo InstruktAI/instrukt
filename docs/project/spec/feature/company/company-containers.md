@@ -1,28 +1,32 @@
 ---
-description: Two-tier company hosting — Tier-1 shared-host onboarding with per-company BYOS account isolation through chat connectors, and Tier-2 isolated Linux containers with self-contained host-folder state, export/import portability, and operator plus optional technical company-owner dual access.
-delivered_by:
-  - thin-live-runtime-boundary
+description: Two-tier company hosting — Tier-1 shared-host onboarding with per-company BYOS account isolation through chat connectors, and Tier-2 isolated Linux containers with self-contained host-folder state, export/import portability, and authenticated operator plus optional technical company-owner dual access.
 ---
 # Company Containers — Spec
 
 ## What it is
 
+<!-- planned:thin-live-runtime-boundary -->
 Companies onboard and grow along a **two-tier hosting ladder**, strictly
-independent of any specific agent runtime (`project/instrukt/spec/feature/runtime/adapter`):
+independent of any specific agent runtime
+(`project/instrukt/spec/feature/runtime/adapter`):
 
 - **Tier 1 (shared host):** Day-1 onboarding on the operator's host as a
   company home (`project/instrukt/spec/feature/configuration/company-homes`).
   The company brings its own model subscription (BYOS) through the selected
   runtime's optional multi-account provider isolation capability, selected via
   the home's `profiles` setting. Company members interact exclusively through
-  declared business chat connectors (`project/instrukt/spec/feature/company/conversations`).
+  declared business chat connectors
+  (`project/instrukt/spec/feature/company/conversations`).
 - **Tier 2 (isolated container):** When a company requires hard OS and
   filesystem confinement, portable export/import, or direct runtime access for
   a technical company owner, it runs in one long-running Linux container of its
   own. Every agent session for that company — its conversations and the
-  procedures running in its home — runs inside that container and nowhere else.
-  The container holds no state of its own: all irreplaceable company state
-  lives in the company's folder on the host.
+  procedures running in its home
+  (`project/instrukt/spec/feature/runner/procedure-standing-agent`) — runs
+  inside that container and nowhere else. The container holds no state of its
+  own: all irreplaceable company state lives in the company's folder on the
+  host.
+<!-- /planned:thin-live-runtime-boundary -->
 
 A **company's folder** is the one folder on the host, under the operator's
 `~/.instrukt`, that holds all of one company's state. The company's home
@@ -37,6 +41,7 @@ company** on the same host, kept apart from this one at Tier 2.
 
 ## Canonical fields
 
+<!-- planned:thin-live-runtime-boundary -->
 ### Two-tier hosting growth ladder
 
 | Dimension | Tier 1 (shared host) | Tier 2 (isolated container) |
@@ -44,8 +49,9 @@ company** on the same host, kept apart from this one at Tier 2.
 | Placement | Company home folder on the operator's host (`project/instrukt/spec/feature/configuration/company-homes`). | One dedicated long-running Linux container per company on a Linux host. |
 | Model subscription (BYOS) | Isolated per-company provider accounts via the runtime's optional multi-account provider isolation capability (`project/instrukt/spec/feature/runtime/adapter`), bound by the company home's `profiles`. | Dedicated agent program login stored inside the company's own host folder; never shared with the operator or other companies. |
 | OS and filesystem isolation | Folder separation only under one OS user (no OS confinement between companies). | Hard OS and filesystem boundary: the company's agents reach no other company and nothing of the host (`sdlc/policy/security-awareness`). |
-| Surfaces and access | Business chat connectors (`project/instrukt/spec/feature/company/conversations`) only. | Business chat connectors, plus **dual runtime access** via the runtime's optional remote peer-linking capability: zero-ops operator visibility from the host runtime, and optional direct steering/mobile access for a technical company owner under their own client account. |
+| Surfaces and access | Business chat connectors (`project/instrukt/spec/feature/company/conversations`) only. | Business chat connectors, plus **dual runtime access** via the runtime's optional remote peer-linking capability: operator visibility from the host runtime, and optional direct steering/mobile access for a technical company owner under their own client account. |
 | Portability | Git repository plus company home files. | Consistent online export and prepared-host import of the company's irreplaceable folder state. |
+<!-- /planned:thin-live-runtime-boundary -->
 
 ### The Tier-2 container
 
@@ -53,7 +59,7 @@ company** on the same host, kept apart from this one at Tier 2.
 | --- | --- |
 | Host | A Linux computer. A Mac runs the same container for testing and is no host. |
 | One per company | A company has one container on a host, and a container serves one company. Two companies never share a container, its runtime, or its agent program's login (`sdlc/policy/security-awareness`: isolate components so a compromise in one cannot reach others). |
-| Long-running | The container runs until the operator stops it, and starts again with the host. A session in it keeps its conversation across a restart under `project/instrukt/spec/feature/runtime/adapter`. |
+| Long-running | The container runs until the operator stops it, and starts again with the host. A session in it keeps its conversation across a restart under `project/instrukt/spec/feature/runner/session-continuity`. |
 | What runs in it | The selected runtime and the agent programs it starts, for this company only. |
 | The image | Lean: it carries nothing of any company, and the agent tools are not part of it. |
 
@@ -79,23 +85,33 @@ the same in its container: who is answered, the answer posted back, and whose
 login a call carries (`project/instrukt/spec/domain/company`,
 `project/instrukt/spec/feature/runner/mcp-access`).
 
+<!-- planned:thin-live-runtime-boundary -->
 ### Operator and technical company-owner dual access
 
 When the selected runtime declares the optional remote peer-linking capability
 (`project/instrukt/spec/feature/runtime/adapter`), a Tier-2 container supports
-two independent access paths without breaking company isolation:
+two independent access paths while enforcing defense-in-depth network and
+authentication isolation (`sdlc/policy/security-awareness`):
 
+- **Per-container endpoint authentication and egress isolation:** Every
+  published Tier-2 container runtime port requires per-container authentication
+  (never relying on network reachability alone, with credentials kept out of
+  logs and diagnostics). Container egress is blocked from reaching host-bound
+  runtime ports and sibling containers' published endpoints, so an agent or
+  account inside one company's container cannot reach another company's runtime
+  or the host's runtime.
 - **Operator access:** The operator links the container's runtime into their
-  own host runtime over a private host-local or tailnet boundary, without
-  installing separate VPN infrastructure inside each container.
+  own host runtime over a private host-local or operator-managed private
+  network boundary restricted to authorized operator peers.
 - **Optional technical company-owner access:** A technical company
   administrator may link their own personal client account directly to their
-  company's container to inspect threads, steer agents, and receive mobile
+  company's container to inspect sessions, steer agents, and receive mobile
   notifications. That link grants reach only inside their own company's
   container and never exposes the operator's host or any other company.
 
 How each concrete runtime realizes these two links belongs to that runtime's
 adapter specification.
+<!-- /planned:thin-live-runtime-boundary -->
 
 ### Where a company's state lives
 
@@ -268,10 +284,6 @@ And no other company on the host changed
 
 ## Known caveats
 
-- Tier-2 container orchestration, automated tool updates, and export/import
-  implementation are a separate future delivery; Tier-1 shared-host onboarding
-  with BYOS account isolation is available today on runtimes declaring that
-  capability.
 - Inside its container a company's team agent is not confined further: it can
   read, change, or erase anything of its own company's that the container
   holds, the company's secrets file and its login included. Importing its last
@@ -290,6 +302,7 @@ And no other company on the host changed
 
 - [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/feature/runtime/adapter](../runtime/adapter.md)
+- [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)
 - [project/instrukt/spec/feature/company/conversations](conversations.md)
 - [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)

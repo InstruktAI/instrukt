@@ -17,7 +17,8 @@ newest nightly on an hourly schedule. Successful checks require no agent.
 This contract applies the external-boundary discipline of `sdlc/policy/testing`
 and the repository's bounded T3 exception in `project/instrukt/policy/testing`.
 The runtime-neutral facade lives in `project/instrukt/spec/feature/runtime/adapter`,
-and T3's concrete operational realization lives in
+and T3's operational realization — including exact project resolution, company
+home project titling, mode resolution, and live RPC semantics — is owned by
 `project/instrukt/spec/feature/runtime/t3`.
 
 ## Canonical fields
@@ -38,33 +39,25 @@ entries, a digest mismatch, unavailable assets, and execution failures fail the
 check visibly. The downloaded executable is the sole T3 used by this check; an
 installed executable never substitutes for it.
 
-### Native launch and replay
+### Native launch, live projection, and project-table agreement
 
 The consumed live native boundary includes `GET /api/projects`,
 `server.getConfig`, `orchestration.getThreadProjection`,
-`orchestration.launchThread`, and `orchestration.dispatchCommand`. Verify fixed
-command/thread identity and opening-message replay, captured native project,
-model-selection options and resolved modes, and existing-worktree capability
+`orchestration.launchThread`, and `orchestration.dispatchCommand`. The suite
+verifies fixed command/thread identity and opening-message replay (including
+replaying an accepted launch after thread deletion), captured native project,
+model-selection options and resolved modes, existing-worktree capability, and
+project-resolution/title agreement against `project/instrukt/spec/feature/runtime/t3`
 where provider-free evidence permits. Native launch accepts `createdBy:"user"`
 on the pinned WebSocket path; caller payload provenance does not override it.
 Grammar or projection shape alone proves neither completed workspace
 preparation nor successful provider execution.
 
-Project resolution and registration belong to the same boundary. `t3 project
-add <root>` creates a live project at exactly that root and refuses a root that
-already has an active one; the project snapshot then lists it. A launch for a
-checkout whose only containing project is rooted at an ancestor adds a project
-at the checkout and starts its thread there, never in the ancestor. A project
-instrukt adds at a company home (`~/.instrukt/companies/<name>/`,
-`project/instrukt/spec/feature/configuration/company-homes`) is created with
-`--title company-<name>`, the company's repository name; a project added at any
-other root keeps the title T3 gives it, its folder name. The title is given
-only at creation: a project already present is reused as it is, never retitled.
-The fake holds its project table as state: a project exists only where the
-fixture or an emulated `t3 project add` placed it, never by deriving it from
-the folders under test, and the agreement check covers its project snapshot,
-its `project add`, and the titles an added root and an added company home
-receive.
+The T3 test double holds its project table as explicit state (never deriving
+projects from folders under test), and the agreement check compares the real
+release and fake on `GET /api/projects`, `t3 project add`, and the titles
+assigned to regular checkouts and company homes under
+`project/instrukt/spec/feature/runtime/t3`.
 
 ### Consumed upstream surfaces
 
@@ -74,8 +67,8 @@ the owners of the required behavior.
 | Upstream surface | Instrukt contracts to check |
 | --- | --- |
 | Contracts package, `packages/contracts/` | Runtime operations, response shapes, and capability evidence in `project/instrukt/spec/feature/runtime/adapter` and `project/instrukt/spec/feature/runtime/t3`. |
-| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Strictly cold/maintenance read-only reads: cold text extraction in `project/instrukt/spec/feature/runner/history` and thread-retention projection confirmation in `project/instrukt/spec/feature/runner/thread-retention`. No live operational path consumes these tables. |
-| WebSocket contracts/handlers, native `ThreadLaunchService`, and project HTTP snapshot | Fixed native launch/replay, queued command dispatch, captured project/model/modes, and existing-worktree placement in `project/instrukt/spec/feature/runtime/t3`. |
+| Server persistence migrations, `apps/server/src/persistence/Migrations.ts` and `apps/server/src/persistence/Migrations/`, and their projection writer, `apps/server/src/orchestration-v2/ProjectionStore.ts` | Strictly non-live read-only reads: cold text extraction (`project/instrukt/spec/feature/runner/history`) and thread-retention projection confirmation (`project/instrukt/spec/feature/runner/thread-retention`). No live operational path consumes these tables. |
+| WebSocket contracts/handlers, native `ThreadLaunchService`, and project HTTP snapshot | Fixed native launch/replay, queued command dispatch, live thread projection observation (`orchestration.getThreadProjection`), captured project/model/modes, and existing-worktree placement in `project/instrukt/spec/feature/runtime/t3`. |
 | CLI entry and commands, `apps/server/scripts/cli.ts` and `apps/server/src/cli/` | Unattended runtime operations and evidence in `project/instrukt/spec/feature/runtime/t3`. |
 
 ### Isolation and real evidence
@@ -85,17 +78,18 @@ and Git project. Server startup uses an explicit base directory, loopback
 address, and `--no-browser`; every client resolves that same base. Inherited T3
 caller, connection, development-server, and credential settings are removed.
 The check uses no person's application data or credentials, running T3, or model
-execution; `HOME` remains inherited for ordinary tool configuration, with app
-state isolated through its native variables. All issued sessions and all
-processes owned by the check are cleaned up on success, failure, and
-interruption within bounded operation deadlines. Synchronization uses
-observable readiness and changes under `sdlc/policy/testing`.
+execution; host environment and isolated application roots follow the owning
+isolation contracts (`project/instrukt/spec/feature/configuration/logging` and
+`project/instrukt/spec/feature/publication/agent-entrypoints`). All issued
+sessions and all processes owned by the check are cleaned up on success,
+failure, and interruption within bounded operation deadlines. Synchronization
+uses observable readiness and changes under `sdlc/policy/testing`.
 
 T3 itself creates and migrates the disposable database and writes the
-projection records for the cold text-read and thread-retention checks. A schema
-fabricated by the test is not evidence of compatibility with T3's migrations.
-Fixtures use provider-free management commands; a deferred run remains
-unreleased throughout any queued-input probe. Cold/maintenance checks open T3's
+projection records for the non-live cold text-read and thread-retention checks.
+A schema fabricated by the test is not evidence of compatibility with T3's
+migrations. Fixtures use provider-free management commands; a deferred run
+remains unreleased throughout any queued-input probe. Non-live checks open T3's
 database read-only through the normal source-discovery path; instrukt's test
 never migrates or patches T3's database.
 
@@ -106,9 +100,9 @@ interfaces and real CLI boundaries, without widening implementation visibility:
 | --- | --- |
 | CLI grammar | Help accepts the consumed start/title, provider/model, worktree/branch, send, list/project/JSON, show/message-window, and session issue/revoke options. Grammar evidence is distinct from successful model execution. |
 | Discovery and readiness | The real runtime descriptor, short-lived read-scoped token issue/revoke, and negotiated `server.getConfig` response pass production readiness acquisition and shape validation. Unready provider facts remain unready; no successful provider login or quota observation is invented. Revocation is checked, including denial of reuse of the revoked credential. The same response's provider instances decode into configured agent runtimes and their homes (`project/instrukt/spec/feature/publication/agent-entrypoints`). |
-| Thread identity and state | Provider-free thread creation supplies real list and show responses. The adapter decodes identity, title/key, project, status, native activity, settled/archive, and available workspace metadata; the tested fixture determines expected values. Unknown-thread responses retain failure meaning. |
-| Accepted input and idempotent dispatch | Authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and native CLI queue delivery are checked against a deferred run for queued acceptance, replay without a duplicate, and native `createdBy:"user"` stamp, without reading `statev2.sqlite`. |
-| Cold text source and thread retention | The cold text source opens the real migrated database read-only and validates the thread and message tables it consumes; `instrukt history extract` retains the fixture thread with its user messages and nothing else, and an unchanged second extraction loads nothing. Thread retention decodes finished, quiet, pinned, and latest-activity facts, validates its projection tables, and checks `orchestration.dispatchCommand` with `thread.archive` (including refusal of a second archive). |
+| Thread identity and state | Provider-free thread creation supplies real list, show, and `orchestration.getThreadProjection` responses. The adapter decodes identity, title/key, project, status, native activity, settled/archive, and available workspace metadata; the tested fixture determines expected values. Unknown-thread responses retain failure meaning. |
+| Accepted input and idempotent dispatch | Authenticated WebSocket `orchestration.dispatchCommand` with a retained command ID and native CLI queue delivery are checked against a deferred run for queued acceptance, replay without a duplicate, native `createdBy:"user"` stamp, and live message/run observation via `orchestration.getThreadProjection` — verifying that the production live adapter completes without reading `statev2.sqlite`. |
+| Non-live cold text source and thread retention | The cold text source opens the real migrated database read-only and validates the thread and message tables it consumes; `instrukt history extract` retains the fixture thread with its user messages and nothing else, and an unchanged second extraction loads nothing. Thread retention decodes finished, quiet, pinned, and latest-activity facts, validates its projection tables, and checks `orchestration.dispatchCommand` with `thread.archive` (including refusal of a second archive). |
 
 Each disposable server start waits for the runtime descriptor to report that
 server's assigned port before connecting, including after a restart.
@@ -122,9 +116,9 @@ determine adapter compatibility under `project/instrukt/spec/feature/runtime/t3`
 ### Agreement of the fake with the real boundary
 
 The same contract check exercises `crates/instrukt-cli/tests/support/t3.rs`
-against the real CLI's provider-free observations. Equivalent native thread
-facts drive both. Normalization removes only incidental identities, paths,
-ports, and timestamps, retaining field presence, types, state meaning,
+against the real CLI and RPC provider-free observations. Equivalent native
+thread facts drive both. Normalization removes only incidental identities,
+paths, ports, and timestamps, retaining field presence, types, state meaning,
 input/run relationships, and success/failure meaning. A consumed-field or
 behavior disagreement fails the check with the operation identified. Fake-only
 fault-injection controls remain test controls; they make no claim about a T3
@@ -204,21 +198,6 @@ and warranted, deduplicated bug filing under
 belongs to the dependency branch and does not report a broken canonical
 delivery. Successful checks wake no T3 watcher.
 
-### Inherited home and isolated application roots
-
-Checks inherit `HOME`, broad XDG bases, and `TMPDIR` unchanged for signing,
-SSH, and caches. `INSTRUKT_LOG_DIR` selects the isolated app log directory
-under `project/instrukt/spec/feature/configuration/logging`. They isolate
-Instrukt, T3, and the six native runtime roots named by
-`project/instrukt/spec/feature/publication/agent-entrypoints`. The shared check
-launcher owns temporary roots and scheduler-command rejection stubs; CLI
-fixtures retain their existing recording scheduler stubs and write fence.
-Systemd uses an explicit `SYSTEMD_UNIT_PATH`, launchd uses
-`INSTRUKT_LAUNCH_AGENTS_DIR`, and file-only cron uses `INSTRUKT_CRONTAB_FILE`.
-Native-account cron checks unset the latter only behind a recording stub.
-Cursor/Grok/Antigravity default-only outputs are not filesystem-delivery
-fixtures against a real home.
-
 ## Use cases
 
 ### UC-TC1: A maintainer checks the T3 dependency without supervising an agent
@@ -268,8 +247,11 @@ And it leaves the maintainer's runtime and home untouched
 - [project/instrukt/spec/feature/runtime/adapter](adapter.md)
 - [project/instrukt/spec/feature/runtime/t3](t3.md)
 - [project/instrukt/spec/feature/runner/history](../runner/history.md)
+- [project/instrukt/spec/feature/runner/thread-retention](../runner/thread-retention.md)
 - [project/instrukt/spec/feature/runner/event-activation](../runner/event-activation.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
+- [project/instrukt/spec/feature/configuration/logging](../configuration/logging.md)
+- [project/instrukt/spec/feature/publication/agent-entrypoints](../publication/agent-entrypoints.md)
 - [project/instrukt/policy/testing](../../../policy/testing.md)
 - https://github.com/pingdotgg/t3code/tree/bf469bb19669671d0df2efda74ed73867a7137c0 — inspected v0.1.8 source; CLI, RPC, migrations and projection writer are the upstream evidence.
 - https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow — repository-token recursion rules, the dispatch exception and default-branch workflow registration.

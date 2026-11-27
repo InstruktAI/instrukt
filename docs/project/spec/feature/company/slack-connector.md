@@ -44,29 +44,20 @@ connectors:
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
 <!-- change:thin-live-runtime-boundary -->
-```yaml
-connectors:
-  slack:
-    app_token: ${SLACK_APP_TOKEN}
-    bot_token: ${SLACK_BOT_TOKEN}
-    context_messages: 30
-  ops:
-    kind: slack
-    role: company-agent
-    admit: admins_only
-    session_scope: company
-    app_token: ${OPS_SLACK_APP_TOKEN}
-    bot_token: ${OPS_SLACK_BOT_TOKEN}
-```
+A Slack connector is declared under `connectors.<name>` in a company home
+(`project/instrukt/spec/feature/configuration/configuration-editing` owns the
+declaration schema and `instrukt config schema --company <name> connectors.slack`
+shows its fields and defaults). Multiple named Slack apps may be declared in
+one company home with `kind: slack` (omitted when `<name>` is `slack`).
 
 | Field | Contract |
 | --- | --- |
-| `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. Multiple named Slack apps may be declared in one company home by setting `kind: slack`. When `<name>` is `slack`, `kind` may be omitted. |
+| `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. |
 | `kind` | Optional registered connector kind (`slack`); defaults to `<name>` when omitted. |
-| `role`, `admit`, `session_scope` | Common connector settings owned by `project/instrukt/spec/feature/company/conversations`. |
+| `role`, `admit`, `session_scope` | Common connector settings owned by `project/instrukt/spec/feature/company/conversations` and `project/instrukt/spec/feature/configuration/layered-configuration`. |
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
-| `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
+| `context_messages` | Positive whole number capping how many earlier messages accompany an addressed message. |
 <!-- /planned-change:thin-live-runtime-boundary -->
 
 A literal token, a missing token, an unsupported `kind`, an invalid common
@@ -249,9 +240,9 @@ A failed turn awaiting redelivery or an answer awaiting posting leaves it
 unfinished.
 <!-- change:thin-live-runtime-boundary -->
 From the admission of an addressed message until it is complete — its explicit
-reply posted, or its standard error reply posted after an unrecovered crash or
-idle-without-reply turn — the connector shows Slack's status line for it, with
-the text the message's state gives
+reply posted, or its standard error reply posted after retries are exhausted on
+failure or after an idle-without-reply turn — the connector shows Slack's
+status line for it, with the text the message's state gives
 (`project/instrukt/spec/feature/company/conversations`):
 
 | The message's state | Text |
