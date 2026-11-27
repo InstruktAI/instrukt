@@ -3,8 +3,9 @@
 //! schedule"), against the interfaces work and workflow implement.
 //!
 //! Per project with `todos` on, each tick: flush and pull reflection,
-//! purge expired retained records, then — for the kinds
-//! `runner.autostart` enables — take work's pickup candidates in order and
+//! purge expired retained records, then — for every eligible `bug`,
+//! `change` or `feature` and for `task` when `runner.autostart` enables
+//! `task` — take work's pickup candidates in order and
 //! ask workflow for each one's assignment. A lane is dispatched into the
 //! procedure declaring the lane flow's orchestrator role; a due task into
 //! the procedure declaring `task-runner`. Before a session starts the
@@ -67,7 +68,9 @@ pub enum Dispatched {
     },
 }
 
-/// The kinds `runner.autostart` picks up automatically in `config`.
+/// The kinds `runner.autostart` enables in `config` (governing task pickup
+/// here, and the first `builder` boundary in `instrukt-todos` for non-task
+/// kinds).
 pub fn autostart_kinds(config: &Configuration) -> Vec<TodoKind> {
     TodoKind::ALL
         .into_iter()
@@ -141,9 +144,6 @@ fn pickup(
     }
     notify_task_failures(cx, config, project);
     let kinds = autostart_kinds(config);
-    if kinds.is_empty() {
-        return Vec::new();
-    }
     let index = match GlobalIndex::load_readable(cx.home) {
         Ok(index) => index.unwrap_or_default(),
         Err(err) => {
@@ -153,7 +153,7 @@ fn pickup(
     };
     offered
         .iter()
-        .filter(|candidate| kinds.contains(&candidate.kind))
+        .filter(|candidate| candidate.kind != TodoKind::Task || kinds.contains(&TodoKind::Task))
         .filter_map(|candidate| {
             dispatch_one(cx, config, work, workflow, &index, project, candidate)
         })
