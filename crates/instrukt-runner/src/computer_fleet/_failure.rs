@@ -1,13 +1,14 @@
 //! Where a responder records its current outside failure. The computer
 //! fleet's evaluation responder and the tick's fleet step keep theirs in
 //! `state/computer-fleet.json` (`project/instrukt/spec/domain/runner`,
-//! "Fleet query and membership"), a file of its own outside the state
-//! database, written whole beside its previous version and renamed over
-//! it, so readers take no lock. History's responder keeps its row in
-//! `runner_workers`.
+//! "Fleet query and membership"), and other runner workers keep theirs in
+//! `state/runner-workers/<id>.json` (`project/instrukt/spec/domain/runner`,
+//! "Runner background state") — each written whole beside its previous
+//! version and renamed over it, outside `instrukt.db` and `state/writer.lock`,
+//! so readers take no lock.
 
 use std::io::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use jiff::Timestamp;
@@ -29,20 +30,7 @@ pub(crate) trait FailureRecorder: Send + 'static {
     fn record(&mut self, failure: Option<&str>) -> bool;
 }
 
-/// A worker's row in `runner_workers`. The row's own write failure is
-/// logged where it is written, and the responder goes on as if recorded.
-pub(crate) struct WorkerRow {
-    pub home: Home,
-    pub worker: &'static str,
-}
-
-impl FailureRecorder for WorkerRow {
-    fn record(&mut self, failure: Option<&str>) -> bool {
-        crate::state::worker_state(&self.home, self.worker, failure)
-    }
-}
-
-/// The file's document.
+/// The file's document for `state/computer-fleet.json`.
 #[derive(Serialize, Deserialize)]
 struct Recorded {
     failure: String,
@@ -57,11 +45,16 @@ enum Note {
     Failing(String),
 }
 
-/// The computer fleet's failure file. Its note changes only when a write or
+enum Target {
+    ComputerFleet(PathBuf),
+    Worker { home: Home, worker: &'static str },
+}
+
+/// An isolated failure file recorder. Its note changes only when a write or
 /// removal succeeded, so a failed one is tried again with the next outcome
 /// and never taken as recorded health.
 pub(crate) struct FailureFile {
-    path: PathBuf,
+    target: Target,
     clock: Clock,
     note: Note,
 }
@@ -69,27 +62,39 @@ pub(crate) struct FailureFile {
 impl FailureFile {
     pub(crate) fn new(home: &Home, clock: Clock) -> Self {
         Self {
-            path: path(home),
+            target: Target::ComputerFleet(path(home)),
             clock,
             note: Note::Unknown,
         }
     }
 
-    /// When the failure already in the file began; `None` when there is
-    /// none, or it cannot be read.
-    fn since(&self) -> Result<Option<Timestamp>, String> {
-        crate::state::refuse_symlink(&self.path).map_err(|error| error.to_string())?;
-        match std::fs::read(&self.path) {
+    /// A failure file for a runner worker under `state/runner-workers/`.
+    pub(crate) fn worker(home: &Home, worker: &'static str, clock: Clock) -> Self {
+        Self {
+            target: Target::Worker {
+                home: home.clone(),
+                worker,
+            },
+            clock,
+            note: Note::Unknown,
+        }
+    }
+
+    /// When the failure already in `path` began; `None` when there is none,
+    /// or it cannot be read.
+    fn since(path: &Path) -> Result<Option<Timestamp>, String> {
+        crate::state::refuse_symlink(path).map_err(|error| error.to_string())?;
+        match std::fs::read(path) {
             Ok(bytes) => match serde_json::from_slice::<Recorded>(&bytes) {
                 Ok(recorded) => Ok(Some(recorded.since)),
                 Err(error) => {
-                    tracing::warn!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
+                    tracing::warn!(event = "computer_fleet_failure_unread", path = %path.display(), %error);
                     Ok(None)
                 }
             },
             Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
             Err(error) => {
-                tracing::warn!(event = "computer_fleet_failure_unread", path = %self.path.display(), %error);
+                tracing::warn!(event = "computer_fleet_failure_unread", path = %path.display(), %error);
                 Ok(None)
             }
         }
@@ -98,28 +103,44 @@ impl FailureFile {
 
 impl FailureRecorder for FailureFile {
     fn record(&mut self, failure: Option<&str>) -> bool {
-        let written = match failure {
+        match failure {
             None if self.note == Note::Healthy => return true,
             Some(failure) if self.note == Note::Failing(failure.to_owned()) => return true,
-            None => crate::state::refuse_symlink(&self.path)
-                .map_err(|error| error.to_string())
-                .and_then(|()| match instrukt_core::fsx::remove_file(&self.path) {
-                    Ok(()) => Ok(()),
-                    Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
-                    Err(error) => Err(error.to_string()),
-                }),
-            Some(failure) => self.since().and_then(|existing| {
-                let recorded = Recorded {
-                    failure: failure.to_owned(),
-                    since: existing.unwrap_or_else(|| (self.clock)()),
-                };
-                serde_json::to_vec(&recorded)
+            _ => {}
+        }
+        let now = (self.clock)();
+        let written = match &self.target {
+            Target::ComputerFleet(path) => match failure {
+                None => crate::state::refuse_symlink(path)
                     .map_err(|error| error.to_string())
-                    .and_then(|bytes| {
-                        crate::state::write_bytes(&self.path, &bytes)
-                            .map_err(|error| error.to_string())
-                    })
+                    .and_then(|()| match instrukt_core::fsx::remove_file(path) {
+                        Ok(()) => Ok(()),
+                        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+                        Err(error) => Err(error.to_string()),
+                    }),
+                Some(failure) => Self::since(path).and_then(|existing| {
+                    let recorded = Recorded {
+                        failure: failure.to_owned(),
+                        since: existing.unwrap_or(now),
+                    };
+                    serde_json::to_vec(&recorded)
+                        .map_err(|error| error.to_string())
+                        .and_then(|bytes| {
+                            crate::state::write_bytes(path, &bytes)
+                                .map_err(|error| error.to_string())
+                        })
+                }),
+            }
+            .map_err(|error| {
+                tracing::warn!(event = "computer_fleet_failure_unrecorded", path = %path.display(), %error);
             }),
+            Target::Worker { home, worker } => {
+                crate::state::record_worker_failure_at(home, worker, failure, now).map_err(
+                    |error| {
+                        tracing::error!(event = "runner_worker_state_unrecorded", worker = %worker, error = %error);
+                    },
+                )
+            }
         };
         match written {
             Ok(()) => {
@@ -127,10 +148,7 @@ impl FailureRecorder for FailureFile {
                     failure.map_or(Note::Healthy, |failure| Note::Failing(failure.to_owned()));
                 true
             }
-            Err(error) => {
-                tracing::warn!(event = "computer_fleet_failure_unrecorded", path = %self.path.display(), %error);
-                false
-            }
+            Err(()) => false,
         }
     }
 }
@@ -249,5 +267,32 @@ mod tests {
     fn an_absent_file_shows_no_worker() {
         let (_dir, home) = home();
         assert!(status(&home).is_none());
+    }
+
+    #[test]
+    fn worker_failure_file_preserves_since_and_clears_under_held_writer_lock() {
+        let (_dir, home) = home();
+        let _writer = instrukt_core::fsx::LockGuard::acquire(
+            &home.writer_lock_file(),
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap();
+        let now = Arc::new(Mutex::new(seconds(10)));
+        let mut recorder = FailureFile::worker(&home, "history-search", clock(&now));
+        assert!(recorder.record(Some("redis down")));
+        *now.lock().unwrap() = seconds(70);
+        assert!(recorder.record(Some("still down")));
+        let entries = crate::state::read_worker_failures(&home).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].worker, "history-search");
+        assert_eq!(entries[0].failure, "still down");
+        assert_eq!(entries[0].since, Some(seconds(10)));
+
+        assert!(recorder.record(None));
+        assert!(
+            crate::state::read_worker_failures(&home)
+                .unwrap()
+                .is_empty()
+        );
     }
 }

@@ -20,7 +20,9 @@ use instrukt_core::home::Home;
 use instrukt_core::state_db::rusqlite::{Connection, Transaction};
 use instrukt_core::state_db::{StateDb, StateDbError, StateRead};
 
-pub(crate) use _workers::worker_state;
+pub(crate) use _workers::{
+    WorkerFailure, read_worker_failures, record_worker_failure_at, worker_state,
+};
 
 /// The runner's state could not be read or written.
 #[derive(Debug, thiserror::Error)]

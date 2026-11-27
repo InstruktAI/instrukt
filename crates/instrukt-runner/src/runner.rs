@@ -261,8 +261,8 @@ pub fn tick(
             &invocation,
         )
     });
-    // The tick's readiness ends with it: its token is revoked and its row,
-    // if a failed refresh left one, removed.
+    // The tick's readiness ends with it: its token is revoked and its failure
+    // file, if a failed refresh left one, removed.
     if readiness.take().is_some() {
         _readiness::ended(cx.home);
     }

@@ -3,7 +3,7 @@
 //! computer's missing answer is worded.
 use super::{Failure, HistoryError, Operation, SearchResult, local_search};
 use crate::computer_fleet::{
-    self, Answering, Outcome, Responder, ResponderSpec, StartError, Unopened, WorkerRow,
+    self, Answering, FailureFile, Outcome, Responder, ResponderSpec, StartError, Unopened,
 };
 use crate::transport::{ScopedTransport, TransportError};
 use instrukt_core::{
@@ -108,7 +108,7 @@ pub(super) fn merge(
     Ok(result)
 }
 
-/// The worker's name in `runner_workers`.
+/// The worker's name in its failure file and `instrukt events status`.
 const SEARCH: &str = "history-search";
 
 /// The query responder for other computers' merged searches, while history
@@ -133,10 +133,7 @@ pub(crate) fn search_worker(
             env: env.clone(),
             current,
         },
-        WorkerRow {
-            home: home.clone(),
-            worker: SEARCH,
-        },
+        FailureFile::worker(home, SEARCH, std::sync::Arc::new(jiff::Timestamp::now)),
     )
 }
 

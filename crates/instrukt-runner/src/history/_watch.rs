@@ -16,7 +16,7 @@ pub(crate) struct Worker {
     handle: Option<JoinHandle<()>>,
 }
 
-/// The worker's name in `runner_workers`.
+/// The worker's name in its failure file and `instrukt events status`.
 const EXTRACTION: &str = "history-extraction";
 
 /// The longest wait before T3's conversation source is acquired again.
@@ -87,8 +87,9 @@ impl Health {
         self.shown_healthy = false;
         if self.failing.as_deref() != Some(cause.as_str()) {
             tracing::warn!(event = "history_worker_failing", worker = EXTRACTION, error = %error);
-            crate::state::worker_state(home, EXTRACTION, Some(&cause));
-            self.failing = Some(cause);
+            if crate::state::worker_state(home, EXTRACTION, Some(&cause)) {
+                self.failing = Some(cause);
+            }
         }
     }
 
@@ -96,8 +97,7 @@ impl Health {
         if let Some(cause) = self.failing.take() {
             tracing::info!(event = "history_worker_recovered", worker = EXTRACTION, cause = %cause);
         }
-        if !self.shown_healthy {
-            crate::state::worker_state(home, EXTRACTION, None);
+        if !self.shown_healthy && crate::state::worker_state(home, EXTRACTION, None) {
             self.shown_healthy = true;
         }
     }

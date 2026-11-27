@@ -292,6 +292,27 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         || messages_of("repaired") == 1,
     );
     assert_eq!(runner.running(), pid, "the same runner process");
+    // Background worker failure recording and clearing never wait on
+    // instrukt.db's writer.lock.
+    {
+        let _writer = instrukt_core::fsx::LockGuard::acquire(
+            &env.instrukt_home().join("state/writer.lock"),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        recreated.break_shape();
+        crate::common::wait_until(
+            "the extraction failure in status while writer.lock is held",
+            Duration::from_secs(20),
+            extraction,
+        );
+        recreated.restore_shape();
+        crate::common::wait_until(
+            "the extraction failure to clear while writer.lock is held",
+            Duration::from_secs(20),
+            || !extraction(),
+        );
+    }
     // A failure one runner process recorded is cleared by the next one's
     // worker once it extracts.
     recreated.break_shape();

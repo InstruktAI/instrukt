@@ -524,6 +524,7 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
     let gate = common::redis_proxy::DeliveryGate::new(&local);
     let home = Home::at_user_home(computer.env.home().to_path_buf());
     let state = RunnerState::new(&home);
+    instrukt_core::machine::machine_id(&home).unwrap();
     let consumer = Consumer {
         name: "blocked-handover".into(),
         interest: Interest {
@@ -558,11 +559,21 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
         threads.spawn(|| old.drain(now));
         transport_support::until(|| gate.intercepted());
         computer.config(&cluster, None);
+        // Deferred consumer source transition recording and reporting never
+        // wait on instrukt.db's writer.lock.
+        let writer = instrukt_core::fsx::LockGuard::acquire(
+            &home.writer_lock_file(),
+            Duration::from_secs(1),
+        )
+        .unwrap();
         let (send, result) = mpsc::channel();
         let runtime = &runtime;
         let binder =
             threads.spawn(move || send.send(runtime().err().map(|error| error.to_string())));
         let deferred = result.recv_timeout(Duration::from_secs(4));
+        let pending = computer.consumers_status()["pending_source_transitions"].clone();
+        assert_eq!(pending.as_array().unwrap().len(), 1);
+        assert_eq!(pending[0]["transition"], "consumer:blocked-handover");
         let abandoned: usize = computer
             .db()
             .query_row(
@@ -571,6 +582,7 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
                 |row| row.get(0),
             )
             .unwrap();
+        drop(writer);
         gate.release();
         binder.join().unwrap().unwrap();
         assert_eq!(abandoned, 0);
@@ -580,6 +592,13 @@ fn a_blocked_source_reader_defers_handover_until_a_later_attempt() {
         );
     });
     assert!(runtime().is_ok());
+    assert_eq!(
+        computer.consumers_status()["pending_source_transitions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
     let abandoned: usize = computer
         .db()
         .query_row(
