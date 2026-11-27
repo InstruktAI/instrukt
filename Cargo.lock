@@ -1449,9 +1449,11 @@ name = "instrukt-connector-slack"
 version = "0.1.0"
 dependencies = [
  "http",
+ "hyper-rustls",
  "instrukt-connector",
  "instrukt-outside",
  "jiff 0.2.39",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -1459,8 +1461,6 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
- "tungstenite 0.28.0",
- "ureq",
 ]
 
 [[package]]
