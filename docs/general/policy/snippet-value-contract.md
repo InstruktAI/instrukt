@@ -301,10 +301,18 @@ Applies to all snippet authoring contexts and company home knowledge:
   without taxonomy IDs or external doctrine references.
 - Future authoring flows (scaffolding, manual updates).
 
+<!-- planned-change:doctrine-commands-and-scan -->
 The contract is procedural, not structural. It is enforced by the author
 applying it before drafting and by reviewers applying it during review.
 There is no automated grader — code that judges free-text snippet quality
 would violate `general/principle/intelligence-boundaries`.
+<!-- change:doctrine-commands-and-scan -->
+Value judgment under this contract is procedural, enforced by the author
+before drafting and by reviewers during review; there is no automated grader
+for free-text snippet quality (`general/principle/intelligence-boundaries`).
+Only the code-container convention for shared-doctrine command invocations
+carries a non-failing structural validation notice (`## Enforcement`).
+<!-- /planned-change:doctrine-commands-and-scan -->
 
 ## Enforcement
 
