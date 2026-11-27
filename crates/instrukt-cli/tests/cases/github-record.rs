@@ -1078,13 +1078,29 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
 // spec: project/instrukt/spec/feature/work/github-record UC-GR9
 #[test]
 fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change_work() {
-    let project = Project::new();
-    project.create(
+    let project = flavor::Tracked::new(false);
+    project.todo([
+        "create",
         "held-work",
-        "feature",
         "Retain this work through a dispatch pause.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create must not contact GitHub"
     );
+    // First tick with deliberate pickup reflects issue #1 without dispatching.
     project.tick();
+    assert_eq!(project.rt.started_count(), 0);
+    // Enable automatic pickup so the next tick exercises inbound hold
+    // ingestion running before dispatch sees the todo.
+    let layer = project.repo.path().join("instrukt.yaml");
+    let config = std::fs::read_to_string(&layer)
+        .unwrap()
+        .replace("autostart: false", "autostart: true");
+    std::fs::write(&layer, config).unwrap();
     // People's label actions are the issue's events, read from where the
     // last read stopped; each actor's access is GitHub's answer.
     let label = |event: &str, login: &str, permission: &str| {
@@ -1108,14 +1124,19 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
     label("labeled", "maintainer", "write");
     project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        0,
+        "a GitHub hold label must prevent dispatch on the same tick"
+    );
     let requests_before_show = project.github.requests().len();
-    let held = project.ok(["show", "held-work"]);
+    let held = project.todo(["show", "held-work"]);
     assert_eq!(
         project.github.requests().len(),
         requests_before_show,
         "todo show must not contact GitHub"
     );
-    project.ok([
+    project.todo([
         "artifacts",
         "write",
         "held-work",
@@ -1123,6 +1144,11 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         "Progress remains available.",
     ]);
     project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        0,
+        "held work stays out of dispatch while progress reflects"
+    );
     let before = project.github.artifacts(REPOSITORY, 1);
     project.github.edit_issue(REPOSITORY, 1, |issue| {
         issue.labels.retain(|l| l != "hold" && l != "status:active");
@@ -1130,14 +1156,25 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         issue.labels.push("team-owned".into());
     });
     label("unlabeled", "collaborator", "write");
-    // The tick ingests the release and restores output labels in the same pass.
+    // The tick ingests the release before pickup, dispatches the unheld todo,
+    // and restores output labels in the same pass.
     project.tick();
-    let released = project.ok(["show", "held-work"]);
+    assert_eq!(
+        project.rt.started_count(),
+        1,
+        "releasing the GitHub hold label must allow dispatch on the same tick"
+    );
+    let released = project.todo(["show", "held-work"]);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
     project.github.edit_issue(REPOSITORY, 1, |_| {});
     label("labeled", "outsider", "read");
     project.tick();
-    let refused = project.ok(["show", "held-work"]);
+    assert_eq!(
+        project.rt.started_count(),
+        1,
+        "an unauthorized hold action must not disturb dispatch"
+    );
+    let refused = project.todo(["show", "held-work"]);
     insta::assert_snapshot!(
         "github-hold-label-audit",
         redact(&format!("{held}---\n{released}---\n{refused}"))
@@ -1145,81 +1182,6 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
     insta::assert_json_snapshot!(
         "github-restored-output-labels",
         project.github.issue(REPOSITORY, 1).unwrap()["labels"]
-    );
-}
-
-// spec: project/instrukt/spec/feature/work/github-record UC-GR9
-// spec: project/instrukt/spec/feature/runner/work-dispatch UC-RD1
-#[test]
-fn a_github_hold_label_applied_before_tick_prevents_dispatch_on_that_tick() {
-    let project = flavor::Tracked::new(false);
-    flavor::change(&project, "held-before-pickup");
-    assert!(
-        project.github.requests().is_empty(),
-        "todo create must not contact GitHub"
-    );
-    // First tick with deliberate pickup creates issue #1 without dispatching.
-    project.tick();
-    assert_eq!(project.github.issues(REPOSITORY).len(), 1);
-    assert_eq!(project.rt.started_count(), 0);
-
-    // Enable automatic pickup, and apply a maintainer `hold` label on GitHub
-    // before the runner's next tick.
-    let layer = project.repo.path().join("instrukt.yaml");
-    let config = std::fs::read_to_string(&layer)
-        .unwrap()
-        .replace("autostart: false", "autostart: true");
-    std::fs::write(&layer, config).unwrap();
-    project
-        .github
-        .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
-    project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({"event":"labeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:00:00Z"}),
-    );
-    project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission":"write"}),
-        },
-    );
-
-    // The tick pulls inbound controls BEFORE pickup, so the hold takes effect
-    // before dispatch sees the todo.
-    project.tick();
-    assert_eq!(
-        project.rt.started_count(),
-        0,
-        "a GitHub hold label must prevent dispatch on the same tick"
-    );
-
-    // Removing the hold label on GitHub allows pickup on the next tick.
-    project
-        .github
-        .edit_issue(REPOSITORY, 1, |issue| issue.labels.retain(|l| l != "hold"));
-    project.github.seed_event(
-        REPOSITORY,
-        1,
-        serde_json::json!({"event":"unlabeled","label":{"name":"hold"},"actor":{"login":"maintainer"},"created_at":"2026-11-06T10:05:00Z"}),
-    );
-    project.github.respond_once(
-        "GET",
-        "/collaborators/maintainer/permission",
-        CannedResponse {
-            status: 200,
-            headers: vec![],
-            body: serde_json::json!({"permission":"write"}),
-        },
-    );
-    project.tick();
-    assert_eq!(
-        project.rt.started_count(),
-        1,
-        "releasing the GitHub hold label must allow dispatch on the same tick"
     );
 }
 // spec: project/instrukt/spec/feature/work/github-record UC-GR8

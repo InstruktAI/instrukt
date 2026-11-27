@@ -1,9 +1,9 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1132
+assertion_line: 1178
 expression: "redact(&format!(\"{held}---\\n{released}---\\n{refused}\"))"
 ---
-held-work · feature · active
+held-work · change · active
 identity: <id 1>
 record status: held
 created: <time> by Test Developer
@@ -20,17 +20,22 @@ artifacts:
 stamps:
   none
 ---
-held-work · feature · active
+held-work · change · active
 identity: <id 1>
 record status: active
 created: <time> by Test Developer
-revision: 4
+revision: 7
 intent:
   Retain this work through a dispatch pause.
 reflection: reflected to GitHub
 issue: #1
-claim: not held
+claim: held since <time> by session t3:instrukt:launch:<event 1>
 hold: none
+sessions:
+  todo-orchestrator/1: t3:instrukt:launch:<event 1>
+    key: instrukt:todo:demo/<id 1>:todo-orchestrator:1
+    branch: held-work/work; base: <commit 1>
+    worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1>
 released holds:
   held from GitHub by maintainer (released <time> by @collaborator)
 artifacts:
@@ -40,18 +45,27 @@ artifacts:
     <digest 2> by Test Developer at <time>
 stamps:
   none
+workspace:
+  branch: held-work/work
+  worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1> (clean)
+  head: <commit 1>
 ---
-held-work · feature · active
+held-work · change · active
 identity: <id 1>
 record status: active
 created: <time> by Test Developer
-revision: 4
+revision: 7
 intent:
   Retain this work through a dispatch pause.
 reflection: reflected to GitHub
 issue: #1
-claim: not held
+claim: held since <time> by session t3:instrukt:launch:<event 1>
 hold: none
+sessions:
+  todo-orchestrator/1: t3:instrukt:launch:<event 1>
+    key: instrukt:todo:demo/<id 1>:todo-orchestrator:1
+    branch: held-work/work; base: <commit 1>
+    worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1>
 released holds:
   held from GitHub by maintainer (released <time> by @collaborator)
 artifacts:
@@ -61,3 +75,7 @@ artifacts:
     <digest 2> by Test Developer at <time>
 stamps:
   none
+workspace:
+  branch: held-work/work
+  worktree: [TMP]/t3-state/worktrees/instrukt:launch:<event 1> (clean)
+  head: <commit 1>
