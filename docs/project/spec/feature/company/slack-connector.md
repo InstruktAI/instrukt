@@ -18,6 +18,7 @@ company context and implements the connector interface that context defines
 
 ### Declaration
 
+<!-- planned-change:thin-live-runtime-boundary -->
 ```yaml
 connectors:
   slack:
@@ -42,6 +43,31 @@ connectors:
 | `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
 | `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
 | `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
+<!-- change:thin-live-runtime-boundary -->
+```yaml
+connectors:
+  slack:
+    app_token: ${SLACK_APP_TOKEN}
+    bot_token: ${SLACK_BOT_TOKEN}
+    context_messages: 30
+  ops:
+    kind: slack
+    role: company-agent
+    admit: admins_only
+    session_scope: company
+    app_token: ${OPS_SLACK_APP_TOKEN}
+    bot_token: ${OPS_SLACK_BOT_TOKEN}
+```
+
+| Field | Contract |
+| --- | --- |
+| `connectors.<name>` | Company home only; `<name>` is a slug identifying the connector within the company home. Multiple named Slack apps may be declared in one company home by setting `kind: slack`. When `<name>` is `slack`, `kind` may be omitted. |
+| `kind` | Optional registered connector kind (`slack`); defaults to `<name>` when omitted. |
+| `role`, `admit`, `session_scope` | Common connector settings owned by `project/instrukt/spec/feature/company/conversations`. |
+| `app_token` | Reference to the Slack app's connection token in the home's secrets file. Required. |
+| `bot_token` | Reference to the Slack app's bot token in the home's secrets file, used to read a conversation and to post. Required. |
+| `context_messages` | The largest number of earlier messages that accompany an addressed message. A positive whole number; 30 when omitted. |
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 A literal token, a missing token, an unsupported `kind`, an invalid common
 setting and an unknown field are validation findings naming the company and the
@@ -194,6 +220,7 @@ alike.
 
 ### While the agent works
 
+<!-- planned-change:thin-live-runtime-boundary -->
 From the admission of an addressed message until it is complete — its answer
 posted, or its turn completed with a successful blank reply —
 the connector shows Slack's status line for it, with the text the message's state gives
@@ -220,6 +247,34 @@ one.
 A posted answer or a successful blank reply completes the message.
 A failed turn awaiting redelivery or an answer awaiting posting leaves it
 unfinished.
+<!-- change:thin-live-runtime-boundary -->
+From the admission of an addressed message until it is complete — its explicit
+reply posted, or its standard error reply posted after an unrecovered crash or
+idle-without-reply turn — the connector shows Slack's status line for it, with
+the text the message's state gives
+(`project/instrukt/spec/feature/company/conversations`):
+
+| The message's state | Text |
+| --- | --- |
+| its no-work interval is open, the relay-wide failure included (the interval the notice reads) | `is temporarily unavailable — your message is saved` |
+| its turn runs and the agent has published a curated update via `instrukt company status` | the latest curated status text recorded by `instrukt company status` |
+| otherwise, from its admission | `is working on your request` |
+
+Slack puts the app's name in front of it. Each status pass sets the text that
+matches the state as it then stands, so a change of state shows at the next
+pass. Where one status serves several unfinished messages, the unavailable text
+shows while every one of them has its interval open; otherwise the latest
+curated `instrukt company status` update, or the calm working text before there
+is one. Raw turn output is never relayed into the status line.
+
+| Where | The status sits on | It stays while |
+| --- | --- | --- |
+| A channel | the conversation's thread | any admitted message of that thread is unfinished |
+| A direct message | the addressed message itself | that one message is unfinished |
+
+A posted explicit reply or standard error reply completes the message. A failed
+turn awaiting redelivery or an answer awaiting posting leaves it unfinished.
+<!-- /planned-change:thin-live-runtime-boundary -->
 
 Admitting a message wakes the connector's status pass, so the person normally
 sees at once that the request was taken on; that first setting can wait behind
