@@ -252,11 +252,17 @@ fn an_approval_on_github_applies_to_the_evidence_it_names_attributed_to_the_appr
         "Keep the depth of nested lists when parsing Markdown.",
     );
     reviewed_prd(&project, "Lists keep their depth through parse and render.");
+    assert!(
+        project.github.requests().is_empty(),
+        "todo commands must not contact GitHub"
+    );
+    project.tick();
     let earlier = shown_prd_prefix(&project);
     reviewed_prd(
         &project,
         "Lists keep their depth, and numbering restarts per level.",
     );
+    project.tick();
     let current = shown_prd_prefix(&project);
 
     let github = &project.github;
@@ -281,7 +287,14 @@ fn an_approval_on_github_applies_to_the_evidence_it_names_attributed_to_the_appr
         "COLLABORATOR",
         &format!("/instrukt approve prd {current}"),
     );
+    project.tick();
+    let requests_before_show = github.requests().len();
     let shown = project.ok(["show", "nested-lists"]);
+    assert_eq!(
+        github.requests().len(),
+        requests_before_show,
+        "todo show must not contact GitHub"
+    );
     let answers: Vec<String> = github
         .comments(REPOSITORY, 1)
         .iter()

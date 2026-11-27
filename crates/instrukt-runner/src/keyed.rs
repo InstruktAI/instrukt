@@ -527,9 +527,6 @@ fn accept_thread(
         };
         work.replace_dispatch(&project, &binding, original, &mut accept)
             .map_err(|e| SessionsError::Refused(e.to_string()))?;
-        if let Err(error) = work.reflect_dispatch_replacement(&project, &input.key) {
-            tracing::warn!(event="dispatch_reflection_pending",%error);
-        }
     } else {
         guard.state.write(accept)?;
     }

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/delivery-cycle.rs
+assertion_line: 104
 expression: "shown(&crew, record.as_bytes())"
 ---
 add-depth · change · active
@@ -9,8 +10,7 @@ created: <time> by session t3:lead-1
 revision: 16
 intent:
   Keep list depth when parsing.
-reflection: pending: the pull request waits for branch `add-depth/work` on GitHub
-issue: #1
+reflection: pending: not yet reflected
 claim: held since <time> by session t3:lead-1
 hold: none
 sessions:

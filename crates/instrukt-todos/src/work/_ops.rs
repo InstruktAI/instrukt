@@ -1,7 +1,7 @@
 //! The `instrukt todo` record operations (`todos`, `dependencies-and-holds`,
 //! `stamps`, `approvals`, `github-record` "Artifacts and stamps"). Each
-//! opens a session, validates the whole resulting record before it
-//! commits, and flushes pending reflection.
+//! opens a local session, validates the whole resulting record before it
+//! commits, and leaves reflection pending for the runner.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -20,9 +20,7 @@ use super::_model::{
     Artifact, Delivery, ReleasedHold, SCHEMA, TodoAddress, TodoId, TodoRecord, TodoRef, Version,
     digest_of, valid_artifact_name,
 };
-use super::_session::{
-    GitHubRead, LockWait, ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of,
-};
+use super::_session::{ReflectionStatus, Session, exact_local, find_in, past_recovery, status_of};
 use super::_stamps::{self, StampInputs, StampRequest};
 use super::_store::{BranchRelease, Completed, LocalItem, Store, WithdrawalIntent};
 use super::_withdrawal::{WithdrawalLock, plan_release, release};
@@ -105,9 +103,6 @@ pub struct TodoView {
     pub record_status: &'static str,
     /// Where the todo's reflection stands.
     pub reflection: ReflectionStatus,
-    /// Whether GitHub was read for this view: when not, what people did on
-    /// the issue since its last read is not applied yet, and why.
-    pub github: GitHubRead,
     pub issue: Option<u64>,
     pub pull: Option<u64>,
     pub prerequisites: Vec<PrerequisiteView>,
@@ -261,7 +256,6 @@ impl Work {
             check_prerequisites(s, index)?;
             Ok(index)
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -271,11 +265,11 @@ impl Work {
 
     /// The todo `address` names: a plain slug is the live item;
     /// `<slug>@<identity-prefix>` an exact entry, retained ones included.
-    /// What people did on its issue is applied first.
+    /// Reads only this computer's local record without contacting GitHub
+    /// or acquiring locks on a current-schema database.
     pub fn show(&self, project: &ProjectRef, address: &TodoAddress) -> Result<TodoView, WorkError> {
-        let mut s = Session::open(self, project)?;
+        let s = Session::open_read(self, project)?;
         let index = s.locate(address)?;
-        s.pull_through(index)?;
         Ok(view(&s, index))
     }
 
@@ -310,13 +304,12 @@ impl Work {
         // writer lock (`state-database`, "Writing"). Withdrawn work past its
         // recovery window is left out; a writing command purges it.
         let store = self.local_store_checked(project)?;
-        let (items, provider) = store.existence()?;
+        let items = store.items()?;
         let now = self.now();
         let items: Vec<LocalItem> = items
             .into_iter()
             .filter(|it| !past_recovery(&it.record, now))
             .collect();
-        let unread = super::_session::unavailable(self, &provider, now);
         let machine = machine::machine_id(&self.home)?;
         let wanted = match selection {
             Selection::Active => vec![TodoStatus::Active, TodoStatus::StructuralHolder],
@@ -329,7 +322,7 @@ impl Work {
             .filter(|it| wanted.contains(&it.record.status))
             .map(|it| ListEntry {
                 record: it.record.clone(),
-                reflection: status_of(it, unread.clone()),
+                reflection: status_of(it),
                 ready: false,
                 claimed_on: it
                     .record
@@ -367,7 +360,6 @@ impl Work {
             s.commit_with_events("updated", events.map(|log| (log, [].as_slice())), |s| {
                 apply_update(s, index, &request, &actor)
             })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: UpdateReport {
                 record: s.items[index].record.clone(),
@@ -416,9 +408,7 @@ impl Work {
     /// `instrukt todo remove`: withdraws the live todo `slug` and releases
     /// its working resources (`todos`, "Parking, withdrawal and delivery").
     ///
-    /// 1. The entry reads GitHub, with no lock beyond what a point refresh
-    ///    takes; a conflict or a head this computer could not judge refuses
-    ///    with nothing done. No GitHub request follows until the flush.
+    /// 1. The entry reads only the local record without contacting GitHub.
     /// 2. Under the withdrawal lock, the todo's worktrees, workspace and
     ///    work branch are checked; work that would be lost refuses with
     ///    nothing done. Then one writer transaction records the intent
@@ -427,7 +417,7 @@ impl Work {
     ///    stays live with its claim as it was, or unclaimed when it had
     ///    none, and nothing withdrawn reaches GitHub before its resources
     ///    are released. While the intent is open no other command changes
-    ///    the record and nothing read from GitHub replaces it.
+    ///    the record and no runner reflection read replaces it.
     /// 3. The resources are released outside the writer lock, the intent
     ///    recording each outcome that must be recognized afterwards
     ///    ([`release`]). A refusal git or the filesystem positively shows —
@@ -443,14 +433,12 @@ impl Work {
     ///    under way, for the withdrawal run again to complete.
     /// 4. One writer transaction commits the withdrawn record, with
     ///    `removal` naming exactly what was released, and closes the intent.
-    /// 5. The withdrawal lock is released and the change flushed under the
-    ///    reflection lock.
+    /// 5. The withdrawal lock is released; the runner's next reflection pass
+    ///    reflects the withdrawal to GitHub.
     ///
     /// A withdrawal interrupted with its intent recorded is completed by
-    /// running it again, which continues from the intent without reading
-    /// GitHub first, after recognizing what the interrupted run did: an
-    /// action that arrived there meanwhile stays outstanding until the
-    /// first pull after the withdrawal commits.
+    /// running it again, which continues from the intent after recognizing
+    /// what the interrupted run did.
     pub fn remove(
         &self,
         project: &ProjectRef,
@@ -459,10 +447,7 @@ impl Work {
         let mut s = Session::open(self, project)?;
         let store = Store::new(&self.home, &project.slug);
         // A withdrawal already admitted resumes on the record it was
-        // admitted on, before anything is read from GitHub: what arrived
-        // there since — a hold label, a command, a newer head — cannot
-        // commit while the intent is open, and waits for the first pull
-        // after the withdrawal commits.
+        // admitted on.
         let resuming = match s.find(slug, false) {
             Some(index)
                 if store
@@ -541,7 +526,6 @@ impl Work {
             }
         }
         drop(withdrawing);
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -588,12 +572,6 @@ impl Work {
                 "a live todo is named `{slug}`; restoring would make the name ambiguous — rename one first"
             )));
         }
-        s.pull_through(index)?;
-        if s.items[index].record.status != TodoStatus::Removed {
-            return Err(WorkError::refused(format!(
-                "`{slug}` is no longer withdrawn: it changed while this command ran; nothing was restored"
-            )));
-        }
         s.commit("reactivated", |s| {
             let record = &mut s.items[index].record;
             let from = record
@@ -603,7 +581,6 @@ impl Work {
             record.status = from;
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -647,7 +624,6 @@ impl Work {
             record.status = TodoStatus::Delivered;
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -824,7 +800,6 @@ impl Work {
                     s.log_event(*log, event)?;
                 }
             }
-            s.flush(LockWait::No)?;
             let retained = record
                 .stamps
                 .iter()
@@ -870,7 +845,6 @@ impl Work {
                     b.attempt.released_at = Some(now);
                     Ok(())
                 })?;
-                s.flush(LockWait::No)?;
             }
             return Ok(Outcome {
                 value: prior,
@@ -940,7 +914,6 @@ impl Work {
             }
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index]
                 .record
@@ -1015,7 +988,6 @@ impl Work {
             }
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         let written = s.items[index]
             .record
             .artifact(name)
@@ -1141,7 +1113,6 @@ impl Work {
         let index = s.enter(slug)?;
         let now = s.now;
         s.commit(what, |s| change(&mut s.items[index].record, now))?;
-        s.flush(LockWait::No)?;
         Ok(Outcome {
             value: s.items[index].record.clone(),
             reflection: s.status(index),
@@ -1870,7 +1841,6 @@ fn view(s: &Session<'_>, index: usize) -> TodoView {
     TodoView {
         record_status: super::_envelope::record_status(&record).as_str(),
         reflection: s.status(index),
-        github: s.github_read(),
         issue: item.reflection.issue.map(|i| i.number),
         pull: item.reflection.pull,
         record,

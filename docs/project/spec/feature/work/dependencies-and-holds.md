@@ -127,8 +127,9 @@ holders carry no dispatch hold; each child carries its own.
 An attributable `hold` label addition by a collaborator with write access sets
 the dispatch hold with source `github`, reason `held from GitHub by <login>`,
 GitHub actor and time. An authorized removal releases the current hold and
-retains the releasing GitHub login. These use the same item-level hold and
-release semantics as the CLI, including preservation of work, claims and
+retains the releasing GitHub login. Both arrive and take effect when the
+runner's reflection pass reads the todo's issue, using the same item-level hold
+and release semantics as the CLI, including preservation of work, claims and
 running sessions. There is one current hold per todo, with its audit retained.
 Inbound action authorization, replay accounting and output-label reflection
 belong to `project/instrukt/spec/feature/work/github-record` (UC-GR9).

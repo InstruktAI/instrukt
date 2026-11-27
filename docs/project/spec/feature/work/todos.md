@@ -154,11 +154,10 @@ holds, prerequisites, group context, execution claim and per-role session
 attempt bindings (runtime, id, key, attempt, branch, base, returned worktree
 path and release evidence), including released attempts. These bindings form the
 assignment child set exposed as `sessions.bound`; `claim.held` exposes whether
-the execution claim remains held. `instrukt todo list` reads only this
-computer's state database and fetches nothing; it shows the todos this
-computer's record holds. `instrukt todo show <slug>` first applies what people
-did on that todo's issue since it was last read. When and what is read from
-GitHub is the contract in
+the execution claim remains held. `instrukt todo list` and
+`instrukt todo show <slug>` read only this computer's state database and never
+contact GitHub; they show the todos as this computer's record holds them. When
+and what is read from GitHub is the contract in
 `project/instrukt/spec/feature/work/github-record`.
 
 `instrukt todo update <slug>` changes supported metadata. A rename preserves

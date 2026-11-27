@@ -73,17 +73,14 @@ meaning and the writes of the conversation tables.
   (`general/principle/trust-and-guardrails`: interference is a harm restoring state
   cannot repair).
 - A separate per-computer reflection lock
-  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. It is held
-  across GitHub requests and takes the writer lock only briefly for each local
-  transaction that records what reflection learned. A command that writes the
-  record takes it only when it is free and never waits for it: finding it
-  held, the command returns once its local write is committed, with that
-  write's reflection pending. Each runner tick's reflection pass waits for the
-  lock for a bounded time and reflects what is pending; a tick whose wait runs
-  out reflects nothing that run, and the next tick tries again.
-  Lock order is always reflection → writer; a local writer releases the writer
-  lock before trying the reflection lock. Current-schema local readers take
-  neither lock. Readers
+  `~/.instrukt/state/reflection.lock` serializes GitHub reflection. Only the
+  runner's reflection pass acquires it, waiting for a bounded time and holding
+  it across GitHub requests while taking the writer lock only briefly for each
+  local transaction that records what reflection learned; a tick whose wait
+  runs out reflects nothing that run, and the next tick tries again. Commands
+  that write the record take only the writer lock, mark reflection pending and
+  return without touching GitHub or the reflection lock. Lock order is always
+  reflection → writer. Current-schema local readers take neither lock. Readers
   of an older database enter the same migration path under the writer lock
   before consuming it, except status inspection and documentation reads.
 - A withdrawal holds the per-computer withdrawal lock
@@ -91,9 +88,10 @@ meaning and the writes of the conversation tables.
   (`withdrawal_intents`) until it has committed or abandoned it, or returned
   with the intent kept by a refusal. The lock tells a withdrawal in progress
   from a recorded intent no command is acting on; it is never requested
-  while the writer lock is held, and it is released before the withdrawal's
-  reflection acquires the reflection lock. A withdrawal's git and filesystem
-  work runs under it and outside the writer lock.
+  while the writer lock is held, and it is released once the withdrawal ends;
+  the runner's next reflection pass reflects the withdrawal to GitHub. A
+  withdrawal's git and filesystem work runs under it and outside the writer
+  lock.
 - A change to a todo is computed from the record its command read and is
   written only while that record is unchanged. When another command changed it
   in between, the later write is refused whole, naming the todo and its door:
@@ -456,19 +454,23 @@ with its claim as it was, or unclaimed when it had none. A change of the todo's
 record committed while the row exists is refused, naming its doors:
 `instrukt todo remove <slug>`, which completes the withdrawal, or the command
 run again once it has ended. What reflection learns of its own receipts is
-still kept while the row exists. A read of the issue while the row exists
-answers no `/instrukt` command and applies no label action it finds there:
-each stays outstanding, and the first read after the withdrawal commits gives
-it the outcome a withdrawn todo gives. An answer to a command, or a label
+still kept while the row exists. A runner reflection read of the issue while
+the row exists answers no `/instrukt` command and applies no label action it
+finds there: each stays outstanding. An answer to a command, or a label
 action recorded as ignored, is recorded only while the todo's live record is
 still the one it was decided on and no row exists, in the transaction that
 records it; one decided on a record that changed before it was recorded, such
 as an active record the withdrawal committed over meanwhile, is not recorded
 and stays outstanding. A read position never moves past a command or label
 action left outstanding. Whenever one is left outstanding this way, and when
-the row is removed, the issue's stored `ETag` is dropped, so the next read
-finds it again rather than being told nothing changed, even when the issue has
-not changed again since.
+the row is removed, the issue's stored `ETag` is dropped. Once the withdrawal
+commits, the todo is withdrawn and the runner stops reading its issue
+(`project/instrukt/spec/feature/work/github-record`, Reading GitHub), so
+actions that arrived meanwhile do not change the withdrawn record; if a refusal
+removes the row and leaves the todo live, or if the todo is later reactivated,
+the dropped `ETag` ensures the runner's next reflection read finds anything
+still outstanding rather than being told nothing changed, even when the issue
+has not changed again since.
 Dispatch admission refuses while the row exists, in the same read that
 confirms the reservation, claim and status. The row is updated as each step
 whose outcome must be recognized
@@ -526,9 +528,12 @@ an ineffective attempt following another release — the row keeps what it
 records, for the withdrawal run again to recognize what happened.
 
 A withdrawal interrupted while the row exists is completed by running
-`instrukt todo remove <slug>` again, which continues from the row before reading
-GitHub: an action that arrived there meanwhile, such as a hold label, stays
-outstanding until the first read of the issue after the withdrawal commits. It first records
+`instrukt todo remove <slug>` again, which continues from the row without
+touching GitHub: any action that arrived on the issue meanwhile, such as a hold
+label, does not block or change the withdrawal; once the withdrawal commits the
+runner stops reading the withdrawn todo's issue, and if a refusal leaves the
+todo live or the todo is later reactivated, the runner's next reflection read
+picks up what stayed outstanding. It first records
 what the interrupted command did without recording it, and what became of the
 resources since: while the row records the branch `pending`, a marker records
 the branch deleted at the marker's commit, and whatever branch carries its name

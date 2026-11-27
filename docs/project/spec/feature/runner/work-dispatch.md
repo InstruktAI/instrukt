@@ -99,16 +99,15 @@ it. The dispatcher records the handoff and retains conversations needed for
 later rounds or human questions. The runtime owns session ending and cleanup;
 which finished threads are archived, and when, is the runner's thread
 retention (`project/instrukt/spec/feature/runner/thread-retention`).
-Every tick also reads GitHub for what people did on the issues of the todos in
-this computer's record (`project/instrukt/spec/feature/work/github-record`).
-Every tick flushes pending work-record reflection under the
-per-computer reflection lock. A command that writes the record flushes under
-that lock when it is free and never waits on it when another process holds
-it, leaving its reflection to the next flush that acquires it
-(`project/instrukt/spec/feature/work/github-record`). Reflection holds that lock across GitHub requests and takes the writer
-lock only briefly for each local commit of what it learned. Lock order is always
-reflection → writer; the local transaction releases the writer lock before a
-flush acquires the reflection lock. Local readers take neither lock.
+Every tick is the single path that talks to GitHub for the work record: it
+reads inbound human controls from the issues of this computer's live todos
+before pickup and flushes pending work-record reflection after pickup,
+serializing both under the per-computer reflection lock
+(`project/instrukt/spec/feature/work/github-record`). Todo commands never
+read GitHub, never flush reflection and never acquire the reflection lock.
+Reflection holds that lock across GitHub requests and takes the writer lock
+only briefly for each local commit of what it learned. Lock order is always
+reflection → writer. Local readers take neither lock.
 
 ### Enablement and infrastructure
 

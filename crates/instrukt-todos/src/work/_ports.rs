@@ -5,17 +5,18 @@
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef, TodoSlug};
 use instrukt_core::interfaces::{InterfaceError, TodoExistence};
 use instrukt_runner::interfaces::{
-    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, FleetRecord, GitHubReach, HoldCause,
-    OpenWorkSessions, Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionReport,
-    RetentionPurge, SessionBinding, SessionBindings, SessionOwner, TaskFirings, TaskOutcome,
-    TaskTiming, TodoKind, WorkInterfaceError,
+    AutomaticHolds, ClaimOutcome, Claimant, Claims, Firing, FleetRecord, HoldCause,
+    OpenWorkSessions, Pickup, PickupCandidate, ProjectRef, Reflection, ReflectionPass,
+    ReflectionReport, RetentionPurge, SessionBinding, SessionBindings, SessionOwner, TaskFirings,
+    TaskOutcome, TaskTiming, TodoKind, WorkInterfaceError,
 };
 use jiff::Timestamp;
 
 use super::_envelope::ShownStatus;
 use super::_error::WorkError;
 use super::_model::{Binding, Claim, TodoId, TodoRecord};
-use super::_session::{self, GitHubRead, LockWait, PendingReason, ReflectionStatus, Session};
+use super::_reflection_session::ReflectionSession;
+use super::_session::{self, Session};
 use super::_store;
 use super::Work;
 use crate::evidence::{
@@ -33,7 +34,7 @@ impl Pickup for Work {
         project: &ProjectRef,
         kinds: &[TodoKind],
     ) -> Result<Vec<PickupCandidate>, WorkInterfaceError> {
-        let s = Session::open(self, project)?;
+        let s = Session::open_read(self, project)?;
         let machine = s.machine()?;
         // The runner's own claims on this computer that no session took up
         // yet are offered again, and dispatched rather than stranded.
@@ -128,9 +129,6 @@ impl Claims for Work {
                     claim.session = Some(session.clone());
                     Ok(())
                 })?;
-                // The claim takes effect in the record; its reflection is
-                // GitHub's to answer whenever it can (`github-record`).
-                s.flush(LockWait::No)?;
                 return Ok(ClaimOutcome::Claimed);
             }
             return Ok(ClaimOutcome::AlreadyHeld);
@@ -156,9 +154,6 @@ impl Claims for Work {
             });
             Ok(())
         })?;
-        // The claim takes effect in the record; its reflection is GitHub's
-        // to answer whenever it can (`github-record`).
-        s.flush(LockWait::No)?;
         Ok(ClaimOutcome::Claimed)
     }
 
@@ -199,30 +194,8 @@ impl Claims for Work {
             s.items[index].record.claim = None;
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
-}
-
-/// The tick's read of people's controls (`github-record`, Reading
-/// GitHub): the issue of every todo this computer's record holds that is
-/// neither delivered nor removed, each with a conditional request, so what
-/// a person does on GitHub reaches the todo whether or not it is claimed.
-fn poll_interest(s: &mut Session<'_>) -> Result<(), WorkError> {
-    let live: Vec<usize> = (0..s.items.len())
-        .filter(|&index| {
-            let item = &s.items[index];
-            item.reflection.issue.is_some()
-                && !matches!(
-                    item.record.status,
-                    TodoStatus::Delivered | TodoStatus::Removed
-                )
-        })
-        .collect();
-    for index in live {
-        s.pull_through(index)?;
-    }
-    Ok(())
 }
 
 fn checked_replacement(
@@ -281,13 +254,12 @@ fn checked_replacement(
     Ok(index)
 }
 
-/// Whether item `index`, as the state database holds it after this
-/// command's flush, admits a native start or follow-up on this computer:
-/// still active, unheld and claimed by `machine` with no session, and
-/// holding the assignment `holds` accepts, whatever its reflection. The
-/// session's own copy is never the evidence: another command can have
-/// replaced the row between the commit and the flush. Why it does not,
-/// otherwise.
+/// Whether item `index`, as the state database holds it now, admits a native
+/// start or follow-up on this computer: still active, unheld and claimed by
+/// `machine` with no session, and holding the assignment `holds` accepts,
+/// whatever its reflection. The session's own copy is never the evidence:
+/// another command can have replaced the row since the commit. Why it does
+/// not, otherwise.
 fn admitted(
     s: &Session<'_>,
     index: usize,
@@ -396,7 +368,6 @@ impl SessionBindings for Work {
                 Some("No eligible configured model; runtime creation was not attempted.".into());
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
 
@@ -458,7 +429,6 @@ impl SessionBindings for Work {
                     binding.attempt.released_at = None;
                     Ok(())
                 })?;
-                s.flush(LockWait::No)?;
                 let key = &retained.attempt.semantic_key;
                 admitted(&s, index, &machine, |b| {
                     &b.attempt.semantic_key == key
@@ -652,7 +622,6 @@ impl SessionBindings for Work {
             record.bindings.push(binding);
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         admitted(&s, index, &machine, |b| {
             b.attempt.semantic_key == key && b.attempt.released_at.is_none() && b.session.is_none()
         })
@@ -729,7 +698,7 @@ impl SessionBindings for Work {
         key: &str,
         stopped: &SessionRef,
     ) -> Result<(), WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
+        let mut s = Session::open_read(self, project)?;
         let machine = s.machine()?;
         let todo = replacement_todo(&s, key)?;
         let index = s.enter(&todo)?;
@@ -788,23 +757,6 @@ impl SessionBindings for Work {
             },
         )?;
         Ok(())
-    }
-
-    fn reflect_dispatch_replacement(
-        &self,
-        project: &ProjectRef,
-        key: &str,
-    ) -> Result<(), WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
-        let todo = replacement_todo(&s, key)?;
-        let index = s.enter(&todo)?;
-        s.flush(LockWait::Bounded)?;
-        match s.status(index) {
-            ReflectionStatus::Reflected => Ok(()),
-            ReflectionStatus::Pending(reason) => {
-                Err(WorkError::refused(super::_session::describe(&reason)).into())
-            }
-        }
     }
 
     fn record_dispatch(
@@ -868,40 +820,27 @@ impl SessionBindings for Work {
             }
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
 }
 
+impl ReflectionPass for ReflectionSession<'_> {
+    fn pull_inbound(&mut self) -> Result<(), WorkInterfaceError> {
+        ReflectionSession::pull_inbound(self)?;
+        Ok(())
+    }
+
+    fn sync_reflection(self: Box<Self>) -> Result<ReflectionReport, WorkInterfaceError> {
+        Ok((*self).finish()?)
+    }
+}
+
 impl Reflection for Work {
-    fn sync_reflection(
-        &self,
+    fn begin_pass<'a>(
+        &'a self,
         project: &ProjectRef,
-    ) -> Result<ReflectionReport, WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
-        // Publication first, holding no reflection lock: no command's flush
-        // waits behind a push.
-        s.publish()?;
-        poll_interest(&mut s)?;
-        s.flush(LockWait::Bounded)?;
-        if let Some(cause) = &s.board_setup_failure {
-            return Err(WorkError::refused(format!("cockpit setup pending: {cause}")).into());
-        }
-        let reach = match s.github_read() {
-            GitHubRead::Read => GitHubReach::Reachable,
-            GitHubRead::NotRead(PendingReason::RateLimited { until }) => {
-                GitHubReach::RateLimited { until }
-            }
-            GitHubRead::NotRead(_) => GitHubReach::Unreachable,
-        };
-        let pending = s
-            .items
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| matches!(s.status(*index), ReflectionStatus::Pending(_)))
-            .map(|(_, item)| item.record.slug.clone())
-            .collect();
-        Ok(ReflectionReport { reach, pending })
+    ) -> Result<Box<dyn ReflectionPass + 'a>, WorkInterfaceError> {
+        Ok(Box::new(ReflectionSession::begin(self, project)?))
     }
 }
 
@@ -946,7 +885,6 @@ impl TaskFirings for Work {
             });
             Ok(())
         })?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
 }
@@ -1029,7 +967,6 @@ impl AutomaticHolds for Work {
                 Ok(())
             },
         )?;
-        s.flush(LockWait::No)?;
         Ok(())
     }
 }
@@ -1058,11 +995,10 @@ impl WorkEvidence for Work {
         project: &ProjectRef,
         todo: &TodoSlug,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
+        let s = Session::open_read(self, project)?;
         let Some(index) = s.find(todo, true) else {
             return Ok(None);
         };
-        s.pull_through(index)?;
         let record = s.items[index].record.clone();
         let prerequisites = expand(&s, &record);
         Ok(Some(to_evidence(record, prerequisites)))
@@ -1073,11 +1009,10 @@ impl WorkEvidence for Work {
         project: &ProjectRef,
         id: &TodoId,
     ) -> Result<Option<TodoEvidence>, WorkInterfaceError> {
-        let mut s = Session::open(self, project)?;
+        let s = Session::open_read(self, project)?;
         let Some(index) = s.find_id(id) else {
             return Ok(None);
         };
-        s.pull_through(index)?;
         let record = s.items[index].record.clone();
         let prerequisites = expand(&s, &record);
         Ok(Some(to_evidence(record, prerequisites)))

@@ -86,7 +86,8 @@ Approval commands are `instrukt todo stamp <slug> --prd-approved --by human|peer
 --by human|peer [--session <runtime:id>]`. A peer approval states its reason
 with `--reason <text>`, the CLI's one justification flag; it requires the peer
 session and is refused without either. Session statements retain the
-observed source session; GitHub approvals arrive by pull with GitHub attribution.
+observed source session; GitHub approvals arrive through the runner's
+reflection pass with GitHub attribution.
 Carry retains the earlier attribution and evidence under the current independent
 reviewer's conclusion, recorded with `--carry-from <stamp-id>` as above.
 
