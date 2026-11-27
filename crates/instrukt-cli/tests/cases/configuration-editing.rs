@@ -12,8 +12,69 @@ use std::path::Path;
 
 use assert_cmd::assert::Assert;
 use common::{Repo, TestEnv};
-use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION};
+use instrukt_core::config::{GLOBAL_SCHEMA_VERSION, PROJECT_SCHEMA_VERSION, SHIPPED_AGENTS};
 use serde_yaml_ng::Value;
+
+fn yaml(text: &str) -> Value {
+    serde_yaml_ng::from_str(text).unwrap()
+}
+
+fn read_optional(path: &Path) -> Option<String> {
+    path.exists()
+        .then(|| std::fs::read_to_string(path).unwrap())
+}
+
+fn agents_file(env: &TestEnv) -> Option<String> {
+    read_optional(&env.instrukt_home().join("agents.yaml"))
+}
+
+fn global_layer(env: &TestEnv) -> Option<String> {
+    read_optional(&env.instrukt_home().join("instrukt.yaml"))
+}
+
+fn write_agents_file(env: &TestEnv, text: &str) {
+    let path = env.instrukt_home().join("agents.yaml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
+}
+
+fn get_agents(env: &TestEnv, extra: &[&str]) -> Assert {
+    let mut args = vec!["config", "get", "--agents"];
+    args.extend_from_slice(extra);
+    env.run(&env.path(""), args)
+}
+
+fn agents_revision(env: &TestEnv) -> String {
+    let out = get_agents(env, &["--revision"]).success();
+    let revision = stdout(&out).trim().to_owned();
+    assert!(!revision.is_empty(), "an agents revision is printed");
+    revision
+}
+
+fn patch_agents(env: &TestEnv, rev: &str, patch: &str) -> Assert {
+    env.run(
+        &env.path(""),
+        [
+            "config",
+            "patch",
+            "--agents",
+            "--revision",
+            rev,
+            "--yaml",
+            patch,
+        ],
+    )
+}
+
+fn older_global_layer_with_a_selection(env: &TestEnv, order: &str) {
+    let path = env.instrukt_home().join("instrukt.yaml");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(
+        path,
+        format!("schema_version: 1\nagents:\n  order: {order}\n"),
+    )
+    .unwrap();
+}
 
 /// Emitted text with the test's temporary directory shown as `[TMP]`.
 fn stderr(env: &TestEnv, assert: &Assert) -> String {
@@ -108,6 +169,92 @@ fn a_patch_from_the_current_revision_changes_only_what_it_names() {
         .success();
     let approvals: Value = serde_yaml_ng::from_str("{prd: peer}").unwrap();
     assert_eq!(layer(&repo)["approvals"], approvals);
+
+    // Agents file in a bound agent session: an older full copy with one
+    // customised role converts on write, prunes to overrides only, keeps
+    // unrelated roles unchanged, and reads literal strings unexpanded.
+    let handler = crate::fixtures::handler::Handler::activate(None, |_| {});
+    let mut full = yaml(SHIPPED_AGENTS);
+    full["schema_version"] = Value::from(3_u64);
+    let (other_role, reversed_order) = full["roles"]
+        .as_mapping()
+        .unwrap()
+        .iter()
+        .find_map(|(name, entry)| {
+            let role = name.as_str()?;
+            if matches!(role, "builder" | "plan-reviewer") {
+                return None;
+            }
+            let order = entry.get("order")?.as_sequence()?;
+            if order.len() < 2 {
+                return None;
+            }
+            let mut reversed = order.clone();
+            reversed.reverse();
+            Some((role.to_owned(), reversed))
+        })
+        .expect("shipped agents defines a multi-profile role besides builder and plan-reviewer");
+    full["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order.clone());
+    write_agents_file(
+        &handler.computer.env,
+        &serde_yaml_ng::to_string(&full).unwrap(),
+    );
+
+    let agents_rev = stdout(
+        &handler
+            .call(&["config", "get", "--agents", "--revision"])
+            .assert()
+            .success(),
+    );
+    let plan_reviewer_before = stdout(
+        &handler
+            .call(&["config", "get", "--agents", "roles.plan-reviewer", "--json"])
+            .assert()
+            .success(),
+    );
+    let patched_agents = handler
+        .call(&[
+            "config",
+            "patch",
+            "--agents",
+            "--revision",
+            agents_rev.trim(),
+            "--yaml",
+            "roles: {builder: {order: [antigravity]}}\nprofiles: {codex: {standard: [{model: 'gpt-{project}', effort: high}]}}\n",
+        ])
+        .assert()
+        .success();
+    assert!(
+        patched_agents.get_output().stdout.is_empty(),
+        "an agents patch prints nothing"
+    );
+    let mut expected_stored = yaml(
+        "schema_version: 4\nroles: {builder: {order: [antigravity]}}\nprofiles: {codex: {standard: [{model: 'gpt-{project}', effort: high}]}}\n",
+    );
+    expected_stored["roles"][other_role.as_str()] = yaml("{}");
+    expected_stored["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order);
+    assert_eq!(
+        yaml(&agents_file(&handler.computer.env).unwrap()),
+        expected_stored
+    );
+    assert_eq!(
+        stdout(
+            &handler
+                .call(&["config", "get", "--agents", "roles.plan-reviewer", "--json"])
+                .assert()
+                .success(),
+        ),
+        plan_reviewer_before
+    );
+    insta::assert_snapshot!(
+        stdout(
+            &handler
+                .call(&["config", "get", "--agents", "profiles.codex.standard.0.model"])
+                .assert()
+                .success(),
+        ),
+        @"gpt-{project}\n"
+    );
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
@@ -122,6 +269,17 @@ fn a_patch_from_a_stale_revision_is_refused_and_writes_nothing() {
     let refused = patch(&env, &repo, &read, "board: false").failure();
     insta::assert_snapshot!("stale-revision", stderr(&env, &refused));
     assert_eq!(repo.read("instrukt.yaml"), content);
+
+    // Agents file: a second patch from the absent revision is refused after the first lands.
+    let absent = agents_revision(&env);
+    patch_agents(&env, &absent, "roles: {builder: {tier: light}}").success();
+    let stored = agents_file(&env);
+    let stale_agents = patch_agents(&env, &absent, "roles: {builder: {tier: strong}}").failure();
+    insta::assert_snapshot!(
+        stderr(&env, &stale_agents),
+        @"instrukt: the configuration changed since revision e3b0c44298fc1c14 (current revision 25a2b38ab3377a4d); the patch was not applied — read it again"
+    );
+    assert_eq!(agents_file(&env), stored);
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
@@ -156,6 +314,55 @@ fn of_two_patches_from_one_revision_exactly_one_lands() {
     assert_eq!(outcomes.iter().filter(|ok| **ok).count(), 1, "{outcomes:?}");
     let approvals = layer(&repo)["approvals"].as_mapping().map(|m| m.len());
     assert_eq!(approvals, Some(1), "only the winning patch is stored");
+
+    // Agents file with no file yet and an older global layer carrying a selection:
+    // the absent revision stays stable and exactly one racing patch lands.
+    let absent = agents_revision(&env);
+    older_global_layer_with_a_selection(&env, "[codex, claude]");
+    let read = agents_revision(&env);
+    assert_eq!(read, absent, "the revision names the stored bytes");
+    let agents_outcomes: Vec<bool> = std::thread::scope(|scope| {
+        let handles: Vec<_> = ["builder", "planner"]
+            .into_iter()
+            .map(|role| {
+                let (env, read) = (&env, &read);
+                scope.spawn(move || {
+                    env.instrukt(&env.path(""))
+                        .args([
+                            "config",
+                            "patch",
+                            "--agents",
+                            "--revision",
+                            read,
+                            "--yaml",
+                            &format!("roles: {{{role}: {{tier: light}}}}"),
+                        ])
+                        .output()
+                        .expect("instrukt runs")
+                        .status
+                        .success()
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    assert_eq!(
+        agents_outcomes.iter().filter(|ok| **ok).count(),
+        1,
+        "{agents_outcomes:?}"
+    );
+    let global = yaml(&global_layer(&env).unwrap());
+    assert_eq!(global["schema_version"], Value::from(GLOBAL_SCHEMA_VERSION));
+    assert_eq!(
+        global.get("agents"),
+        Some(&yaml("{}")),
+        "the global layer states no selection any more"
+    );
+    let stored = yaml(&agents_file(&env).unwrap());
+    assert_eq!(stored["schema_version"], Value::from(4_u64));
+    assert_eq!(stored["default"], yaml("{order: [codex, claude]}"));
+    let roles = stored["roles"].as_mapping().map(|m| m.len());
+    assert_eq!(roles, Some(1), "only the winning agents patch is stored");
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE1
@@ -178,6 +385,17 @@ fn a_patch_leaving_the_configuration_invalid_is_refused_naming_what_is_wrong() {
     insta::assert_snapshot!(stderr(&env, &not_a_mapping), @"instrukt: the patch is not a YAML mapping");
     assert_eq!(repo.read("instrukt.yaml"), content);
     assert_eq!(revision(&env, repo.path()), read);
+
+    // Agents file: an invalid profile reference is refused and leaves no file written.
+    let absent = agents_revision(&env);
+    let invalid_agents =
+        patch_agents(&env, &absent, "roles: {builder: {order: [missing]}}").failure();
+    insta::assert_snapshot!(
+        stderr(&env, &invalid_agents),
+        @"instrukt: `agents.yaml` orders must be nonempty and reference declared profiles"
+    );
+    assert_eq!(agents_file(&env), None);
+    assert_eq!(agents_revision(&env), absent);
 }
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
