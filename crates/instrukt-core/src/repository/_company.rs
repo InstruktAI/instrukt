@@ -440,7 +440,7 @@ fn compose_root(
         });
     }
     publication::write_rendering(skeleton, &rendering)?;
-    let plugin = publication::plan_plugin(skeleton, key, &intent.name)?;
+    let plugin = publication::plan_plugin(skeleton)?;
     if !plugin.findings.is_empty() {
         return Err(RepositoryError::Skeleton {
             findings: plugin

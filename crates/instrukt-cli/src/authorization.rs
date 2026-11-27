@@ -128,7 +128,7 @@ pub fn company_init(matches: &ArgMatches) -> bool {
 }
 
 /// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `docs plugin
+/// nothing else of the computer: `docs render [--plugin] [--check]`, `docs plugin
 /// [--check | --validate]`, `docs units`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
@@ -149,7 +149,7 @@ pub fn state_inspection(matches: &ArgMatches) -> bool {
     action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
-/// The commands that write no log: `docs render [--check]`, `docs plugin
+/// The commands that write no log: `docs render [--plugin] [--check]`, `docs plugin
 /// [--check | --validate]` and `docs units`, so a check writes nothing
 /// anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {

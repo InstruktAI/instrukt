@@ -12,8 +12,25 @@ fn name() -> CompanyName {
     CompanyName::parse("Acme").unwrap()
 }
 
+fn acme() -> CompanyIdentity {
+    CompanyIdentity {
+        key: key(),
+        name: name(),
+    }
+}
+
+/// The findings of rendering `tree`: the root's, which leave it no company
+/// repository to render, else the rendering's under Acme's identity.
 fn findings(tree: &Committed) -> Vec<PluginFinding> {
-    match render(tree, &key(), &name()).unwrap() {
+    if let Err(
+        finding @ (PluginFinding::ProjectRepository
+        | PluginFinding::NoIndex
+        | PluginFinding::UnreadableRoot { .. }),
+    ) = identity(tree)
+    {
+        return vec![finding];
+    }
+    match render(tree, &acme()).unwrap() {
         Rendered::Findings(findings) => findings,
         Rendered::Files(files) => panic!("rendered {:?}", files.keys()),
     }
@@ -64,7 +81,7 @@ fn a_project_layer_declaring_company_repository_renders_the_plugin() {
         ),
     ]);
     assert!(matches!(
-        render(&tree, &key(), &name()).unwrap(),
+        render(&tree, &acme()).unwrap(),
         Rendered::Files(_)
     ));
 }
@@ -193,7 +210,7 @@ fn catalog(
 
 /// What rendering from `tree` changes, which must be knowable.
 fn drift_of(tree: &Committed) -> PluginDrift {
-    plan(tree, &key(), &name()).unwrap().drift.unwrap()
+    planned(tree, &acme()).unwrap().drift.unwrap()
 }
 
 /// `tree` with `plan`'s writes applied and its removals made.
@@ -246,7 +263,7 @@ fn with_unit(unit: Option<&str>) -> Vec<(String, String)> {
 }
 
 fn rendered_files(tree: &Committed) -> BTreeMap<String, String> {
-    match render(tree, &key(), &name()).unwrap() {
+    match render(tree, &acme()).unwrap() {
         Rendered::Files(files) => files,
         Rendered::Findings(findings) => panic!("findings {findings:?}"),
     }
@@ -278,7 +295,7 @@ fn a_stale_unit_holds_its_document_in_prose_in_the_main_file_alone() {
 #[test]
 fn the_version_rises_when_only_a_unit_changes() {
     let first = with_unit(Some(&unit_of(COMPANY, true, "- we make things\n")));
-    let planned = plan(&view(&first), &key(), &name()).unwrap();
+    let planned = planned(&view(&first), &acme()).unwrap();
     let version = planned.drift.clone().unwrap().version;
     let mut changed = applied_plan(&first, &planned);
     for (path, text) in &mut changed {
@@ -324,7 +341,7 @@ fn rendered_once() -> (Vec<(String, String)>, PluginVersion) {
         ("docs/company.md", "# Company\n\nWe make things.\n"),
         (CATALOG, CATALOG_TEXT),
     ]);
-    let planned = plan(&view(&first), &key(), &name()).unwrap();
+    let planned = planned(&view(&first), &acme()).unwrap();
     let version = planned.drift.clone().unwrap().version;
     (applied_plan(&first, &planned), version)
 }
@@ -381,7 +398,7 @@ fn the_skill_stands_at_the_root_and_no_manifest_is_written() {
 #[test]
 fn findings_that_leave_the_version_unknown_leave_the_catalog_unwritten() {
     let tree = Committed::of(&[(CATALOG, CATALOG_TEXT)]);
-    let plan = plan(&tree, &key(), &name()).unwrap();
+    let plan = planned(&tree, &acme()).unwrap();
     assert_eq!(plan.findings, [PluginFinding::NoIndex]);
     assert_eq!(plan.drift, None);
     assert_eq!(plan.catalog, None);
@@ -462,7 +479,7 @@ fn an_earlier_renderings_output_upgrades_with_its_version_and_then_converges() {
             "an earlier rendering\n",
         ),
     ]);
-    let upgrade = plan(&view(&earlier), &key(), &name()).unwrap();
+    let upgrade = planned(&view(&earlier), &acme()).unwrap();
     assert_eq!(upgrade.findings, []);
     // The skill is written at the root, a step above the version the
     // earlier manifest held; its folder is left as it is.
@@ -491,7 +508,7 @@ fn an_earlier_renderings_output_upgrades_with_its_version_and_then_converges() {
     };
     assert_eq!(left(&upgraded), left(&earlier));
     // Rendering again changes nothing.
-    let again = plan(&view(&upgraded), &key(), &name()).unwrap();
+    let again = planned(&view(&upgraded), &acme()).unwrap();
     assert_eq!(again.findings, []);
     assert_eq!(again.catalog, None);
     let again = again.drift.unwrap();
@@ -508,9 +525,7 @@ fn versionless_findings(more: &[(&str, &str)]) -> Vec<PluginFinding> {
         (CATALOG, EARLIER_CATALOG),
     ];
     files.extend_from_slice(more);
-    plan(&Committed::of(&files), &key(), &name())
-        .unwrap()
-        .findings
+    planned(&Committed::of(&files), &acme()).unwrap().findings
 }
 
 #[test]
@@ -535,15 +550,14 @@ fn a_versionless_entry_beside_a_manifest_version_that_is_not_three_numbers_is_a_
 #[test]
 fn an_entry_whose_version_is_not_three_numbers_is_a_finding_naming_it() {
     let held = "one";
-    let plan = plan(
+    let plan = planned(
         &repository(
             Some(&format!(
                 "{{\"plugins\": [{{\"name\": \"acme\", \"version\": \"{held}\"}}]}}"
             )),
             &[],
         ),
-        &key(),
-        &name(),
+        &acme(),
     )
     .unwrap();
     assert_eq!(
@@ -559,7 +573,7 @@ fn an_entry_whose_version_is_not_three_numbers_is_a_finding_naming_it() {
 /// knows what differs.
 fn linked(link: &str) -> (Vec<PluginFinding>, bool) {
     let tree = repository(Some(CATALOG_TEXT), &[]).with_link(link);
-    let plan = plan(&tree, &key(), &name()).unwrap();
+    let plan = planned(&tree, &acme()).unwrap();
     (plan.findings, plan.drift.is_some())
 }
 
@@ -650,4 +664,45 @@ fn the_shared_readings_findings_and_the_plugins_own_are_reported_together() {
         ),
         "{found:?}"
     );
+}
+
+#[test]
+fn a_company_repository_without_a_company_identity_is_refused_with_its_finding() {
+    let tree = Committed::of(&[
+        (
+            "instrukt.yaml",
+            "project: company-acme\ncompany_repository: true\n",
+        ),
+        (INDEX, "expanded: [company.md]\n"),
+        ("docs/company.md", "# Company\n"),
+    ]);
+    let refused = plan(&tree).unwrap();
+    assert_eq!(
+        refused.findings,
+        [PluginFinding::Identity(IdentityFinding::NameMissing)]
+    );
+    assert_eq!(
+        (refused.folder, refused.drift, refused.catalog),
+        (None, None, None)
+    );
+    assert_eq!(
+        super::findings(&tree).unwrap(),
+        [PluginFinding::Identity(IdentityFinding::NameMissing)]
+    );
+}
+
+#[test]
+fn the_plugin_is_rendered_under_the_identity_the_project_layer_declares() {
+    let tree = Committed::of(&[
+        (
+            "instrukt.yaml",
+            "project: company-acme\ncompany_repository: true\ncompany_name: Acme\n",
+        ),
+        (INDEX, "expanded: [company.md]\n"),
+        ("docs/company.md", "# Company\n"),
+    ]);
+    let rendered = plan(&tree).unwrap();
+    assert!(rendered.findings.is_empty(), "{:?}", rendered.findings);
+    assert_eq!(rendered.folder, Some(PathBuf::from("skills/acme")));
+    assert_eq!(rendered, planned(&tree, &acme()).unwrap());
 }

@@ -15,6 +15,15 @@ missing identity against `modules.events`, the home's event responses are
 withheld, other patches of the layer are refused, and its plugin does not
 render. No migration can supply the name, since it cannot be derived.
 
+`instrukt docs plugin` no longer takes `--key` or `--name`: it reads the
+company identity from the repository's committed project layer, so a home, a
+clone and an integration candidate render the same bytes. A script that still
+passes them gets a usage error; drop both flags. A repository without a
+company identity is refused with that finding and nothing is written.
+`instrukt docs render --plugin` renders the repository's whole agent material
+as one operation, the entrypoints and in a company repository the company's
+plugin, and `instrukt docs render --plugin --check` checks it.
+
 ### A company's settings and skill move
 
 A company home keeps its settings in `company.yaml`, beside the project

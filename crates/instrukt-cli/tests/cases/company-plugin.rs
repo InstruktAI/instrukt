@@ -18,12 +18,17 @@ const CATALOG: &str = ".claude-plugin/marketplace.json";
 /// instrukt does not know, and a layout instrukt does not write.
 const CATALOG_TEXT: &str = "{\"name\":\"acme-tools\",\"owner\":{\"name\":\"Acme Workshop\"},\"metadata\":{\"pluginRoot\":\"./plugins\"},\"plugins\":[{\"name\":\"workshop\",\"source\":\"./workshop\",\"category\":\"tools\"}]}\n";
 
-/// A company's repository without a settings document: an index that
-/// expands one document and lists two, each form of reference between
-/// them, a document only a required read reaches, and the catalog.
+/// A company's repository without a settings document: a project layer
+/// declaring Acme's company identity, an index that expands one document and
+/// lists two, each form of reference between them, a document only a
+/// required read reaches, and the catalog.
 fn company(env: &TestEnv) -> Repo {
     let repo = env.git_repo("acme");
     repo.write(
+        "instrukt.yaml",
+        "schema_version: 6\nproject: company-acme\ncompany_repository: true\ncompany_name: Acme Bicycles\n",
+    )
+    .write(
         "docs/index.yaml",
         "expanded:\n  - company.md\nlisted:\n  - systems.md\n  - teams/suppliers.md\n",
     )
@@ -51,9 +56,9 @@ fn company(env: &TestEnv) -> Repo {
     repo
 }
 
-/// Runs `docs plugin` for Acme in `repo` with `extra` arguments.
+/// Runs `docs plugin` in Acme's `repo` with `extra` arguments.
 fn plugin(env: &TestEnv, repo: &Repo, extra: &[&str]) -> Assert {
-    let mut args = vec!["docs", "plugin", "--key", "acme", "--name", "Acme Bicycles"];
+    let mut args = vec!["docs", "plugin"];
     args.extend_from_slice(extra);
     env.run(repo.path(), args)
 }
