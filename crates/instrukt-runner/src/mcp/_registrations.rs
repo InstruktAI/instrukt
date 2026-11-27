@@ -552,7 +552,7 @@ pub(crate) fn ensure_dynamic_registration(
         if let Some(wait) = wait {
             McpError::Unreachable {
                 server: server.to_string(),
-                url: endpoint.to_owned(),
+                url: _http::redact_url(endpoint),
                 cause: format!("dynamic client registration failed ({summary}; {wait})"),
             }
         } else {

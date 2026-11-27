@@ -135,7 +135,7 @@ where
         } => Err(error),
         instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
             server: server.to_owned(),
-            url: url.to_owned(),
+            url: _http::redact_url(url),
             cause: wait.to_string(),
         }),
     }
@@ -401,13 +401,13 @@ fn classify_transport_error(
                 {
                     McpError::Unreachable {
                         server: server.to_owned(),
-                        url: url.to_owned(),
+                        url: _http::redact_url(url),
                         cause: req_err.to_string(),
                     }
                 }
                 StreamableHttpError::Io(io_err) => McpError::Unreachable {
                     server: server.to_owned(),
-                    url: url.to_owned(),
+                    url: _http::redact_url(url),
                     cause: io_err.to_string(),
                 },
                 other => McpError::Server {

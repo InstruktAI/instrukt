@@ -140,6 +140,7 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
     );
 
     let http_client = _http::client("ingress", PROBE_TIMEOUT, PROBE_TIMEOUT, false)?;
+    let safe_ingress = _http::redact_url(&ingress_url);
     let (origin, _) = _http::gate_scope(&ingress_url);
     let key =
         instrukt_outside::Key::new("mcp-ingress", [origin.as_str()]).item("/hooks/inbound/sign-in");
@@ -151,7 +152,7 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
                 let response = match http_client.get(&probe_url).send().await {
                     Ok(response) => response,
                     Err(error) => {
-                        let cause = format!("external callback probe to {ingress_url} failed");
+                        let cause = format!("external callback probe to {safe_ingress} failed");
                         return match instrukt_outside::http::judge_reqwest_error(&error, &settings)
                         {
                             instrukt_outside::http::Judgment::Unavailable(unavailable) => {
@@ -189,9 +190,10 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
                 let _ = claim_sign_in_return(&transport, &state_digest);
                 Err(McpError::Unreachable {
                     server: "ingress".into(),
-                    url: ingress_url.clone(),
+                    url: safe_ingress.clone(),
                     cause: format!(
-                        "external callback probe to {ingress_url}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200): {wait}"
+                        "external callback probe to {}/hooks/inbound/sign-in/... returned HTTP {status} (expected 200): {wait}",
+                        safe_ingress.trim_end_matches('/')
                     ),
                 })
             }
@@ -200,13 +202,13 @@ pub fn check_ingress(home: &Home) -> Result<IngressCheckReport, McpError> {
                 error: Some(Err(cause)),
             } => Err(McpError::Unreachable {
                 server: "ingress".into(),
-                url: ingress_url.clone(),
+                url: safe_ingress.clone(),
                 cause: format!("{cause}: {wait}"),
             }),
             instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
                 server: "ingress".into(),
-                url: ingress_url.clone(),
-                cause: format!("external callback probe to {ingress_url} delayed: {wait}"),
+                url: safe_ingress.clone(),
+                cause: format!("external callback probe to {safe_ingress} delayed: {wait}"),
             }),
             instrukt_outside::Attempted::Defect(Err(cause)) => Err(McpError::Server {
                 server: "ingress".into(),
@@ -1952,7 +1954,7 @@ fn try_refresh_login(
                 clear_renewal_lease(home, company, person, server.name.as_str());
                 return Err(McpError::Unreachable {
                     server: server.name.to_string(),
-                    url: token_endpoint.to_owned(),
+                    url: _http::redact_url(token_endpoint),
                     cause: format!("token renewal temporarily unavailable: {wait}"),
                 });
             }

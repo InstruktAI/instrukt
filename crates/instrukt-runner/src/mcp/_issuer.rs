@@ -584,7 +584,7 @@ pub(crate) fn obtain_issuer_login(
             .map_err(|error| match error {
                 super::_http::GatedTextError::Unavailable(detail) => McpError::Unreachable {
                     server: server.name.to_string(),
-                    url: token_endpoint.to_owned(),
+                    url: super::_http::redact_url(token_endpoint),
                     cause: format!("issuer token exchange failed: {detail}"),
                 },
                 super::_http::GatedTextError::Defect(detail) => McpError::Server {

@@ -118,7 +118,7 @@ pub(crate) fn sanitize_auth_error(error: &AuthError) -> String {
 }
 
 /// Derives a stable `(origin, path)` gate scope from an admitted HTTP URL so
-/// query parameters (including OAuth parameters) never leak into gate keys.
+/// userinfo, query parameters, and fragments never leak into gate keys.
 pub(crate) fn gate_scope(url: &str) -> (String, String) {
     match url::Url::parse(url) {
         Ok(parsed) => {
@@ -128,7 +128,23 @@ pub(crate) fn gate_scope(url: &str) -> (String, String) {
             }
             (origin, parsed.path().to_owned())
         }
-        Err(_) => (url.to_owned(), "/".to_owned()),
+        Err(_) => ("<invalid-url>".to_owned(), "/".to_owned()),
+    }
+}
+
+/// Returns a credential-safe `scheme://host[:port]/path` display form of `url`
+/// with any userinfo, query parameters, and fragments stripped so error
+/// diagnostics never leak credentials embedded in provider-supplied URLs.
+pub(crate) fn redact_url(url: &str) -> String {
+    match url::Url::parse(url) {
+        Ok(parsed) => {
+            let mut origin = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""));
+            if let Some(port) = parsed.port() {
+                origin.push_str(&format!(":{port}"));
+            }
+            format!("{origin}{}", parsed.path())
+        }
+        Err(_) => "<invalid-url>".to_owned(),
     }
 }
 
@@ -618,5 +634,18 @@ mod tests {
 
         let decode_fallback = classify_body_transport(Judgment::Defect, &settings);
         assert_eq!(decode_fallback.map(|u| u.reason), Some(Reason::Unreachable));
+    }
+
+    #[test]
+    fn redact_url_strips_userinfo_query_and_fragment() {
+        assert_eq!(
+            redact_url("https://user:secret@auth.example.com:8443/oauth/token?api_key=leak#frag"),
+            "https://auth.example.com:8443/oauth/token"
+        );
+        assert_eq!(
+            redact_url("http://127.0.0.1:9000/register?token=secret"),
+            "http://127.0.0.1:9000/register"
+        );
+        assert_eq!(redact_url("not a url with secret"), "<invalid-url>");
     }
 }

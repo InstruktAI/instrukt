@@ -141,6 +141,7 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
         captured,
         unavailable,
     } = resolve_live(url)?;
+    let safe_url = super::_http::redact_url(url);
     match resolution {
         Ok(resolved) if resolved.source.is_discovered() => {
             Ok(build_report(url, &captured, &resolved.metadata))
@@ -148,8 +149,8 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
         Ok(_) => {
             if let Some(cause) = unavailable {
                 return Err(McpError::Unreachable {
-                    server: url.to_owned(),
-                    url: url.to_owned(),
+                    server: safe_url.clone(),
+                    url: safe_url,
                     cause,
                 });
             }
@@ -161,8 +162,8 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
         }) => {
             if let Some(cause) = unavailable {
                 return Err(McpError::Unreachable {
-                    server: url.to_owned(),
-                    url: url.to_owned(),
+                    server: safe_url.clone(),
+                    url: safe_url,
                     cause,
                 });
             }
@@ -176,8 +177,8 @@ pub fn discover(url: &str) -> Result<DiscoveryReport, McpError> {
         Err(_) => {
             if let Some(cause) = unavailable {
                 return Err(McpError::Unreachable {
-                    server: url.to_owned(),
-                    url: url.to_owned(),
+                    server: safe_url.clone(),
+                    url: safe_url,
                     cause,
                 });
             }
@@ -204,18 +205,19 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
         captured,
         unavailable,
     } = resolve_live(url)?;
+    let safe_url = super::_http::redact_url(url);
     let resolved = match resolution {
         Ok(resolved) => resolved,
         Err(error) => {
             if let Some(cause) = unavailable {
                 return Err(McpError::Unreachable {
-                    server: url.to_owned(),
-                    url: url.to_owned(),
+                    server: safe_url.clone(),
+                    url: safe_url,
                     cause,
                 });
             }
             return Err(McpError::Server {
-                server: url.to_owned(),
+                server: safe_url,
                 cause: format!(
                     "OAuth metadata discovery failed: {}",
                     sanitize_auth_error(&error)
@@ -226,13 +228,13 @@ pub(crate) fn discover_auth(url: &str) -> Result<DiscoveredAuth, McpError> {
     if resolved.source != AuthorizationMetadataSource::ProtectedResourceMetadata {
         if let Some(cause) = unavailable {
             return Err(McpError::Unreachable {
-                server: url.to_owned(),
-                url: url.to_owned(),
+                server: safe_url.clone(),
+                url: safe_url,
                 cause,
             });
         }
         return Err(McpError::Server {
-            server: url.to_owned(),
+            server: safe_url,
             cause: "server published no readable RFC 9728 protected resource metadata".into(),
         });
     }
@@ -299,11 +301,14 @@ async fn probe_post_initialize_challenge(url: &str) -> Result<Option<String>, Mc
                 Err(error) => {
                     return match instrukt_outside::http::judge_reqwest_error(&error, &settings) {
                         instrukt_outside::http::Judgment::Unavailable(unavailable) => {
-                            instrukt_outside::Tried::Unavailable(unavailable, error.to_string())
+                            instrukt_outside::Tried::Unavailable(
+                                unavailable,
+                                "HTTP request failed".into(),
+                            )
                         }
                         instrukt_outside::http::Judgment::Success
                         | instrukt_outside::http::Judgment::Defect => {
-                            instrukt_outside::Tried::Defect(error.to_string())
+                            instrukt_outside::Tried::Defect("HTTP request failed".into())
                         }
                     };
                 }
@@ -341,16 +346,17 @@ async fn probe_post_initialize_challenge(url: &str) -> Result<Option<String>, Mc
             }
         })
         .await;
+    let safe_url = super::_http::redact_url(url);
     match attempted {
         instrukt_outside::Attempted::Done(challenge) => Ok(challenge),
         instrukt_outside::Attempted::Defect(cause) => Err(McpError::Unreachable {
-            server: url.to_owned(),
-            url: url.to_owned(),
+            server: safe_url.clone(),
+            url: safe_url,
             cause,
         }),
         instrukt_outside::Attempted::Wait { wait, error } => Err(McpError::Unreachable {
-            server: url.to_owned(),
-            url: url.to_owned(),
+            server: safe_url.clone(),
+            url: safe_url,
             cause: match error {
                 Some(cause) => format!("{wait} ({cause})"),
                 None => wait.to_string(),
