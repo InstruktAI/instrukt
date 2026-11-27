@@ -3,7 +3,7 @@
 //! merged status JSON.
 
 use instrukt_core::config::{Configuration, Module};
-use instrukt_core::state_db::rusqlite::OptionalExtension as _;
+use instrukt_core::state_db::rusqlite::{OptionalExtension as _, params};
 
 use super::{
     _demand, _proposals, _redis, InstallationError, Report, Request, converge, inspection_error,
@@ -88,6 +88,40 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
             Ok(serde_json::json!({"count": count, "recent": recent}))
         })?
         .unwrap_or_else(|| serde_json::json!({"count": 0, "recent": []}));
+    let undeliverable_verdict_notices = state
+        .read(|conn, path| {
+            let sql = crate::state::sql(path);
+            let verdict_kind = crate::inputs::InputKind::Verdict.name();
+            let count: u64 = conn
+                .query_row(
+                    "SELECT count(*) FROM runtime_inputs WHERE kind=?1 AND state='failed'",
+                    params![verdict_kind],
+                    |row| row.get(0),
+                )
+                .map_err(&sql)?;
+            let mut statement = conn
+                .prepare(
+                    "SELECT runtime, session, input_id, arrived_at, failure FROM runtime_inputs WHERE kind=?1 AND state='failed' ORDER BY julianday(arrived_at) DESC, input_id LIMIT ?2",
+                )
+                .map_err(&sql)?;
+            let recent = statement
+                .query_map(
+                    params![verdict_kind, crate::inputs::SET_ASIDE_STATUS_LIMIT],
+                    |row| {
+                        Ok(serde_json::json!({
+                            "session": format!("{}:{}", row.get::<_, String>(0)?, row.get::<_, String>(1)?),
+                            "input_id": row.get::<_, String>(2)?,
+                            "at": row.get::<_, String>(3)?,
+                            "failure": row.get::<_, Option<String>>(4)?,
+                        }))
+                    },
+                )
+                .map_err(&sql)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(sql)?;
+            Ok(serde_json::json!({"count": count, "recent": recent}))
+        })?
+        .unwrap_or_else(|| serde_json::json!({"count": 0, "recent": []}));
     // The history workers' current failures, while they last.
     let workers = state
         .read(|conn, path| {
@@ -157,6 +191,7 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         "stopped_executions": stopped_executions,
         "input_findings": input_findings,
         "set_aside": set_aside,
+        "undeliverable_verdict_notices": undeliverable_verdict_notices,
         "conversations": conversations,
     }))
 }
