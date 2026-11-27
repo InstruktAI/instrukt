@@ -59,6 +59,8 @@ pub(super) struct Line<'a> {
     pub span: Range<usize>,
     /// Inside a fenced code block, or a fence line itself.
     pub fenced: bool,
+    /// A fence opening or closing delimiter line (never interior code).
+    pub fence_delimiter: bool,
 }
 
 /// The lines of `body`, each marked when it belongs to fenced code.
@@ -70,24 +72,25 @@ pub(super) fn lines(body: &str) -> Vec<Line<'_>> {
         let text = raw.trim_end_matches(['\n', '\r']);
         let trimmed = text.trim_start();
         let opener = fence_opener(trimmed);
-        let fenced = match (fence, opener) {
+        let (fenced, fence_delimiter) = match (fence, opener) {
             (None, Some(open)) => {
                 fence = Some(open);
-                true
+                (true, true)
             }
             (Some((ch, len)), Some((close_ch, close_len)))
                 if ch == close_ch && close_len >= len && trimmed.trim_end().len() == close_len =>
             {
                 fence = None;
-                true
+                (true, true)
             }
-            (Some(_), _) => true,
-            (None, None) => false,
+            (Some(_), _) => (true, false),
+            (None, None) => (false, false),
         };
         out.push(Line {
             text,
             span: offset..offset + raw.len(),
             fenced,
+            fence_delimiter,
         });
         offset += raw.len();
     }
@@ -100,17 +103,37 @@ fn fence_opener(trimmed: &str) -> Option<(char, usize)> {
         return None;
     }
     let len = trimmed.chars().take_while(|c| *c == ch).count();
-    (len >= 3).then_some((ch, len))
+    if len < 3 {
+        return None;
+    }
+    // CommonMark §4.5: backtick code fence info strings cannot contain backticks.
+    if ch == '`' && trimmed[len..].contains('`') {
+        return None;
+    }
+    Some((ch, len))
 }
 
-/// `text` with every inline code span blanked to spaces, so byte offsets
-/// keep their meaning. A span opens with a run of backticks and closes with
-/// the next run of the same length; an unclosed run is literal text.
-pub(super) fn mask_inline_code(text: &str) -> String {
+/// Byte ranges of one CommonMark inline code span inside a text slice.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CodeSpan {
+    /// Full span, including the opening and closing backtick runs.
+    outer: Range<usize>,
+    /// Content between the opening and closing backtick runs.
+    inner: Range<usize>,
+}
+
+/// Inline code spans of `text`, following CommonMark §6.1 backtick-run
+/// matching and backslash-escaped backticks outside code spans (inside a code
+/// span, backslashes are literal).
+fn inline_code_spans(text: &str) -> Vec<CodeSpan> {
     let bytes = text.as_bytes();
-    let mut blank = vec![false; bytes.len()];
+    let mut spans = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() && matches!(bytes[i + 1], b'\\' | b'`') {
+            i += 2;
+            continue;
+        }
         if bytes[i] != b'`' {
             i += 1;
             continue;
@@ -122,7 +145,7 @@ pub(super) fn mask_inline_code(text: &str) -> String {
             if bytes[j] == b'`' {
                 let len = bytes[j..].iter().take_while(|b| **b == b'`').count();
                 if len == run {
-                    closed = Some(j + len);
+                    closed = Some(j);
                     break;
                 }
                 j += len;
@@ -131,14 +154,70 @@ pub(super) fn mask_inline_code(text: &str) -> String {
             }
         }
         match closed {
-            Some(end) => {
-                blank[i..end].iter_mut().for_each(|flag| *flag = true);
-                i = end;
+            Some(close_start) => {
+                let close_end = close_start + run;
+                spans.push(CodeSpan {
+                    outer: i..close_end,
+                    inner: (i + run)..close_start,
+                });
+                i = close_end;
             }
             None => i += run,
         }
     }
+    spans
+}
+
+/// `text` with every inline code span blanked to spaces, so byte offsets
+/// keep their meaning. A span opens with a run of backticks and closes with
+/// the next run of the same length; an unclosed run is literal text.
+pub(super) fn mask_inline_code(text: &str) -> String {
+    let mut blank = vec![false; text.len()];
+    for span in inline_code_spans(text) {
+        blank[span.outer].iter_mut().for_each(|flag| *flag = true);
+    }
     blanked(text, &blank)
+}
+
+/// All code segments of a body: each interior line of a fenced code block
+/// (fence delimiter lines excluded, never joined across lines) and each
+/// inline code span extracted from contiguous non-fenced, non-blank paragraph
+/// runs (breaking on blank lines, fenced blocks, and whole-line HTML comments
+/// such as pending markers), with internal line breaks normalized to `' '`
+/// per CommonMark §6.1.
+pub(super) fn code_segments(lines: &[Line<'_>]) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut paragraph = String::new();
+    for line in lines {
+        if line.fenced {
+            flush_paragraph(&mut paragraph, &mut out);
+            if !line.fence_delimiter {
+                out.push(line.text.to_owned());
+            }
+            continue;
+        }
+        let visible = without_comments(line.text);
+        if visible.trim().is_empty() {
+            flush_paragraph(&mut paragraph, &mut out);
+            continue;
+        }
+        if !paragraph.is_empty() {
+            paragraph.push('\n');
+        }
+        paragraph.push_str(&visible);
+    }
+    flush_paragraph(&mut paragraph, &mut out);
+    out
+}
+
+fn flush_paragraph(paragraph: &mut String, out: &mut Vec<String>) {
+    if paragraph.is_empty() {
+        return;
+    }
+    for span in inline_code_spans(paragraph) {
+        out.push(paragraph[span.inner].replace(['\n', '\r'], " "));
+    }
+    paragraph.clear();
 }
 
 /// `text` with the bytes flagged in `blank` replaced by spaces. Only whole
@@ -507,5 +586,51 @@ mod tests {
     fn a_directive_in_inline_code_or_fences_is_not_one() {
         let body = "`<!-- @config: x -->`\n```\n<!-- @exec: y -->\n```\n";
         assert!(directives(&lines(body)).is_empty());
+    }
+
+    #[test]
+    fn code_segments_extract_inline_and_multi_backtick_spans() {
+        let body = "Run `instrukt sync` and `` `instrukt status` `` or ```instrukt docs```.\n";
+        assert_eq!(
+            code_segments(&lines(body)),
+            vec!["instrukt sync", " `instrukt status` ", "instrukt docs",]
+        );
+    }
+
+    #[test]
+    fn code_segments_join_wrapped_paragraph_spans_and_break_at_boundaries() {
+        let body = "Run `instrukt\ndocs get --domain sdlc` here.\n\n\
+                    `unclosed across blank\n\n\
+                    line`\n\n\
+                    `unclosed across marker\n\
+                    <!-- planned:some-todo -->\n\
+                    line`\n";
+        assert_eq!(
+            code_segments(&lines(body)),
+            vec!["instrukt docs get --domain sdlc"]
+        );
+    }
+
+    #[test]
+    fn code_segments_respect_escaped_and_unclosed_backticks() {
+        let body = "Escaped \\`instrukt sync\\` is prose, \\\\`instrukt status` is code, \
+                    and `keep\\` ends with a literal backslash; `unclosed stays prose.\n";
+        assert_eq!(
+            code_segments(&lines(body)),
+            vec!["instrukt status", "keep\\"]
+        );
+    }
+
+    #[test]
+    fn code_segments_emit_fenced_interior_lines_without_delimiters_or_cross_line_joining() {
+        let body = "```instrukt sync\ninstrukt\nstatus\n```\n~~~sh\ninstrukt todo list\n~~~\n";
+        let parsed = lines(body);
+        assert!(parsed[0].fenced && parsed[0].fence_delimiter);
+        assert!(parsed[1].fenced && !parsed[1].fence_delimiter);
+        assert!(parsed[3].fenced && parsed[3].fence_delimiter);
+        assert_eq!(
+            code_segments(&parsed),
+            vec!["instrukt", "status", "instrukt todo list"]
+        );
     }
 }

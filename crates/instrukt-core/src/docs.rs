@@ -75,6 +75,7 @@
 //! under the position's [`heading`] with every snippet's headings demoted
 //! ([`demote_headings`]).
 
+mod _commands;
 mod _company;
 mod _corpus;
 mod _directives;

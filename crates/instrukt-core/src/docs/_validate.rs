@@ -145,6 +145,7 @@ fn documentation(
     };
     let (mut findings, mut notices) = check_all(&corpus, &env)?;
     notices.extend(unreferenced(&corpus, request.repo_root)?);
+    super::_commands::check(&corpus, request.wiring, &mut notices);
     super::_directives::check(
         &corpus,
         request.repo_root,
