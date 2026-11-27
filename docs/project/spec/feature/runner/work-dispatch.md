@@ -239,7 +239,9 @@ its refusal then names that declaration too; it does not admit `tick`. `run`
 serves those two modules, history and conversations: it refuses only when
 todos, events and history are off and there is no conversation demand, and
 then names the three switches and the connector declaration. `install` and `ticks status` always
-work; `eval report` needs no switch and reports only the record it can access.
+work; `eval report` needs no switch and reports only the records it can access:
+this computer's and those of the computers that answer it
+(`project/instrukt/spec/feature/work/eval-report`).
 
 ## Use cases
 

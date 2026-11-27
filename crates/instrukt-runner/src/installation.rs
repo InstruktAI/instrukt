@@ -297,6 +297,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
     }
     runtime_projects(request, &demand, &mut report);
     if request.conversations {
+        fleet_permissions(request, &demand, &global, &mut report);
         boot_prerequisite(request, &demand, &mut report);
         return Ok(report);
     }
@@ -356,6 +357,7 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             report.finding("receiver", error);
         }
     }
+    fleet_permissions(request, &demand, &global, &mut report);
     if request.module.is_none()
         && let Err(error) = _services::report_unknown(request, &mut report)
     {
@@ -589,6 +591,50 @@ fn boot_prerequisite(request: &Request<'_>, demand: &_demand::Demand, report: &m
         );
     }
 }
+/// Where a cluster connection is configured and the computer has a demand
+/// this run covers that keeps a runner or a cluster reader — history,
+/// events, an MCP server with sign-in, the minute wake-up or the runner
+/// service — the cluster user must permit the computer fleet's query
+/// (`project/instrukt/spec/feature/runner/module-installation`).
+fn fleet_permissions(
+    request: &Request<'_>,
+    demand: &Demand,
+    global: &Configuration,
+    report: &mut Report,
+) {
+    let demanded = || -> anyhow::Result<bool> {
+        if global.cluster_redis_url()?.is_none() {
+            return Ok(false);
+        }
+        let history = !demand.history.is_empty();
+        let events = !demand.events.is_empty()
+            || (global.module_enabled(Module::Events)? && global.ingress_url()?.is_some());
+        let sign_in = !demand.sign_in.is_empty();
+        let wake_up = !demand.projects().is_empty() && global.ticks_enabled()?;
+        let service = !demand.conversations.is_empty();
+        Ok(if request.conversations {
+            service
+        } else {
+            match request.module {
+                None => history || events || sign_in || wake_up || service,
+                Some(Module::History) => history,
+                Some(Module::Events) => events || sign_in,
+                Some(Module::Todos) => wake_up,
+                Some(Module::Blueprint) => false,
+            }
+        })
+    };
+    match demanded() {
+        Ok(false) => {}
+        Ok(true) => {
+            if let Err(error) = _redis::fleet(request) {
+                report.finding("fleet Redis", error);
+            }
+        }
+        Err(error) => report.finding("fleet Redis", error),
+    }
+}
+
 /// The owned service that keeps `instrukt run` running while a company
 /// home declares a connector; withdrawn when that
 /// demand ends. Its state is recorded in the report as it was found.
@@ -904,12 +950,15 @@ fn retained_event_status(request: &Request<'_>) -> Result<serde_json::Value, Ins
         }))).map_err(&sql)?.collect::<Result<Vec<_>,_>>().map_err(sql)?;
         Ok(serde_json::json!({"count":count,"recent":recent}))
     })?.unwrap_or_else(|| serde_json::json!({"count":0,"recent":[]}));
-    // The history workers' current failures, while they last.
-    let workers = state.read(|conn, path| {
+    // The runner workers' current failures, while they last: the rows in
+    // runner_workers and the computer fleet's failure file.
+    let mut workers = state.read(|conn, path| {
         let mut stmt = conn.prepare("SELECT worker,failure,since FROM runner_workers ORDER BY worker").map_err(crate::state::sql(path))?;
         let rows = stmt.query_map([], |row| Ok(serde_json::json!({"worker":row.get::<_,String>(0)?,"failure":row.get::<_,String>(1)?,"since":row.get::<_,String>(2)?}))).map_err(crate::state::sql(path))?;
         rows.collect::<Result<Vec<_>, _>>().map_err(crate::state::sql(path))
     })?.unwrap_or_default();
+    workers.extend(crate::computer_fleet::failure_status(request.home));
+    workers.sort_by(|a, b| a["worker"].as_str().cmp(&b["worker"].as_str()));
     // The run loop's last skipped wake, until a wake is not skipped.
     let skipped_wake = state.read(|conn, path| {
         conn.query_row("SELECT at,cause FROM runner_skipped_wake WHERE id=1", [], |row| Ok(serde_json::json!({"at":row.get::<_,String>(0)?,"cause":row.get::<_,String>(1)?}))).optional().map_err(crate::state::sql(path))

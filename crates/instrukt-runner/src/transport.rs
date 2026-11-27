@@ -63,7 +63,48 @@ pub enum TransportError {
     )]
     Url { scope: &'static str },
     #[error("Redis source {source_id} failed ({kind})")]
-    Redis { source_id: String, kind: String },
+    Redis {
+        source_id: String,
+        kind: String,
+        class: RedisFailure,
+    },
+}
+
+/// Which side a Redis failure came from: the store could not be reached or
+/// its connection failed, or the store answered with an error (or with an
+/// answer that could not be used).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RedisFailure {
+    /// A connection or I/O failure: the store was not reached, or stopped
+    /// answering.
+    Connection,
+    /// The store answered, refusing the operation or with an answer that
+    /// could not be read.
+    Reply,
+}
+
+impl TransportError {
+    /// Whether this is a Redis failure of the connection class: the store
+    /// was not reached or its connection failed.
+    pub fn is_connection_failure(&self) -> bool {
+        matches!(
+            self,
+            Self::Redis {
+                class: RedisFailure::Connection,
+                ..
+            }
+        )
+    }
+}
+
+/// Whether a transport's uses of a Redis keep that Redis's reachability
+/// record in the state database.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reachability {
+    /// Each use that succeeds or fails to reach the Redis keeps the record.
+    Recorded,
+    /// Its uses write nothing into the state database.
+    Unrecorded,
 }
 
 #[derive(Debug, Clone)]
@@ -78,7 +119,20 @@ impl ScopedTransport {
         config: &Configuration,
         state: &RunnerState,
     ) -> Result<Self, TransportError> {
-        let endpoint = Arc::new(Endpoint::new(&config.cluster_redis()?, "cluster", state)?);
+        Self::cluster_with(config, state, Reachability::Recorded)
+    }
+
+    /// A cluster-only transport whose uses keep, or do not keep, the
+    /// cluster Redis's reachability record.
+    pub fn cluster_with(
+        config: &Configuration,
+        state: &RunnerState,
+        reachability: Reachability,
+    ) -> Result<Self, TransportError> {
+        let endpoint = Arc::new(
+            Endpoint::new(&config.cluster_redis()?, "cluster", state)?
+                .with_reachability(reachability),
+        );
         Ok(Self {
             local: Arc::clone(&endpoint),
             cluster: endpoint,

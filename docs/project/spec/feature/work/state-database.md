@@ -1175,7 +1175,9 @@ its current outside failure — for `readiness`, a refresh that failed or ran pa
 its limit — written by that worker alone on a change and cleared by its next
 success; current state only. A row lives while its worker exists on this computer:
 the history rows while history is on, `readiness` while the runner runs with a
-runtime that reports provider facts.
+runtime that reports provider facts. The computer fleet's evaluation responder
+keeps its failure outside this database, in its own failure file
+(`project/instrukt/spec/domain/runner`).
 
 A message is stored, with its sender's connector identity, before the
 connector acknowledges it to its provider, so admission is taken up again
