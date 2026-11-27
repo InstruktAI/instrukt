@@ -98,6 +98,20 @@ enum Command {
     Install(runner::InstallArgs),
 }
 
+/// Top-level subcommand names and aliases of this binary, derived from
+/// Clap's command definition so docs validation never duplicates the list.
+pub(crate) fn cli_subcommands() -> std::collections::BTreeSet<String> {
+    let mut cmd = Cli::command();
+    cmd.build();
+    cmd.get_subcommands()
+        .flat_map(|sub| {
+            std::iter::once(sub.get_name())
+                .chain(sub.get_all_aliases())
+                .map(str::to_owned)
+        })
+        .collect()
+}
+
 /// The log source of this run, once tracing writes to it: the panic hook
 /// names its file.
 enum LogDestination {
