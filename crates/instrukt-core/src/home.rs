@@ -306,24 +306,37 @@ impl Home {
         self.state_dir().join("runner-service.json")
     }
 
-    /// `~/.instrukt/state/runner-workers/` — one atomic JSON state file per
-    /// failing runner worker, keyed-start finding, or deferred consumer source
-    /// transition, outside `state/writer.lock`
+    /// Directory holding per-worker atomic failure state files for failing
+    /// runner workers, keyed-start findings, and deferred consumer source
+    /// transitions, isolated from the state database's writer lock
     /// (`project/instrukt/spec/domain/runner`, Runner background state).
     pub fn runner_workers_dir(&self) -> PathBuf {
         self.state_dir().join("runner-workers")
     }
 
-    /// `~/.instrukt/state/computer-fleet.json` — the computer fleet
-    /// evaluation responder's current failure state, outside
-    /// `state/writer.lock`.
+    /// Atomic failure state file for the computer fleet evaluation responder
+    /// and tick fleet step, isolated from the state database's writer lock
+    /// (`project/instrukt/spec/domain/runner`, Fleet query and membership).
     pub fn computer_fleet_file(&self) -> PathBuf {
         self.state_dir().join("computer-fleet.json")
     }
 
-    /// `~/.instrukt/state/redis-reachability/` — per-Redis reachability state
-    /// files and per-source transition locks, outside `state/writer.lock`
+    /// Dedicated SQLite database storing per-Redis last observed reachability
+    /// for background writers, isolated from the state database's writer lock
     /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn redis_reachability_db_file(&self) -> PathBuf {
+        self.state_dir().join("redis-reachability.db")
+    }
+
+    /// Write-isolation lock for [`Home::redis_reachability_db_file`], taken
+    /// only by background reachability transitions and retirement
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn redis_reachability_lock_file(&self) -> PathBuf {
+        self.state_dir().join("redis-reachability.lock")
+    }
+
+    /// Temporary accessor removed once transport switches to
+    /// [`Home::redis_reachability_db_file`].
     pub fn redis_reachability_dir(&self) -> PathBuf {
         self.state_dir().join("redis-reachability")
     }
@@ -465,7 +478,8 @@ mod tests {
             home.runner_lock_file(),
             home.runner_workers_dir(),
             home.computer_fleet_file(),
-            home.redis_reachability_dir(),
+            home.redis_reachability_db_file(),
+            home.redis_reachability_lock_file(),
             home.requested_review_db_file(),
             home.requested_review_lock_file(),
             home.eval_fingerprint_dir(),

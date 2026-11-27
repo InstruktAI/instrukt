@@ -542,6 +542,26 @@ impl StateDb {
         })
     }
 
+    /// Drops `runner_workers` once the runner has moved any active rows into
+    /// its isolated worker failure files (version 41).
+    pub fn remove_runner_workers(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_RUNNER_WORKERS)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
+    /// Drops `redis_reachability` once the runner has moved any recorded rows
+    /// into its isolated reachability store (version 41).
+    pub fn remove_redis_reachability(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_REDIS_REACHABILITY)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
     /// Reclaims the database's free pages under the writer lock this handle
     /// holds, as [`StoreDb::reclaim`] does for any store.
     pub fn reclaim(&mut self) -> Result<(), StateDbError> {
@@ -1638,39 +1658,40 @@ mod tests {
     }
 
     #[test]
-    fn version_41_drops_retired_worker_and_reachability_tables_keeping_work_and_runner_rows() {
-        let mut conn = Connection::open_in_memory().unwrap();
-        for migration in _schema::MIGRATIONS.iter().take(40) {
-            let tx = conn.transaction().unwrap();
-            match migration {
-                _schema::Migration::Sql(script) => tx.execute_batch(script),
-                _schema::Migration::Step(step) => step(&tx),
+    fn version_41_drops_empty_legacy_tables_and_preserves_populated_ones_until_removed() {
+        let build_v40 = |conn: &mut Connection| {
+            for migration in _schema::MIGRATIONS.iter().take(40) {
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
             }
+            conn.pragma_update(None, "user_version", 40).unwrap();
+            conn.execute_batch(
+                "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence)
+                 VALUES ('t-40','demo','keep-me','change','active','2026-11-27T00:00:00Z','session-1',1,'none',1);
+                 INSERT INTO events(seq,id,name,project,payload,envelope,logged_at)
+                 VALUES (1,'ev-40','runner.test','demo','{}','{}','2026-11-27T00:00:00Z');
+                 INSERT INTO conversation_relay(id,failure,updated_at)
+                 VALUES (1,'relay-ok','2026-11-27T00:00:00Z');",
+            )
             .unwrap();
-            tx.commit().unwrap();
-        }
-        conn.pragma_update(None, "user_version", 40).unwrap();
-        conn.execute_batch(
-            "INSERT INTO runner_workers(worker,failure,since)
-             VALUES ('history-extraction','stale','2026-11-27T00:00:00Z');
-             INSERT INTO redis_reachability(source,reachable)
-             VALUES ('src-v40',1);
-             INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence)
-             VALUES ('t-40','demo','keep-me','change','active','2026-11-27T00:00:00Z','session-1',1,'none',1);
-             INSERT INTO events(seq,id,name,project,payload,envelope,logged_at)
-             VALUES (1,'ev-40','runner.test','demo','{}','{}','2026-11-27T00:00:00Z');
-             INSERT INTO conversation_relay(id,failure,updated_at)
-             VALUES (1,'relay-ok','2026-11-27T00:00:00Z');",
-        )
-        .unwrap();
+        };
 
-        migrate(&mut conn, Path::new(":memory:")).unwrap();
-        let version: u32 = conn
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, schema_version());
-
-        let retired: u32 = conn
+        // 1. Empty legacy tables drop immediately at version 41 while work/runner rows stay.
+        let mut empty_conn = Connection::open_in_memory().unwrap();
+        build_v40(&mut empty_conn);
+        migrate(&mut empty_conn, Path::new(":memory:")).unwrap();
+        assert_eq!(
+            empty_conn
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            schema_version()
+        );
+        let retired: u32 = empty_conn
             .query_row(
                 "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
                 [],
@@ -1678,27 +1699,96 @@ mod tests {
             )
             .unwrap();
         assert_eq!(retired, 0);
+        let kept: (String, String, String) = (
+            empty_conn
+                .query_row("SELECT slug FROM todos WHERE id = 't-40'", [], |r| r.get(0))
+                .unwrap(),
+            empty_conn
+                .query_row("SELECT name FROM events WHERE id = 'ev-40'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap(),
+            empty_conn
+                .query_row(
+                    "SELECT failure FROM conversation_relay WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+        );
+        assert_eq!(
+            kept,
+            ("keep-me".into(), "runner.test".into(), "relay-ok".into())
+        );
 
-        let todo_slug: String = conn
-            .query_row("SELECT slug FROM todos WHERE id = 't-40'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(todo_slug, "keep-me");
-        let event_name: String = conn
-            .query_row("SELECT name FROM events WHERE id = 'ev-40'", [], |row| {
-                row.get(0)
-            })
-            .unwrap();
-        assert_eq!(event_name, "runner.test");
-        let relay_failure: String = conn
-            .query_row(
-                "SELECT failure FROM conversation_relay WHERE id = 1",
-                [],
-                |row| row.get(0),
+        // 2. Populated legacy tables stay intact across both read-only in-memory
+        // snapshot inspection and on-disk StateDb::open until removed explicitly.
+        let dir = crate::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        let file = home.state_db_file();
+        crate::fsx::create_dir_all(file.parent().unwrap()).unwrap();
+        {
+            let mut conn = Connection::open(&file).unwrap();
+            build_v40(&mut conn);
+            conn.execute_batch(
+                "INSERT INTO runner_workers(worker,failure,since)
+                 VALUES ('history-extraction','stale','2026-11-27T00:00:00Z');
+                 INSERT INTO redis_reachability(source,reachable)
+                 VALUES ('src-v40',1);",
             )
             .unwrap();
-        assert_eq!(relay_failure, "relay-ok");
+        }
+        let before_bytes = std::fs::read(&file).unwrap();
+        let snapshot = Store::state(&home).read(true).unwrap().unwrap();
+        let Read::Current(snapshot_conn) = snapshot else {
+            panic!("snapshot read should migrate in memory to current schema");
+        };
+        let worker_count: u32 = snapshot_conn
+            .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
+            .unwrap();
+        let reach_count: u32 = snapshot_conn
+            .query_row("SELECT count(*) FROM redis_reachability", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((worker_count, reach_count), (1, 1));
+        drop(snapshot_conn);
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            before_bytes,
+            "read-only snapshot leaves on-disk database untouched"
+        );
+
+        let mut db = StateDb::open(&home).unwrap();
+        let worker_rows: u32 = db
+            .conn()
+            .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
+            .unwrap();
+        let reach_rows: u32 = db
+            .conn()
+            .query_row("SELECT count(*) FROM redis_reachability", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((worker_rows, reach_rows), (1, 1));
+
+        db.remove_runner_workers().unwrap();
+        let remaining_after_workers: u32 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_after_workers, 1);
+
+        db.remove_redis_reachability().unwrap();
+        let remaining_after_both: u32 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_after_both, 0);
     }
 
     #[test]
