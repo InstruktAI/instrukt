@@ -117,8 +117,11 @@ pub(crate) fn sanitize_auth_error(error: &AuthError) -> String {
     }
 }
 
+const INVALID_URL_MARKER: &str = "<invalid-url>";
+
 /// Derives a stable `(origin, path)` gate scope from an admitted HTTP URL so
-/// userinfo, query parameters, and fragments never leak into gate keys.
+/// userinfo, query parameters, and fragments never leak into gate keys or
+/// error diagnostics.
 pub(crate) fn gate_scope(url: &str) -> (String, String) {
     match url::Url::parse(url) {
         Ok(parsed) => {
@@ -128,23 +131,19 @@ pub(crate) fn gate_scope(url: &str) -> (String, String) {
             }
             (origin, parsed.path().to_owned())
         }
-        Err(_) => ("<invalid-url>".to_owned(), "/".to_owned()),
+        Err(_) => (INVALID_URL_MARKER.to_owned(), "/".to_owned()),
     }
 }
 
 /// Returns a credential-safe `scheme://host[:port]/path` display form of `url`
-/// with any userinfo, query parameters, and fragments stripped so error
-/// diagnostics never leak credentials embedded in provider-supplied URLs.
+/// derived from [`gate_scope`] so all outward MCP surfaces share one redaction
+/// rule.
 pub(crate) fn redact_url(url: &str) -> String {
-    match url::Url::parse(url) {
-        Ok(parsed) => {
-            let mut origin = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or(""));
-            if let Some(port) = parsed.port() {
-                origin.push_str(&format!(":{port}"));
-            }
-            format!("{origin}{}", parsed.path())
-        }
-        Err(_) => "<invalid-url>".to_owned(),
+    let (origin, path) = gate_scope(url);
+    if origin == INVALID_URL_MARKER {
+        origin
+    } else {
+        format!("{origin}{path}")
     }
 }
 

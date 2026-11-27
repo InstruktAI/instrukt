@@ -112,7 +112,8 @@ where
     F: std::future::Future<Output = Result<T, McpError>> + Send,
     T: Send,
 {
-    let key = instrukt_outside::Key::new("mcp", [url]).item(op);
+    let (origin, path) = _http::gate_scope(url);
+    let key = instrukt_outside::Key::new("mcp", [origin.as_str(), path.as_str()]).item(op);
     let attempted = _http::run_async(server, async move {
         _http::mcp_gate()
             .attempt_async(
@@ -131,8 +132,20 @@ where
         instrukt_outside::Attempted::Done(value) => Ok(value),
         instrukt_outside::Attempted::Defect(error) => Err(error),
         instrukt_outside::Attempted::Wait {
-            error: Some(error), ..
-        } => Err(error),
+            wait,
+            error: Some(error),
+        } => match error {
+            McpError::Unreachable { server, url, cause } => Err(McpError::Unreachable {
+                server,
+                url,
+                cause: format!("{wait} ({cause})"),
+            }),
+            McpError::Server { server, cause } => Err(McpError::Server {
+                server,
+                cause: format!("{wait} ({cause})"),
+            }),
+            other => Err(other),
+        },
         instrukt_outside::Attempted::Wait { wait, error: None } => Err(McpError::Unreachable {
             server: server.to_owned(),
             url: _http::redact_url(url),
@@ -361,6 +374,44 @@ fn map_service_error(server: &str, url: &str, error: ServiceError) -> McpError {
     }
 }
 
+fn safe_reqwest_cause(error: &reqwest::Error) -> String {
+    if error.is_timeout() {
+        "HTTP request timed out".into()
+    } else if error.is_connect() {
+        "HTTP connection failed".into()
+    } else if let Some(status) = error.status() {
+        format!("HTTP {}", status.as_u16())
+    } else if error.is_body() {
+        "HTTP response body interrupted".into()
+    } else if error.is_decode() {
+        "HTTP response decode failed".into()
+    } else {
+        "HTTP request failed".into()
+    }
+}
+
+fn classify_reqwest_error(server: &str, url: &str, req_err: &reqwest::Error) -> McpError {
+    if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) {
+        return McpError::Unauthorized {
+            server: server.to_owned(),
+            cause: "HTTP 401 Unauthorized".into(),
+        };
+    }
+    let cause = safe_reqwest_cause(req_err);
+    if req_err.is_connect() || req_err.is_timeout() || req_err.is_request() {
+        McpError::Unreachable {
+            server: server.to_owned(),
+            url: _http::redact_url(url),
+            cause,
+        }
+    } else {
+        McpError::Server {
+            server: server.to_owned(),
+            cause,
+        }
+    }
+}
+
 fn classify_transport_error(
     server: &str,
     url: &str,
@@ -388,22 +439,8 @@ fn classify_transport_error(
                         cause: msg.to_string(),
                     }
                 }
-                StreamableHttpError::Client(req_err)
-                    if req_err.status() == Some(reqwest::StatusCode::UNAUTHORIZED) =>
-                {
-                    McpError::Unauthorized {
-                        server: server.to_owned(),
-                        cause: req_err.to_string(),
-                    }
-                }
-                StreamableHttpError::Client(req_err)
-                    if req_err.is_connect() || req_err.is_timeout() || req_err.is_request() =>
-                {
-                    McpError::Unreachable {
-                        server: server.to_owned(),
-                        url: _http::redact_url(url),
-                        cause: req_err.to_string(),
-                    }
+                StreamableHttpError::Client(req_err) => {
+                    classify_reqwest_error(server, url, req_err)
                 }
                 StreamableHttpError::Io(io_err) => McpError::Unreachable {
                     server: server.to_owned(),
@@ -415,6 +452,9 @@ fn classify_transport_error(
                     cause: other.to_string(),
                 },
             };
+        }
+        if let Some(req_err) = err.downcast_ref::<reqwest::Error>() {
+            return classify_reqwest_error(server, url, req_err);
         }
         current = err.source();
     }
