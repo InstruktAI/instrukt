@@ -306,6 +306,28 @@ impl Home {
         self.state_dir().join("runner-service.json")
     }
 
+    /// `~/.instrukt/state/runner-workers/` — one atomic JSON state file per
+    /// failing runner worker, keyed-start finding, or deferred consumer source
+    /// transition, outside `state/writer.lock`
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn runner_workers_dir(&self) -> PathBuf {
+        self.state_dir().join("runner-workers")
+    }
+
+    /// `~/.instrukt/state/computer-fleet.json` — the computer fleet
+    /// evaluation responder's current failure state, outside
+    /// `state/writer.lock`.
+    pub fn computer_fleet_file(&self) -> PathBuf {
+        self.state_dir().join("computer-fleet.json")
+    }
+
+    /// `~/.instrukt/state/redis-reachability/` — per-Redis reachability state
+    /// files and per-source transition locks, outside `state/writer.lock`
+    /// (`project/instrukt/spec/domain/runner`, Runner background state).
+    pub fn redis_reachability_dir(&self) -> PathBuf {
+        self.state_dir().join("redis-reachability")
+    }
+
     /// `~/.instrukt/state/history.lock` — the history store's
     /// write-isolation unit: every history write runs under it, and once the
     /// one-time move of earlier history out of the state database is
@@ -441,6 +463,9 @@ mod tests {
             home.withdrawal_lock_file(),
             home.delivered_release_lock_file(),
             home.runner_lock_file(),
+            home.runner_workers_dir(),
+            home.computer_fleet_file(),
+            home.redis_reachability_dir(),
             home.requested_review_db_file(),
             home.requested_review_lock_file(),
             home.eval_fingerprint_dir(),
