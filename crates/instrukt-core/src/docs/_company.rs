@@ -1,10 +1,10 @@
 //! A company document as a company rendering reads it
 //! (`project/instrukt/spec/feature/publication/agent-entrypoints`, "Company
-//! home entrypoint"): its text without its `## Required reads` section, each
-//! entry of that section as written, the references in its text, its
-//! directives and the `description` of its frontmatter. What the entries and
-//! references name, and what a document without a description means, is
-//! publication's to judge.
+//! home entrypoint"): its text after any leading YAML frontmatter and without
+//! its `## Required reads` section, each entry of that section as written, the
+//! references in its body, its directives and the `description` and
+//! `visibility` of its frontmatter. What the entries and references name, and
+//! what a document without a description means, is publication's to judge.
 
 use std::ops::Range;
 
@@ -16,16 +16,17 @@ use crate::ids::SnippetId;
 
 /// One company document, read.
 pub(crate) struct CompanyDocument {
-    /// The text without its `## Required reads` section, heading included.
+    /// The text after any leading YAML frontmatter, without its
+    /// `## Required reads` section, heading included.
     pub body: String,
     /// Each entry of the `## Required reads` section, in order: a list
     /// item's text, or a link's target.
     pub reads: Vec<String>,
-    /// The references in the text without its `## Required reads`
-    /// section, each once, in order.
+    /// The references in the body without its `## Required reads` section,
+    /// each once, in order.
     pub references: Vec<CompanyReference>,
-    /// Its `@config`, `@exec` and `@include` directives, the `## Required
-    /// reads` section's included.
+    /// Its `@config`, `@exec` and `@include` directives in the body, the
+    /// `## Required reads` section's included.
     pub directives: Vec<Directive>,
     /// What its frontmatter says.
     pub frontmatter: CompanyFrontmatter,
@@ -37,6 +38,8 @@ pub(crate) struct CompanyDocument {
 /// range.
 #[derive(Default)]
 struct Places {
+    /// Byte offset where the body starts after any leading frontmatter.
+    body_offset: usize,
     /// The `## Required reads` section, heading included.
     section: Option<Range<usize>>,
     /// The path of each entry of that section, in the order of `reads`.
@@ -65,8 +68,8 @@ pub(crate) enum CompanyFrontmatter {
 }
 
 impl CompanyFrontmatter {
-    fn of(text: &str) -> Self {
-        let Some(yaml) = split_frontmatter(text).frontmatter else {
+    fn of_yaml(yaml: Option<&str>) -> Self {
+        let Some(yaml) = yaml else {
             return Self::Read {
                 description: None,
                 visibility: None,
@@ -113,20 +116,50 @@ pub(crate) enum CompanyPath<'a> {
 /// Which text of a company document [`company_paths`] returns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CompanyText {
-    /// The whole text, its `## Required reads` section included.
+    /// The whole text, its frontmatter and `## Required reads` section
+    /// included.
     Whole,
-    /// The text without its `## Required reads` section, as
-    /// [`CompanyDocument::body`] holds it.
+    /// The text after any leading YAML frontmatter and without its
+    /// `## Required reads` section, as [`CompanyDocument::body`] holds it.
     Body,
 }
 
-/// Reads `text` as a company document.
+/// Reads `text` as a company document: splits any leading YAML frontmatter
+/// once, parses its frontmatter metadata, and reads the body after it.
 pub(crate) fn company_document(text: &str) -> CompanyDocument {
-    let lines = _text::lines(text);
+    let split = split_frontmatter(text);
+    let frontmatter = CompanyFrontmatter::of_yaml(split.frontmatter);
+    parse_body(split.body, split.body_offset, frontmatter)
+}
+
+/// Reads `body`, a text whose frontmatter has already been split (such as a
+/// compressed unit's body or a company document's delivered prose), without
+/// splitting frontmatter again.
+pub(crate) fn company_body(body: &str) -> CompanyDocument {
+    parse_body(
+        body,
+        0,
+        CompanyFrontmatter::Read {
+            description: None,
+            visibility: None,
+        },
+    )
+}
+
+fn parse_body(
+    raw_body: &str,
+    body_offset: usize,
+    frontmatter: CompanyFrontmatter,
+) -> CompanyDocument {
+    let lines = _text::lines(raw_body);
     let directives = _text::directives(&lines);
     let mut reads = Vec::new();
-    let mut places = Places::default();
-    let mut body = text.to_owned();
+    let mut places = Places {
+        body_offset,
+        ..Places::default()
+    };
+    let mut body = raw_body.to_owned();
+    let mut section_in_body = None;
     if let Some(section) = required_reads_section(&lines) {
         for line in lines
             .get(section.clone())
@@ -141,30 +174,30 @@ pub(crate) fn company_document(text: &str) -> CompanyDocument {
             }
             let item = list_item(item).unwrap_or(item);
             let read = _refs::link(item).map_or(item, |(_, target)| target);
-            let at = line.span.start + offset(&visible, read);
+            let at = body_offset + line.span.start + offset(&visible, read);
             places.reads.push(at..at + read.len());
             reads.push(read.to_owned());
         }
         let from = lines
             .get(section.start.saturating_sub(1))
-            .map_or(text.len(), |line| line.span.start);
+            .map_or(raw_body.len(), |line| line.span.start);
         let to = lines
             .get(section.end)
-            .map_or(text.len(), |line| line.span.start);
-        body = format!("{}{}", &text[..from], &text[to..]);
-        places.section = Some(from..to);
+            .map_or(raw_body.len(), |line| line.span.start);
+        body = format!("{}{}", &raw_body[..from], &raw_body[to..]);
+        section_in_body = Some(from..to);
+        places.section = Some(body_offset + from..body_offset + to);
     }
     // The body's references, placed in the whole text: no line of the body
     // spans the cut, which falls between two lines.
-    let cut = places.section.clone();
     places.references = located_references(&body)
         .into_iter()
-        .map(|(reference, range)| match &cut {
-            Some(cut) if range.start >= cut.start => {
-                let shift = cut.end - cut.start;
-                (reference, range.start + shift..range.end + shift)
-            }
-            _ => (reference, range),
+        .map(|(reference, range)| {
+            let shift = match &section_in_body {
+                Some(cut) if range.start >= cut.start => body_offset + (cut.end - cut.start),
+                _ => body_offset,
+            };
+            (reference, range.start + shift..range.end + shift)
         })
         .collect();
     let mut references: Vec<CompanyReference> = Vec::new();
@@ -178,7 +211,7 @@ pub(crate) fn company_document(text: &str) -> CompanyDocument {
         directives,
         body,
         reads,
-        frontmatter: CompanyFrontmatter::of(text),
+        frontmatter,
         places,
     }
 }
@@ -197,7 +230,8 @@ pub(crate) fn company_paths(
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     match (part, &places.section) {
         (CompanyText::Body, Some(section)) => edits.push((section.clone(), String::new())),
-        _ => {
+        (CompanyText::Body, None) => {}
+        (CompanyText::Whole, _) => {
             for (read, range) in document.reads.iter().zip(&places.reads) {
                 if let Some(path) = replace(CompanyPath::Read(read)) {
                     edits.push((range.clone(), path));
@@ -211,8 +245,11 @@ pub(crate) fn company_paths(
         }
     }
     edits.sort_by_key(|(range, _)| (range.start, range.end));
-    let mut out = String::with_capacity(text.len());
-    let mut at = 0;
+    let mut at = match part {
+        CompanyText::Whole => 0,
+        CompanyText::Body => places.body_offset,
+    };
+    let mut out = String::with_capacity(text.len().saturating_sub(at));
     for (range, replacement) in edits {
         // One path read twice, as a link's target and as an `@` reference
         // inside it, is replaced once, by the reading that starts first.
@@ -595,6 +632,62 @@ mod tests {
             "---\ndescription: |\n  Who works here,\n  and since when.\n---\n\n# People\n",
         );
         assert_eq!(across.as_deref(), Some("Who works here,\nand since when."));
+    }
+
+    #[test]
+    fn frontmatter_is_omitted_from_body_and_unscanned_while_kept_in_whole_and_metadata() {
+        let frontmatter = "---\ndescription: >-\n  Read @general/policy/commits and [old](../secret.md) <!-- @config: company -->.\nvisibility: internal\n---\n";
+        let body_part = "\n# Company\n\nSee [Roles](roles.md#lead).\n\n## Required reads\n\n- people.md\n\n## See Also\n\n- teams/a.md — teams\n";
+        let text = format!("{frontmatter}{body_part}");
+        let with_fm = company_document(&text);
+        let without_fm = company_document(body_part);
+        assert_eq!(with_fm.body, without_fm.body);
+        assert_eq!(with_fm.reads, without_fm.reads);
+        assert_eq!(with_fm.references, without_fm.references);
+        assert_eq!(with_fm.directives, without_fm.directives);
+        assert_eq!(
+            with_fm.frontmatter,
+            CompanyFrontmatter::Read {
+                description: Some(
+                    "Read @general/policy/commits and [old](../secret.md) <!-- @config: company -->."
+                        .to_owned()
+                ),
+                visibility: Some(serde_yaml_ng::Value::String("internal".to_owned())),
+            }
+        );
+        assert_eq!(placed(&text), placed(body_part));
+        assert_eq!(kept(&text, CompanyText::Whole), text);
+        assert_eq!(kept(&text, CompanyText::Body), without_fm.body);
+        let rewrite = |src: &str, part: CompanyText| {
+            let doc = company_document(src);
+            company_paths(src, &doc, part, |path| {
+                let written = match path {
+                    CompanyPath::Reference(CompanyReference::Path(file)) => file,
+                    CompanyPath::Reference(CompanyReference::Name(_)) => return None,
+                    CompanyPath::Read(read) => read,
+                };
+                Some(format!(
+                    "references/{}",
+                    written.strip_prefix('@').unwrap_or(written)
+                ))
+            })
+        };
+        assert_eq!(
+            rewrite(&text, CompanyText::Body),
+            rewrite(body_part, CompanyText::Body)
+        );
+        assert_eq!(
+            rewrite(&text, CompanyText::Whole),
+            format!("{frontmatter}{}", rewrite(body_part, CompanyText::Whole))
+        );
+    }
+
+    #[test]
+    fn a_pre_split_company_body_does_not_strip_a_second_leading_fence_block() {
+        let body = "---\n## Required reads\n\n- extra.md\n\n## Rules\n---\n- rule\n";
+        let document = company_body(body);
+        assert_eq!(document.reads, vec!["extra.md".to_owned()]);
+        assert_eq!(document.body, "---\n## Rules\n---\n- rule\n");
     }
 
     #[test]

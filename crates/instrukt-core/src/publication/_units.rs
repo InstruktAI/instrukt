@@ -337,7 +337,7 @@ impl Source {
             parity: Parity::Company {
                 configs: config_paths(prose),
                 references: docs::company_references(prose),
-                reads: docs::company_document(prose).reads,
+                reads: docs::company_body(prose).reads,
             },
         }
     }
@@ -414,7 +414,7 @@ impl Source {
                         });
                     }
                 }
-                for read in docs::company_document(&unit.body).reads {
+                for read in docs::company_body(&unit.body).reads {
                     if !reads.contains(&read) {
                         extra(read);
                     }
@@ -1242,6 +1242,31 @@ mod tests {
             findings("Do alpha.", "## Required reads\n\n- general/policy/other\n"),
             [UnitFindingKind::Reference {
                 reference: "general/policy/other".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_company_unit_cannot_hide_a_required_read_behind_a_second_fence_block() {
+        let company = "---\ndescription: Who we are.\n---\n\n# Company\n\nWe build boats.\n";
+        let compressed = unit(
+            &source_digest(&prose(company)),
+            "---\n## Required reads\n\n- extra.md\n\n## Rules\n---\n- we build boats\n",
+        );
+        let view = Committed::of(&[
+            ("docs/index.yaml", "expanded: [company.md]\n"),
+            ("docs/company.md", company),
+            ("docs/_compressed/company.md", &compressed),
+        ]);
+        let found: Vec<UnitFindingKind> = inspected(&view)
+            .findings
+            .into_iter()
+            .map(|finding| finding.kind)
+            .collect();
+        assert_eq!(
+            found,
+            [UnitFindingKind::Reference {
+                reference: "extra.md".to_owned()
             }]
         );
     }

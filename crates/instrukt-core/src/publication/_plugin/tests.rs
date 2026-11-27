@@ -273,6 +273,40 @@ const SKILL: &str = "skills/acme/SKILL.md";
 const CARRIED: &str = "skills/acme/references/company.md";
 
 #[test]
+fn an_expanded_company_document_in_the_skill_main_file_omits_its_frontmatter_while_carried_prose_keeps_it()
+ {
+    let frontmatter = "---\ndescription: Who Acme is.\nvisibility: internal\n---\n";
+    let body_part = format!("\n{COMPANY}");
+    let with_fm = format!("{frontmatter}{body_part}");
+    let tree_with = |doc: &str, unit: Option<&str>| {
+        let mut files = vec![
+            (INDEX, "expanded: [company.md]\nlisted: [roles.md]\n"),
+            ("docs/company.md", doc),
+            ("docs/roles.md", ROLES),
+            (CATALOG, CATALOG_TEXT),
+        ];
+        files.extend(unit.map(|unit| ("docs/_compressed/company.md", unit)));
+        Committed::of(&files)
+    };
+    let prose_with_fm = rendered_files(&tree_with(&with_fm, None));
+    let prose_without_fm = rendered_files(&tree_with(&body_part, None));
+    assert_eq!(prose_with_fm[SKILL], prose_without_fm[SKILL]);
+
+    let unit = unit_of(
+        &with_fm,
+        true,
+        "- we make things; roles: [roles](roles.md)\n",
+    );
+    let compressed_with_fm = rendered_files(&tree_with(&with_fm, Some(&unit)));
+    let compressed_without_fm = rendered_files(&tree_with(&body_part, Some(&unit)));
+    assert_eq!(compressed_with_fm[SKILL], compressed_without_fm[SKILL]);
+    assert_eq!(
+        compressed_with_fm[CARRIED],
+        format!("{frontmatter}\n{}", compressed_without_fm[CARRIED])
+    );
+}
+
+#[test]
 fn a_document_held_as_its_unit_is_framed_with_the_file_carrying_its_prose() {
     let unit = unit_of(
         COMPANY,

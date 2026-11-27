@@ -321,7 +321,7 @@ fn main_file(
     }
     for path in &selection.held {
         if let (Some(unit), Some(place)) = (units.get(path), carried.file(path)) {
-            let document = docs::company_document(&unit.body);
+            let document = docs::company_body(&unit.body);
             let body = company_paths(&unit.body, &document, CompanyText::Body, |at| {
                 carried.replacement(tree, path, SKILL_FILE, at)
             });
