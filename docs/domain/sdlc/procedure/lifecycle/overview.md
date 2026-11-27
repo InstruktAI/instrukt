@@ -98,11 +98,17 @@ and route to `planner`, `intaker`, or doc updates cleanly in the same
      blast-radius discovery, substrate readiness check, and
      `implementation-plan`, followed by independent `plan-reviewer`
      (`sdlc/procedure/lifecycle/prepare/review-plan`).
-  2. Where the work makes a structural decision, the plan carries its
-     architecture reasoning and `plan-reviewer` judges it
-     (`sdlc/policy/preparation-artifact-quality`, Structural decisions carry
-     architecture review). `architect` and `architecture-reviewer` are
-     dispatched only for a todo that carries an approved `prd`.
+  2. Where the work makes a structural decision, introduces or modifies an
+     external protocol, API client, auth/OAuth flow, or retry/backoff
+     integration, or spans multiple crates, the plan carries its architecture
+     and outward existing-solutions reasoning (`sdlc/policy/preparation-artifact-quality`,
+     `sdlc/policy/substrate-anchoring`) and `plan-reviewer` judges it even when
+     `architecture` is skipped on `change` todos. `architect` and
+     `architecture-reviewer` are dispatched only for a todo that carries an
+     approved `prd`. When `planner` finds a `change` or `bug` fails the
+     scope/size gate and needs a multi-child split the human has not released,
+     present the proposed partition to the human and wait for release before
+     filing children (`sdlc/procedure/lifecycle/prepare/plan-draft`).
   3. Proceed to `builder` → independent `build-reviewer` and live verification
      (Step 4b, pushing `origin/<slug>/work` first when CI-hosted) →
      `fix-review-findings` remediation on `changes_requested` or `FAIL`, and

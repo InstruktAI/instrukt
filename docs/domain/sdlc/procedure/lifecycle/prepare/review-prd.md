@@ -45,7 +45,9 @@ Apply these configured action values to the identified assignment and session.
    product and domain snippets. Inspect the current `input` version and its
    intent-checked stamp. Take a current check as given. If no current check
    exists and you are the first recipient other than its author, read the
-   originating conversation with the configured runtime conversation read instruction
+   human's actual originating conversation with the configured runtime
+   conversation read instruction — tracing past any relaying or splitting
+   session (`general/policy/human-contract`, `sdlc/policy/todo-creation-discipline`) —
    and compare outcome-level substance. Confirm fidelity and record
    `instrukt todo stamp {slug} --intent-checked` for that input version.
    Clarification returns to the author for a new version; a mistaken

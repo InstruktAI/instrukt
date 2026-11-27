@@ -32,9 +32,10 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
   part is a defect to fix in the code.
 - A part designed or changed meets the rule above through the outside gate
   (`project/instrukt/design/architecture/outside-gate`): it talks to its service
-  through the best existing client for it — an SDK, a protocol client, a
-  command-line program — and never replaces a fitting client with hand-written
-  requests to suit the outside gate; it brings that client's outcome to the
+  through an established off-the-shelf SDK, protocol client, or command-line
+  program (`sdlc/policy/substrate-anchoring`) — adopting one rather than keeping
+  or extending hand-written protocol requests, and never replacing a fitting
+  client with hand-written requests to suit the outside gate; it brings that client's outcome to the
   outside gate, which alone judges the failure, decides the wait and reports it,
   so the part keeps no backoff schedule, `Retry-After` reading or rate-limit
   memory of its own; it keeps exactly one retry layer, a client that retries by
@@ -66,8 +67,9 @@ description: What instrukt adds to trust-and-guardrails — prerequisites guarde
 - One mechanism makes the judgment once: parts that each read their service's
   answers and pick their own pauses drift apart, retry what is not theirs to
   retry and report the same outage in as many places.
-- The client best fitted to a service already knows its protocol; rebuilding it
-  to fit a retry mechanism trades proven handling for new defects.
+- An established client already owns its service's protocol, auth, and edge
+  cases; keeping or writing hand-rolled requests trades proven handling for new
+  defects.
 - Two retry layers multiply each other's tries and hide the outage from the
   report.
 - A person can act on what belongs to their world and on nothing else.

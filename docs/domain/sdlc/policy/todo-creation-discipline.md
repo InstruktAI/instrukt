@@ -301,9 +301,13 @@ The terms below are defined in `sdlc/concept/defect-evidence`.
 
 - **Check intent by position.** `input` is the intent record for every kind,
   including work with a supplied plan. The first recipient other than its
-  author reads the originating conversation through
-  the configured runtime conversation read instruction and compares outcome-level
-  substance. Confirm the record, clarify expression without changing meaning,
+  author reads the human's actual originating conversation through
+  the configured runtime conversation read instruction — tracing past any
+  relaying or splitting session, and for a grouped child following its parent or
+  recorded origin pointer back to the root human conversation
+  (`general/policy/human-contract`) — and compares outcome-level substance.
+  Reading a relaying or splitting subagent's thread is not an intent check.
+  Confirm the record, clarify expression without changing meaning,
   or return a mistaken interpretation to the human in the responsible thread.
   Record `instrukt todo stamp <slug> --intent-checked` bound to that input
   version, checker and conversation. A current check travels unchanged to

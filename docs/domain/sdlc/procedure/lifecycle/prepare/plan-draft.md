@@ -240,14 +240,24 @@ grounded change surface and record the verdict before drafting. That policy owns
 the splitting criteria.
 
 **If the work fails the scope/size gate, stop here.** Do not draft a plan for
-work that will fail gate validation. Group first:
+work that will fail gate validation.
 
-- read the parent's full authorized scope from its resolved intent artifact and any approved architecture context
-- create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, partitioning the parent's existing scope — adding no functional or business scope absent from the parent
-- act on a child only once its filing outcome reports it created
-- narrow each child to its scope slice, referencing that parent intent and any applicable approved architecture context
-- add dependency ordering between the children with `instrukt todo update <child> --after <dep>`
-- stop treating the parent as directly prepare/work-ready; it is now a structural holder
+Splitting into multiple children multiplies execution fan-out and delivery order.
+Apply the release boundary before filing any child (`general/policy/human-contract`):
+
+- **When a `change` or `bug` (no approved `prd`) needs a split and the human has
+  not released that split in the originating conversation:** stop without
+  creating children. Return the proposed partition — the slices, their
+  dependency order, and why the scope cannot ship coherently as one delivery —
+  through the orchestrator for human release before any child is filed.
+- **When a `feature` has an approved `prd` or the human has already released the
+  split:** group the parent and file the children:
+  - read the parent's full authorized scope from its resolved intent artifact and any approved architecture context
+  - create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, partitioning the parent's existing scope — adding no functional or business scope absent from the parent
+  - copy the human's constraints and originating-conversation pointer verbatim into each child's `input` alongside its narrow scope slice (`general/policy/human-contract`); referencing the parent holder never substitutes for carrying the constraints and origin pointer
+  - act on a child only once its filing outcome reports it created
+  - add dependency ordering between the children with `instrukt todo update <child> --after <dep>`
+  - stop treating the parent as directly prepare/work-ready; it is now a structural holder
 
 If the work passes the scope/size gate, continue to plan drafting.
 

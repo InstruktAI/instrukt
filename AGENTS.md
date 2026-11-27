@@ -19,6 +19,7 @@ Compressed sections (headed by document name) hold rules, not prose: `MUST` requ
 ## general/principle/trust-and-guardrails
 
 - MUST trust agents; gate only harm restoring state cannot repair: interference (two agents, one object) | contract changed under executor -- rest is brief's direction.
+- MUST keep tools neutral surfaces of fact (CLI, ledger, store): record observed provenance only, describe verbs and facts in help, NEVER police workflow choreography, role interaction, or turn state in code/gates -- choreography lives in briefs and procedures.
 - NEVER meet irreversible mutation with permission rule; repair state layer (versioning, soft removal) -- gate makes it permanent.
 - MUST read object (holder, phase), NEVER caller rank -- rank drifts.
 - MUST name refusal's door (sanctioned path keeping invariant); on refusal stop, tell someone -- door is path, not decision.
@@ -46,85 +47,20 @@ Compressed sections (headed by document name) hold rules, not prose: `MUST` requ
 
 # Project
 
-## Checks and Guards — Policy
+## project/instrukt/policy/checks-and-guards
 
-### Rules
-
-- A prerequisite — configuration, a credential, a published procedure, an
-  installed service — is checked where it enters: where it is written, at install,
-  and when the runner starts or takes a change. Nothing running handles a missing
-  prerequisite. Such a check at the entry, refusing with its door, is a gate in the
-  sense of trust-and-guardrails; a proof of ownership, a version gate on rebuildable
-  state or a refusal of instrukt's own files is not one.
-- instrukt's own places are the files, service units, crontab line, private Redis
-  configuration and marked hook sections it generates, each under a name that
-  carries its home when the home is not `~/.instrukt`. instrukt writes them whole
-  when it converges, without consulting any record of an earlier write, and removes
-  nothing because it remembers having written it.
-- A part that depends on a service outside instrukt — the runtime, Slack, Redis,
-  the network, a model provider — retries until it returns and reports its state
-  to the operator; a part whose caller's wait is bounded retries within that
-  bound and then gives its caller the wait, a bound of nothing being a single
-  try. The exceptions are the best-effort unavailable notices governed by
-  `project/instrukt/spec/feature/company/conversations` and dead-letter
-  announcements governed by `project/instrukt/spec/feature/runner/event-consumers`. Any other failure of a
-  part is a defect to fix in the code.
-- A part designed or changed meets the rule above through the outside gate
-  (`project/instrukt/design/architecture/outside-gate`): it talks to its service
-  through the best existing client for it — an SDK, a protocol client, a
-  command-line program — and never replaces a fitting client with hand-written
-  requests to suit the outside gate; it brings that client's outcome to the
-  outside gate, which alone judges the failure, decides the wait and reports it,
-  so the part keeps no backoff schedule, `Retry-After` reading or rate-limit
-  memory of its own; it keeps exactly one retry layer, a client that retries by
-  itself being configured not to or brought through the outside gate as a
-  single try; and it states its own settings for its calls, which the outside
-  gate honours.
-- A person writing to a company's agent may be told about their request and about
-  their own world — a service of theirs that is unreachable, the assistant being
-  unavailable for a while — and never about instrukt's internals. What instrukt
-  cannot resolve goes to the operator. Each object generation uses a fixed native start key and thread ID; retries
-  replay that identity. Outstanding work after confirmed native archive or deletion,
-  or after an idle thread is confirmed to belong to a runtime project other than its
-  checkout's own, uses a new generation automatically; a misplaced thread that is
-  still busy is left alone until it is idle. Native lifecycle owns provider
-  detachment; neither a create receipt nor a misplacement rollover supplies a
-  physical-process exit guarantee.
-- A record in an older or unknown shape is discarded only when its specification
-  names the source that rebuilds it. A person's stated choices and restrictions,
-  and records of external effects, are migrated, never discarded or expired.
-
-### Rationale
-
-- A prerequisite checked where it enters, and a running process that uses only
-  what it admitted, leave no runtime path for a missing prerequisite; what a
-  service outside instrukt does later is availability, not a missing prerequisite.
-- A check on a place only instrukt writes protects nothing a person owns and fails
-  exactly where installations differ.
-- An outside service can leave at any moment; a defect cannot be retried away.
-- One mechanism makes the judgment once: parts that each read their service's
-  answers and pick their own pauses drift apart, retry what is not theirs to
-  retry and report the same outage in as many places.
-- The client best fitted to a service already knows its protocol; rebuilding it
-  to fit a retry mechanism trades proven handling for new defects.
-- Two retry layers multiply each other's tries and hide the outage from the
-  report.
-- A person can act on what belongs to their world and on nothing else.
-- Discarding a record is safe exactly when what rebuilds it survives.
-
-### Scope
-
-instrukt's product behaviour: the runner, installation, hooks, company messaging
-and command preconditions. The todo workflow's own rules follow their contracts.
-
-### Enforcement
-
-- Specification and code review apply these rules to the mechanisms a change adds
-  or touches.
-
-### Exceptions
-
-- None.
+- MUST check a prerequisite (configuration, credential, published procedure, installed service) where it enters: when written, at install, when the runner starts or takes a change; NEVER handle a missing one while running -- what runs uses only what entry admitted.
+- gate = such an entry check refusing with its door; proof of ownership, a version gate on rebuildable state, or refusing instrukt's own files is no gate.
+- instrukt's own places = the files, service units, crontab line, private Redis config and marked hook sections it generates, each named with its home when that is not `~/.instrukt`.
+- MUST write own places whole on converge, consulting no record of earlier writes; NEVER remove anything because it is remembered as written -- a check on a place only instrukt writes protects nothing.
+- MUST make a part depending on an outside service (runtime, Slack, Redis, network, model provider) retry until it returns and report its state to the operator (bounded caller wait retries within bound; bound of nothing = single try), except best-effort unavailable notices (`project/instrukt/spec/feature/company/conversations`) and dead-letter announcements (`project/instrukt/spec/feature/runner/event-consumers`); any other failure of a part is a code defect -- outages pass, defects do not.
+- MUST meet outside-service retries via outside gate (`project/instrukt/design/architecture/outside-gate`) using an established off-the-shelf SDK, protocol client, or CLI (`sdlc/policy/substrate-anchoring`), adopting one over hand-written requests, keeping one retry layer with no local backoff/`Retry-After`/rate-limit memory -- established clients own protocol and edge cases; one layer prevents retry multiplication.
+- MAY tell a person writing to a company's agent about their request and their own world (their service unreachable, the assistant unavailable a while); NEVER about instrukt internals; what instrukt cannot resolve goes to the operator -- a person acts only on their own world.
+- MUST give each object generation a fixed native start key and thread ID that retries replay -- retries stay one generation.
+- MUST start a new generation automatically for outstanding work after confirmed native archive or deletion, or after an idle thread is confirmed in a runtime project other than its checkout's own; NEVER touch a misplaced thread while it is busy -- wait until idle.
+- native lifecycle = owner of provider detachment; neither a create receipt nor a misplacement rollover guarantees a physical-process exit.
+- NEVER discard a record of older or unknown shape unless its spec names the source that rebuilds it; MUST migrate, never discard or expire, a person's stated choices and restrictions and records of external effects -- discarding is safe only when the rebuild source survives.
+- scope = instrukt's product behaviour (runner, installation, hooks, company messaging, command preconditions), not the todo workflow's own rules; spec and code review enforce it on mechanisms a change adds or touches.
 
 - project/instrukt/spec/verification-substrate: Live verification substrate for instrukt — archetype classification (Rust CLI/daemon/orchestrator), real surfaces, Docker-free isolated-root primitive, concurrency cap, and declared blind spots. — `instrukt docs get project/instrukt/spec/verification-substrate`
 - project/instrukt/policy/reliability-checklist: Diff-triggered live verification checks for instrukt born solely from confirmed real occurrences with auditable evidence, governed by sdlc/policy/live-verification. — `instrukt docs get project/instrukt/policy/reliability-checklist`

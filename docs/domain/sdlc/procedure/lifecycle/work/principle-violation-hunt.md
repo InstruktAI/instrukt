@@ -134,6 +134,16 @@ Patterns to detect:
   ("documents with `## Goal` and `## Acceptance` score higher").
 - A test, replay or score whose subject is a document, a prompt or a skill,
   whether code or staged agent sessions run it.
+- Tool or ledger code that polices agent coordination
+  (`general/principle/trust-and-guardrails`,
+  `general/principle/intelligence-boundaries`): hardcoding agent role names to
+  gate workflow steps, inspecting live turn state or conversation transcripts to
+  decide coordination, embedding workflow choreography prose in CLI responses or
+  help, or fabricating logical provenance (such as equating a mechanical writer
+  identity with the human's originating conversation).
+- Product feature specifications (`docs/project/spec/feature/*`) that encode
+  agent-to-agent coordination or role handoffs instead of software state and
+  observable tool behavior.
 
 **Severity: Critical.** This pattern accumulates and corrupts the codebase
 faster than coupling violations because every implementation looks
@@ -179,6 +189,26 @@ Patterns to detect:
 - A mechanism guesses or substitutes an identity when none is resolvable.
 
 **Severity:** Important.
+
+### 12. Hand-rolled external protocol or infrastructure without outward grounding
+
+Per `sdlc/policy/substrate-anchoring`, `general/principle/grounding`, and
+`general/policy/adr-discipline`. External protocols, API clients, auth/OAuth
+flows, formats/grammars, and retry/backoff mechanisms adopt a maintained
+off-the-shelf SDK or library unless a grounded ADR proves a concrete gap.
+
+Patterns to detect:
+
+- Hand-rolled client, protocol, auth/OAuth, or retry/backoff code introduced or
+  extended where an established SDK or library exists, without an outward
+  assessment and grounded ADR.
+- Wrapping or extending pre-existing hand-rolled protocol code, or citing a
+  local runtime choice (such as a synchronous-only I/O stack) as the reason to
+  skip adopting the maintained ecosystem SDK.
+
+**Severity:** Critical — active in both plan review (including `change` and
+`bug` plans where `architecture` is skipped) and build or commit review.
+Pre-existing hand-rolled code in the repository supplies no precedent shield.
 
 ## Outputs
 
