@@ -54,9 +54,10 @@ meaning and the writes of the conversation tables.
 
 - **Runner background worker failures and Redis reachability stay outside it:**
   per-worker failure files live under `state/runner-workers/` (beside
-  `state/computer-fleet.json`) and per-Redis reachability records live under
-  `state/redis-reachability/`, each isolated from `state/writer.lock`
-  (`project/instrukt/spec/domain/runner`, Runner background state).
+  `state/computer-fleet.json`) and per-Redis reachability lives in
+  `state/redis-reachability.db` under `state/redis-reachability.lock`, each
+  isolated from `state/writer.lock` (`project/instrukt/spec/domain/runner`,
+  Runner background state).
 
 <!-- /planned:runner-background-writes-isolated -->
 
@@ -282,13 +283,15 @@ table, column or row.
 
 <!-- planned:runner-background-writes-isolated -->
 
-Version 41 drops `runner_workers` and `redis_reachability`, now that runner
-worker failures live in `state/runner-workers/` and per-Redis reachability
-records live in `state/redis-reachability/` outside this database and its
-writer lock (`project/instrukt/spec/domain/runner`). Every work, runner and
-conversation row in the remaining tables is kept; any active failure or
-reachability state is recorded again by the next worker pass or Redis
-operation.
+Version 41 retires `runner_workers` and `redis_reachability` once their data
+has left the state database (`project/instrukt/spec/domain/runner`, Runner
+background state). Each table is dropped immediately when it holds no rows;
+while either holds active rows, it stays in place until the runner moves those
+rows into `state/runner-workers/` or `state/redis-reachability.db` and drops
+the table. Active failure text, `since` times and last observed reachability
+are therefore preserved across upgrades, and read-only inspection of an older
+database keeps active worker rows visible without modifying the database on
+disk. Every work, runner and conversation row in the remaining tables is kept.
 
 <!-- /planned:runner-background-writes-isolated -->
 
@@ -714,13 +717,10 @@ retries. Completing the transition removes the row.
 
 <!-- change:runner-background-writes-isolated -->
 
-**Worker failures and Redis reachability** — not stored in this database
-(dropped in version 41). Runner worker failures, deferred consumer source
-transitions and keyed-start findings live in per-worker state files under
-`state/runner-workers/` (beside `state/computer-fleet.json`), and per-Redis
-reachability records live under `state/redis-reachability/`, outside
-`state/writer.lock` (`project/instrukt/spec/domain/runner`, Runner background
-state).
+**Worker failures and Redis reachability** — retired from this database in
+version 41 once moved to `state/runner-workers/` and
+`state/redis-reachability.db` outside `state/writer.lock`
+(`project/instrukt/spec/domain/runner`, Runner background state).
 
 <!-- /planned-change:runner-background-writes-isolated -->
 

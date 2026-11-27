@@ -180,8 +180,9 @@ Deleting the home is not a lossless reset.
 | `state/runner.lock` | the lock serializing runner invocations | taken again by the next runner |
 | `state/runtime-dispatch.lock` | serializes runtime dispatch owners for one command or wake; released between long-lived runner wakes so agent-issued commands remain available | taken again by the next runtime invocation |
 | `state/computer-fleet.json` | the computer fleet's current failure on this computer, `{failure, since}`, written whole beside its previous version and renamed over it by `instrukt run`'s evaluation responder or `instrukt tick`'s fleet step while a failure lasts, removed on the next success or when no cluster connection is configured; readers take no lock; shown by `instrukt events status` as the worker `computer-fleet` (`project/instrukt/spec/domain/runner`) | nothing: the next attempt records the failure again |
-| `state/runner-workers/<id>.json` | per-worker current failure `{worker, failure, since}` for `history-extraction`, `history-search`, `readiness`, deferred consumer source transitions and keyed-start findings, written whole beside its previous version and renamed over it outside `state/writer.lock`, removed on recovery or shutdown; readers take no lock; shown by `instrukt events status` (`project/instrukt/spec/domain/runner`) | nothing: the next failing pass records the failure again |
-| `state/redis-reachability/<source>.json`, `<source>.lock` | each logical Redis source's last observed reachability `{reachable}` so loss and return are logged once per transition; unchanged reads take no lock and write nothing; transitions serialize on `<source>.lock` outside `state/writer.lock` (`project/instrukt/spec/domain/runner`) | nothing: the next Redis command observes reachability again (at most one repeated transition log) |
+| `state/runner-workers/<id>.json` | per-worker current failure records shown by `instrukt events status` (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next failing pass records the failure again |
+| `state/redis-reachability.db` | per-Redis last observed reachability store (SQLite, WAL; `-wal` and `-shm` beside it) for background writers (`project/instrukt/spec/domain/runner`, Runner background state) | nothing: the next background Redis command observes reachability again (at most one repeated transition log) |
+| `state/redis-reachability.lock` | write-isolation lock of `state/redis-reachability.db` (`project/instrukt/spec/domain/runner`, Runner background state) | taken again by the next background reachability transition |
 | `state/eval-fingerprint/current.yaml` | the current eval fingerprint with its prose digest and units digest (`project/instrukt/spec/feature/publication/eval-fingerprint`) | the next `sync` |
 | `state/eval-fingerprint/<commit>.yaml` | one record per published commit: the fingerprint it was published under and its prose and units digests; history that stamps' evaluation windows are attributed against, kept as written, a record that holds no digests holding its fingerprint alone | nothing: a lost record loses that commit's attribution; must be preserved |
 | `rendered/<runtime>.uncompressed.md` | per runtime with a global agent file, that file's rendering with every source in its prose, under a name no agent runtime loads | the `docs/general/` owner's `sync` |
@@ -223,14 +224,14 @@ lock above derives from it, so a home reached through a link keeps one authority
 a link at the database file itself is refused
 (`project/instrukt/spec/feature/work/state-database`). The state database also holds
 the read-back cursor of each connector (`connector_read_back`) and each conversation
-message's no-work interval. Runner background worker failures (`history-extraction`,
-`history-search`, `readiness`, deferred consumer source transitions and keyed-start
-findings) live in per-worker state files under `state/runner-workers/` beside
-`state/computer-fleet.json`, and per-Redis reachability records live under
-`state/redis-reachability/`, none of them in the state database or under
-`state/writer.lock` (`project/instrukt/spec/domain/runner`). Installation keeps no
-record of the units it wrote and the runner service publishes no identity: both
-converge by name (`project/instrukt/spec/feature/runner/module-installation`).
+message's no-work interval. Runner background worker failures live under
+`state/runner-workers/` beside `state/computer-fleet.json`, and per-Redis
+reachability lives in `state/redis-reachability.db` under
+`state/redis-reachability.lock`, outside the state database and
+`state/writer.lock` (`project/instrukt/spec/domain/runner`, Runner background
+state). Installation keeps no record of the units it wrote and the runner
+service publishes no identity: both converge by name
+(`project/instrukt/spec/feature/runner/module-installation`).
 
 <!-- /planned-change:runner-background-writes-isolated -->
 

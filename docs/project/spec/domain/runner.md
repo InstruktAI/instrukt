@@ -198,8 +198,8 @@ Native agent-operation prose is supplied by configuration and rendered through `
   requested-review store with its file, lock and migrations, holding the
   admitted asks (`project/instrukt/spec/feature/runner/requested-review`); the
   runner's per-worker failure files (`state/runner-workers/` and
-  `state/computer-fleet.json`) and per-Redis reachability files
-  (`state/redis-reachability/`).
+  `state/computer-fleet.json`) and its per-Redis reachability store
+  (`state/redis-reachability.db` and `state/redis-reachability.lock`).
 
 <!-- /planned-change:runner-background-writes-isolated -->
 - **Does not own:** Work content, approval, workflow derivation or step
@@ -646,11 +646,14 @@ state database older than this build's schema, which first brings it to the
 current schema once under the writer lock, as every read of an older database
 does (`project/instrukt/spec/feature/work/state-database`). Beyond that they
 never wait on, or hold, the writer lock that work commands wait on
-(`sdlc/policy/state-storage`, Write isolation). Event transport and merged
-history search keep each Redis's one reachability record in
-`state/redis-reachability/`, outside the state database and its writer lock,
-logging its loss and return once per transition
-(`project/instrukt/spec/feature/runner/event-transport`).
+(`sdlc/policy/state-storage`, Write isolation). Background event transport,
+inbound webhook relay and the history-search responder keep each logical Redis's
+one reachability record in `state/redis-reachability.db`, outside the state
+database and its writer lock, logging loss and return once per transition
+(`project/instrukt/spec/feature/runner/event-transport`); interactive paths
+(`instrukt history search`, `instrukt mcp`, `instrukt install`, `instrukt eval`
+and synchronous OAuth/OIDC callbacks) record no reachability so they never
+contend on `state/redis-reachability.lock`.
 Whether the cluster user permits the fleet query is checked where the
 connection enters, at installation
 (`project/instrukt/spec/feature/runner/module-installation`).
@@ -674,9 +677,10 @@ The fleet membership record is durable state (`sdlc/policy/state-storage`):
 
 ### Runner background state
 
-Background worker failure files and per-Redis reachability records live outside
-the state database so no interactive work command ever waits behind them on
-`state/writer.lock` (`sdlc/policy/state-storage`).
+Background worker failure files and the per-Redis reachability store live
+outside the state database so no interactive command ever waits behind
+background writers on `state/writer.lock` or `state/redis-reachability.lock`
+(`sdlc/policy/state-storage`).
 
 Each failing worker outside `computer-fleet` (`history-extraction`,
 `history-search`, `readiness`, deferred consumer source transitions and
@@ -687,12 +691,14 @@ and renamed over it with symlink refusal, preserving `since` across updates and
 removed on recovery, shutdown or feature disable. `instrukt events status` reads
 `state/runner-workers/` alongside `state/computer-fleet.json` without taking any
 lock, skipping concurrent removals (`NotFound`) and surfacing any unreadable
-`.json` file as a worker failure rather than health. Deferred consumer source
-transitions serialize recording a handover timeout and clearing after
-`consumer_sources` commits through a per-consumer transition status lock in
-`state/consumer-locks/` (with a non-blocking recheck of the handover lock before
-writing a timeout), never touching `state/writer.lock`; a crash between the
-`consumer_sources` commit and file removal self-heals on the next bind.
+`.json` file as a worker failure rather than health. Existing rows left in an
+older state database's `runner_workers` table move forward into
+`state/runner-workers/` preserving their original failure text and `since`
+before the table is dropped, and read-only inspection of an older database
+keeps those active rows visible without writing to disk
+(`project/instrukt/spec/feature/work/state-database`). Deferred consumer source
+transitions synchronize handover timeout recording and post-commit clearing per
+`project/instrukt/spec/feature/runner/event-transport`.
 
 | Aspect | Declaration |
 | --- | --- |
@@ -700,29 +706,40 @@ writing a timeout), never touching `state/writer.lock`; a crash between the
 | Owner | The runner; each worker owns its own file (`state/runner-workers/<id>.json` or `state/computer-fleet.json`). |
 | Loss cost | Nothing beyond resetting `since`: the next failing pass records the failure again; no work, intent or external effect is lost. |
 | Medium | One atomic JSON state file per worker under `state/runner-workers/` (and `state/computer-fleet.json`), written via temp-file + fsync + rename. |
-| Write isolation | One file per worker; fixed workers have one writer at a time (`state/runner.lock`), keyed-start findings serialize per key under `runtime-key-<hash>.lock` for in-guard starts (including `instrukt review start`), under `state/runner.lock` for standing delivery findings, and under the target input lock for delivery-project verification (with atomic write-and-rename preventing corruption on any concurrent access), and consumer source transitions serialize under their per-consumer status lock; readers take no lock; none acquires `state/writer.lock`. |
+| Write isolation | One file per worker; fixed workers have one writer at a time (`state/runner.lock`), keyed-start findings serialize per key under `runtime-key-<hash>.lock` for in-guard starts (including `instrukt review start`), under `state/runner.lock` for standing delivery findings, and under the target input lock for delivery-project verification (with atomic write-and-rename preventing corruption on any concurrent access), and consumer source transitions serialize under their per-consumer status lock; readers take no lock; none acquires `state/writer.lock` outside the one-time legacy table removal. |
 | Scope | One home (`~/.instrukt`). |
 | Durability | Persisted across restarts while failing so `since` and status survive until recovery; removed on success, shutdown or disable. |
 | Bound and retirement | Zero files while healthy; one ~250-byte file per currently failing worker or start key, removed when that worker or key recovers. |
 
-Each logical Redis source keeps its last observed reachability in
-`state/redis-reachability/<source>.json` (`{reachable}`), keyed by the endpoint
-identity digest. Steady-state commands perform a lock-free read (with symlink
-refusal) and return immediately when reachability is unchanged. On a transition
-or missing/unreadable file, writers serialize on
-`state/redis-reachability/<source>.lock`, re-read under the lock, atomically
-replace the file and emit `redis_reachable` or `redis_unreachable` once.
+Background Redis writers (`instrukt run`, `instrukt tick` and `instrukt webhooks
+serve`'s inbound webhook relay) keep each logical Redis source's last observed
+reachability in `state/redis-reachability.db` (SQLite, WAL mode), keyed by the
+endpoint identity digest, with `state/redis-reachability.lock` as its exclusive
+write-isolation unit. Steady-state commands perform a lock-free WAL read and
+return immediately when reachability is unchanged. On a transition or missing
+row, background writers serialize on `state/redis-reachability.lock`, re-read
+under the lock, upsert the row and emit `redis_reachable` or
+`redis_unreachable` once. Interactive paths (`instrukt history search`,
+`instrukt eval`, `instrukt mcp`, `instrukt install` and synchronous OAuth/OIDC
+ingress callbacks) use unrecorded transport and never write this store or wait
+on its lock. Existing rows left in an older state database's
+`redis_reachability` table move forward into `state/redis-reachability.db`
+before the legacy table is dropped, preserving transition continuity across
+upgrade (`project/instrukt/spec/feature/work/state-database`). On each runner
+wake or tick, entries for endpoints no longer in the admitted Redis
+configuration are retired while preserving every configured endpoint's
+transition state.
 
 | Aspect | Declaration |
 | --- | --- |
 | Nature | External bookkeeping: last observed reachability of a logical Redis endpoint for once-per-transition logging (`project/instrukt/spec/feature/runner/event-transport`). |
 | Owner | The runner's transport `Endpoint`. |
-| Loss cost | At most one repeated `redis_reachable` or `redis_unreachable` log entry on the next Redis command; no work, event, cursor or external effect is lost. |
-| Medium | One atomic JSON state file per logical Redis source (`state/redis-reachability/<source>.json`) with a per-source advisory lock (`<source>.lock`) used only on transitions. |
-| Write isolation | Per logical Redis source; steady-state reads take no lock and perform no write; transitions contend only on `<source>.lock`, never on `state/writer.lock`. |
+| Loss cost | At most one repeated `redis_reachable` or `redis_unreachable` log entry on the next background Redis command; no work, event, cursor or external effect is lost. |
+| Medium | Dedicated SQLite store (`state/redis-reachability.db`, WAL mode) with exclusive advisory lock (`state/redis-reachability.lock`), matching its multi-process background writers (`instrukt run`/`tick` and webhook ingress relay). |
+| Write isolation | Background writers only serialize on `state/redis-reachability.lock` on transitions and retirement; steady-state reads take no lock and perform no write; interactive commands never write or lock it; `state/writer.lock` is never acquired outside the one-time legacy table removal. |
 | Scope | One home (`~/.instrukt`). |
-| Durability | Persisted across invocations (`instrukt tick`, `instrukt run`, `instrukt history search`, `instrukt webhooks`) so repeated invocations do not repeat transition logs. |
-| Bound and retirement | Bounded by the small set of logical Redis endpoints configured for the home (typically 1–2 files of ~20 bytes each); files for retired endpoints remain inert and unread. |
+| Durability | Persisted across restarts and invocations (`instrukt run`, `instrukt tick`, `instrukt webhooks serve`) so repeated passes do not repeat transition logs. |
+| Bound and retirement | Bounded by the currently configured logical Redis endpoints (typically 1–2 rows; 0 when unconfigured), transiently plus any superseded endpoint until the next runner wake or tick retires unconfigured rows while keeping current endpoints' transition state. |
 
 <!-- /planned:runner-background-writes-isolated -->
 
