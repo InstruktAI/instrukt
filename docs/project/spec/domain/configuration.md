@@ -98,6 +98,7 @@ be absent outside that runtime and does not change runtime selection.
 
 ## Ownership boundary
 
+<!-- planned-change:instrukt-home-backup -->
 - **Owns** — the `instrukt.yaml` schema, `agents.yaml` role/class/scoped-grant,
   bundle and model-selection shapes and validation; GitHub App public profile
   and role-reference configuration; machine-local protected secrets and owned-file migration;
@@ -111,6 +112,29 @@ be absent outside that runtime and does not change runtime selection.
   choice, agent-action instruction entries and derived caller identity.
   Code owns the action catalog and operation mappings; configuration owns the
   composed grants, with admission consuming owner-supplied assignment facts.
+<!-- change:instrukt-home-backup -->
+- **Owns** — the `instrukt.yaml` schema (including global-only `backup` at
+  global schema version 8, defaulting `keep` to `14` and `time` to `03:00` in
+  the published global schema, with lossless forward migration from earlier
+  global schemas and withheld-only admission when a loaded global `backup`
+  declaration has findings), `agents.yaml` role/class/scoped-grant,
+  bundle and model-selection shapes and validation; GitHub App public profile
+  and role-reference configuration; machine-local protected secrets and owned-file migration;
+  company homes, their settings documents and their own protected secrets;
+  a company home's `connectors:` map and its validation against the connector
+  declarations the binary carries, which the CLI installs once when it starts,
+  before any configuration is read (a document read without them finds no
+  connector kind supported); layer rules; validation of a layer
+  document (including entry verification of `backup.endpoint`, `backup.age_recipient`,
+  and protected `${NAME}` secret references in `<selected INSTRUKT_HOME>/secrets.env`);
+  schema versions and migration; the effective configuration;
+  revisions and safe patching; interpolation; validation of the runtime
+  choice, agent-action instruction entries and derived caller identity.
+  Code owns the action catalog and operation mappings (including `instrukt backup`
+  machine-wide installation actions and unconditional company-session refusal);
+  configuration owns the composed grants, with admission consuming owner-supplied
+  assignment facts.
+<!-- /planned-change:instrukt-home-backup -->
 - **Does not own** — what any key does: docs and publication read
   `project`; repository decides when publication runs and its commit
   composition reads adapter caller identity and `agents.<name>.git_author` and decides the
@@ -324,6 +348,16 @@ This context emits no events.
   the computer's admitted retention window and refuses, where configuration
   enters, a window the selected runtime cannot carry
   (`project/instrukt/spec/feature/configuration/layered-configuration`).
+
+<!-- planned:instrukt-home-backup -->
+- **Runner (home backup)** — customer / supplier: configuration supplies the
+  computer's admitted global `backup` declaration (withholding only home backup
+  when the loaded global layer carries `backup` findings), validates secret
+  references against `<selected INSTRUKT_HOME>/secrets.env` and `age` public
+  recipients where configuration enters, and supplies company-home settings
+  forward conversion (`project/instrukt/spec/feature/configuration/layered-configuration`,
+  `project/instrukt/spec/feature/configuration/company-homes`).
+<!-- /planned:instrukt-home-backup -->
 
 These are context relationships; module switches determine enablement, not
 semantic ownership. Configuration is the supplier in each relationship except

@@ -334,10 +334,18 @@ text, calls a model or judges whether a unit means what its source means.
   `schema.yaml` model, validation, as customer); configuration (project slug,
   runtime choice, its migration operation, and the configuration schema type
   the editor schema of `instrukt.yaml` is generated from, as customer);
+<!-- planned-change:instrukt-home-backup -->
   for `instrukt status` only, repository (hook-section state, as customer);
   runner (the configured agent runtimes and their homes, read through the
   selected runtime's adapter behind an interface core declares and the CLI
   wires, as customer).
+<!-- change:instrukt-home-backup -->
+  for `instrukt status` only, repository (hook-section state, as customer);
+  runner (the configured agent runtimes and their homes read through the
+  selected runtime's adapter, and runner's local-only, lock-free home backup
+  standing query, each behind an interface core declares and the CLI wires, as
+  customer).
+<!-- /planned-change:instrukt-home-backup -->
 - **Implementation roots** — `crates/instrukt-core/` (publication);
   `crates/instrukt-cli/` (command surface).
 
@@ -652,12 +660,23 @@ This context emits no events.
 - **work** — Customer / Supplier. Publication supplies the current fingerprint
   and its per-published-commit association; stamp behavior belongs to
   `project/instrukt/spec/domain/work`.
+<!-- planned-change:instrukt-home-backup -->
 - **runner** — Customer / Supplier, both ways. Publication supplies project
   checkout paths beside published commits in its existing state
   (`project/instrukt/spec/domain/runner`); the selected runtime's adapter
   supplies the configured agent runtimes and their homes the global agent
   files are written for, through an interface core declares and the CLI
   wires.
+<!-- change:instrukt-home-backup -->
+- **runner** — Customer / Supplier, both ways. Publication supplies project
+  checkout paths beside published commits in its existing state
+  (`project/instrukt/spec/domain/runner`); the selected runtime's adapter
+  supplies the configured agent runtimes and their homes the global agent
+  files are written for, and runner supplies the local-only, lock-free home
+  backup standing query rendered verbatim by `instrukt status`, each through
+  an interface core declares and the CLI wires
+  (`project/instrukt/spec/feature/publication/instrukt-status`).
+<!-- /planned-change:instrukt-home-backup -->
 - **Workflow** — Customer / Supplier. Publication supplies definitions, roles,
   actions and templates from `docs/domain/<x>/workflow/` to
   `~/.instrukt/docs/<x>/workflow/`. The engine selects the domain with

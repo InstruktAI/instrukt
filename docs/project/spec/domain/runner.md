@@ -141,8 +141,20 @@ Native agent-operation prose is supplied by configuration and rendered through `
   `project/instrukt/spec/feature/work/state-database`; the history store with
   its file, lock and migrations, holding retained history, source positions and
   import progress (`project/instrukt/spec/feature/runner/history`); the
+<!-- planned-change:instrukt-home-backup -->
   requested-review store with its file, lock and migrations, holding the
   admitted asks (`project/instrukt/spec/feature/runner/requested-review`).
+<!-- change:instrukt-home-backup -->
+  requested-review store with its file, lock and migrations, holding the
+  admitted asks (`project/instrukt/spec/feature/runner/requested-review`);
+  encrypted home backup and guarded restore, its local bookkeeping store
+  (`state/backup-state.json` under `state/backup.lock`), the staleness threshold
+  and runner-owned staleness-notification deduplication mark
+  (`state/backup-staleness-notified.json` under `state/runner.lock`), the
+  local-only lock-free backup standing query, and convergence and withdrawal of
+  the owned daily home backup timer
+  (`project/instrukt/spec/feature/runner/home-backup`).
+<!-- /planned-change:instrukt-home-backup -->
 - **Does not own:** Work content, approval, workflow derivation or step
   completion evidence, owned by work and workflow;
   configuration storage and interpolation, owned by configuration;
@@ -156,12 +168,23 @@ Native agent-operation prose is supplied by configuration and rendered through `
   extracted searchable history is a separate contract. instrukt calls only the adapter's
   released primitives. Events, schedules and dispatch decisions are the
   runner's own; a runtime's task, schedule or event features are not used.
+<!-- planned-change:instrukt-home-backup -->
 - **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
   operational `instrukt sessions list` surface,
   `instrukt history extract|search|show`,
   `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
   `instrukt review start`, the sign-in return path, and wake-up
   and runner-service registration by `instrukt install`;
+<!-- change:instrukt-home-backup -->
+- **Published contracts:** `instrukt run`, `instrukt tick`, the runtime-neutral
+  operational `instrukt sessions list` surface,
+  `instrukt history extract|search|show`,
+  `instrukt ticks status`, `instrukt mcp list|list-tools|call|sign-out`,
+  `instrukt review start`, `instrukt backup run|list|restore`, the local-only
+  home backup standing query (core-declared, CLI-wired for publication), the
+  sign-in return path, and wake-up, runner-service, and daily home backup timer
+  registration by `instrukt install`;
+<!-- /planned-change:instrukt-home-backup -->
   structured adapter operations, semantic-state observation, optional bounded native conversation
   reads and explicit delivery/assignment evidence capabilities, linked-thread
   streams and optional notification; instrukt-owned start semantic-key discovery
@@ -214,6 +237,22 @@ adapter and owns everything else in the thread's lifecycle. It does not own
 whether a todo has reached a terminal outcome, owned by work, or the window's
 admitted value and its validation, owned by configuration
 (`project/instrukt/spec/feature/runner/thread-retention`).
+
+<!-- planned:instrukt-home-backup -->
+The runner also owns encrypted home backup and guarded restore for a computer's
+instrukt home (`project/instrukt/spec/feature/runner/home-backup`): consistent
+SQLite snapshotting and verification, snapshot collection and owning-root path
+confinement, client-side `age` encryption and streaming `zstd` archiving,
+provider-neutral S3-compatible staged publication, per-machine retention
+pruning, local bookkeeping (`state/backup-state.json`), the staleness threshold
+(`36 hours`), runner-owned staleness-notification deduplication
+(`state/backup-staleness-notified.json`), the local-only lock-free standing
+query consumed by publication, anomaly routing for failed and stale runs, and
+convergence and withdrawal of the owned daily OS timer. It does not own global
+`backup` configuration schema, entry validation, or company-home settings
+forward conversion (configuration), `instrukt status` presentation
+(publication), or single-company container export/import (`company-containers`).
+<!-- /planned:instrukt-home-backup -->
 
 The runner also owns carrying a company's knowledge proposals to review and
 integration, and what of them reaches the operator, in a company home
@@ -464,6 +503,105 @@ project or pass, as worktree reclamation reports what stays owed
 Retention runs where the runner already runs: the window adds no wake-up
 demand (`project/instrukt/spec/feature/runner/module-installation`).
 
+<!-- planned:instrukt-home-backup -->
+### Home backup and guarded restore
+
+`instrukt backup run`, `instrukt backup list`, and `instrukt backup restore`
+execute as one-shot CLI invocations speaking provider-neutral S3-compatible
+object storage directly through the S3 SDK with bounded built-in retries and
+`RequestChecksumCalculation::WhenRequired`, never wrapped through
+`instrukt-outside` (`project/instrukt/design/architecture/outside-gate`,
+`project/instrukt/spec/feature/runner/home-backup`). The async S3 client stays
+encapsulated behind a synchronous runner storage boundary.
+
+- **Pre-conversion confinement and snapshot collection:** `instrukt backup run`
+  serializes on `state/backup.lock` and never takes `state/writer.lock` or
+  `state/runner.lock`. Before invoking configuration's forward conversion on a
+  company home (`project/instrukt/spec/feature/configuration/company-homes`),
+  runner checks `symlink_metadata` on the company directory and its
+  `company.yaml`, `instrukt.yaml`, and `.gitignore` paths, refusing any symlink
+  that escapes its owning root before configuration reads them. Snapshot
+  collection prunes excluded trees before descent (including regenerable
+  `companies/<name>/.instrukt/schemas/` and `state/.backup-staging-*`) and
+  collects `state/agents-deployment.json` only when present. Every visited
+  symlink whose resolved target escapes its owning root (or cannot be resolved)
+  refuses the backup fail-closed naming the offending path and owning root;
+  symlinks are never written as archive symlink entries.
+- **Reusable SQLite online backup and streaming archive pipeline:** Every
+  discovered `*.db` and `*.sqlite` store under `state/` and
+  `companies/<name>/.instrukt/` is snapshotted via `instrukt-core::state_db`'s
+  reusable SQLite online-backup primitive (`rusqlite::backup::Backup`, admitted
+  through `fsx::open_database`) into an owner-only (`0700`) staging directory
+  under `state/.backup-staging-<rand>/` and checked with `PRAGMA quick_check`.
+  Each verified snapshot streams immediately into a single `tar → zstd`
+  (level 3) → `age` X25519 STREAM (`64 KiB` chunks) pipeline writing
+  `<staging>/archive.tar.zst.age` (`0600`) and is unlinked before the next
+  database is snapshotted, bounding peak staging disk to
+  `max_single_db + archive_size` and peak RAM to constant streaming buffers.
+  Before staging any file, runner verifies available space on the staging
+  filesystem against `20 GiB + max_single_db + raw_snapshot_bytes`
+  (`general/policy/shared-machine-resources`) and removes the staging directory
+  unconditionally on exit.
+- **Staged S3 publication, multi-GB promotion, and cleanup:** Archive names use
+  `<prefix>/<machine-id>/instrukt-home.<timestamp>.tar.zst.age` (or
+  `<machine-id>/...` when `prefix` is omitted). Uploads to `_staging/<key>` use
+  single `PutObject` up to `64 MiB` and multipart `UploadPart` in `64 MiB`
+  chunks above `64 MiB`. After `HeadObject` confirms exact byte length on
+  `_staging/<key>`, promotion to `<key>` uses single `CopyObject` up to `4 GiB`
+  and multipart `UploadPartCopy` (`copy_source_range` in `512 MiB` chunks)
+  above `4 GiB`, writes `_validated/<key>`, and deletes `_staging/<key>`. On
+  upload or promotion failure, runner aborts any open multipart upload and
+  deletes `_staging/<key>` best-effort. After successful promotion and
+  per-machine retention pruning, runner aborts incomplete multipart uploads and
+  deletes orphaned `_staging/` objects older than `24 hours` strictly under
+  this computer's `<machine-id>` namespace.
+- **Guarded restore:** Restore resolves the target key, reads its byte size via
+  `HeadObject`, checks available space on the destination filesystem against
+  `20 GiB + 4 * encrypted_size` before staging (and re-checks the `20 GiB`
+  floor during streaming extraction), downloads into an owner-only (`0700`)
+  staging directory beside the destination, streams `age` decryption and `zstd`
+  decompression, and rejects any tar entry with absolute paths, `..` segments,
+  NUL bytes, escaping paths, or any non-regular/non-directory type (symlinks,
+  hardlinks, devices, FIFOs, sockets). Every restored `*.db` and `*.sqlite`
+  store must pass `PRAGMA integrity_check` (`ok`) before destination writes.
+  `--into <dir>` is canonicalized against active `INSTRUKT_HOME` so an alias or
+  symlink to the live home cannot bypass the live-home lock guard. Live-home
+  restore acquires non-blocking exclusive locks across all home state and
+  company-proposal lock files (`runner.lock`, `writer.lock`, `history.lock`,
+  `reflection.lock`, `withdrawal.lock`, `delivered-release.lock`,
+  `company-generation.lock`, `review*.lock`, `requested-review.lock`,
+  `backup.lock`, `locks/*.lock`, and `companies/*/.instrukt/*.lock`) and holds
+  them across the entire destination swap, refusing with holder detail and
+  recovery doors if any lock is busy. Overwrite confirmation without `--yes`
+  reads `/dev/tty` when `--identity -` consumes stdin on an interactive
+  terminal and fails closed non-interactively. Before moving each restored
+  database into place, restore removes stale `-wal`, `-shm`, and `-journal`
+  sidecars and enforces `0600` on restored `secrets.env` files and `0700` on
+  state directories. Staging is removed unconditionally on success, failure,
+  and declined confirmation.
+- **Local bookkeeping, standing query, staleness, and timer:** `instrukt backup
+  run` atomically updates `state/backup-state.json` (`0600`) under
+  `state/backup.lock`. Runner's `HomeBackupStanding` implementation reads global
+  backup admission and `state/backup-state.json` lock-free with no remote calls:
+  absent global `backup` yields `unconfigured`; present `backup` (admitted or
+  withheld, flagged via `admitted: bool`) yields `never_run` when no run is
+  recorded, `failed` when the latest attempt failed, `stale` when the latest
+  attempt succeeded more than `36 hours` ago, or `ok` otherwise; unreadable
+  bookkeeping returns a structured `(path, reason)` error. On backup failure,
+  `instrukt backup run` invokes `runner.notify` directly with non-session
+  reference `backup:failed:<machine-id>`. During `instrukt tick` and
+  `instrukt run` (under `state/runner.lock`), admitted `stale` standing invokes
+  `runner.notify` once per staleness episode (`backup:stale:<machine-id>`) and
+  persists `state/backup-staleness-notified.json` keyed by `last_success_at`,
+  clearing that mark when a newer `last_success_at` appears; `instrukt events
+  status` surfaces active failed or stale backup conditions directly from
+  `state/backup-state.json` with their repair doors regardless of
+  `runner.notify`. Unfiltered `instrukt install` converges the owned daily
+  timer (`ai.instrukt.backup`, `instrukt-backup.timer`/`.service` with
+  `Persistent=true`, or `# instrukt-backup` crontab marker, each carrying the
+  home suffix for non-default homes).
+<!-- /planned:instrukt-home-backup -->
+
 ### Event naming and producer declarations
 
 Existing vocabulary is retained explicitly: `runner.upstream_changed` →
@@ -626,6 +764,11 @@ related references.
 - **Thread retention** — [project/instrukt/spec/feature/runner/thread-retention](../feature/runner/thread-retention.md)
   — have long-quiet finished threads leave the thread list without anyone archiving them.
 
+<!-- planned:instrukt-home-backup -->
+- **Home backup** — [project/instrukt/spec/feature/runner/home-backup](../feature/runner/home-backup.md)
+  — encrypted nightly offsite backup and guarded restore of an instrukt home to provider-neutral S3-compatible object storage.
+<!-- /planned:instrukt-home-backup -->
+
 ## Governing designs and decisions
 
 - `project/instrukt/design/architecture/overview` — module boundaries
@@ -722,6 +865,15 @@ answers: configuration supplies the computer's admitted retention window, and
 work the native sessions bound to, or holding the execution claim of, a
 project's todos that have not reached a terminal outcome. The runtime adapter lists finished threads and archives them
 (`project/instrukt/spec/domain/context-map`).
+
+<!-- planned:instrukt-home-backup -->
+For home backup, configuration supplies admitted global `backup` settings
+(withheld alone when invalid) and company-home settings forward conversion,
+runner's S3-compatible storage adapter forms an anti-corruption layer over
+provider-neutral S3 APIs, and runner supplies publication's `instrukt status`
+with the local-only, lock-free `HomeBackupStanding` query behind an interface
+core declares and the CLI wires (`project/instrukt/spec/domain/context-map`).
+<!-- /planned:instrukt-home-backup -->
 
 ## Known caveats
 

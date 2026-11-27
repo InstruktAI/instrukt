@@ -106,6 +106,19 @@ provenance is not a roleless bypass. A bot-role commit resolves its author from
 the verified App actor even without native provider-agent identity; other
 unverified agent identity remains unresolved.
 
+<!-- planned:instrukt-home-backup -->
+Core likewise declares the local-only, lock-free home backup standing query
+interface (`HomeBackupStanding`) consumed by publication's `instrukt status`,
+carrying standing, timestamps, last generation, admission state, and structured
+`(path, reason)` unreadable-state errors so publication never reads runner's
+private state path; `instrukt-runner` implements it and `instrukt-cli` wires it,
+preserving one-way `instrukt-runner` → `instrukt-core`. Core's `state_db`
+infrastructure layer also exposes a reusable SQLite online-backup and
+consistency-verification primitive (`rusqlite::backup::Backup` admitted through
+`fsx::open_database`) shared by runner's home backup and future single-company
+export (`project/instrukt/spec/feature/runner/company-containers`).
+<!-- /planned:instrukt-home-backup -->
+
 The shared GitHub boundary uses configured project/author/reviewer Apps and
 issues installation credentials from protected key references under
 `project/instrukt/spec/feature/work/github-apps`. CLI wiring supplies its
@@ -160,6 +173,18 @@ write-isolation unit, taken only by that command
 (`project/instrukt/spec/feature/runner/requested-review`, Requested review
 records). Nothing re-creates the store: it is the only record of each
 requested reviewer's assignment and must be preserved.
+
+<!-- planned:instrukt-home-backup -->
+Home backup adds two bounded single-writer state files under `state/`, kept
+outside `state/instrukt.db` and `state/writer.lock` (`sdlc/policy/state-storage`),
+plus one serialization lock for backup runs:
+
+| Path | Nature & owner | Loss cost | Medium, write-isolation unit, scope & bound |
+| --- | --- | --- | --- |
+| `state/backup-state.json` | External bookkeeping; single writer `instrukt backup run` (`runner` context). Holds `schema_version`, `last_attempt_at`, `last_outcome` (`ok` \| `failed`), `last_generation`, `last_success_at`, and redacted `last_error` (preserving `last_success_at` and `last_generation` across subsequent failed runs) | Standing degrades to `never_run` until the next `instrukt backup run`; remote generations stay intact and discoverable via `instrukt backup list` (no remote rebuild on local reads) | Bounded single-record JSON file (`< 4 KiB`), written whole and atomically (`0600`). Write-isolation unit: `state/backup.lock` (readers such as `instrukt status` and `instrukt events status` read lock-free via atomic rename). Scope: per-home (`INSTRUKT_HOME`); overwritten in place, never grows, excluded from backup archives |
+| `state/backup.lock` | Lock file; taken exclusively by `instrukt backup run` (and non-blocking by live-home `instrukt backup restore`) | Taken again by the next backup run | Advisory lock file serializing concurrent `instrukt backup run` invocations and writes to `state/backup-state.json`; never shared with `state/writer.lock` or `state/runner.lock`. Scope: per-home |
+| `state/backup-staleness-notified.json` | External bookkeeping; single writer `instrukt tick` / `instrukt run` (`runner` context). Holds `schema_version`, `notified_for_success_at`, and `notified_at` so staleness invokes `runner.notify` once per episode | At most one duplicate staleness notification on the next runner wake if lost while still stale; no data loss or network transfer | Bounded single-record JSON file (`< 1 KiB`), written whole and atomically (`0600`) when `runner.notify` is invoked for a stale episode and removed when a newer `last_success_at` is observed. Write-isolation unit: `state/runner.lock` (never shared with `state/backup.lock` or `state/writer.lock`). Scope: per-home; overwritten/removed in place, never grows, excluded from backup archives |
+<!-- /planned:instrukt-home-backup -->
 
 The state directory is resolved to its canonical location once, and every path and
 lock above derives from it, so a home reached through a link keeps one authority;
@@ -237,7 +262,12 @@ the command-line parser's own text and exit status 2.
 | Configured runtime | runner | Rust adapter trait; compiled `t3` implementation over host `t3 thread start`, `send`, `list`, `show`, plus read-only durable T3 projection-database reads with native change notifications; `runner.runtime`, unset meaning the compiled adapter, never detected; unattended operations only, native agent operations rendered from runtime instruction configuration |
 | Configured graph engine | blueprint | an adapter emitting the node-link contract |
 | Declared MCP servers | runner | `instrukt mcp`: a connection per call over the network, carrying the login `project/instrukt/spec/feature/runner/mcp-access` selects |
+<!-- planned-change:instrukt-home-backup -->
 | OS scheduler | runner | `instrukt tick` each minute |
+<!-- change:instrukt-home-backup -->
+| OS scheduler | runner | `instrukt tick` each minute; when global `backup` is validly configured, one owned daily timer invoking `instrukt backup run` at the configured local time (`project/instrukt/spec/feature/runner/module-installation`) |
+| S3-compatible object storage | runner | one-shot CLI commands (`instrukt backup run\|list\|restore`) speaking provider-neutral S3 APIs directly through the S3 SDK with `RequestChecksumCalculation::WhenRequired`, bounded built-in retries, single-object and multipart upload and server-side copy, over credential-free `https` (or loopback `http` for local verification); never wrapped through `instrukt-outside` (`project/instrukt/design/architecture/outside-gate`, `project/instrukt/spec/feature/runner/home-backup`) |
+<!-- /planned-change:instrukt-home-backup -->
 | OS service manager | runner | the ingress receiver's socket and service, and with a company's connector declared the owned service that keeps `instrukt run` running (`project/instrukt/spec/feature/runner/module-installation`) |
 | Slack | company, through its Slack connector | one Socket Mode connection opened outward per declared Slack connector (`connectors.<name>` with `kind: slack`, or `connectors.slack`), hosted in `instrukt run` by the runner with `(company, connector)`-isolated bot identity and rate limits; its history and posting calls with the bot token (`project/instrukt/spec/feature/company/slack-connector`) |
 | GitHub Releases | distribution | per tag: an archive per target, `SHA256SUMS` and `install.sh` |
@@ -607,6 +637,37 @@ Observation rides the tick's existing
 conditional GitHub pass, requests the event platform and publication the tick;
 the gate adds no webhook, queue or process.
 
+<!-- planned:instrukt-home-backup -->
+### Home backup and restore
+
+```mermaid
+flowchart LR
+  C[configuration: global backup + company conversion] --> R[runner: instrukt backup run under backup.lock]
+  R --> S["instrukt-core::state_db online_backup + PRAGMA quick_check"]
+  S --> P["stream tar -> zstd -> age X25519 -> 0700 staging"]
+  P --> U["S3 SDK (WhenRequired): PutObject/Multipart -> _staging/<key>"]
+  U --> V["HEAD exact size -> CopyObject / UploadPartCopy -> <key> + _validated/<key>"]
+  V --> K[prune this machine-id + clean stale _staging/multiparts]
+  K --> B["atomic state/backup-state.json (0600)"]
+  B -. lock-free HomeBackupStanding .-> ST["publication: instrukt status"]
+  B -. runner.lock wake check .-> AN["runner: backup-staleness-notified.json + runner.notify"]
+```
+
+Home backup composes three bounded contexts without crossing write-isolation
+units (`project/instrukt/spec/domain/context-map`). Configuration supplies
+admitted global `backup` settings (withholding only home backup when invalid)
+and company-home forward conversion; runner executes one-shot CLI backup,
+listing, and guarded restore directly against provider-neutral S3-compatible
+object storage (using the S3 SDK with `RequestChecksumCalculation::WhenRequired`
+and built-in bounded retries, outside `instrukt-outside`), records local
+bookkeeping in `state/backup-state.json` under `state/backup.lock`, tracks
+wake-time staleness notifications in `state/backup-staleness-notified.json`
+under `state/runner.lock`, and converges the owned daily OS timer via
+unfiltered `instrukt install`; publication renders runner's local-only,
+lock-free `HomeBackupStanding` answer verbatim in `instrukt status` without
+reading runner's files or contacting remote storage.
+<!-- /planned:instrukt-home-backup -->
+
 ## Failure modes
 
 - **The program panics:** the terminal shows only `instrukt stopped
@@ -802,3 +863,27 @@ the gate adds no webhook, queue or process.
   not published is gone. The computer that serves next recognises what the
   reviewer bot published, has every other owed head reviewed again, and shows
   whatever approval GitHub last received.
+
+<!-- planned:instrukt-home-backup -->
+- **A home backup fails consistency, headroom, symlink-confinement, or remote
+  staged verification:** nothing is published to the computer's namespace,
+  existing validated generations stay intact, best-effort remote staging and
+  multipart abort cleanup runs, local staging is deleted, `state/backup-state.json`
+  records the failure while preserving the last successful generation, and
+  `instrukt backup run` invokes `runner.notify` directly.
+- **Global `backup` configuration carries validation findings:** only home
+  backup admission is withheld; backup commands refuse naming the finding and
+  configuration door, `instrukt install --check` reports unmet demand without
+  withdrawing an existing owned backup timer, and all other admitted modules
+  and runner work continue unchanged.
+- **A home restore encounters insufficient headroom, decryption error, unsafe
+  tar entry, failed SQLite `PRAGMA integrity_check`, busy home locks, or
+  declined/non-interactive confirmation:** the destination is untouched, any
+  acquired non-blocking locks are released, temporary staging is removed, and
+  the command refuses naming the cause and recovery door.
+- **No home backup succeeds within `36 hours` on an admitted machine:**
+  `instrukt status` and `instrukt events status` report `stale` from local
+  bookkeeping on every host; hosts running `instrukt tick` or `instrukt run`
+  invoke `runner.notify` once per staleness episode under `state/runner.lock`
+  (`state/backup-staleness-notified.json`) until a subsequent backup succeeds.
+<!-- /planned:instrukt-home-backup -->

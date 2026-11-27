@@ -31,7 +31,11 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
+<!-- planned-change:instrukt-home-backup -->
 | runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
+<!-- change:instrukt-home-backup -->
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history, the container each company runs in on a host, and encrypted home backup with guarded restore | `project/instrukt/spec/domain/runner` |
+<!-- /planned-change:instrukt-home-backup -->
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
@@ -178,6 +182,16 @@ Thread retention adds these crossings; its contract is
 | configuration → runner | Customer / Supplier | The computer's admitted retention window, refused where configuration enters when the selected runtime cannot archive threads |
 | work → runner | Customer / Supplier | The native sessions bound to, or holding the execution claim of, a project's todos that have not reached a terminal outcome, delivered or withdrawn, read from work's local record |
 
+<!-- planned:instrukt-home-backup -->
+Home backup adds these crossings; its contract is
+`project/instrukt/spec/feature/runner/home-backup`.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| configuration → runner | Customer / Supplier | Admitted global `backup` settings (withheld alone when invalid so other capabilities run unchanged) and company-home settings forward conversion (`project/instrukt/spec/feature/configuration/layered-configuration`, `project/instrukt/spec/feature/configuration/company-homes`) |
+| runner → publication | Customer / Supplier | Local-only, lock-free home backup standing query (standing, timestamps, last generation, admission state, or unreadable-state `path` and `reason`), declared by core and wired by the CLI (`project/instrukt/spec/feature/publication/instrukt-status`) |
+<!-- /planned:instrukt-home-backup -->
+
 Workflow and runner coordinate integration without making the workflow engine
 event-driven: it computes state and emits few events; the runner receives
 external events and wakes agents. GitHub checks guard main; the integrator
@@ -186,6 +200,7 @@ belong to blueprint. Core declares the todo-existence, flavor-role lookup and
 hook-generation interfaces; the CLI wires work and workflow when todos is
 enabled, and blueprint when blueprint is enabled.
 
+<!-- planned-change:instrukt-home-backup -->
 External models are translated through **Anti-corruption layer (ACL)**
 relationships: work's GitHub boundary translates the record one way into
 issues, artifacts, the work branch, its pull request and reviews, and people's
@@ -194,6 +209,18 @@ node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
+<!-- change:instrukt-home-backup -->
+External models are translated through **Anti-corruption layer (ACL)**
+relationships: work's GitHub boundary translates the record one way into
+issues, artifacts, the work branch, its pull request and reviews, and people's
+controls back into attributed record changes; blueprint's engine adapter translates the engine graph into its
+node-link contract; runner's runtime adapter and event-source boundary translate
+session operations, native thread streams and external notifications; runner's
+S3-compatible object-storage adapter translates home backup publication, listing,
+retention, and restore operations into provider-neutral S3 API calls; the
+company context's connectors translate a channel provider's messages into
+conversation turns and answers, at the connector interface company defines.
+<!-- /planned-change:instrukt-home-backup -->
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
