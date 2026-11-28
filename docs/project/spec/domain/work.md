@@ -143,14 +143,16 @@ runner owns dispatch, and the configured runtime owns conversations.
   `instrukt eval report`. Workflow-driving subcommands belong to the workflow
   contract even though they share the todo namespace.
 - **Allowed dependencies:** configuration supplies project settings; publication supplies
-  published eval provenance; workflow and runner record evidence through
+  published eval provenance, and the projects a home publishes with their
+  checkout paths, which the evaluation report reads; workflow and runner record evidence through
   work’s mutation contract; the configured runtime supplies session and conversation references;
   GitHub is the required surface reflection writes to and people's controls
   are read from, and holds no copy of the record; the project's git remote
   receives the published work branch; the runner supplies the event-log
-  append the finalize-ready stamp uses, and the fleet-attention contract its
-  status, hold and attempt changes call. Standing-agent event delivery
-  is optional and is not the work record.
+  append the finalize-ready stamp uses, the fleet-attention contract its
+  status, hold and attempt changes call, and the fleet query and fleet
+  membership record the evaluation report covers other computers through.
+  Standing-agent event delivery is optional and is not the work record.
 - **Implementation roots:** the `instrukt-todos` crate.
 
 The GitHub boundary also answers for adding a company
@@ -166,6 +168,27 @@ repository, when and for whom are configuration's decisions, and the sequence
 around them is repository's company home adoption. Configuration and
 repository reach them through interfaces core declares and the CLI wires, so
 core imports nothing of this crate.
+
+For a company's knowledge proposals the GitHub boundary also answers whether
+any pull request of the repository, open or closed, has a commit as its head,
+and opens a pull request for a branch into the canonical branch under the
+proposal pull-request credential, the identity the `company-agent` role
+selects (`project/instrukt/spec/feature/work/github-apps`, Company
+repositories).
+
+- **Idempotency:** it opens one only after answering that no open pull
+  request of that branch exists. A crash between the two leaves GitHub as the
+  record, and a repeated ask opens no second one.
+- **Content:** the title is fixed wording naming the branch. The body states
+  in fixed words that the change was asked of the company's agent, followed
+  by the commits' messages inside a fence longer than any run of backticks in
+  them, so nothing in them mentions anyone or renders as markup.
+- **Credential:** a readiness of its own for a company repository, apart
+  from automatic review's, verified by requesting exactly its permissions
+  (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+
+When to open one, under which role's identity, and whether a closed pull
+request rules a head out, are the runner's decisions.
 
 One-off work retains its reviewed-head report for the integrator; no direct-main notes mechanism exists.
 
@@ -362,6 +385,21 @@ owning design snippet or decision record is declared.
   migrations (`project/instrukt/spec/feature/runner/history`). History reaches
   the state database only to move earlier history out of it, through work's
   open, its migrations and its space reclamation.
+- **Publication → work (evaluation report)** — customer-supplier. The
+  evaluation report reads the projects this home publishes and their checkout
+  paths from publication state, on the asking computer and on each answering
+  one.
+- **Runner → work (fleet evaluation)** — customer-supplier. The evaluation
+  report on the asking computer reads the fleet membership record and sends
+  its request to the computers it covers through the runner's fleet query,
+  receiving each answer or why there is none
+  (`project/instrukt/spec/domain/runner`).
+- **Work → runner (fleet evaluation)** — customer-supplier. Work answers an
+  evaluation request from this computer's own record and publication state
+  through the evaluation-answer interface the runner declares and the CLI
+  wires; the runner returns the answer unread. What an answer holds, which
+  computers a report covers and how answers pool are work's
+  (`project/instrukt/spec/feature/work/eval-report`).
 - **Work → docs** — customer-supplier. Work supplies pending todo-slug existence
   through the core-declared interface wired by the CLI.
 - **Work → repository** — customer-supplier. Work supplies todo existence
@@ -384,10 +422,19 @@ owning design snippet or decision record is declared.
 - **Work → runner (requested review)** — customer-supplier. Work answers
   whether a commit's head verdict stands here, with the session that recorded
   its current version, or was handed off, with the export that handed it off,
-  and which pinned base it admits the commit's verdict against; the runner
-  consults this when it admits a requested review
+  which pinned base it admits the commit's verdict against, and, for that
+  project, which commit's standing verdict has a version with a given report
+  digest; the runner consults this when it admits a requested review
   (`project/instrukt/spec/feature/runner/requested-review`). Work admits the
   requested reviewer's verdict under its own rules.
+- **Runner → work (requested review)** — customer-supplier. Once
+  `instrukt review record` has recorded a version, work hands that version to
+  the runner's verdict-notice queuing
+  (`project/instrukt/spec/feature/runner/requested-review`).
+- **Work → runner (knowledge proposals)** — customer-supplier. Through its
+  GitHub boundary work answers the readiness of the proposal pull-request
+  credential and whether any pull request has a commit as its head, and opens
+  a proposal's pull request under that credential; the runner decides when.
 
 
 - **Work → workflow (review coverage)** — customer-supplier. Work answers which

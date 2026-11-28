@@ -31,7 +31,7 @@ domain spec owns its behavior. The map is not an additional bounded context.
 | blueprint | Revision-keyed structural graphs, graph queries and use-case trace joins | `project/instrukt/spec/domain/blueprint` |
 | work | Local work record as its only copy, one-way GitHub reflection with people's controls read back once, App credential/actor boundary, artifacts and stamps | `project/instrukt/spec/domain/work` |
 | workflow | Configured state derivation, transitions and integration gate | `project/instrukt/spec/domain/workflow` |
-| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, conversation links/identity envelopes, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
+| runner | Runtime dispatch, standing agents, event sources, scheduled ticks, agents' MCP access, per-computer searchable history and the container each company runs in on a host | `project/instrukt/spec/domain/runner` |
 | company | Connectors, the conversations they carry bound to agent sessions, who is answered, the answers posted back and the speaker of each turn | `project/instrukt/spec/domain/company` |
 | distribution | The release, the release installer and the instrukt cockpit skill | `project/instrukt/spec/domain/distribution` |
 
@@ -56,6 +56,10 @@ require todo autostart. A flavor declares its module requirements through
 `requires`. Eval has no module or switch: stamps carry model, version and eval
 fingerprint; reporting uses `instrukt eval report` and the flavor's report
 procedure. There is reportable work only where work passes through the record.
+
+A report covering other computers reaches them through the runner's fleet query
+over the cluster connection each computer already has, whether or not history
+is on there; it adds no module, switch or connection.
 
 ### Context relationships
 
@@ -147,14 +151,26 @@ Fleet attention adds these crossings
 | work → runner | Customer / Supplier | A project's active todos with their status and holds, read when a raise is admitted and when a runner-observed condition opens an attention episode |
 | workflow → runner | Customer / Supplier | Whether a claimed todo waits on a person, carried by the existing assignment and read when a claimed session's input wait is observed |
 
+The evaluation report across computers adds these crossings
+(`project/instrukt/spec/feature/work/eval-report`). The runner owns the fleet
+query and the fleet membership record (`project/instrukt/spec/domain/runner`);
+work owns what a computer answers, which computers a report covers and how
+their answers pool.
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| runner → work | Customer / Supplier | The fleet query, carrying the evaluation report's request to the computers it covers and returning each answer or why there is none, and the fleet membership record, read by the report on the asking computer |
+| work → runner | Customer / Supplier | This computer's answer to an evaluation request, through the evaluation-answer interface the runner declares, work implements and the CLI wires; the runner's responder returns it unread |
+| publication → work | Customer / Supplier | The projects a home publishes and their checkout paths, read by the evaluation report on the asking computer and on each answering one |
 
 A requested review (`project/instrukt/spec/feature/runner/requested-review`)
-adds one crossing and is no part of the review gate: it emits no event and the
+adds two crossings and is no part of the review gate: it emits no event and the
 runner holds no review request for it.
 
 | Supplier → customer | Relationship | Contract crossing the boundary |
 | --- | --- | --- |
-| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; and the pinned base work admits the commit's verdict against; consulted when a requested review is admitted |
+| work → runner | Customer / Supplier | Whether a commit's head verdict stands on this computer, with the session that recorded its current version, or was handed off, with the export that handed it off; the pinned base work admits the commit's verdict against; and, for that project, which commit's standing verdict has a version with a given report digest; consulted when a requested review is admitted |
+| runner → work | Customer / Supplier | The requested-review verdict-notice queuing, called by `instrukt review record` once its evidence write has closed, with the recorded version |
 
 
 Worktree reclamation adds these crossings; its contract is
@@ -177,6 +193,21 @@ repository's company home adoption carries it out.
 | configuration → repository | Customer / Supplier | The generation decision for a company's key, the skeleton's project layer and ignore lines, and the operation that writes the home's settings document |
 | publication → repository | Customer / Supplier | The skeleton's rendered `AGENTS.md`, skill and catalog, its project layer's modeline, and the sync of the new home |
 | publication → docs | Customer / Supplier | Whether a repository is a company's, consumed by validation, which then reads nothing under its `docs/` |
+
+Carrying a company's knowledge to its default branch adds these crossings;
+their contracts are `project/instrukt/spec/feature/runner/pull-request-review`
+and `project/instrukt/spec/feature/workflow/integration-gate` (A company
+home's candidate).
+
+| Supplier → customer | Relationship | Contract crossing the boundary |
+| --- | --- | --- |
+| company → repository | Customer / Supplier | The proposal recording the `post-commit` hook run invokes, through an interface core declares and the CLI wires |
+| company → runner | Customer / Supplier | The proposal lookups runner declares and company implements: whether a head is an admitted proposal, the unestablished entries on remote-tracking branches and the store's condition |
+| work GitHub boundary → runner | Customer / Supplier | The readiness of the proposal pull-request credential, whether any pull request has a commit as its head, and opening a pull request for a branch under the proposal pull-request credential |
+| configuration → runner | Customer / Supplier | A company repository's company identity, whose finding withholds the home's event responses |
+| runner → workflow | Published language | `runner.proposal_approved` wakes the company's integrator to integrate an approved admitted proposal's exact head |
+| configuration → publication | Customer / Supplier | The company identity a company repository's committed project layer declares, with its finding |
+| publication → workflow | Customer / Supplier | Publication's one operation rendering a tree's agent material, from which candidate coverage reproduces a rendering commit |
 
 Thread retention adds these crossings; its contract is
 `project/instrukt/spec/feature/runner/thread-retention`.
@@ -202,10 +233,6 @@ node-link contract; runner's runtime adapter and event-source boundary translate
 session operations, native thread streams and external notifications; the
 company context's connectors translate a channel provider's messages into
 conversation turns and answers, at the connector interface company defines.
-Conversation-link relay and its identity-envelope vocabulary belong to runner
-under `project/instrukt/spec/feature/runner/conversation-links`; the stream reader
-shares `instrukt run` with existing readers, and Redis is transport only. These are boundary locations, not
-additional contexts.
 
 Distribution is **Conformist** to the Agent Skills format,
 the `skills` command and GitHub's release assets.
@@ -218,6 +245,7 @@ formats, for the company plugin it renders into a company's repository
 
 - `project/instrukt/design/architecture/overview` — module crates, home layout, publication and retrieval flows, push-triggered graphs and CI-gated integration; no consumer daemon beside the runner.
 - `project/instrukt/policy/testing` — repository test authorship and validation ruling.
+- `project/instrukt/design/architecture/outside-gate` — internal daemon utility through which long-lived retrying loops (connectors, relay, background pollers) share cooldowns, wait, and report outages once per episode.
 
 ## Ubiquitous language
 

@@ -1,5 +1,5 @@
 ---
-description: 'How a company''s applications are prepared and placed: preparation as requirements an agent checks, and a recorded placement — platform, shared or dedicated, the project that runs it.'
+description: 'How company applications record preparation requirements and placement (platform, shared/dedicated, project).'
 ---
 
 # Application Placement — Concept

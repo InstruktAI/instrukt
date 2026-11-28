@@ -10,6 +10,7 @@
 
 mod _admitted;
 mod _agents;
+mod _agents_file;
 mod _agents_migrate;
 mod _company;
 mod _company_document;
@@ -20,6 +21,7 @@ mod _error;
 mod _features;
 mod _generation;
 mod _github_org;
+mod _identity;
 mod _interpolate;
 mod _layer;
 mod _mcp;
@@ -45,6 +47,7 @@ pub use _agents::{
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
+pub use _agents_file::{agents_revision, agents_value, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
@@ -64,6 +67,10 @@ pub use _generation::{
     company_repository, decide as decide_generation, skeleton_layer, write_skeleton,
 };
 pub use _github_org::{GITHUB_ORG_KEY, admit_github_org};
+pub use _identity::{
+    COMPANY_NAME_KEY, CompanyIdentity, CompanyName, CompanyNameError, IdentityFinding,
+    company_identity,
+};
 pub use _layer::{
     CONFIG_FILE_NAME, InitOutcome, Layer, LayerInspection, MigrationOutcome, Revision,
     bring_current, converted_project_layer, init, inspect_layer, migrate, parse_patch, patch,

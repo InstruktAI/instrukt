@@ -69,7 +69,8 @@ if args[:3]==['auth','session','issue']:
     expires=(clock_now()+datetime.timedelta(seconds=seconds)).strftime('%Y-%m-%dT%H:%M:%SZ')
     (readiness/'tokens').mkdir(parents=True,exist_ok=True)
     (readiness/'tokens'/(sid+'.json')).write_text(json.dumps({'digest':hashlib.sha256(token.encode()).hexdigest(),'expires':expires,'revoked':False,'scope':scope,'owner':os.getppid(),'label':args[args.index('--label')+1] if '--label' in args else ''}))
-    (readiness/'clock-source').write_text(os.environ.get('INSTRUKT_NOW',''))
+    clock_tmp=readiness/('clock-source.'+str(os.getpid())+'.'+sid+'.tmp')
+    clock_tmp.write_text(os.environ.get('INSTRUKT_NOW','')); clock_tmp.replace(readiness/'clock-source')
     print(token); sys.exit(0)
 if args[:3]==['auth','session','revoke']:
     import time
@@ -1056,6 +1057,16 @@ impl FakeT3 {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
         self.read(id)["worktreePath"].as_str().unwrap().into()
+    }
+    pub fn worktree_if_present(&self, id: &str) -> Option<PathBuf> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["worktreePath"].as_str().map(Into::into)
+    }
+    pub fn branch(&self, id: &str) -> Option<String> {
+        let resolved = self.native_id(id);
+        let id = resolved.as_str();
+        self.read(id)["branch"].as_str().map(ToOwned::to_owned)
     }
     pub fn worktree_base(&self, id: &str) -> String {
         let resolved = self.native_id(id);

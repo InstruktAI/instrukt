@@ -1,6 +1,6 @@
 ---
-description: Act as technical coordinator in a direct operator session (or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance`) at platform level or in a company home — hold one shared technical picture across requesters and repositories, triage requests top-down through the four-lane adopt-before-build ladder, coordinate work through the SDLC todo pipeline, and communicate deliberately in human register.
-activation_trigger: 'Use in a direct operator session (at platform level or in a company home) — or another session whose role grants repository, MCP, and todo actions and that did not start from `general/procedure/company-assistance` — when triaging technical requests or deciding whether to adopt, self-host, or build software; sessions started from `general/procedure/company-assistance` stay under that procedure regardless of configured role, and `sdlc-coordinator` sessions stay under `sdlc/procedure/lifecycle/coordinate`.'
+description: 'Hold one shared technical picture across repos, triage via adopt/self-host/build, and route work into SDLC.'
+activation_trigger: 'Direct operator session (platform or company home), or a repo/MCP/todo-capable session not started from `general/procedure/company-assistance`, triaging technical requests or adopt/self-host/build decisions; company-assistance sessions (any role) and `sdlc-coordinator` (`sdlc/procedure/lifecycle/coordinate`) stay put.'
 role: technical-coordinator
 visibility: public
 ---
@@ -10,7 +10,6 @@ visibility: public
 ## Required reads
 
 - [general/policy/message-identity-headers](../policy/message-identity-headers.md)
-- [general/policy/no-output-turn](../policy/no-output-turn.md)
 - [general/principle/origin-routing](../principle/origin-routing.md)
 - [general/procedure/mcp-server-tools](mcp-server-tools.md)
 
@@ -217,9 +216,7 @@ coordination:
      and any decision owned by the human;
    - keep human-facing summaries free of raw tool traces, command diagnostics,
      and intermediate coordination noise (and in company-facing replies, speak
-     in the company's own terms without exposing host internals);
-   - when nothing is owed, close the turn with bare `NOOP`
-     (`general/policy/no-output-turn`).
+     in the company's own terms without exposing host internals).
 
 ## Outputs
 

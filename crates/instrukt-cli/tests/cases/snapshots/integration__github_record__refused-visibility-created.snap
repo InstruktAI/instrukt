@@ -1,7 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/cases/github-record.rs
-assertion_line: 1631
+assertion_line: 1546
 expression: redact(&created)
 ---
 created cockpit (change) with identity <id 1>
-reflection: reflected to GitHub
+reflection: pending: not yet reflected

@@ -249,6 +249,10 @@ index or schema file, and never a finding of validation.
   - Every reference to a snippet is its id; a required read is an id or a
     bare domain name, listed under `## Required reads`, which is the first H2
     when present.
+  - Its Required reads and See Also run upward only: a `general` snippet
+    names only `general`, a domain snippet only its own domain and `general`,
+    a project snippet its own project, `general` and any domain
+    (`general/policy/referencing-doc-snippets`).
   - A companion shares its parent's identity and never appears in a listing.
   - `delivered_by` is the only pending frontmatter field; pending material for
     a live snippet lives only in companions and planned blocks.
@@ -265,8 +269,8 @@ index or schema file, and never a finding of validation.
   `general`'s `agents` map.
 - **Invariants:**
   - Only the keys allowed at its position appear.
-  - Every id it names is a delivered snippet; a domain's and the project's
-    name only their own position's snippets, `general`'s may name any domain's.
+  - Every id it names is a delivered snippet of its own position, `general`'s
+    index included.
   - No `listed` id is already in the closure of `expanded`.
   - One per position; never nested.
 - **Identifier:** its position.

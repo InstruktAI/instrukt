@@ -7,7 +7,7 @@
 //! exists (`project/instrukt/spec/feature/repository/attributed-commit`,
 //! Review routing).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Instant;
 
 use crate::config::{Configuration, Env};
@@ -40,9 +40,6 @@ pub struct CommitRequest {
     pub human_involved: bool,
     /// The work item the commit belongs to.
     pub todo: Option<TodoSlug>,
-    /// Commit exactly these paths as they are in the working tree, leaving
-    /// the rest of the index as it is; empty commits what is staged.
-    pub only: Vec<PathBuf>,
     /// The author's review-routing choice; required in an adopted project.
     pub routing: Option<ReviewRouting>,
 }
@@ -163,11 +160,7 @@ pub fn commit(
     if let Some(author) = &author {
         args.push(format!("--author={author}"));
     }
-    if request.only.is_empty() {
-        git::run_with_hooks(cwd, &args)?;
-    } else {
-        commit_only(cwd, &mut args, &request.only)?;
-    }
+    git::run_with_hooks(cwd, &args)?;
     let sha = CommitSha::parse(&git::run(cwd, ["rev-parse", "HEAD"])?)?;
     tracing::debug!(
         event = "commit_created",
@@ -175,7 +168,6 @@ pub fn commit(
         agent_author = author.is_some(),
         session = session.is_some(),
         human_involved = request.human_involved,
-        only_paths = request.only.len(),
         duration_ms = started.elapsed().as_millis() as u64,
     );
     if let Admitted::Exemption { basis, port } = admitted {
@@ -254,57 +246,6 @@ pub(super) fn root_commit(
     }
     git::run(root, &args)?;
     Ok(CommitSha::parse(&git::run(root, ["rev-parse", "HEAD"])?)?)
-}
-
-/// Commits exactly `paths`: untracked ones are made known to the index
-/// (intent to add) so `--only` takes them, and made unknown again when the
-/// commit does not happen.
-fn commit_only(
-    cwd: &Path,
-    args: &mut Vec<String>,
-    paths: &[PathBuf],
-) -> Result<(), RepositoryError> {
-    let mut listing = vec![
-        "ls-files".to_owned(),
-        "-z".to_owned(),
-        "--others".to_owned(),
-        "--exclude-standard".to_owned(),
-        "--".to_owned(),
-    ];
-    listing.extend(paths.iter().map(|path| path.display().to_string()));
-    let untracked: Vec<String> = git::run(cwd, &listing)?
-        .split('\0')
-        .filter(|name| !name.is_empty())
-        .map(str::to_owned)
-        .collect();
-    if !untracked.is_empty() {
-        let mut add = vec![
-            "add".to_owned(),
-            "--intent-to-add".to_owned(),
-            "--".to_owned(),
-        ];
-        add.extend(untracked.iter().cloned());
-        git::run(cwd, &add)?;
-    }
-    args.push("--only".into());
-    args.push("--".into());
-    args.extend(paths.iter().map(|path| path.display().to_string()));
-    let committed = git::run_with_hooks(cwd, &*args);
-    if committed.is_err() && !untracked.is_empty() {
-        let mut forget = vec![
-            "rm".to_owned(),
-            "--cached".to_owned(),
-            "--quiet".to_owned(),
-            "--ignore-unmatch".to_owned(),
-            "--".to_owned(),
-        ];
-        forget.extend(untracked);
-        if let Err(err) = git::run(cwd, &forget) {
-            tracing::warn!(event = "commit_index_not_restored", error = %err);
-        }
-    }
-    committed?;
-    Ok(())
 }
 
 /// Refuses a message with a line whose key is a trailer instrukt owns, in

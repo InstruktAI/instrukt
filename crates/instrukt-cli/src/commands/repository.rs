@@ -38,7 +38,7 @@ pub struct InitArgs {
     /// The name people write the company by; needed only when its
     /// repository is created.
     #[arg(long, value_name = "NAME", requires = "company")]
-    name: Option<instrukt_core::publication::CompanyName>,
+    name: Option<instrukt_core::config::CompanyName>,
     /// The company's GitHub administrator, a person's GitHub account; needed
     /// only when its repository is created.
     #[arg(long, value_name = "LOGIN", requires = "company")]
@@ -623,10 +623,6 @@ struct CommitArgs {
     /// The work item this commit belongs to.
     #[arg(long, value_name = "SLUG")]
     todo: Option<String>,
-    /// Commit exactly these paths as they are in the working tree, new
-    /// files included; everything else in the index stays as it was.
-    #[arg(long, num_args = 1.., value_name = "PATH")]
-    only: Vec<PathBuf>,
     /// The commit goes to the independent review of a head that contains
     /// it: a requested review, or its todo's build review.
     #[arg(long)]
@@ -752,7 +748,6 @@ fn commit(args: CommitArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
         message,
         human_involved: args.human_involved,
         todo: args.todo.as_deref().map(TodoSlug::parse).transpose()?,
-        only: args.only,
         routing: ReviewRouting::from_options(args.review, args.exempt)?,
     };
     match repository::commit(

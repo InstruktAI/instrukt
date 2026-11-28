@@ -176,9 +176,13 @@ claims against authoritative external evidence when they matter. Before choosing
 new construction, assess established implementations and compositions for the
 same outcome as well as the comparable in-system path. Name what is reused and
 the concrete gap that remains; interface familiarity or a list of references is
-not an assessment of existing solutions (`general/principle/grounding`). This
-applies to designs carried by specs and mechanism notes as well as architecture
-artifacts. For every external system the work depends on, the artifact names
+not an assessment of existing solutions (`general/principle/grounding`,
+`sdlc/policy/substrate-anchoring`). This
+applies to designs carried by specs, mechanism notes, and `change` or `bug`
+plans where `architecture` is skipped, as well as architecture
+artifacts — including outward SDK and library adoption for external protocols,
+APIs, auth/OAuth flows, and retry/backoff mechanisms under
+`sdlc/policy/substrate-anchoring`. For every external system the work depends on, the artifact names
 the primitives that system offers for the problem, read from its current
 documentation, and the part of the design each one carries
 (`sdlc/procedure/lifecycle/prepare/architecture`, step 1a). For infrastructure

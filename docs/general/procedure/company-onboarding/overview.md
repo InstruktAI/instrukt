@@ -1,6 +1,6 @@
 ---
-description: Onboard a company — take the intake, have instrukt generate the company's repository and its home on this computer, write its knowledge, connect the messaging its people talk in and the services its work runs on, hand its reviewed knowledge to its repository's integrator, and prove that a person of the company asks its agent and is answered; also the routes for connecting or repairing an onboarded company's services and for turning on software building for an onboarded company.
-activation_trigger: Use when a company is to be onboarded, when an onboarded company's setup is to be brought in line with this procedure or a step of it is to be found, when an onboarded company's services are to be connected or repaired, or when software building is to be turned on for an onboarded company.
+description: 'Onboard a company end-to-end (repo, home, knowledge, messaging, services, live proof).'
+activation_trigger: 'Onboarding a company, bringing an onboarded setup in line or finding one of its steps, connecting or repairing its services, or enabling software building.'
 role: company-operator
 visibility: public
 ---
@@ -194,6 +194,25 @@ onboarded company runs step 11, then step 7, then step 10.
    worktree. Where the head cannot be integrated yet, keep the reviewed
    worktree and report it as open in step 10. The proof of step 9 runs on the
    home once it holds the knowledge.
+
+   The integrator renders the company's skill with its catalog entry, and the
+   `AGENTS.md`, into every candidate it promotes, under the company identity
+   the home's committed `instrukt.yaml` declares with `company_name`; nothing
+   else renders them onto the default branch. So:
+   - In the worktree, `instrukt docs render --plugin --check` names the skill
+     as stale until the knowledge is integrated; that is expected, and Claude
+     serves the previous skill until the integrated revision is promoted.
+   - Once the home holds the integrated knowledge, run `instrukt docs render
+     --plugin --check` there; it passes with nothing named. Where it names the
+     skill or `AGENTS.md`, report it as open in step 10.
+   - Where `instrukt config validate` names the home's missing company
+     identity, the integrator renders nothing and instrukt withholds the
+     home's event responses until it is repaired: patch `company_name` into
+     the project layer in a worktree with `instrukt config patch`, as the
+     finding names, and hand that change to integration as above.
+   - A repository that carries the shared workflows repository's publishing
+     workflow keeps it, and that workflow then writes the default branch
+     beside the integrator. Report it in step 10 when you find it.
 9. **Prove that a person is answered.** With a person of the company present,
    have them address the agent where they talk, and read:
    - the answer arrives in the same conversation and nowhere else;

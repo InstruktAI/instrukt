@@ -1,7 +1,6 @@
 ---
-activation_trigger: Use when the human is exploring an idea that has no converged design yet
-  and implementation is on the horizon.
-description: 'Refine an idea into a converged design before implementation, ground the technical path, and route forming material by its intended reader.'
+activation_trigger: 'Human is exploring an unconverged idea with implementation on the horizon.'
+description: 'Converge an exploratory idea into a grounded design before implementation and route forming material.'
 visibility: public
 ---
 

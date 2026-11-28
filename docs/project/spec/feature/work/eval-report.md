@@ -14,18 +14,24 @@ or opt-out setting. Reporting is an on-demand view of that evidence.
 
 ### Evidence source
 
-`instrukt eval report` produces HTML from this computer's work record. The
-report uses recorded evidence rather than a separate eval log. There is only
-something to evaluate where work passes through the record.
+`instrukt eval report` produces HTML from the work record of each computer the
+report covers. The report uses recorded evidence rather than a separate eval
+log. There is only something to evaluate where
+work passes through the record.
 
 `--since <date>` selects the history range. `--out <path>` selects the HTML
-destination, defaulting to the current project’s `scratchpad/eval/index.html`.
-With no recorded work, the report says so.
+destination, defaulting to the current project’s
+`.instrukt/scratchpad/eval/index.html`. With no recorded work, the report says
+so.
 
-One report covers every project known to this home's publication state,
-grouped by project, with the current project first. Each project's record is
-read from this computer's work record; the report reads nothing from GitHub.
-The report takes no options beyond `--since` and `--out`.
+One report covers every project known to the publication state of each
+contributing computer, grouped by project, with the current project first. A
+project recorded on several computers under the same project slug is one
+project in the report. Each computer's part of a project's record is read
+from that computer's own work record; the report reads nothing from GitHub,
+from an agent runtime's own state or from history. Beyond `--since` and
+`--out`, the report takes only the computers to narrow it to, named by their
+instrukt computer identities.
 
 Model identity, version and eval fingerprint come from the stamps owned by
 `project/instrukt/spec/feature/work/stamps`. Report generation does not
@@ -75,6 +81,77 @@ separate logging service.
 - **Human intervention:** stamps marked `human_involved`, human approvals,
   change requests, and acts whose actor is a person or a GitHub actor.
 
+### Computers in a report
+
+A report covers the whole fleet unless computers are named: every computer
+on the runner's fleet membership record (`project/instrukt/spec/domain/runner`)
+and this one. Naming computers narrows the report to exactly the named ones;
+this computer is in a narrowed report only when it is named. With nothing
+named, on a computer with no cluster connection configured, the report covers
+only this computer and needs no cluster Redis; when the cluster store cannot
+be reached at report time, the report covers only this computer and carries
+the limitation that the fleet could not be reached. With computers named, the
+report covers them in both cases. The report is never refused for either
+reason. A report covering only this computer reads as described above, with
+its windows in time order and a restored eval set a window of its own.
+
+Requests and answers travel through the runner's bounded fleet query
+(`project/instrukt/spec/domain/runner`), which returns each covered computer's
+answer or what it observed instead. A computer answers over the cluster connection it already has, from
+its own work record and publication state, applying the requested range,
+whether or not history is switched on there; a covered computer without a
+cluster connection of its own does not answer.
+For each project it counts its outcomes per eval set and model across all of
+its stamps under that eval set, counting each todo, review and findings report
+once per eval set. Its answer holds only the project slugs, eval sets and
+model identities, those measures, the earliest and latest stamp time of each
+project, eval set and model, the commits that computer records setting each
+eval set, and the limitations it found, each worded as a safe diagnostic
+that carries no URL, credential, checkout path or raw error text, the detail
+staying in that computer's own logs. No stamp, artifact,
+findings report or conversation leaves the computer, and no computer but the
+requesting one writes a report. The requesting computer's own limitations read
+as in a report covering only this computer.
+
+A report covering any other computer pools by eval set, whether or not any
+other computer answers. Within each project it shows one window per eval set,
+holding the outcomes of every answering computer it covers, this one when it
+is covered: the
+window spans the earliest to the latest stamp under that eval set across
+those computers, its measures add per model and in the human row, and it
+names the commits those computers record setting that eval set; where none
+records one, the window carries the limitation that the commit setting it is
+unknown. A todo's
+record is held on one computer only
+(`project/instrukt/spec/feature/work/state-database`); no todo, review or
+findings report is counted twice. Stamps that copied no eval fingerprint form
+one window per project, with the limitation that their process-document set is
+unknown. The windows are listed by earliest stamp, and the report names no
+process change and no restoration between them; a restored eval set's periods
+form its one window. Model and version remain rows within each window, so a
+model change stays distinguishable from a process-document change.
+
+Every computer the report covers appears in it, either among the computers
+whose answer it holds or as a limitation of the report with its reason,
+whatever made its answer missing or unusable, a named computer included when
+no cluster connection is configured here or the cluster store cannot be
+reached. One without an answer carries the report's reason for what the
+fleet query observed: that the fleet could not be reached, that its request
+could not be delivered, that the store failed while its answer was awaited,
+or that it answered after the wait ends; together with when the
+membership record last saw it where the record holds it and could be read at
+report time. One whose answer this computer cannot read
+is named as answering in a form it cannot read. Each
+limitation a computer reports appears under that computer's identity. The
+reason that the fleet could not be reached is given only when no cluster
+connection is configured here or the cluster store cannot be reached; when the
+store answers but the membership record cannot be read, the report carries
+that as a limitation of its own and each named computer without an answer
+carries its reason as above. A report covering any other computer waits no longer than
+the fleet query's maximum deadline, 120 seconds; a covered computer whose answer has not
+arrived by then is named as answering after the wait ends, and the report is
+written from the answers it has.
+
 ## Use cases
 
 ### UC-ER1: Compare delivery quality across process changes
@@ -84,6 +161,19 @@ separate logging service.
   When they request an evaluation report
   Then they receive a readable report comparing the available outcomes over time
   And can distinguish process-document changes from changes in the model used
+```
+
+### UC-ER2: Compare delivery quality across a developer's computers
+
+```gherkin
+  Given a developer records work on several of their computers
+  When they request an evaluation report without naming any computer
+  Then they receive one report covering every computer of their fleet, giving each project one figure per process-document set pooled from every answering computer
+  And the report names the computers whose outcomes it holds
+  And can distinguish process-document sets from the models used
+  But when one of their computers is offline
+  Then the report is still written from the computers that answered
+  And it names the offline computer, with when it was last seen, as a limitation of the comparison
 ```
 
 ## See Also

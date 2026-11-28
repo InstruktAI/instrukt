@@ -6,10 +6,14 @@ visibility: 'public'
 
 # Version Control Safety — Policy
 
+## Required reads
+
+- [general/policy/shared-machine-resources](../../../general/policy/shared-machine-resources.md)
+
 ## Rules
 
 - Dirty `main` is allowed. Agents may continue work in files required by the active task.
-- Repo root cleanliness is not required for integration. The integrator operates in an isolated worktree (`trees/_integration/`), independent of repo root state.
+- Repo root cleanliness is not required for integration. The integrator operates in an isolated worktree (`.instrukt/trees/_integration/`), independent of repo root state.
 - Unrelated local changes may be reported for awareness, but they are non-blocking and must not change task execution.
 - Only treat local changes as blockers when they overlap current task scope or create a concrete data-loss risk.
 - In worktrees, all files belong to the task. Commit everything.

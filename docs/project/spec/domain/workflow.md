@@ -35,9 +35,9 @@ commit. Intelligence owns all activity routing in clear prose
 - **Integration candidate:** an exact published commit SHA on `<slug>/work` carrying an independent reviewer's `build_review` `approve` stamp bound to that exact SHA and current `review-findings` report, and a current verification disposition for that SHA that admits handoff, handed to `integrate` via `--finalize-ready`.
 
 <!-- planned-change:author-recorded-review-routing -->
-- **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch is an independently approved head, reproduced mechanically from approved or canonical content, a reproduced revert of a failing delivery, a reproduced rendering of the repository's agent material, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
 <!-- change:author-recorded-review-routing -->
-- **Review coverage:** whether every commit the active candidate adds to the canonical branch, whichever parent brought it in, is part of an independently approved head, a merge or documentation fold reproduced mechanically, a reproduced revert of a failing delivery, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
+- **Review coverage:** whether every commit the active candidate adds to the canonical branch, whichever parent brought it in, is part of an independently approved head, a merge or documentation fold reproduced mechanically, a reproduced revert of a failing delivery, a reproduced rendering of the repository's agent material, or exempted by its author. The active candidate is the integration branch's head while the canonical branch does not contain it (`project/instrukt/spec/feature/workflow/integration-gate`).
 - **Held candidate:** an active candidate with a commit that is not covered; what follows for it is `project/instrukt/spec/feature/workflow/integration-gate`'s (Review coverage of a candidate).
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -70,6 +70,16 @@ earns is work's record, and the author asks, the integrator's notice and the
 candidate review it otherwise calls for are the runner's to carry out
 (`project/instrukt/spec/feature/runner/pull-request-review`).
 <!-- /planned-change:author-recorded-review-routing -->
+
+A rendering of the repository's agent material is reproduced by asking
+publication's one rendering operation to render the parent commit's tree and
+comparing the result with the commit's tree. What that material holds, and
+how it is rendered, are publication's
+(`project/instrukt/spec/domain/publication`); workflow compares trees and
+judges no content. Which repositories' rendering commits coverage recognises
+is stated by the integration gate's rule
+(`project/instrukt/spec/feature/workflow/integration-gate`, Review coverage of
+a candidate).
 
 The current assignment workflow derives for a todo also names the session holding
 its execution claim and states whether the todo waits on a person. Work decides
@@ -120,6 +130,8 @@ there, never by reading through delivered work.
 - **Work → workflow:** work supplies `WorkEvidence` and invokes workflow's gate checks on attempt reservation, completion stamps, and `--finalize-ready`.
 - **Runner → workflow:** runner calls `WorkflowAssignments::assignment` on each tick, tracks progress via the factual progress fingerprint, and routes `workflow.finalized` and `runner.ci_completed` to the standing `integrator`.
 - **Docs → workflow:** docs validation checks authored `workflow/workflow.yaml` and procedure role declarations through `FlavorSchema` and `FlavorRoles`.
+- **Runner → workflow (knowledge proposals):** runner routes `runner.proposal_approved` to a company home's standing `integrator`, naming the exact approved head to compose.
+- **Publication → workflow (review coverage):** publication supplies its one operation rendering a tree's agent material, from which coverage reproduces a rendering commit.
 
 <!-- planned-change:author-recorded-review-routing -->
 - **Workflow → runner (review coverage):** workflow supplies the active candidate's review coverage; the runner supplies the canonical head's CI result as it observed it.
@@ -133,8 +145,8 @@ there, never by reading through delivered work.
 ## Governing designs and decisions
 
 - `general/principle/intelligence-boundaries` — code owns facts and integrity invariants; prose owns judgment and routing.
-- `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation, human-owned gates).
-- `general/principle/verification-independence` — a pass, fail or blocked disposition, like a build-review approval, comes only from a session that did not produce the change.
+- `general/principle/trust-and-guardrails` — guardrails exist only where state restoration cannot repair harm (interference, contract violation).
+- `general/principle/verification-independence` — a change is verified only against a standard that originated outside the session that produced it.
 - `general/policy/human-contract` — human-owned approvals (`approvals.prd`, `approvals.task`) remain enforced where configured.
 
 ## Use cases

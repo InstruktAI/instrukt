@@ -182,37 +182,17 @@ pull request that has it as its head at that moment. Each further request for
 one commit waits longer than the one before, up to a bound, so a reviewer that
 cannot finish is not started in a loop and the commit is never given up.
 
-Work reads two answers from the runner when it admits a verdict: the first
-always, the second only where the first shows that a request of the commit
-reached the session that offers a revision
-(`project/instrukt/spec/feature/work/github-apps`, Admission of review
-evidence).
+Work reads one answer from the runner when it admits a verdict: the commit's
+requests from delivery's own records (`project/instrukt/spec/feature/work/github-apps`,
+Admission of review evidence).
 
 | Asked | Answered from |
 | --- | --- |
 | A commit's requests: each one's number, its standing, the session it was handed over to, an ended request's disposition, whether an ended request that delivery selected is still to be handed over, and its pinned base | Delivery's own records. |
-| Which input opened the turn a named session has in progress, with regard to that commit's requests handed over to that session | One read of the runtime for the turn the session has in progress and the input that opened it, compared with the frozen content of those handovers. |
-
-The second answer is one of four: a request of that commit opened the turn,
-something else opened it, the session has no turn in progress, or the runtime
-cannot say. It costs one bounded read of the runtime and one keyed read of
-delivery's records, however long the session's history is. It is asked while
-the command that offers the revision runs and is about the turn in progress
-then. A runtime that is unavailable, or that keeps no record of the session's
-turn, cannot say.
-
-The answer is exact where a handover opens the turn it enters: a session
-started with the request,
-only-at-entry delivery, and as-soon-as-possible delivery on a runtime that
-queues a handover for the next turn
-(`project/instrukt/spec/feature/runner/procedure-event-delivery`, Intent,
-capability and bounded batches). A handover that a runtime steers into a
-running turn is not that turn's opening input and is not seen by this answer.
 
 A request's records are kept while it is live, while its commit is still owed,
-while a session it was selected for can still take it up, and while a turn it
-opened is in progress. A session of which no kept record says a request of the
-commit reached it is therefore in no turn that such a request opened.
+and while a session it was selected for can still take it up. Request standing
+and live runtime activity do not control verdict admission.
 
 ### Placement and consumer
 
@@ -266,11 +246,11 @@ Nothing is asked of a session the runtime cannot say about, and no review of
 the candidate is asked for while any uncovered commit's session is unanswered;
 the next tick derives again, and the sessions left unanswered are reported to
 the operator through `instrukt events status`
-(`project/instrukt/policy/checks-and-guards`).
+(`project/instrukt/design/architecture/outside-gate`).
 
 **Asking an author.** Each session workflow names to be asked for an uncovered
 commit is sent one ask, a runner-authored `[Instrukt Notification]`
-(`project/instrukt/spec/feature/runner/conversation-links`) delivered through
+(`general/policy/message-identity-headers`) delivered through
 the session's input delivery
 (`project/instrukt/spec/feature/runner/procedure-event-delivery`). The runner
 renders it in one fixed wording from the project, the candidate and the
@@ -323,6 +303,58 @@ its queued requests end (One review per commit); when it calls for one, the
 request is emitted as under Candidate requests.
 <!-- /planned:author-recorded-review-routing -->
 
+### Knowledge proposals in a company home
+
+In a company home admitted for automatic review, instrukt carries the
+company's knowledge proposals to review and integration. The observation's
+fetch of the home prunes remote-tracking branches the remote no longer holds,
+and instrukt considers only the heads of the home's remote-tracking branches,
+never a branch that exists only on the computer. Whether a head is an
+admitted proposal is the company context's answer
+(`project/instrukt/spec/domain/company`, Knowledge proposal).
+
+- **Opening.** For each such head that is an admitted proposal, is not
+  contained in the remote-tracking canonical branch, and that no pull
+  request, open or closed, has as its head, instrukt opens a pull request for
+  its branch as the identity the `company-agent` role selects
+  (`project/instrukt/spec/feature/work/github-apps`, Company repositories).
+  The pull request is then reviewed as every eligible pull request is.
+- **Handoff.** When an open pull request's current head is an admitted
+  proposal, holds an approving verdict work answers is current and covers the
+  canonical branch, and is not contained in the remote-tracking canonical
+  branch, instrukt emits `runner.proposal_approved`, which wakes the
+  company's standing integrator to integrate that exact head. No person
+  merges it: the integrator is the one writer of the company's default branch
+  (`general/policy/commits`).
+- **Reports.** `instrukt events status` lists, with their doors, the
+  unestablished entries the company context names and a proposal store whose
+  condition is not usable, derived through the company context's lookups each
+  time it runs, and raises each as an anomaly
+  (`project/instrukt/spec/feature/runner/anomaly-notification`).
+
+Opening proposal pull requests, and nothing else, needs the proposal
+pull-request credential, whose readiness work answers: met, unmet with a
+finding, or GitHub cannot be asked
+(`project/instrukt/spec/feature/work/github-apps`, Company repositories). It is
+checked where it enters (`sdlc/principle/design-fundamentals`, Fail Fast):
+
+- **At entry.** `instrukt install` and `instrukt install --check` ask it for
+  each company home admitted for automatic review, beside automatic review's
+  readiness, and report an unmet answer or one GitHub cannot give as a
+  finding with its repair door.
+- **On each pass.** The review observation of a company home asks it once.
+  Met opens pull requests as above. Unmet withholds only the opening of
+  proposal pull requests, with a warning naming the finding and its door.
+  GitHub cannot be asked withholds only the opening for that pass; the
+  source's cause is recorded and a warning is logged, as for automatic
+  review's readiness, and the next tick asks again.
+
+Automatic review of the home's other pull requests, the handoff of heads
+already approved and CI observation never wait on this credential. An opening
+GitHub or the runtime cannot answer is warned and tried again on the next tick
+(Availability). An opening GitHub refuses while the credential is met is a
+defect of the part: a warning
+carries GitHub's answer. Neither writes any state.
 ### Enablement
 
 The capability is enabled per project with the project-layer setting
@@ -348,7 +380,7 @@ publishes the status and does not change branch protection.
 
 When GitHub or the runtime is unavailable, observation, activation and
 publication retry until the service returns, and the unavailable service is
-reported to the operator (`project/instrukt/policy/checks-and-guards`).
+reported to the operator (`project/instrukt/design/architecture/outside-gate`).
 
 ## Use cases
 
@@ -435,4 +467,3 @@ Then no review is started for it
 - [project/instrukt/spec/feature/runner/event-activation](event-activation.md)
 - [project/instrukt/spec/feature/work/github-apps](../work/github-apps.md)
 - [project/instrukt/spec/feature/workflow/integration-gate](../workflow/integration-gate.md)
-- [project/instrukt/policy/checks-and-guards](../../../policy/checks-and-guards.md)

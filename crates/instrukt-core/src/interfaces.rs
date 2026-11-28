@@ -148,6 +148,22 @@ pub trait GraphGeneration: Send + Sync {
     fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
 }
 
+/// The company's recording of a commit just made as a knowledge proposal
+/// (`project/instrukt/spec/domain/company`, Knowledge proposal). The
+/// `post-commit` hook run invokes it synchronously with the commit's
+/// repository root and the hook's environment, which is the committing
+/// session's; it decides everything, reports on `stderr`, the commit's
+/// standard error, and never fails the commit.
+pub trait ProposalRecording: Send + Sync {
+    fn record(
+        &self,
+        home: &crate::home::Home,
+        root: &Path,
+        env: &crate::config::Env,
+        stderr: &mut dyn std::io::Write,
+    );
+}
+
 /// How the adapter selected an instruction target home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,6 +256,7 @@ pub struct CoreWiring {
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
     pub configured_runtimes: Option<Arc<dyn ConfiguredAgentRuntimes>>,
+    pub proposal_recording: Option<Arc<dyn ProposalRecording>>,
 }
 
 impl std::fmt::Debug for CoreWiring {
@@ -254,6 +271,7 @@ impl std::fmt::Debug for CoreWiring {
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .field("configured_runtimes", &self.configured_runtimes.is_some())
+            .field("proposal_recording", &self.proposal_recording.is_some())
             .finish()
     }
 }
@@ -277,6 +295,14 @@ pub enum ReviewReadiness {
 /// credentials and writes no state.
 pub trait AutomaticReviewReadiness: Send + Sync {
     fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
+/// Work's readiness answer for the proposal pull-request credential: the
+/// identity the `company-agent` role selects, with write access to pull
+/// requests and read access to contents. It requests that one credential
+/// and writes no state; a met answer carries it.
+pub trait ProposalReadiness: Send + Sync {
+    fn proposal_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
 }
 
 /// What kind of account a GitHub login names.

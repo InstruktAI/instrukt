@@ -1,5 +1,5 @@
 ---
-description: A change is verified only against a standard that originated outside the session that produced it; an agent that writes both the work and the definition of correct has produced agreement, not verification.
+description: 'Verification requires a standard external to the producing session; self-checking is agreement, not proof.'
 ---
 
 # Verification Independence — Principle

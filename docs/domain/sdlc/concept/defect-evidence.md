@@ -25,7 +25,7 @@ review — uses them.
 - **Dangerous path** — a concrete path to a defect that has not occurred. It
   names who acts, through which surface, holding what access, doing what, and it
   ends in a consequence that meets the safety gate's bar in
-  `general/policy/human-contract`: material, hard-to-reverse exposure of a
+  `general/policy/leadership`: material, hard-to-reverse exposure of a
   human-owned asset. Hard-to-reverse is judged by what is lost, leaked, or done
   in someone's name before anyone can intervene. A transient, self-clearing, or
   cosmetic consequence does not meet the bar, and neither does a state that

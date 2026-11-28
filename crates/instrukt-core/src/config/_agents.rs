@@ -1,18 +1,16 @@
 //! Role-keyed model choices, validated independently of provider model catalogs.
+use super::_agents_file::read_existing;
 use super::{ConfigError, Tier};
 use crate::{
-    fsx::{LockGuard, atomic_write},
     home::Home,
     ids::{ProfileName, ProviderInstanceId},
 };
 use serde::{Deserialize, Serialize};
 use serde_yaml_ng::Value;
-use sha2::{Digest, Sha256};
-use std::{collections::BTreeMap, time::Duration};
+use std::collections::BTreeMap;
 
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
 pub(super) const VERSION: u64 = 4;
-const DEPLOYMENT_VERSION: u64 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSelection {
@@ -132,14 +130,11 @@ fn invalid(message: impl Into<String>) -> ConfigError {
 /// The maps the file merges into the shipped defaults key by key.
 const KEYED_MAPS: [&str; 3] = ["roles", "profiles", "bundles"];
 
-/// The effective selection document: the shipped defaults with `file` laid
-/// over them. Maps merge by key, a field the file sets replaces the shipped
-/// one and a field it leaves out is inherited, and any other value (a list
-/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
-/// entries names nothing, so a bare `roles:` keeps every shipped role.
-fn effective(mut file: Value) -> Result<Value, ConfigError> {
-    let mut merged: Value =
-        serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))?;
+fn shipped() -> Result<Value, ConfigError> {
+    serde_yaml_ng::from_str(SHIPPED_AGENTS).map_err(|e| invalid(e.to_string()))
+}
+
+fn without_empty_keyed_maps(file: &mut Value) {
     if let Some(fields) = file.as_mapping_mut() {
         for key in KEYED_MAPS {
             if fields
@@ -150,6 +145,16 @@ fn effective(mut file: Value) -> Result<Value, ConfigError> {
             }
         }
     }
+}
+
+/// The effective selection document: the shipped defaults with `file` laid
+/// over them. Maps merge by key, a field the file sets replaces the shipped
+/// one and a field it leaves out is inherited, and any other value (a list
+/// included) replaces whole. One of [`KEYED_MAPS`] that the file gives no
+/// entries names nothing, so a bare `roles:` keeps every shipped role.
+fn effective(mut file: Value) -> Result<Value, ConfigError> {
+    let mut merged = shipped()?;
+    without_empty_keyed_maps(&mut file);
     // A role with no shipped entry takes its omitted class and grants from
     // the effective `default`; a shipped role takes them from its own entry
     // through the overlay.
@@ -179,12 +184,43 @@ fn effective(mut file: Value) -> Result<Value, ConfigError> {
     Ok(merged)
 }
 
+/// `file` reduced to the entries that differ from the shipped defaults,
+/// keeping `schema_version` first: the inverse of [`effective`].
+pub(super) fn overrides_only(mut file: Value) -> Result<Value, ConfigError> {
+    let mut base = shipped()?;
+    without_empty_keyed_maps(&mut file);
+    let version = file
+        .as_mapping_mut()
+        .and_then(|fields| fields.remove("schema_version"));
+    if let Some(fields) = base.as_mapping_mut() {
+        fields.remove("schema_version");
+    }
+    super::_merge::prune(&mut file, &base);
+    if let Value::Mapping(fields) = file {
+        let mut ordered = serde_yaml_ng::Mapping::new();
+        if let Some(version) = version {
+            ordered.insert("schema_version".into(), version);
+        }
+        for (key, value) in fields {
+            ordered.insert(key, value);
+        }
+        return Ok(Value::Mapping(ordered));
+    }
+    Ok(file)
+}
+
 impl Agents {
     /// The effective selection `text` states: the shipped defaults with the
     /// file's overrides merged over them, validated as one document. The
     /// file's own `schema_version` names the shape of its overrides, so it is
     /// required and never inherited.
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
+        Self::validated(Self::effective_document(text)?)
+    }
+
+    /// `text` parsed, checked for schema version and coordinator-role conflict,
+    /// with retired grants stripped and merged over the shipped defaults.
+    pub(super) fn effective_document(text: &str) -> Result<Value, ConfigError> {
         let mut value: Value = serde_yaml_ng::from_str(text).map_err(|e| invalid(e.to_string()))?;
         match value.get("schema_version") {
             None => {
@@ -220,8 +256,13 @@ impl Agents {
             });
         }
         super::_agents_migrate::retire_session_recover(&mut value);
+        effective(value)
+    }
+
+    /// Validates an already-merged effective selection `document`.
+    pub(super) fn validated(document: Value) -> Result<Self, ConfigError> {
         let result: Self =
-            serde_yaml_ng::from_value(effective(value)?).map_err(|e| invalid(e.to_string()))?;
+            serde_yaml_ng::from_value(document).map_err(|e| invalid(e.to_string()))?;
         if result.schema_version != VERSION {
             return Err(invalid(
                 "unsupported agents schema_version; upgrade instrukt",
@@ -284,65 +325,6 @@ impl Agents {
         })
     }
 
-    /// What a writing command does to `agents.yaml` before reading it. A full
-    /// copy of shipped defaults the deployment record recognises as unedited
-    /// is removed, and then the record; any other file is kept and has a due
-    /// shape conversion persisted. Removal comes first, so a recognised copy
-    /// is never converted and kept.
-    pub fn converge_file(home: &Home) -> Result<(), ConfigError> {
-        let path = home.agents_file();
-        let state = home.agents_deployment_file();
-        let Some(before) = read_existing(&path)? else {
-            return Ok(());
-        };
-        if next_write(&before, Deployment::load(&state).as_ref())? == NextWrite::Keep {
-            return Ok(());
-        }
-        let _lock = LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
-            Duration::from_secs(10),
-        )?;
-        let Some(current) = read_existing(&path)? else {
-            return Ok(());
-        };
-        match next_write(&current, Deployment::load(&state).as_ref())? {
-            NextWrite::Keep => {}
-            NextWrite::Remove => remove_copy(&path, &state)?,
-            NextWrite::Convert(converted) => {
-                atomic_write(&path, &converted.bytes)?;
-                tracing::info!(
-                    event = "agents_shape_migrated",
-                    from_version = converted.from,
-                    to_version = VERSION
-                );
-            }
-        }
-        Ok(())
-    }
-
-    /// What a reading command reports about `agents.yaml`: the change the
-    /// next writing command makes to it, if any, without making it.
-    pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
-        let path = home.agents_file();
-        let Some(bytes) = read_existing(&path)? else {
-            return Ok(None);
-        };
-        let state = home.agents_deployment_file();
-        Ok(
-            match next_write(&bytes, Deployment::load(&state).as_ref())? {
-                NextWrite::Keep => None,
-                NextWrite::Remove => Some(format!(
-                    "{}: an unedited copy of earlier shipped defaults; the next writing command removes it and the shipped defaults apply",
-                    path.display()
-                )),
-                NextWrite::Convert(_) => Some(format!(
-                    "{}: selection configuration inspected in memory; file migrates on the next writing command",
-                    path.display()
-                )),
-            },
-        )
-    }
-
     /// The effective selection: the admitted one when served, else the file
     /// merged over the shipped defaults, or the shipped defaults when there
     /// is no file. A writing home first brings the file to its current state
@@ -355,12 +337,38 @@ impl Agents {
         if home.is_inspection() {
             let existing = read_existing(&home.agents_file())?;
             let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
-            return Self::from_documents(home, existing, global.as_ref());
+            return Self::from_documents(existing, global.as_ref());
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
         Self::converge_file(home)?;
         let existing = read_existing(&home.agents_file())?;
-        Self::from_documents(home, existing, None)
+        Self::from_documents(existing, None)
+    }
+
+    /// The selection document text from `agents.yaml`'s bytes (`None` when
+    /// there is no file) and the global layer as read (`None` when there is
+    /// none), without reading or writing anything: an older `agents.yaml`
+    /// converted in memory, an older global layer's selection carried over
+    /// through `_migrate::carry_into`, and the shipped defaults when neither
+    /// states any.
+    pub(super) fn selection_text(
+        agents: Option<Vec<u8>>,
+        global: Option<&Value>,
+    ) -> Result<String, ConfigError> {
+        let existing = match agents {
+            Some(bytes) => Some(
+                super::_agents_migrate::current(&bytes)?.map_or(bytes, |converted| converted.bytes),
+            ),
+            None => None,
+        };
+        let bytes = match super::_migrate::carried_selection(global)? {
+            Some(carried) => Some(super::_migrate::carry_into(existing, &carried)?),
+            None => existing,
+        };
+        match bytes {
+            Some(bytes) => String::from_utf8(bytes).map_err(|_| invalid("expected UTF-8")),
+            None => Ok(SHIPPED_AGENTS.to_owned()),
+        }
     }
 
     /// The effective selection from `agents.yaml`'s bytes (`None` when there
@@ -370,62 +378,10 @@ impl Agents {
     /// merged over the shipped defaults, and the shipped defaults alone when
     /// neither states any.
     pub(crate) fn from_documents(
-        home: &Home,
         agents: Option<Vec<u8>>,
         global: Option<&Value>,
     ) -> Result<Self, ConfigError> {
-        let path = home.agents_file();
-        let existing = match agents {
-            Some(bytes) => Some(
-                super::_agents_migrate::current(&bytes)?.map_or(bytes, |converted| converted.bytes),
-            ),
-            None => None,
-        };
-        let legacy = match global {
-            Some(value)
-                if value
-                    .get("schema_version")
-                    .and_then(Value::as_u64)
-                    .is_some_and(|v| v < super::GLOBAL_SCHEMA_VERSION) =>
-            {
-                let mut value = value.clone();
-                super::_migrate::selection(home, &super::Layer::Global, &mut value, false)?
-            }
-            _ => None,
-        };
-        if let Some(value) = legacy {
-            let text = super::render_yaml(&value).map_err(|source| ConfigError::Render {
-                path: path.clone(),
-                source,
-            })?;
-            if let Some(existing) = existing
-                && serde_yaml_ng::from_slice::<Value>(&existing).map_err(|source| {
-                    ConfigError::Parse {
-                        path: path.clone(),
-                        source,
-                    }
-                })? != value
-            {
-                return Err(ConfigError::InvalidValue {
-                    key: "configuration migration".into(),
-                    message:
-                        "agents.yaml differs from old global selection; reconcile before writing"
-                            .into(),
-                });
-            }
-            return Self::parse(&text);
-        }
-        match existing {
-            Some(bytes) => {
-                Self::parse(
-                    std::str::from_utf8(&bytes).map_err(|_| ConfigError::InvalidValue {
-                        key: "agents.yaml".into(),
-                        message: "expected UTF-8".into(),
-                    })?,
-                )
-            }
-            None => Self::parse(SHIPPED_AGENTS),
-        }
+        Self::parse(&Self::selection_text(agents, global)?)
     }
 
     pub fn undeclared_roles<'a>(&'a self, installed: &[&str]) -> Vec<&'a str> {
@@ -506,130 +462,6 @@ impl Agents {
             .iter()
             .map(|entry| resolve_entry(name, profile, entry))
             .collect()
-    }
-}
-/// What the next writing command does to `agents.yaml`.
-#[derive(Debug, PartialEq, Eq)]
-enum NextWrite {
-    /// Nothing for this operation: the file is not a recognised copy and no
-    /// shape conversion applies. Whether it is valid is for [`Agents::parse`]
-    /// to decide.
-    Keep,
-    /// Remove the file and then the deployment record: the record recognises
-    /// the file as a copy an earlier release wrote and nobody edited.
-    Remove,
-    /// Persist the file's own bytes at the current shape.
-    Convert(super::_agents_migrate::Converted),
-}
-
-/// The decision for `file` beside `record`, the readable deployment record
-/// (`None` when there is none, or it is unreadable). Removal comes first, so
-/// a recognised copy is never converted and kept.
-fn next_write(file: &[u8], record: Option<&Deployment>) -> Result<NextWrite, ConfigError> {
-    if record.is_some_and(|record| record.recognises(file)) {
-        return Ok(NextWrite::Remove);
-    }
-    Ok(match super::_agents_migrate::current(file)? {
-        Some(converted) => NextWrite::Convert(converted),
-        None => NextWrite::Keep,
-    })
-}
-
-/// Removes a recognised copy at `path`, then its record at `state`.
-fn remove_copy(path: &std::path::Path, state: &std::path::Path) -> Result<(), ConfigError> {
-    for removed in [path, state] {
-        match crate::fsx::remove_file(removed) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(source) => {
-                return Err(crate::fsx::FsError::Write {
-                    path: removed.to_path_buf(),
-                    source,
-                }
-                .into());
-            }
-        }
-    }
-    tracing::info!(event = "agents_defaults_copy_removed");
-    Ok(())
-}
-
-/// `agents.yaml`'s bytes, or `None` when there is no file.
-fn read_existing(path: &std::path::Path) -> Result<Option<Vec<u8>>, ConfigError> {
-    match std::fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(source) => Err(ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        }),
-    }
-}
-
-/// What an ignored deployment record leaves, and how an operator returns to
-/// the shipped defaults: told whether the record could not be read or could
-/// not be understood.
-const IGNORED_RECORD_RECOVERY: &str = "the record is ignored: agents.yaml stays as the user's overrides, still converted to the current shape; to return to the shipped defaults, remove agents.yaml together with this record once you have confirmed it holds no edits you want";
-
-#[derive(Deserialize)]
-struct Deployment {
-    schema_version: u64,
-    digest: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pending: Option<String>,
-}
-
-impl Deployment {
-    /// The record an earlier release kept of the defaults it deployed; `None`
-    /// when there is none. A record that cannot be read or is in an unknown
-    /// shape recognises nothing: the file beside it is kept and the command
-    /// proceeds, because the record is only bookkeeping about instrukt's own
-    /// earlier write and the person's file is never removed on a guess.
-    fn load(state: &std::path::Path) -> Option<Self> {
-        let bytes = match std::fs::read(state) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
-            Err(error) => {
-                tracing::warn!(
-                    event = "agents_deployment_record_unreadable",
-                    record = %state.display(),
-                    %error,
-                    "{IGNORED_RECORD_RECOVERY}"
-                );
-                return None;
-            }
-        };
-        match Self::parse(&bytes) {
-            Ok(record) => Some(record),
-            Err(cause) => {
-                tracing::warn!(
-                    event = "agents_deployment_record_invalid",
-                    record = %state.display(),
-                    %cause,
-                    "{IGNORED_RECORD_RECOVERY}"
-                );
-                None
-            }
-        }
-    }
-
-    /// A deployment record from its bytes, or why it recognises nothing.
-    fn parse(bytes: &[u8]) -> Result<Self, String> {
-        let record: Self = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-        if record.schema_version != DEPLOYMENT_VERSION {
-            return Err(format!(
-                "schema_version {} is not the supported {DEPLOYMENT_VERSION}",
-                record.schema_version
-            ));
-        }
-        Ok(record)
-    }
-
-    /// Whether `bytes` are what an earlier release itself wrote: the deployed
-    /// defaults, or a write it recorded before making it.
-    fn recognises(&self, bytes: &[u8]) -> bool {
-        let found = hex::encode(Sha256::digest(bytes));
-        self.digest == found || self.pending.as_deref() == Some(found.as_str())
     }
 }
 
@@ -1048,62 +880,6 @@ mod tests {
         ));
     }
 
-    /// The deployment record an earlier release kept of `bytes`.
-    fn record_of(bytes: &str) -> super::Deployment {
-        use sha2::Digest as _;
-        let record = serde_json::json!({
-            "schema_version": 1,
-            "digest": hex::encode(sha2::Sha256::digest(bytes.as_bytes())),
-        });
-        super::Deployment::parse(record.to_string().as_bytes()).unwrap()
-    }
-
-    /// The shipped defaults in the shape an earlier release wrote: the split
-    /// orchestrator role the current shape retires.
-    fn older_shape(text: &str) -> String {
-        text.replacen("  todo-orchestrator:", "  work-orchestrator:", 1)
-    }
-
-    #[test]
-    fn a_recognised_older_copy_is_removed_rather_than_converted() {
-        let older = older_shape(SHIPPED_AGENTS);
-        assert_eq!(
-            super::next_write(older.as_bytes(), Some(&record_of(&older))).unwrap(),
-            super::NextWrite::Remove
-        );
-    }
-
-    #[test]
-    fn an_edited_older_file_is_converted_and_kept() {
-        let edited = format!("{}# my own note\n", older_shape(SHIPPED_AGENTS));
-        let decided = super::next_write(
-            edited.as_bytes(),
-            Some(&record_of(&older_shape(SHIPPED_AGENTS))),
-        )
-        .unwrap();
-        assert!(matches!(decided, super::NextWrite::Convert(_)));
-    }
-
-    #[test]
-    fn an_edited_current_file_is_kept_as_it_is() {
-        let edited = format!("{SHIPPED_AGENTS}# my own note\n");
-        assert_eq!(
-            super::next_write(edited.as_bytes(), Some(&record_of(SHIPPED_AGENTS))).unwrap(),
-            super::NextWrite::Keep
-        );
-    }
-
-    #[test]
-    fn a_record_in_an_unknown_shape_recognises_nothing() {
-        use sha2::Digest as _;
-        let record = serde_json::json!({
-            "schema_version": 2,
-            "digest": hex::encode(sha2::Sha256::digest(SHIPPED_AGENTS.as_bytes())),
-        });
-        assert!(super::Deployment::parse(record.to_string().as_bytes()).is_err());
-        assert!(super::Deployment::parse(b"{not a record").is_err());
-    }
-
     #[test]
     fn an_antigravity_effort_outside_its_vocabulary_is_refused() {
         let edited = SHIPPED_AGENTS.replacen(
@@ -1115,5 +891,45 @@ mod tests {
             Agents::parse(&edited),
             Err(ConfigError::InvalidValue { .. })
         ));
+    }
+
+    #[test]
+    fn a_full_copy_of_the_shipped_defaults_with_one_change_reduces_to_that_change() {
+        let mut copy: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        let mut reversed = copy["roles"]["builder"]["order"]
+            .as_sequence()
+            .unwrap()
+            .clone();
+        reversed.reverse();
+        copy["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed.clone());
+
+        let reduced = super::overrides_only(copy).unwrap();
+        let mut expected: serde_yaml_ng::Value = serde_yaml_ng::from_str(&format!(
+            "schema_version: {}\nroles: {{builder: {{}}}}\n",
+            super::VERSION
+        ))
+        .unwrap();
+        expected["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed);
+        assert_eq!(reduced, expected);
+    }
+
+    #[test]
+    fn reducing_a_file_to_its_overrides_leaves_its_effective_selection_unchanged() {
+        let mut edited: serde_yaml_ng::Value = serde_yaml_ng::from_str(SHIPPED_AGENTS).unwrap();
+        let mut reversed = edited["roles"]["builder"]["order"]
+            .as_sequence()
+            .unwrap()
+            .clone();
+        reversed.reverse();
+        edited["roles"]["builder"]["order"] = serde_yaml_ng::Value::Sequence(reversed);
+        edited["roles"]["custom-role"] =
+            serde_yaml_ng::from_str("{order: [codex], tier: light}").unwrap();
+        edited["bundles"]["extra"] =
+            serde_yaml_ng::from_str("[{action: docs-read, scope: any}]").unwrap();
+
+        let before = super::effective(edited.clone()).unwrap();
+        let reduced = super::overrides_only(edited).unwrap();
+        let after = super::effective(reduced).unwrap();
+        assert_eq!(after, before);
     }
 }

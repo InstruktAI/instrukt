@@ -2,6 +2,128 @@
 
 ## 0.1.0
 
+### Ephemeral project working directories move under `.instrukt/`
+
+All instrukt-owned ephemeral project working directories now live under the
+single gitignored `.instrukt/` namespace instead of top-level repository
+folders:
+
+- task workspaces: `.instrukt/workspace/<slug>/`
+- project scratchpads and default `instrukt eval report` output:
+  `.instrukt/scratchpad/` (`.instrukt/scratchpad/eval/index.html`)
+- persistent integration worktree: `.instrukt/trees/_integration/`
+
+Adopting repositories require only `.instrukt/` in `.gitignore`, which
+`instrukt init` already writes. Any in-flight `withdrawal_intents` row
+recorded before upgrading finishes against its stored `workspace_path` without
+manual intervention.
+
+For an existing checkout that still holds untracked instrukt-created root
+directories, move them in this order (run `git worktree list` to check
+whether an integration worktree exists):
+
+1. Verify each candidate root directory is not tracked by git before moving it:
+   `git ls-files <dir>` must print nothing. Leave any tracked project directory
+   untouched.
+2. Relocate an existing integration worktree:
+   `mkdir -p .instrukt/trees && git worktree move trees/_integration .instrukt/trees/_integration && rmdir trees`.
+   If left in place, the standing integrator also relocates an existing
+   `integrate` worktree with `git worktree move` on its next wake.
+3. Relocate existing task workspaces so recurring tasks retain checkpoints and
+   ranked lists:
+   `mkdir -p .instrukt/workspace && mv workspace/* .instrukt/workspace/ && rmdir workspace`.
+4. Relocate any active shared scratchpads:
+   `mkdir -p .instrukt/scratchpad && mv scratchpad/* .instrukt/scratchpad/ && rmdir scratchpad`
+   (or remove disposable `scratchpad/eval/index.html` and `rmdir` the empty
+   directories).
+5. Once every checkout on the machine has moved its root directories, remove
+   any manual `/workspace/`, `/scratchpad/`, or `/trees/` lines added to
+   `.gitignore`, keeping `.instrukt/`.
+
+### Requested review delivery check and reply changes
+
+- **`instrukt review start` Delivery admission check:** When invoked from a
+  resolved agent session, `instrukt review start` now checks that a runner
+  wake-up serves this computer so recorded verdicts can be delivered back to
+  the asking session. Any of the following satisfies Delivery:
+  - the shared minute wake-up registered via `instrukt install`,
+  - operator scheduling (`ticks: off`), or
+  - the owned runner service (`instrukt run`).
+
+  When Delivery is unmet, the command refuses before starting or waking a
+  reviewer and names its door: `instrukt install` when the shared minute
+  wake-up registration is missing or broken or a demanded runner service
+  (including on a conversations-only computer) is unmet, or enabling the
+  `todos` or `events` module of a project on this computer and then running
+  `instrukt install` when neither has demand. Callers outside a session and
+  computers already running `todos` or `events` need no action.
+- **`instrukt review start --json` reply:** `reached` renames `"sent"` to
+  `"woke"`, and replies gain `asker`, `wakeup_stale`, and (for re-reviews)
+  `re_review`.
+### Retired discussion links, control wrappers, bare NOOP suppression, and proxy review recording
+
+The following legacy surfaces have been retired:
+
+- **`instrukt discuss` and `runtime.discuss`:** Peer thread conversation links
+  and the `instrukt discuss` subcommand have been removed. Company-connected
+  conversation relay (Slack connectors) continues unchanged. Existing
+  `instrukt.yaml` machine overrides carrying `runtimes.t3.discuss` and existing
+  `agents.yaml` files carrying the `conversation-link` action continue to parse
+  and admit without failing startup; remove those retired keys when you next
+  edit those files. Existing `state/instrukt.db` databases open without manual
+  migration (historical schema migrations are preserved; any prior
+  `conversation_links` rows remain dormant and unread).
+- **Global `[Instrukt Assignment]` and `[Instrukt Notification]` wrappers:**
+  Runner deliveries and agent launch briefs now arrive as plain structured text
+  without `[Instrukt Assignment]` / `[Instrukt Notification]` wrappers. Only
+  company connected-conversation messages retain `[Member (... · boundary)]`
+  and `[Instrukt Conversation Context (boundary)]` framing. In-flight
+  conversation rollovers, unaccepted requested-review retries, and open manual
+  standing reservations stored before upgrade continue to match their legacy
+  wrapped payloads until they complete.
+- **Bare `NOOP` suppression:** Connected company conversations no longer drop a
+  turn whose output is literally `NOOP`; it is posted as ordinary turn output.
+  Empty/whitespace turns remain unposted.
+- **`instrukt review record --reviewer`:** Proxy verdict entry on behalf of
+  another session has been removed so every standing verdict is recorded
+  directly by the independent reviewing session that produced it. Historical
+  verdicts that recorded an `entered_by` session remain readable and exportable.
+
+**Transition & rollback:** Upgrading requires no database reset or config edit
+for existing `runtimes.t3.discuss` / `conversation-link` keys, and in-flight
+standing/review/conversation records finish cleanly. Scripts or agent
+instructions invoking `instrukt discuss`, `instrukt config get runtime.discuss`,
+or `instrukt review record --reviewer` must be updated to native runtime
+delegation/messaging and direct reviewer-session `instrukt review record`
+calls. To roll back, let any open new-format manual standing reservations
+complete or clear them before restoring the previous `instrukt` binary:
+although this release performs no destructive SQLite schema migration, manual
+standing reservations opened on this release store plain (unwrapped) briefs
+that older binaries cannot resume because older builds require exact matches
+against the legacy `[Instrukt Assignment]` wrapper.
+
+### A company repository declares its company identity
+
+A company repository's committed project layer now declares which company it
+is: the key its `project` carries after `company-`, and the name people write
+the company by in the new project-only key `company_name`. `instrukt init
+--company <key> --name <name>` writes it into a new company's skeleton. An
+existing company repository has no `company_name` yet: add it with `instrukt
+config patch` on its project layer, through a reviewed change like any other
+change to the repository. Until then `instrukt config validate` reports the
+missing identity against `modules.events`, the home's event responses are
+withheld, other patches of the layer are refused, and its plugin does not
+render. No migration can supply the name, since it cannot be derived.
+
+`instrukt docs plugin` no longer takes `--key` or `--name`: it reads the
+company identity from the repository's committed project layer, so a home, a
+clone and an integration candidate render the same bytes. A script that still
+passes them gets a usage error; drop both flags. A repository without a
+company identity is refused with that finding and nothing is written.
+`instrukt docs render --plugin` renders the repository's whole agent material
+as one operation, the entrypoints and in a company repository the company's
+plugin, and `instrukt docs render --plugin --check` checks it.
+
 ### A company's settings and skill move
 
 A company home keeps its settings in `company.yaml`, beside the project
@@ -336,9 +458,8 @@ published. To switch it on for a project, in this order:
    `runner.review_needed` under the `commit-reviewer` role and is the only
    procedure subscribed to it. Admission requires that route.
 4. Record the approval of every head reviewed before the cutover that is not
-   on the canonical branch yet: its reviewing session with `instrukt review
-   record`, or another session with `instrukt review record --reviewer
-   <session>`. A head whose approval is not recorded is reviewed as part of its
+   on the canonical branch yet from its reviewing session with `instrukt review
+   record`. A head whose approval is not recorded is reviewed as part of its
    candidate.
 5. Set `review: {automatic: true}` in the project layer through a reviewed
    commit. `instrukt config patch` refuses it while a finding stands, and
@@ -727,3 +848,36 @@ the record:
     instrukt todo artifacts diff <address> <name> <digest> <digest>
 
 A version the command reports GitHub no longer serves stays without content.
+
+### Evaluation reports cover the computer fleet; a shared cluster Redis grants the fleet query
+
+`instrukt eval report` now covers every computer that shares this computer's
+cluster Redis, unless `--computer` narrows it. Each computer's `instrukt run`
+or `instrukt tick` keeps its entry on the fleet membership record and answers
+evaluation requests over that cluster connection. The cluster Redis user
+therefore needs the fleet query's permissions. A computer without
+`redis.cluster.url` is unaffected and still reports on itself alone.
+
+Where the cluster Redis is instrukt's own, the next `instrukt install`
+rewrites its access list with these permissions and restarts it. Nothing else
+is needed.
+
+Where the cluster Redis is supplied by an operator, its access list is not
+instrukt's to change. Before installing the new build on any computer that
+configures `redis.cluster.url` there, in this order:
+
+1. Grant the cluster Redis user these commands on instrukt's keys: `HSET` and
+   `HGETALL` on `instrukt:fleet:members`; `RPUSH`, `BLPOP`, `LPOP`, `LLEN` and
+   `EXPIRE` on `instrukt:eval:requests:*` and `instrukt:eval:reply:*`; and
+   `MULTI` and `EXEC`. A user already scoped to `~instrukt:*` needs only the
+   commands added, for example
+   `ACL SETUSER <user> +hset +hgetall +lpop +llen +rpush +blpop +expire +multi +exec`.
+2. On each such computer, run `instrukt install --check`. While any of these
+   permissions is still denied, it reports a `fleet Redis` finding telling you
+   to grant the fleet query's permissions to the cluster Redis user, then run
+   `instrukt install`.
+3. Run `instrukt install`.
+
+Until a computer's user is granted these permissions, reports covering it list
+it among their limitations, and its runner records the denial in its
+`computer-fleet` worker state.

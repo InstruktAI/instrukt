@@ -1,8 +1,6 @@
 ---
 eval: true
-description: 'Worktree-only authoring (main has one writer: the integrator), committing
-  via `instrukt repo commit` with Commitizen format and provenance, commit-first autonomy,
-  and author-decided post-commit independent review routing.'
+description: 'Worktree-only authoring (`main` is integrator-only), `instrukt repo commit` (Commitizen + provenance), commit-first autonomy, and review routing.'
 visibility: public
 ---
 
@@ -10,9 +8,15 @@ visibility: public
 
 ## Rules
 
-Main has one writer: the integrator. Every other agent authors and commits in a worktree: a todo's single `<slug>/work` worktree, or a short-lived one-off worktree for ad hoc work. Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Pending documentation edits authored on `<slug>/work` are reviewed alongside implementation and folded by the integrator at delivery. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
+Main has one writer: the integrator. Every other agent authors and commits in a worktree, placed by these rules alone:
 
-This is the canonical source of commit behavior. Other docs may reference it, but must not redefine commit policy.
+- **A todo's work** is done by its orchestrator and the workers it dispatches in the todo's single `<slug>/work` worktree, which exists once the orchestrator starts its work: the configured `runtime.start_thread` places it. Pending documentation edits authored there are reviewed alongside implementation and folded by the integrator at delivery.
+- **Everything else is ad hoc:** a short-lived one-off worktree from the freshly fetched canonical branch, on a branch whose name carries the change's Commitizen type as its prefix (`docs/…`, `fix/…`), never a todo's branch. Pending documentation written ahead for a todo is ad hoc work: its carriers name the todo, it is committed with `--todo <slug>`, reviewed and merged onto main, and its worktree removed. No todo worktree is opened or kept for it; the todo's own worktree starts from main carrying it.
+- **These placements are exclusive.** A todo's work happens only in its worktree, written-ahead documentation only as ad hoc work, and main changes only through the integrator.
+
+Where independent review is owed under the routing rule below, it binds the exact worktree head before integration. Only the integrator merges reviewed heads and publishes main through the existing candidate gate. No per-SHA review note or direct-main exemption path exists.
+
+This is the canonical source of commit behavior and of where repository work is authored. Other docs may reference it, but must not redefine either.
 
 Write a Commitizen subject and, when useful, an explanation of the change:
 
@@ -28,7 +32,7 @@ type(scope): subject
 
 **Todo association:**
 
-Create the todo before its first committing preparation step and associate its worktree commits through `instrukt repo commit --todo <slug>`. Ad hoc work retains its one-off worktree and reviewed head until integration.
+Create the todo before its first committing preparation step and associate its worktree commits through `instrukt repo commit --todo <slug>`. Ad hoc work retains its one-off worktree and reviewed head until integration, and removes the worktree and its branch once merged.
 
 **Valid types:**
 
@@ -67,8 +71,7 @@ All Committizen types are allowed.
   tracked change for commit, report what remains uncommitted and offer to
   commit; do not commit it, revert it, or suppress the automation.
 - Commit through `instrukt repo commit`. It stages nothing: stage the change
-  with git first, or name its paths with `--only <path>...` to commit just
-  those.
+  with `git add` first.
 - When the human intends a full commit, first inspect the entire change set,
   then commit the full working tree as-is, with no selective scoping, under a
   clear, meaningful, intent-based commit message.
@@ -131,10 +134,13 @@ All Committizen types are allowed.
   commits carry each finding's disposition, independently established basis,
   and closure evidence in their commit bodies; an evidence-only rejection on
   the same head records its dispositions and sources in a disposition file
-  beside the prior report. The follow-up message that opens the continuing
-  reviewer's revision turn carries only the coordinates (`head`, prior report
-  path, and any disposition file path) and no free-text narrative or
-  constraints (`sdlc/procedure/lifecycle/work/review-commits`). The author
+  beside the prior report. A re-review of the fixing head, and a dispute
+  on the same head, are asked for by their coordinates only (`head`, prior
+  report path, and any disposition file path) and reach the continuing
+  reviewer, the session that recorded the earlier verdict; no free-text
+  narrative or constraints travel with them, and the reviewer records its
+  judgment of a dispute as a new verdict version whether or not the verdict
+  changes (`sdlc/procedure/lifecycle/work/review-commits`). The author
   retains commit and review-routing responsibilities; the reviewer alone
   determines the verdict. What cannot proceed — a genuine human-owned decision,
   a safety gate, or a disagreement author and reviewer cannot resolve — is

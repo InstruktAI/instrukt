@@ -46,32 +46,6 @@ Care: Enforcement.
 
 Care: Exceptions.
 
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
-
 ## Kind — Policy
 
 ### Rules
@@ -175,32 +149,6 @@ Care: Enforcement.
 ### Exceptions
 
 Care: Exceptions.
-
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
 
 ## Kind — Policy
 
@@ -306,32 +254,6 @@ Care: Enforcement.
 
 Care: Exceptions.
 
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
-
 ## Kind — Policy
 
 ### Rules
@@ -435,32 +357,6 @@ Care: Enforcement.
 ### Exceptions
 
 Care: Exceptions.
-
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
 
 ## Kind — Policy
 
@@ -566,32 +462,6 @@ Care: Enforcement.
 
 Care: Exceptions.
 
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
-
 ## Kind — Policy
 
 ### Rules
@@ -695,32 +565,6 @@ Care: Enforcement.
 ### Exceptions
 
 Care: Exceptions.
-
-# Sdlc
-
-## Tests — Policy
-
-### Rules
-
-Tests: Rules.
-
-### Rationale
-
-Tests: Rationale.
-
-### Scope
-
-Tests: Scope.
-
-### Enforcement
-
-Tests: Enforcement.
-
-### Exceptions
-
-Tests: Exceptions.
-
-# General
 
 ## Kind — Policy
 

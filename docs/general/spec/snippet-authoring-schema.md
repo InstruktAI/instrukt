@@ -1,5 +1,5 @@
 ---
-description: 'Where snippets live and how they are named: the three positions, ids, domains, index.yaml and schema.yaml, frontmatter including event subscription home, identity and attendance, and the reference forms. Section shape comes from instrukt docs schema.'
+description: 'Snippet positions, ids, domains, `index.yaml`/`schema.yaml`, frontmatter (events, identity, attendance), references, and `_compressed/`; section shape comes from `instrukt docs schema`.'
 visibility: 'public'
 ---
 
@@ -82,14 +82,14 @@ the position's rendering carries; depth below that comes from required reads.
 - `agents` — a map from the name of an agent runtime instrukt deploys to, to
   snippet ids. Those snippets are ordinary `policy` snippets, appended to that
   one runtime's global file only.
-- `general`'s `expanded` and `listed` may name ids from any domain, which is
-  how always-on content from several domains is chosen in one place. A
-  domain's index and the project's index name only snippets of their own
-  position.
+- Every position's index, `general`'s included, names only snippets of its
+  own position: always-on content is `general`'s own, and a domain is reached
+  through its `description` line (`general/policy/referencing-doc-snippets`).
 
 `instrukt docs validate`, and the sync that publishes the position, report as
 findings a key the position does not allow (`agents` outside
-`docs/general/index.yaml` among them), an id that names no delivered snippet,
+`docs/general/index.yaml` among them), an id that names no delivered snippet
+or a snippet of another position,
 an `agents` key that names no agent runtime instrukt deploys to, a `listed` id already in the
 closure of `expanded`, and an `index.yaml` anywhere but a position's root; sync
 refuses on them. A domain without `index.yaml` is a notice: it is

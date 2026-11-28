@@ -5,16 +5,15 @@ expanded:
   - general/principle/attunement
   - general/principle/calibration
   - general/principle/grounding
-  - general/principle/trust-and-guardrails
-  - general/concept/lineage-vs-authorship
   - general/policy/leadership
   - general/policy/human-contract
   - general/policy/context-retrieval
-  - general/policy/conflict-resolution
   - general/policy/message-identity-headers
-  - general/policy/no-output-turn
-  - general/policy/shared-machine-resources
 listed:
+  - general/principle/trust-and-guardrails
+  - general/concept/lineage-vs-authorship
+  - general/policy/conflict-resolution
+  - general/policy/shared-machine-resources
   - general/principle/evolution
   - general/principle/continuity
   - general/principle/intelligence-boundaries
@@ -26,7 +25,6 @@ listed:
   - general/spec/third-party-docs
   - general/concept/failure-modes
   - general/concept/application-placement
-  - general/design/peer-discussion
   - general/policy/grounding
   - general/policy/orchestrator-jurisdiction
   - general/policy/agent-artifact-governance

@@ -2,15 +2,13 @@
 //! schema versions into its current one, and the machine's old agent
 //! selection into `agents.yaml`.
 use super::{Agents, ConfigError, Layer, LayerKind, SHIPPED_AGENTS};
-use crate::{fsx::atomic_write, home::Home};
+use crate::{
+    fsx::{LockGuard, atomic_write},
+    home::Home,
+};
 use serde_yaml_ng::Value;
 
-pub(super) fn selection(
-    home: &Home,
-    layer: &Layer,
-    value: &mut Value,
-    persist: bool,
-) -> Result<Option<Value>, ConfigError> {
+pub(super) fn selection(layer: &Layer, value: &mut Value) -> Result<Option<Value>, ConfigError> {
     if !matches!(layer, Layer::Global) {
         return Ok(None);
     }
@@ -86,29 +84,6 @@ pub(super) fn selection(
         }
         Agents::parse(&super::render_yaml(&next).map_err(|e| invalid(e.to_string()))?)?;
     }
-    if changed && persist {
-        let _lock = crate::fsx::LockGuard::acquire(
-            &home.locks_dir().join("agents.lock"),
-            std::time::Duration::from_secs(10),
-        )?;
-        let text = super::render_yaml(&next).map_err(|e| invalid(e.to_string()))?;
-        Agents::parse(&text)?;
-        let dest = home.agents_file();
-        if dest.try_exists().map_err(|e| invalid(e.to_string()))? {
-            let existing = std::fs::read_to_string(&dest).map_err(|e| invalid(e.to_string()))?;
-            // Do not discard either user's choice when both files already own selection.
-            let _: Agents = Agents::parse(&existing)?;
-            if serde_yaml_ng::from_str::<Value>(&existing).map_err(|e| invalid(e.to_string()))?
-                != next
-            {
-                return Err(invalid(
-                    "agents.yaml already exists with different selections; reconcile it with the old global selections before retrying",
-                ));
-            }
-        } else {
-            atomic_write(&dest, text.as_bytes())?;
-        }
-    }
     old.remove("order");
     old.remove("tier");
     for fields in old.values_mut().filter_map(Value::as_mapping_mut) {
@@ -118,6 +93,73 @@ pub(super) fn selection(
     }
     old.retain(|_, v| v.as_mapping().is_none_or(|m| !m.is_empty()));
     Ok(changed.then_some(next))
+}
+
+/// The selection carried over from an older global layer, if any.
+pub(super) fn carried_selection(global: Option<&Value>) -> Result<Option<Value>, ConfigError> {
+    let Some(value) = global.filter(|value| {
+        value
+            .get("schema_version")
+            .and_then(Value::as_u64)
+            .is_some_and(|v| v < super::GLOBAL_SCHEMA_VERSION)
+    }) else {
+        return Ok(None);
+    };
+    let mut value = value.clone();
+    selection(&Layer::Global, &mut value)
+}
+
+/// Carries `carried` into `existing` agents-file bytes: renders `carried` when
+/// no file exists, keeps `existing` when structurally equal, or refuses when
+/// the two disagree.
+pub(super) fn carry_into(
+    existing: Option<Vec<u8>>,
+    carried: &Value,
+) -> Result<Vec<u8>, ConfigError> {
+    if let Some(bytes) = existing {
+        let text = std::str::from_utf8(&bytes).map_err(|_| invalid("expected UTF-8"))?;
+        // Do not discard either user's choice when both files already own selection.
+        let _: Agents = Agents::parse(text)?;
+        if serde_yaml_ng::from_slice::<Value>(&bytes).map_err(|e| invalid(e.to_string()))?
+            != *carried
+        {
+            return Err(invalid(
+                "agents.yaml already exists with different selections; reconcile it with the old global selections before retrying",
+            ));
+        }
+        return Ok(bytes);
+    }
+    let text = super::render_yaml(carried).map_err(|e| invalid(e.to_string()))?;
+    let _: Agents = Agents::parse(&text)?;
+    Ok(text.into_bytes())
+}
+
+/// Extracts any legacy selection from `value` and persists it into `agents.yaml`
+/// under `agents.lock` (reusing `agents_held` when the caller already holds it).
+pub(super) fn carry_over(
+    home: &Home,
+    layer: &Layer,
+    value: &mut Value,
+    agents_held: Option<&LockGuard>,
+) -> Result<(), ConfigError> {
+    let Some(carried) = selection(layer, value)? else {
+        return Ok(());
+    };
+    let _acquired = match agents_held {
+        Some(_) => None,
+        None => Some(LockGuard::acquire(
+            &super::_agents_file::agents_lock(home),
+            std::time::Duration::from_secs(10),
+        )?),
+    };
+    let dest = home.agents_file();
+    let existing = super::_agents_file::read_existing(&dest)?;
+    let absent = existing.is_none();
+    let bytes = carry_into(existing, &carried)?;
+    if absent {
+        atomic_write(&dest, &bytes)?;
+    }
+    Ok(())
 }
 /// `value`, a document of `kind` at schema version `from`, converted to its
 /// kind's current version: retired settings removed, every other setting
@@ -269,6 +311,48 @@ mod tests {
         assert_eq!(
             upcycle(yaml(&text), PROJECT_SCHEMA_VERSION, LayerKind::Project),
             yaml(&text),
+        );
+    }
+
+    fn carried_example() -> Value {
+        let mut legacy = yaml("schema_version: 1\nagents: {order: [codex, claude]}\n");
+        super::selection(&super::Layer::Global, &mut legacy)
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_carried_selection_is_rendered_into_an_absent_file() {
+        let carried = carried_example();
+        let bytes = super::carry_into(None, &carried).unwrap();
+        let parsed: Value = serde_yaml_ng::from_slice(&bytes).unwrap();
+        assert_eq!(parsed, carried);
+    }
+
+    #[test]
+    fn an_agents_file_equal_to_the_carried_selection_is_kept_as_written() {
+        let carried = carried_example();
+        let bytes = format!(
+            "# operator note\n{}",
+            super::super::render_yaml(&carried).unwrap()
+        )
+        .into_bytes();
+        let kept = super::carry_into(Some(bytes.clone()), &carried).unwrap();
+        assert_eq!(kept, bytes);
+    }
+
+    #[test]
+    fn an_agents_file_differing_from_the_carried_selection_is_refused() {
+        let carried = carried_example();
+        let differing = format!(
+            "schema_version: {}\nroles: {{builder: {{tier: light}}}}\n",
+            super::super::_agents::VERSION
+        )
+        .into_bytes();
+        let err = super::carry_into(Some(differing), &carried).unwrap_err();
+        assert!(
+            matches!(err, super::ConfigError::InvalidValue { .. }),
+            "{err:?}"
         );
     }
 }

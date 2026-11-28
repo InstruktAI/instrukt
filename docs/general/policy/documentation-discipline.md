@@ -1,8 +1,6 @@
 ---
 eval: true
-description: 'The enforceable rules of doc-driven development: functionality authors
-  its contract first, behavioral deltas stay reflected, and current versus pending
-  truth remains explicit.'
+description: 'Doc-driven development: contract first, deltas reflected, current vs pending explicit; directive text anywhere is contract (owning snippet + independent review).'
 visibility: public
 ---
 
@@ -42,6 +40,16 @@ restart, then check the logs` is directive. One string reaching a human and an
   in the owning snippet: a spec's `Known caveats`, or a design's `Failure modes`
   when it is how the system fails. What each section holds is defined in
   `general/spec/snippet-authoring-schema`.
+- **A behavior correction removes what steered the behavior.** A change that
+  corrects what agents did traces every text that led them there — the
+  snippets their load path reached, the help and prompts of the command they
+  ran, the briefs and runtime values they received — and rewrites or removes
+  each statement that steers otherwise. A corrected rule added beside a
+  competing one corrects nothing. A steering statement that lives in code is
+  named in the change and carried by the todo that delivers its code
+  (`sdlc/policy/process-change-authority`). The commit body names the
+  occurrence, so review can follow the path the agent read
+  (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene).
 
 ### Doc-driven delivery
 
@@ -130,6 +138,12 @@ reviewer resolves the same case the same way.
 A limit known only to the session that found it is rediscovered by every later
 reader, often only after relying on the capability. Recorded with its contract,
 it is in front of the reader at the moment of relying on it.
+
+An agent that meets two answers acts on whichever its load path reaches at the
+moment of acting, so a correction placed beside the text that steered it leaves
+that text winning there. Checked only against its own wording, such a
+correction passes review while the occurrence it targets recurs; following the
+path the agent read is the check that finds the competing text.
 
 A decision the human makes with one agent reaches every other agent through the
 document that agent writes. Handed on as a message instead, it arrives without

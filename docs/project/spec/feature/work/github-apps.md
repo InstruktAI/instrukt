@@ -198,8 +198,7 @@ an exemption is not.
 
 | Command | Contract |
 | --- | --- |
-| `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|->` | Records the calling session's head verdict of the commits after the base up to the head. |
-| `instrukt review record --head <sha> --base <sha> --verdict approve --report <file\|-> --reviewer <session>` | Records the approving head verdict that the named session reached, entered by the calling session as that session's standing result (A handed-over approval). |
+| `instrukt review record --head <sha> --base <sha> --verdict approve\|needs_work --report <file\|->` | Records the calling reviewing session's head verdict of the commits after the base up to the head. |
 | `instrukt review exempt --commit <sha> --basis <text>` | Records an exemption for a commit the canonical branch does not contain yet. |
 | `instrukt review show <sha>` | What this computer holds for the commit: its head verdict with its versions and with whether it stands here, was handed off by an export or was set aside by an import; its exemption and its derived approval, or a derived approval the tick withdrew with the commit found uncovered; each of these with its pinned base and where it was recorded; every publication with its state and the cause of an outstanding or refused one; and a verdict recognised as already published where this computer holds none. |
 | `instrukt review export --to <file>` | Hands the project's review evidence that stands on this computer off into one file (Evidence when the serving computer changes). |
@@ -211,6 +210,30 @@ judges its own findings again, as when the author disputes them with evidence
 and no new commit. The latest version is current and earlier ones are kept as
 history.
 
+A head verdict's versions are numbered from one in the order they are
+recorded, and `instrukt review show` names each by its number.
+
+The session that recorded the current version of a commit's verdict that
+stands here is that commit's reviewer of record. Work answers it with the
+commit's verdict, and `instrukt review show` names it. Work also answers, for a
+project, which commit's verdict standing here has a version whose report has a
+given digest (Verdict publication names a version by that digest). A verdict this computer
+handed off or set aside has no reviewer of record here. The runner wakes a
+reviewer of record to review later work
+(`project/instrukt/spec/feature/runner/requested-review`). A wake records
+nothing of the commit's evidence and changes nothing of who may record a
+version (Admission of review evidence, Settlement): a verdict the woken session
+records for another commit is that commit's own and admitted as that commit's.
+Once `instrukt review record` has recorded a version, it hands the version to
+the runner, which queues the verdict notices of that head's requested reviews
+and delivers them on its own wake-ups
+(`project/instrukt/spec/feature/runner/requested-review`). The recording waits
+only for that queuing, never for a delivery, and is not undone when it fails. A
+revision whose verdict equals the current one is admitted on the same terms as
+one that changes it (Admission of review evidence, Settlement). A reviewer
+records each dispute it judges as a revision
+(`sdlc/procedure/lifecycle/work/review-commits`).
+
 A verdict and an exemption are separate facts of a commit. Recording, importing
 or publishing one never replaces, hides or retires the other, and work's answer
 on a commit reports both.
@@ -221,47 +244,19 @@ admission. Recording needs no opt-in; publication does (Verdict publication).
 
 ### Admission of review evidence
 
-`instrukt review record` admits a verdict only when all of these hold. They are
-facts of the reviewed commit and of the reviewing session's recorded relation
-to it, and they bind every caller, a session without a role included
-(`project/instrukt/spec/feature/configuration/roles-and-capabilities`).
-
-| Invariant | Rule | The refusal names |
-| --- | --- | --- |
-| Repository | `--head` is the full id of a commit present in the repository of the project the caller stands in. | The commit and the project. |
-| Reviewer | The reviewing session is the caller, a session the selected runtime adapter recognises, resolved as for an attributed commit (`project/instrukt/spec/feature/repository/attributed-commit`). With `--reviewer` it is the named session (A handed-over approval). | That no session resolves. |
-| Request | Read from the runner (`project/instrukt/spec/feature/runner/pull-request-review`). While a request for exactly this project and commit is queued, selected or handed over, the review is that request's: only the session it was handed over to records it, and every other caller is refused, also while no session holds it yet. A commit with no such request is unrequested, and its verdict is a one-off review's whoever reviewed, a session whose request has ended included. | The request with its standing, and the session that holds it once it was handed over. |
-| Range | The pinned base is fixed by instrukt and the caller cannot narrow it. A request of the commit, live or ended, carries the pinned base the runner selected for it (`project/instrukt/spec/feature/runner/pull-request-review`). For a commit that has had no request, work pins the head's merge base with the canonical branch, as `sdlc/procedure/lifecycle/work/review-commits` pins its candidate, and refuses a head that has none. A verdict whose pinned base does not lie on the canonical branch is recorded as not covering that branch. A later version of a settled commit keeps the pinned base of the version it replaces. `--base` states where the review started and is admitted when it is the pinned base or one of that base's ancestors. | The pinned base. |
-| Independence | No commit after the pinned base up to the head names the reviewing session in its `Session:` trailer. | The commits that name the reviewing session. The door is a review by a session none of them names. |
-| Settlement | This computer holds no verdict of the commit, or the verdict is a revision: the commit's verdict stands here, the caller is the session that recorded the current version, and, where a review request for this commit reached that session, the turn the session has in progress when it offers the verdict was not opened by such a request. | The settled verdict and `instrukt review show`; for the session that recorded it, which of the answers below applied; for a verdict this computer handed off, the export and its door (Evidence when the serving computer changes). |
-| Report | A non-empty report is supplied. It is stored whole with the version. | The missing report. |
-
-A review request is answered in the turn it opened. A verdict the settling
-session offers in such a turn, for a commit that is already settled, answers
-that request a second time. Only a session that a request of the commit
-reached can be in such a turn, so work reads the commit's requests first
-(`project/instrukt/spec/feature/runner/pull-request-review`).
-
-| The commit's requests | The settling session's offer |
+| Fact | Rule |
 | --- | --- |
-| None was handed over to that session, and none that delivery selected is still to be handed over | Is admitted as a revision from the stores alone. The reviewer of a commit that never had a request is always in this row. |
-| One was handed over to that session, or one that delivery selected is still to be handed over | Is decided by which input opened the turn the session has in progress when it offers the verdict. |
+| Repository | `--head` names the full SHA of a commit held by the project repository. |
+| Reviewer | The calling session resolves to a native session and records its own verdict directly. |
+| Range | The first verdict pins the request's recorded base, or the head's merge base with the canonical branch. Revisions keep that pinned base. `--base` accepts the pinned base or an ancestor. A pinned base outside the canonical branch is recorded as non-covering. |
+| Independence | The reviewing session must differ from every authoring session named by a `Session:` trailer in the pinned range. The refusal lists matching commits. |
+| Settlement | The first verdict establishes the settlement. The same reviewing session may revise a verdict that stands locally. A different reviewer or a locally handed-off settlement is refused. |
+| Report | A non-empty report is retained whole with its digest. |
 
-Which input opened that turn is the runner's answer. Every other verdict is
-admitted or refused from the stores alone.
-
-| The runner answers | The offered verdict |
-| --- | --- |
-| Something other than a review request for this commit opened that turn | Is admitted as a revision. |
-| A review request for this commit opened that turn | Is refused; no version is recorded. |
-| The session has no turn in progress | Is refused; a revision is recorded within a turn of its session. |
-| The runtime cannot say | Is asked for again until the command's own wait has passed, and is then refused. No version is recorded, and the refusal names the runtime that could not answer and its door: the same command with the same report, once the runtime answers. |
-
-Every offered verdict is thus recorded or refused within the command's wait,
-and a commit either has a current verdict or has none. A revision is the
-commit's current version from the write that records it, and work answers the
-commit by it before anything of it is published. Until then the earlier
-version is current and stays published.
+A first verdict can record the number of the request already associated with
+the reviewing session. Request standing and live runtime activity do not
+control recording. A revision becomes current when the write commits.
+Earlier versions remain readable.
 
 A commit without a `Session:` trailer names no session, and that is its true
 state (`general/concept/lineage-vs-authorship`). Work refuses nothing on that
@@ -309,47 +304,6 @@ each tick before anything of the approval is written
 
 A derived approval that GitHub shows as the commit's status is withdrawn by
 nothing.
-
-### A handed-over approval
-
-An approval its reviewing session returned through native messaging and did
-not record is entered by another session.
-`instrukt review record --reviewer <session>` names the reviewing session; the
-entering session supplies the head, the base and the report, and adds no
-judgment of the reviewed change.
-
-The command is the entering session's statement that the report is the named
-session's result for the head as it stands: it read that session's
-conversation from the return of the report to its end and found no later
-result for the head and no withdrawal. Whether a later message replaces,
-withdraws or only mentions an approval is read by that session and is not
-computed (`general/principle/intelligence-boundaries`). Work records the
-statement with the entering session and establishes these facts beside it.
-
-| Established by work | Rule |
-| --- | --- |
-| The return | The named session's conversation is read through the runner (`project/instrukt/spec/feature/runner/history`). A message that session itself authored names the full head commit together with the SHA-256 digest of the supplied report. Other digests in that message, and what other messages name, decide nothing. |
-| The base | The base the entering session supplies is named, as a full commit, in such a message or in the supplied report. |
-| The verdict | The supplied report ends in the approving verdict line, in the form `sdlc/procedure/lifecycle/review` fixes for a report. A needs-work result is not admitted this way. |
-| The entering session | It resolves as the Reviewer row resolves a caller, is not the named session, and no commit after the pinned base up to the head names it in its `Session:` trailer. |
-| The commit | Repository, Request, Range, Independence and Report hold as above with the named session as the reviewing session, and the commit has no verdict. |
-
-A reviewing session returns the reviewed head with its report's digest and
-keeps the base with the report
-(`sdlc/procedure/lifecycle/work/review-commits`). What work establishes is
-that this report is the named session's own, for this head and this range.
-That it still stands is established by the statement and by nothing else: the
-identifiers of a conversation admit no approval on their own, and no command
-enters one without a session that states it.
-
-The verdict is recorded as the named session's, with the entering session and
-its statement, and counts like any other head verdict. A conversation that
-cannot be read, no authored message that names the head together with this
-report's digest, a base named in neither place, a report without that verdict
-line, and an entering session that is the named session or that a reviewed
-commit names each leave the approval unrecorded, and the refusal names which.
-The named session records its own result without `--reviewer`. A head whose
-approval is not entered owes its review like any other.
 
 ### Verdict publication
 
@@ -442,7 +396,7 @@ workflow's finding names it.
 | A finalized commit approved in its todo's record | The todo, the build-review approval bound to that exact commit and its report's digest, and the todo's pull request when that approval was reflected there as a review (`project/instrukt/spec/feature/work/github-record`). |
 | A reviewed preparation head approved in its todo's record | The todo, that approval bound to the exact commit and its report's digest (`project/instrukt/spec/feature/work/stamps`). No pull-request review exists for it and none is cited. |
 | An exempted commit | The commit, the exemption's basis and who declared it. |
-| A reproduced merge, documentation fold or revert | The commits it was reproduced from, named as reproduced. |
+| A reproduced merge, documentation fold, revert or rendering of the repository's agent material | The commits it was reproduced from, named as reproduced. |
 
 Every eligible pull request at a commit thus receives its own native review
 from the commit's one verdict: the pull request a request was addressed to and
@@ -699,6 +653,22 @@ adds them with administrator permission. GitHub adds a member of the owning
 organisation at once; anyone else receives an invitation from GitHub, and
 holds administrator access once they accept it.
 
+A company repository admitted for automatic review needs one more
+credential for its knowledge proposals:
+
+| Credential | Identity | Permissions | Used for |
+| --- | --- | --- | --- |
+| Proposal pull requests | The identity the `company-agent` role selects | Write access to pull requests, read access to contents | Opening a knowledge proposal's pull request. |
+
+Work answers its readiness as it answers automatic review's, by requesting
+the credential with exactly those permissions: met; unmet, a finding naming
+the App, the repository, the missing permission and the configuration repair
+door; or GitHub cannot be asked. It is a readiness of its own, apart from
+automatic review's, and it is never the reviewer identity. Verification
+writes no state. What an unmet or unaskable answer withholds is the runner's
+(`project/instrukt/spec/feature/runner/pull-request-review`, Knowledge
+proposals in a company home).
+
 ## Use cases
 
 ### UC-GA1: See bot authorship and receive an independent native review
@@ -790,22 +760,6 @@ But a later head of that pull request carries no status from that verdict
   for the retention period. No later derivation gives it again, and it is in
   no export: a computer that serves next derives the candidate's coverage for
   itself and holds no account of an earlier withdrawal.
-- A handed-over approval is admitted only from a conversation instrukt can
-  still read and with a report that ends in the fixed verdict line. Work
-  establishes that the named session returned that report for that head. That
-  the result still stands is the entering session's statement after reading
-  that conversation; work records it and verifies nothing of it.
-- A revision offered in a turn that a review request for the same commit
-  opened is refused; the reviewing session records it in another turn. The
-  answer rests on the input that opened the turn, so a request that a runtime
-  steers into a running turn is not seen by it
-  (`project/instrukt/spec/feature/runner/pull-request-review`).
-- While the runtime cannot say which input opened the turn a revision is
-  offered in, the revision is refused and the earlier version stays current.
-  GitHub keeps showing that version and enforces by it: where it approved, a
-  required review check on the commit stays met until the reviewing session
-  records the revision once the runtime answers. Only a session that a review
-  request of the commit reached is asked that question.
 - While a candidate's needs-work verdict is admitted and its failure status
   not yet published, GitHub still shows the earlier approving status and would
   accept the push; the candidate's failed result is what holds it back

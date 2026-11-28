@@ -37,14 +37,15 @@ transport or integration delivery adapts to the existing process. A reviewer
 raises such an alteration as significant unrequested behavior, whatever its
 quality. When the human explicitly directs an ad-hoc process change inside an
 eligible authoring session — including an orchestrator supervising an unrelated
-delivery — that session may author it in a separate clean worktree and branch
-from the canonical branch, leaving any active delivery's worktree and branch
+delivery — that session authors it as ad hoc work in a one-off worktree
+(`general/policy/commits`), leaving any active delivery's worktree and branch
 untouched, declaring human presence at each commit under
 `general/policy/human-involvement-recording`, and submitting it to an
 independent commit reviewer. A delivery whose own stated purpose is a process
-change keeps authoring its pending contract on its assigned worktree, and a
-role whose grants forbid authoring refuses with the door to an eligible
-session.
+change has its pending contract written where `general/policy/commits` places
+it — ahead, by the human-directed session in that one-off worktree, or by its
+orchestrator and the workers it dispatches in its own worktree — and a role whose grants forbid authoring
+refuses with the door to an eligible session.
 
 The process artifact creates no human decision. Apply
 `general/policy/human-contract` to the underlying consequence. Only a material

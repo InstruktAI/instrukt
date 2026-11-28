@@ -65,6 +65,24 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
         Some((path, query)) => (path.to_owned(), query.to_owned()),
         None => (url.clone(), String::new()),
     };
+    let invalid_api_version = {
+        let api_versions: Vec<&str> = request
+            .headers()
+            .iter()
+            .filter(|h| {
+                h.field
+                    .as_str()
+                    .as_str()
+                    .eq_ignore_ascii_case("x-github-api-version")
+            })
+            .map(|h| h.value.as_str())
+            .collect();
+        (api_versions.len() > 1
+            || api_versions
+                .first()
+                .is_some_and(|v| !matches!(*v, "2022-11-28" | "2026-03-10")))
+        .then(|| api_versions.join(","))
+    };
     let headers: BTreeMap<String, String> = request
         .headers()
         .iter()
@@ -121,7 +139,17 @@ pub(super) fn serve(mut request: tiny_http::Request, state: &Mutex<State>, front
     // them without a credential.
     let public_app = path.starts_with("/apps/");
     let public_account = method == "GET" && path.starts_with("/users/");
-    let mut reply = if jwt_endpoint && jwt.is_none()
+    let mut reply = if let Some(given) = invalid_api_version {
+        Reply::json(
+            400,
+            json!({
+                "message": "Bad Request",
+                "errors": format!(
+                    "The version you specified in the \"X-GitHub-API-Version\" request header, \"{given}\", is not a supported version.",
+                )
+            }),
+        )
+    } else if jwt_endpoint && jwt.is_none()
         || (!jwt_endpoint && !public_app && !public_account && token.is_none())
     {
         Reply::json(401, json!({"message":"Bad credentials"}))

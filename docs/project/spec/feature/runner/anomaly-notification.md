@@ -50,9 +50,8 @@ bound, a message no turn has taken past that bound, and a message whose turn kee
 failing (`project/instrukt/spec/feature/runner/session-continuity`,
 `project/instrukt/spec/feature/company/conversations`). Each is also listed in
 `instrukt events status` with its door, whether or not a notification command is
-configured, so the operator sees it when the runtime offers no notification
-(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
-the operator).
+configured, so the operator sees what automation cannot resolve even when the
+runtime offers no notification.
 
 For a stopped execution, `instrukt events status` lists its work item,
 session, workflow state and whether a notification command is configured.

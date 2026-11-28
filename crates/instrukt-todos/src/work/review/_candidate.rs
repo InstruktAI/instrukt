@@ -10,7 +10,7 @@ use jiff::Timestamp;
 
 use super::{
     _published, _recognition, DeliveryState, Derived, Destination, Moment, REMOTE, ReviewError,
-    ReviewWork, Verdict, derived_approval, derived_target, evidence, refused,
+    ReviewWork, approving, derived_approval, derived_target, evidence, refused,
 };
 use crate::evidence::ContentDigest;
 
@@ -166,10 +166,7 @@ impl crate::workflow::CoverageEvidence for CoverageReader<'_> {
     fn approved(&self, commit: &CommitSha) -> Result<Option<crate::workflow::Approved>, String> {
         let held =
             evidence(&self.work.home, &self.project.slug, commit).map_err(|e| e.to_string())?;
-        if let Some(version) = held.current()
-            && version.verdict == Verdict::Approve
-            && version.base_on_canonical
-        {
+        if let Some(version) = approving(&held) {
             return Ok(Some(crate::workflow::Approved {
                 reference: format!(
                     "head verdict {} of {commit} by {}",

@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/progressive-retrieval.rs
-assertion_line: 895
 expression: "stdout(&env, &read)"
 ---
 # instrukt docs get --domain acme
@@ -66,15 +65,15 @@ Text.
 
 `- [acme/principle/care](../principle/care.md)`
 
-# Beta
+# General
 
-## Thing — Spec
+## Ground — Spec
 
 ### What it is
 
 #### Detail
 
-A thing.
+The ground.
 
 ### Canonical fields
 

@@ -97,7 +97,7 @@ one rule whatever the root is:
 | `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
 | `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
-| `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, receiver placement/health, the runner service's state, the last skipped wake with its time and cause until a wake that is not skipped, and each connector's connection; masks credentials. |
+| `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, undeliverable requested-review verdict notices with their count and the most recent ones, receiver placement/health, the runner service's state, the last skipped wake with its time and cause until a wake that is not skipped, and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |
 | `instrukt webhooks serve` | Internal receiver entry point for owned service definitions; refuse before binding on non-ingress, or with neither an enabled valid source nor `ingress.url` set with events enabled. |
 
@@ -117,7 +117,7 @@ Successful configuration is distinct from successful installation. An interrupte
 or partially failed install reports its completed and remaining resources;
 rerunning reconciles observed state rather than assuming the prior run completed.
 An interrupted install is completed by the next one: every definition is written
-again under its name (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof).
+again whole under its name without checking proof of earlier writes.
 Reports name installed, reused, repaired, withdrawn, externally supplied or
 unmet resources, their paths/units and demanding project identities, without
 expanded credentials. A failed prerequisite never produces an overall success.
@@ -200,7 +200,8 @@ holder when known, and its manager starts it again. An acquired lock is kept
 even when the wait bound has elapsed. Installation writes the service's
 definition and restarts the service every time it runs, so the installed
 executable and configuration are the ones running; it keeps no record of what the
-running process executes (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). `install --check` reports
+running process executes, rewriting instrukt's own unit whole without consulting
+any prior write record. `install --check` reports
 a missing, stopped or unloaded service as unmet demand without changing it.
 
 `instrukt events status` reports the service as `runner_service` in one of
@@ -232,11 +233,29 @@ events off; it prepares no event consumers solely for history. The private
 Redis's configuration and ACL are written from the stored secret on every
 install and the service is restarted when they change; an existing secret is
 reused and a missing one is generated, and the data Redis keeps stays reachable
-with it (`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Installation checks a Redis it started or restarted only
+with it, rewriting instrukt's own Redis files whole without checking proof of
+earlier writes. Installation checks a Redis it started or restarted only
 once it answers and has finished loading its data, waiting a bounded time for
 both; past the bound the check reports what Redis answers. Read-only inspection reports a pending repair without changing
 files or services. An unused local
 event Redis is withdrawn when history points at an external cluster.
+
+Where `redis.cluster.url` is configured and the computer has any demand —
+history, events, an MCP server with sign-in, the minute wake-up or the runner
+service — installation and `install --check` also check the fleet query's
+permissions on the cluster user (`project/instrukt/spec/domain/runner`): setting
+this computer's entry on the fleet membership record and reading the record,
+and the evaluation kind's request/reply (lists, transactions and expiry). A
+computer whose only runner is the minute `instrukt tick` is checked like one
+that runs `instrukt run`. The proof is `ACL DRYRUN` on the production key
+forms, as for history. When the cluster store is instrukt's own Redis, the ACL
+installation writes for it grants these permissions, so convergence meets them.
+For an operator-supplied cluster store a denial is an unmet finding with its
+door: grant the fleet query's permissions to the cluster Redis user, then
+`instrukt install`.
+A computer without a cluster connection is not checked: it keeps no
+membership entry and answers no fleet request. A module filter checks these
+permissions when it covers one of those demands.
 
 For events, reuse an explicitly configured working local Unix-socket Redis
 without rewriting its config, credentials or service. Otherwise install the
@@ -362,7 +381,8 @@ the default home keeps today's names. An earlier unit without the suffix that na
 this non-default home in its environment is withdrawn by this home's install; the
 default home never touches a unit naming another home. Anything under another name
 is never read or touched; an incomplete demand still withdraws nothing
-(`project/instrukt/policy/checks-and-guards`: instrukt's own places are written without proof). Cron withdrawal replaces or removes only the line marked with this home's name.
+(instrukt writes and withdraws only its own named places without consulting
+earlier write records). Cron withdrawal replaces or removes only the line marked with this home's name.
 Withdrawal stops/unregisters owned units only; it never
 deletes the database, Redis data, streams, pending delivery records, credentials
 or foreign services, and never uninstalls a shared Redis executable. Re-enable

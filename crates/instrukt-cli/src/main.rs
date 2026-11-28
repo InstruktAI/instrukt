@@ -26,8 +26,8 @@ use std::sync::OnceLock;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use crate::commands::{
-    agents, blueprint, bugs, company, config, discuss, docs, eval, events, history, mcp,
-    repository, review, runner, secrets, specs, sync, todo, webhooks,
+    agents, blueprint, bugs, company, config, docs, eval, events, history, mcp, repository, review,
+    runner, secrets, specs, sync, todo, webhooks,
 };
 use crate::context::Ctx;
 
@@ -47,8 +47,6 @@ enum Command {
     Status(commands::status::StatusArgs),
     /// Park, inspect and remove known-issue dispositions for the log bug hunter.
     Bugs(bugs::BugsArgs),
-    /// Open or close this native thread's conversation link.
-    Discuss(discuss::DiscussArgs),
     /// Configured profiles and expiring profile/model availability.
     Agents(agents::AgentsArgs),
     /// Reach the MCP servers declared for this caller: list them, list one's
@@ -109,6 +107,7 @@ static LOG_DESTINATION: OnceLock<LogDestination> = OnceLock::new();
 
 fn main() -> ExitCode {
     install_panic_hook();
+    instrukt_outside::http::ensure_crypto_provider();
     // The connector kinds this binary supports reach configuration before
     // anything reads it.
     instrukt_core::config::install_connector_declarations(&connectors::DECLARATIONS);
@@ -193,6 +192,12 @@ fn run() -> ExitCode {
     let deferred_patch = matches
         .subcommand()
         .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
+    let agents_patch = matches.subcommand().is_some_and(|(name, args)| {
+        name == "config"
+            && args
+                .subcommand_matches("patch")
+                .is_some_and(|patch| patch.get_flag("agents"))
+    });
     // Adding a company reads no working directory and converges nothing
     // before its caller is admitted (`project-initialization`, Adding a
     // company).
@@ -239,7 +244,12 @@ fn run() -> ExitCode {
                 layers.push(instrukt_core::config::Layer::Project(root));
             }
             if matches.subcommand().is_some_and(|(name, args)| {
-                name == "agents" || (name == "config" && args.subcommand_name() == Some("show"))
+                name == "agents"
+                    || (name == "config"
+                        && (args.subcommand_name() == Some("show")
+                            || args
+                                .subcommand_matches("get")
+                                .is_some_and(|get| get.get_flag("agents"))))
             }) && let Some(notice) = instrukt_core::config::Agents::inspection_notice(&ctx.home)?
             {
                 eprintln!("instrukt: {notice}");
@@ -277,7 +287,8 @@ fn run() -> ExitCode {
     }
     if deferred_patch || company_init {
         ctx.home = ctx.home.for_writing();
-        if let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home) {
+        if !agents_patch && let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home)
+        {
             return report(&error.into());
         }
     }
@@ -291,7 +302,6 @@ fn run() -> ExitCode {
         Command::Bugs(args) => bugs::run(args, &mut ctx),
         Command::Status(args) => commands::status::run(&args, &mut ctx, None),
         Command::DevSeed => seed_development(&mut ctx),
-        Command::Discuss(args) => discuss::run(args, &mut ctx),
         Command::Company(args) => company::run(args, &mut ctx),
         Command::Mcp(args) => mcp::run(args, &mut ctx),
         Command::Agents(args) => agents::run(args, &mut ctx),
@@ -423,7 +433,6 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         Command::DevSeed => "dev-seed",
         Command::Status(_) => "status",
         Command::Bugs(_) => "bugs",
-        Command::Discuss(_) => "discuss",
         Command::Company(_) => "company",
         Command::Mcp(_) => "mcp",
         Command::Agents(_) => "agents",
@@ -467,6 +476,7 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_company",
         "instrukt_connector",
         "instrukt_connector_slack",
+        "instrukt_outside",
     ];
     let builder = || {
         APP_TARGETS.iter().fold(
@@ -476,11 +486,11 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
     };
     let mut file = builder();
     if matches!(command, Command::Mcp(_)) {
-        // The HTTP client's records carry what an MCP server sent back, a
-        // reflected login among it, before instrukt can remove it: for this
-        // command no third-party record below a warning is written.
+        // Third-party HTTP and MCP SDK loggers can emit raw server payloads or
+        // unexpected pre-initialization messages at WARN/ERROR before instrukt
+        // scrubs credentials: suppress all third-party targets for `mcp`.
         file = file.env_lookup(|name| match name {
-            "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("WARNING".into()),
+            "INSTRUKT_THIRD_PARTY_LOG_LEVEL" => Some("CRITICAL".into()),
             "INSTRUKT_THIRD_PARTY_LOGGERS" => None,
             other => std::env::var_os(other),
         });

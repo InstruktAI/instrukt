@@ -19,21 +19,9 @@ branch protection.
 
 ### Candidate and verification
 
-The finalized candidate is the shared `<slug>/work` branch head carrying an
-independent reviewer's `build_review` `approve` stamp bound to that exact commit
-SHA and `--finalize-ready` under
-`project/instrukt/spec/feature/workflow/delivery-cycle`. The integrator reads
-that branch and stamped commit; it does not inherit a shared todo worktree.
-
-The integrator merges finalized candidates into its own integration worktree
-and pushes the resulting commit to `integrate`. It may batch
-candidates according to its judgment. A merge conflict remains work for the
-integrator to resolve before there is a candidate to verify.
-
-The integrator receives reviewed todo or one-off worktree heads. Main has no
-independent authoring commits to discover: only the integrator merges
-candidates, and publication goes live atomically at that integration. A
-dependent todo waits for delivery of the contracts it requires.
+The finalized candidate is the workspace commit identified by the exact-SHA
+approval, verification disposition and `--finalize-ready` stamp defined in
+`project/instrukt/spec/feature/workflow/delivery-cycle`.
 
 The active candidate is the fetched `origin/integrate` head while it is not
 already contained in remote canonical main. An absent integrate ref or a head
@@ -87,16 +75,7 @@ project that has not opted in,
 classification reads every status and check run as before, a review status
 published earlier included.
 
-| Observed result | Integrator obligation |
-| --- | --- |
-| Required CI checks are green for the candidate | Fast-forward the canonical branch to that exact commit and push it. |
-| Candidate CI is red | Read the failure and choose the remediation: return it to the responsible todo as findings, make a trivial fix, or isolate the offending member of a batch. |
-| Verification has not completed or its result belongs to another commit | Keep the candidate unpromoted. |
-| The canonical branch no longer admits the verified fast-forward | Reconcile a candidate against the current canonical branch and obtain verification for the resulting commit. |
-
-Any candidate altered by remediation is verified in its resulting form before
-promotion. The standing integrator drives this process; an automatic merge
-queue does not select, merge or discard candidates on its behalf.
+CI evidence applies to the exact commit reported in the result.
 
 ### Review coverage of a candidate
 
@@ -123,6 +102,7 @@ each of them must be one of these.
 | A merge of the canonical branch | Its second parent is contained in the canonical branch, and its tree is what git's own merge of its two parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
+| A rendering of the repository's agent material | In a company home, its tree is what rendering the repository's agent material from its parent's tree produces. | The rendering reproduced from its parent by publication's one rendering operation (`project/instrukt/spec/domain/publication`). |
 | A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
 <!-- change:author-recorded-review-routing -->
 takes every commit the candidate contains and the canonical branch does not,
@@ -134,6 +114,7 @@ whichever parent brought it in, and each of them must be one of these.
 | A merge git reproduces | Its tree is what git's own merge of its parents produces. | Reproduced from its parents. |
 | A documentation fold | Its tree is what folding one delivery's pending documentation produces from its parent's tree, and that delivery's approved head is incorporated below it in this candidate. | The fold reproduced for that delivery (`project/instrukt/spec/feature/docs/pending-documentation`, Delivery fold). |
 | A revert of the failing delivery | The canonical head the candidate is based on is one the runner observed red, and the commit undoes only what that head's own promotion added: its tree is what git's own revert of one commit that promotion added produces from its parent's tree, or it is exactly the tree the canonical branch had before that promotion. | The runner's red observation of that head; work's evidence of that head as a candidate, which names the canonical head it was promoted from; the revert reproduced. |
+| A rendering of the repository's agent material | In a company home, its tree is what rendering the repository's agent material from its parent's tree produces. | The rendering reproduced from its parent by publication's one rendering operation (`project/instrukt/spec/domain/publication`). |
 | A commit its author exempted | Work holds an exemption for it. | Work's exemption record (`project/instrukt/spec/feature/work/github-apps`). |
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -169,7 +150,7 @@ this way.
 | Finding | What follows |
 | --- | --- |
 | Every commit is covered | Work records a derived approval with the canonical head and every covering item, each named with the kind of evidence it rests on and where that evidence is kept, and publishes it (`project/instrukt/spec/feature/work/github-apps`). A derived approval recorded earlier that GitHub does not show yet is published with this finding's coverage. The candidate owes no review, and a request for it that is still queued ends. |
-| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/policy/checks-and-guards`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when no commit left uncovered has an author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
+| A commit is not covered | The candidate is held. A derived approval recorded earlier that GitHub does not show yet is withdrawn through work and publishes nothing. Each commit not covered whose authoring session can decide is asked of that session once: ask for the independent review of its head, or record why it owes none (`general/policy/commits`). The integrator is told once that the candidate is held, for which commits and whose decisions. While the runtime cannot be asked, nothing is asked or started on that account; the ask is retried and the runtime's state reported (`project/instrukt/design/architecture/outside-gate`). A commit that names no authoring session, or one the runtime answers it does not hold or holds archived or deleted, has no author of ours who can decide. Only when no commit left uncovered has an author of ours who can decide does the runner ask for an independent review of the exact candidate (`project/instrukt/spec/feature/runner/pull-request-review`, Candidate requests), and that review's verdict is the candidate's review status. |
 | The repository cannot answer | Nothing is recorded, withdrawn, published or asked; the next tick derives again. |
 <!-- /planned-change:author-recorded-review-routing -->
 
@@ -230,15 +211,30 @@ never from a candidate: a canonical head carrying no status and no check run
 means the project has no CI. A just-pushed candidate with nothing reported yet
 is pending, not evidence of a project without CI.
 
-For a project without CI the integrator runs the project's documented test
-command in the integration worktree against the candidate. Success supplies
-the local admission evidence for that exact commit; failure remains with the
-integrator for judgment under the same remediation routes. An unavailable or
-failing command does not establish a green candidate.
+A `no_ci` result identifies the exact candidate and the absence of CI
+evidence. Local verification outcomes apply to the commit tested.
 
-This local check is the integration gate. Builders, reviewers and the pure
-workflow evaluator do not add suite execution to their steps. Project-owned
-hooks and CI retain their own checks.
+### A company home's candidate
+
+Every candidate of a company home carries the repository's agent material,
+the home's rendered `AGENTS.md`
+(`project/instrukt/spec/feature/publication/agent-entrypoints`) and the
+company's skill with its plugin catalog entry
+(`project/instrukt/spec/feature/publication/company-plugin`), rendered by
+`instrukt docs render --plugin` from the knowledge that candidate holds and
+committed in it before it is verified. Once the repository exists, the
+integrator is the only writer that renders them onto its default branch
+(`general/policy/commits`).
+
+A candidate whose rendering is refused, or whose committed agent material
+differs from what its knowledge renders, holds no admission: it stays
+unpromoted and its failure stays with the integrator under the remediation
+routes above. For a company home without CI, `instrukt docs render --plugin
+--check` passing on the exact candidate is the local admission evidence.
+
+The commit that carries the rendering is covered by reproduction (Review
+coverage of a candidate) and owes no review of its own, as a mechanical change
+owes none (`general/policy/commits`).
 
 ### Recovery of a red canonical branch
 
@@ -342,9 +338,7 @@ But a dirty checkout or non-fast-forward history is reported and preserved for r
 
 ### UC-IG5: Build after preparation contracts are published (retired)
 
-Retired: preparation and build share one `<slug>/work` worktree under the
-unified `todo-orchestrator`, with no separate `<slug>/prepare` integration
-handoff before build.
+Repository todos share one `<slug>/work` worktree.
 
 ### UC-IG6: A developer gets failed dependency updates assessed without watching every bot PR
 

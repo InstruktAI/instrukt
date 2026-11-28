@@ -14,7 +14,7 @@ pub struct EventsArgs {
 
 #[derive(Debug, clap::Subcommand)]
 enum EventsCommand {
-    /// Inspect module infrastructure, scoped transport, retained readers, failures and conversation links.
+    /// Inspect module infrastructure, scoped transport, retained readers and failures.
     Status {
         #[arg(long)]
         json: bool,

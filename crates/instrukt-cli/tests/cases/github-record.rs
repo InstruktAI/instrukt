@@ -34,10 +34,16 @@ const CLOSE: &str = " -->";
 fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
     let mut project = Project::new();
     project.create("nested-lists", "feature", INTENT);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create must not contact GitHub"
+    );
+    project.tick();
     let reflected_before = project.github.artifacts(REPOSITORY, 1);
 
     project.github.stop();
     let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.tick();
     let shown = project.ok(["show", "nested-lists"]);
     let read = project.ok(["artifacts", "read", "nested-lists", "prd"]);
 
@@ -57,6 +63,11 @@ fn progress_recorded_while_github_is_unreachable_stays_local_and_pending() {
 fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reason() {
     let project = Project::new();
     project.create("nested-lists", "feature", INTENT);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create must not contact GitHub"
+    );
+    project.tick();
     project.github.respond_once(
         "POST",
         "/issues/1/artifacts",
@@ -71,7 +82,14 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
         },
     );
 
+    let requests_before = project.github.requests().len();
     let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before,
+        "artifacts write must not contact GitHub"
+    );
+    project.tick();
     let read = project.ok(["artifacts", "read", "nested-lists", "prd"]);
     let attempts = project
         .github
@@ -80,6 +98,7 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     // Another change reflects the todo again; the refused content is not
     // sent again, and the rest of its reflection goes on.
     project.ok(["update", "nested-lists", "--hold", "--reason", "waiting"]);
+    project.tick();
     assert_eq!(
         project
             .github
@@ -90,11 +109,33 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     );
     assert!(labels(&project.github.issue(REPOSITORY, 1).unwrap()).contains("on-hold"));
     let shown = project.ok(["show", "nested-lists"]);
+    // Writing the refused content again records nothing: nothing changed.
+    let rewritten = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    // Once its grounding moves, the same content is a new version; it repeats
+    // the refused one, so it is not sent either and the refusal still holds.
+    let moved = |project: &Project| {
+        let args = ["commit", "--allow-empty", "--quiet", "-m", "moved"];
+        project.env.git(project.repo.path(), args);
+    };
+    moved(&project);
+    let regrounded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.tick();
+    assert_eq!(
+        project
+            .github
+            .requests_to("POST", "/issues/1/artifacts")
+            .len(),
+        attempts,
+        "the refused content was sent again as a later version"
+    );
+    let reshown = project.ok(["show", "nested-lists"]);
 
     // The door is the artifact's next version: once GitHub accepts it, the
     // refused version no longer holds the todo's reflection back.
     const NEXT: &str = "Lists keep their depth, and numbering restarts per level.";
-    let next = project.ok(["artifacts", "write", "nested-lists", "prd", NEXT]);
+    project.ok(["artifacts", "write", "nested-lists", "prd", NEXT]);
+    project.tick();
+    let next = project.ok(["show", "nested-lists"]);
     // The same holds for an artifact already on GitHub.
     let prd = project
         .github
@@ -117,9 +158,27 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
         },
     );
     const REFUSED_AGAIN: &str = "Lists keep their depth in every renderer.";
-    let refused_again = project.ok(["artifacts", "write", "nested-lists", "prd", REFUSED_AGAIN]);
+    project.ok(["artifacts", "write", "nested-lists", "prd", REFUSED_AGAIN]);
+    project.tick();
+    let refused_again = project.ok(["show", "nested-lists"]);
     const LATER: &str = "Lists keep their depth through parse, render and export.";
-    let later = project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    project.tick();
+    // Accepted content written again on a moved grounding is not sent again.
+    let patches = project
+        .github
+        .requests_to("PATCH", &format!("/issues/1/artifacts/{prd}"));
+    moved(&project);
+    project.ok(["artifacts", "write", "nested-lists", "prd", LATER]);
+    project.tick();
+    assert_eq!(
+        project
+            .github
+            .requests_to("PATCH", &format!("/issues/1/artifacts/{prd}"))
+            .len(),
+        patches.len(),
+        "unchanged content was sent to GitHub again"
+    );
     let settled = project.ok(["show", "nested-lists"]);
     // Neither refused version was sent again.
     let sent = |content: &str| {
@@ -139,7 +198,7 @@ fn progress_whose_reflection_github_refuses_stays_local_and_reports_githubs_reas
     insta::assert_snapshot!(
         "refused-by-github",
         redact(&format!(
-            "{recorded}---\n{read}---\n{shown}---\n{next}---\n{refused_again}---\n{later}---\n{settled}"
+            "{recorded}---\n{read}---\n{shown}---\n{rewritten}---\n{regrounded}---\n{reshown}---\n{next}---\n{refused_again}---\n{settled}"
         ))
     );
 }
@@ -370,6 +429,7 @@ fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_is
         "schema_version: 1\nproject: demo\nmodules: {todos: true}\ngithub: {repository: acme/demo, approvers: [maintainer]}\n",
     );
     project.create("nested-lists", "feature", INTENT);
+    project.tick();
     // The issue already carries a record comment an earlier instrukt wrote,
     // and the developer and a collaborator discuss the todo there.
     project.github.seed_comment(
@@ -410,6 +470,7 @@ fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_is
         "log",
         "Joined the cases.",
     ]);
+    project.tick();
     let prefix = &hex::encode(Sha256::digest(PRD.as_bytes()))[..12];
     project.github.seed_comment(
         REPOSITORY,
@@ -418,7 +479,7 @@ fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_is
         "COLLABORATOR",
         &format!("/instrukt approve prd {prefix}"),
     );
-    project.ok(["show", "nested-lists"]);
+    project.tick();
     project.ok([
         "artifacts",
         "write",
@@ -426,6 +487,7 @@ fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_is
         "log",
         "Approved; building.",
     ]);
+    project.tick();
 
     let conversation: Vec<String> = project
         .github
@@ -450,6 +512,7 @@ fn progress_agents_record_adds_nothing_to_the_conversation_people_hold_on_the_is
 fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending() {
     let mut project = Project::new();
     project.create("nested-lists", "feature", INTENT);
+    project.tick();
     std::fs::remove_file(project.env.instrukt_home().join("secrets.env")).unwrap();
     let requests_before = project.github.requests().len();
     let gh_config = project.env.path("gh-config");
@@ -460,6 +523,7 @@ fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending(
         .set_env("GH_CONFIG_DIR", gh_config.to_str().unwrap());
 
     let recorded = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.tick();
     let shown = project.ok(["show", "nested-lists"]);
 
     insta::assert_snapshot!(
@@ -478,23 +542,30 @@ fn progress_recorded_without_credentials_stays_local_and_says_why_it_is_pending(
 fn reflection_held_back_by_rate_limiting_or_another_reflection_completes_later() {
     let project = Project::new();
     project.create("nested-lists", "feature", INTENT);
+    project.tick();
     // GitHub limits the next two requests; its window has already reset.
     project.github.rate_limit_next(2, 0);
 
-    let limited = project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
-    let still_limited = project.ok([
+    project.ok(["artifacts", "write", "nested-lists", "prd", PRD]);
+    project.tick();
+    let limited = project.ok(["show", "nested-lists"]);
+    project.ok([
         "artifacts",
         "write",
         "nested-lists",
         "prd",
         "Lists keep their depth, and numbering restarts per level.",
     ]);
-    let accepted = project.ok(["artifacts", "write", "nested-lists", "log", "Started."]);
+    project.tick();
+    let still_limited = project.ok(["show", "nested-lists"]);
+    project.ok(["artifacts", "write", "nested-lists", "log", "Started."]);
+    project.tick();
+    let accepted = project.ok(["show", "nested-lists"]);
     let reflected = retained_artifacts(&project);
 
-    // Another process is reflecting: a first command's reflection stops at
-    // its issue update. A second command records its progress and returns
-    // without waiting for that reflection.
+    // Another process (the runner tick) is reflecting: its reflection stops at
+    // its issue update. A concurrent todo command records its progress and
+    // returns without waiting for that reflection or contacting GitHub.
     let todo = |args: &[&str]| {
         let mut command = project.env.instrukt_process(project.repo.path());
         command
@@ -504,19 +575,23 @@ fn reflection_held_back_by_rate_limiting_or_another_reflection_completes_later()
             .stderr(std::process::Stdio::piped());
         command
     };
-    let fields = project.github.pause_once("PATCH", "/issues/1");
-    let first = todo(&[
+    project.ok([
         "artifacts",
         "write",
         "nested-lists",
         "log",
         "Joined the cases.",
-    ])
-    .spawn()
-    .unwrap();
+    ]);
+    let fields = project.github.pause_once("PATCH", "/issues/1");
+    let first = project
+        .tick_command()
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
     assert!(
         fields.wait_until_received(std::time::Duration::from_secs(30)),
-        "the first command's reflection never reached GitHub"
+        "the runner tick's reflection never reached GitHub"
     );
     let second = exited_within(
         todo(&[
@@ -536,9 +611,8 @@ fn reflection_held_back_by_rate_limiting_or_another_reflection_completes_later()
     drop(fields);
     let first = first.wait_with_output().unwrap();
     assert!(first.status.success(), "{first:?}");
-    // The next reflection that takes the lock — here a command that changes
-    // nothing — reflects what the second command left pending.
-    project.ok(["update", "nested-lists"]);
+    // The next runner tick reflects what the second command left pending.
+    project.tick();
 
     insta::assert_snapshot!(
         "rate-limited-then-reflected",
@@ -662,6 +736,7 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         ])
         .assert()
         .success();
+    project.tick();
 
     let remote = project.github.issues(REPOSITORY);
     let pull = remote
@@ -676,9 +751,10 @@ fn a_delivered_todo_shows_its_intent_artifacts_decisions_and_commit_on_github() 
         serde_json::json!({"author":remote.iter().find(|i|i.get("pull_request").is_some()).unwrap()["user"],"reviewer":reviews.last().unwrap()["user"],"state":reviews.last().unwrap()["state"]})
     );
     // A later reflection recognizes the native verdict already on GitHub.
-    project.ok(["update", "nested-lists"]);
+    project.tick();
     assert_eq!(project.github.reviews(REPOSITORY, pull), reviews);
     project.ok(["deliver", "nested-lists", "--commit", &built]);
+    project.tick();
 
     insta::assert_snapshot!("delivery-on-github", redact(&github_view(project)));
 }
@@ -971,10 +1047,20 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
 
     let slugs = ["nested-lists", "parser-depth", "renderer"];
     project.create(slugs[0], "feature", INTENT);
+    project.tick();
     project.create(slugs[1], "change", "Track list depth in the parser.");
+    project.tick();
     project.create(slugs[2], "change", "Render lists at their depth.");
+    project.tick();
+    let requests_before_freeze = project.github.requests().len();
     project.ok(["freeze", slugs[1]]);
     project.ok(["update", slugs[2], "--hold", "--reason", "waiting"]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before_freeze,
+        "todo freeze and update must not contact GitHub"
+    );
+    project.tick();
     let nodes: Vec<String> = (1..=3).map(|n| issue_node(&project, n)).collect();
     let issues: Vec<(u64, &str)> = (1..=3).zip(nodes.iter().map(String::as_str)).collect();
     let every_todo: BTreeSet<String> = nodes.iter().cloned().collect();
@@ -1003,7 +1089,7 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
     choose_board(&project, "acme/8");
     project.ok(["update", slugs[0], "--hold", "--reason", "waiting"]);
     project.ok(["update", slugs[2], "--release"]);
-    project.ok(["update", slugs[1]]);
+    project.tick();
 
     assert_eq!(on_board(&project, "acme", 8), every_todo);
     // Both owned fields are created on the newly selected board.
@@ -1033,12 +1119,29 @@ fn reflected_todos_appear_on_the_chosen_board_and_follow_a_change_of_board() {
 // spec: project/instrukt/spec/feature/work/github-record UC-GR9
 #[test]
 fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change_work() {
-    let project = Project::new();
-    project.create(
+    let project = flavor::Tracked::new(false);
+    project.todo([
+        "create",
         "held-work",
-        "feature",
         "Retain this work through a dispatch pause.",
+        "--kind",
+        "change",
+        "--approved",
+    ]);
+    assert!(
+        project.github.requests().is_empty(),
+        "todo create must not contact GitHub"
     );
+    // First tick with deliberate pickup reflects issue #1 without dispatching.
+    project.tick();
+    assert_eq!(project.rt.started_count(), 0);
+    // Enable automatic pickup so the next tick exercises inbound hold
+    // ingestion running before dispatch sees the todo.
+    let layer = project.repo.path().join("instrukt.yaml");
+    let config = std::fs::read_to_string(&layer)
+        .unwrap()
+        .replace("autostart: false", "autostart: true");
+    std::fs::write(&layer, config).unwrap();
     // People's label actions are the issue's events, read from where the
     // last read stopped; each actor's access is GitHub's answer.
     let label = |event: &str, login: &str, permission: &str| {
@@ -1061,14 +1164,32 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         .github
         .edit_issue(REPOSITORY, 1, |issue| issue.labels.push("hold".into()));
     label("labeled", "maintainer", "write");
-    let held = project.ok(["show", "held-work"]);
-    project.ok([
+    project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        0,
+        "a GitHub hold label must prevent dispatch on the same tick"
+    );
+    let requests_before_show = project.github.requests().len();
+    let held = project.todo(["show", "held-work"]);
+    assert_eq!(
+        project.github.requests().len(),
+        requests_before_show,
+        "todo show must not contact GitHub"
+    );
+    project.todo([
         "artifacts",
         "write",
         "held-work",
         "log",
         "Progress remains available.",
     ]);
+    project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        0,
+        "held work stays out of dispatch while progress reflects"
+    );
     let before = project.github.artifacts(REPOSITORY, 1);
     project.github.edit_issue(REPOSITORY, 1, |issue| {
         issue.labels.retain(|l| l != "hold" && l != "status:active");
@@ -1076,13 +1197,25 @@ fn attributable_hold_labels_control_dispatch_and_output_label_edits_never_change
         issue.labels.push("team-owned".into());
     });
     label("unlabeled", "collaborator", "write");
-    let released = project.ok(["show", "held-work"]);
-    // A subsequent write reflects the accepted release and restores output labels.
-    project.ok(["update", "held-work"]);
+    // The tick ingests the release before pickup, dispatches the unheld todo,
+    // and restores output labels in the same pass.
+    project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        1,
+        "releasing the GitHub hold label must allow dispatch on the same tick"
+    );
+    let released = project.todo(["show", "held-work"]);
     assert_eq!(project.github.artifacts(REPOSITORY, 1), before);
     project.github.edit_issue(REPOSITORY, 1, |_| {});
     label("labeled", "outsider", "read");
-    let refused = project.ok(["show", "held-work"]);
+    project.tick();
+    assert_eq!(
+        project.rt.started_count(),
+        1,
+        "an unauthorized hold action must not disturb dispatch"
+    );
+    let refused = project.todo(["show", "held-work"]);
     insta::assert_snapshot!(
         "github-hold-label-audit",
         redact(&format!("{held}---\n{released}---\n{refused}"))
@@ -1144,6 +1277,7 @@ fn a_github_decision_wakes_only_its_live_claimant_and_replay_creates_no_second_n
     let mut text = std::fs::read_to_string(&config).unwrap();
     text = text.replace("github:\n", "github:\n  approvers: [maintainer]\n");
     std::fs::write(config, text).unwrap();
+    project.tick();
     let issue = project.github.issue(REPOSITORY, 1).unwrap();
     let body = issue["body"].as_str().unwrap();
     let prefix = body
@@ -1160,7 +1294,7 @@ fn a_github_decision_wakes_only_its_live_claimant_and_replay_creates_no_second_n
         "COLLABORATOR",
         &format!("/instrukt approve prd {prefix}"),
     );
-    crew.todo(["show", "approval-work"]);
+    project.tick();
     assert_eq!(crew.runtime.sent_count("lead-1"), 0); // This manually opened thread had no initial assignment message.
     let first = crew.runtime.input_log("lead-1");
     insta::assert_snapshot!("github-decision-attention", redact(&first));
@@ -1170,7 +1304,7 @@ fn a_github_decision_wakes_only_its_live_claimant_and_replay_creates_no_second_n
         redact(&crew.next("prepare", "approval-work"))
     );
     assert_eq!(crew.runtime.started_count(), started);
-    crew.todo(["show", "approval-work"]);
+    project.tick();
     let second = crew.runtime.input_log("lead-1");
     assert_eq!(first, second);
 }
@@ -1192,6 +1326,7 @@ fn a_confirmation_failure_retries_without_reapplying_the_github_decision() {
         "prd",
         "The current outcome.",
     ]);
+    project.tick();
     project.github.seed_comment(
         REPOSITORY,
         1,
@@ -1209,10 +1344,12 @@ fn a_confirmation_failure_retries_without_reapplying_the_github_decision() {
             body: serde_json::json!({"message":"Bad Gateway"}),
         },
     );
-    project.ok(["show", "reply-work"]);
+    project.tick();
     assert_eq!(project.github.comments(REPOSITORY, 1).len(), before);
+    project.tick();
     let recovered = project.ok(["show", "reply-work"]);
     assert_eq!(project.github.comments(REPOSITORY, 1).len(), before + 1);
+    project.tick();
     let again = project.ok(["show", "reply-work"]);
     assert_eq!(project.github.comments(REPOSITORY, 1).len(), before + 1);
     assert_eq!(redact(&recovered), redact(&again));
@@ -1244,6 +1381,8 @@ fn a_failed_mixed_handover_does_not_resend_an_approval_to_a_released_claimant() 
     crew.runtime.open_session_in("lead-1", crew.root());
     crew.runtime.set_status("lead-1", "ended ok");
     project.env.run(crew.root(), ["sync"]).success();
+    // Reflect the todo to GitHub before the worker finishes so issue #1 exists.
+    project.env.run(crew.root(), ["tick"]).success();
     crew.runtime
         .finish(child, "completed", "The review turn ended.");
     let file = project.repo.path().join("instrukt.yaml");
@@ -1262,7 +1401,7 @@ fn a_failed_mixed_handover_does_not_resend_an_approval_to_a_released_claimant() 
     project.env.run(crew.root(), ["tick"]).success();
     crew.todo(["update", "mixed-attention", "--unclaim"]);
     std::fs::remove_file(crew.runtime.state_dir().join("send-failure")).unwrap();
-    crew.todo(["show", "mixed-attention"]);
+    project.env.run(crew.root(), ["tick"]).success();
     assert_eq!(crew.runtime.message_count("lead-1"), 0);
 }
 
@@ -1283,6 +1422,7 @@ fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
         .read("instrukt.yaml")
         .replace("github:\n", "github:\n  approvers: [maintainer]\n");
     project.repo.write("instrukt.yaml", &source);
+    project.tick();
     project.github.seed_comment(
         REPOSITORY,
         1,
@@ -1290,13 +1430,13 @@ fn request_changes_wakes_the_live_claimant_once_without_a_worker_ending() {
         "COLLABORATOR",
         "/instrukt request-changes prd Clarify the audience.",
     );
-    crew.todo(["show", slug]);
+    project.tick();
     assert_eq!(crew.runtime.message_count("lead-1"), 1);
     insta::assert_snapshot!(
         "github-request-changes-attention",
         redact(&crew.runtime.input_log("lead-1"))
     );
-    crew.todo(["show", slug]);
+    project.tick();
     assert_eq!(crew.runtime.message_count("lead-1"), 1);
 }
 
@@ -1309,6 +1449,7 @@ fn missing_board_is_set_up_automatically_and_reused() {
     let file = project.repo.path().join("instrukt.yaml");
     let config = std::fs::read_to_string(&file).unwrap();
     project.create("cockpit", "bug", INTENT);
+    project.tick();
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         config,
@@ -1321,7 +1462,7 @@ fn missing_board_is_set_up_automatically_and_reused() {
         .github
         .remove_project_field("acme", 2, "Record status");
     project.github.clear_project_items("acme", 2);
-    project.ok(["update", "cockpit"]);
+    project.tick();
     assert_eq!(project.github.project_items("acme", 2).len(), 1);
     assert_eq!(project.github.project_fields("acme", 2).len(), 3);
     insta::assert_snapshot!(
@@ -1351,12 +1492,13 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
     project.github.set_repo_public(REPOSITORY);
     without_board(project.repo.path());
     project.create("cockpit", "bug", INTENT);
+    project.tick();
     let todo = issue_node(&project, 1);
     assert!(project.github.project_public("acme", 2));
     assert!(on_board(&project, "acme", 2).contains(&todo));
 
     project.github.set_project_public("acme", 2, false);
-    project.ok(["update", "cockpit"]);
+    project.tick();
     assert!(
         !project.github.project_public("acme", 2),
         "the recorded board keeps the maintainer's choice"
@@ -1371,6 +1513,7 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
         "change",
         "--approved",
     ]);
+    elsewhere.tick();
     let theirs = issue_node(&project, 2);
     assert!(
         on_board(&project, "acme", 2).contains(&theirs),
@@ -1387,7 +1530,7 @@ fn a_public_projects_new_board_is_public_and_a_maintainers_later_choice_is_kept(
     );
 
     choose_board(&project, "acme/1");
-    project.ok(["update", "cockpit"]);
+    project.tick();
     assert!(
         !project.github.project_public("acme", 1),
         "a named board keeps its visibility"
@@ -1410,6 +1553,7 @@ fn a_new_board_github_will_not_make_public_is_set_up_private_and_holds_the_work(
         "change",
         "--approved",
     ]);
+    project.tick();
     assert!(!project.github.project_public("acme", 2));
     insta::assert_snapshot!("refused-visibility-created", redact(&created));
     insta::assert_snapshot!(
@@ -1471,6 +1615,7 @@ fn cockpit_views_are_created_and_reconciled_without_touching_user_views_or_workf
     let user_view = project.github.project_views("acme", 1)[0].clone();
     let workflows = project.github.project_workflows("acme", 1);
     project.create("cockpit-views", "bug", "Show the cockpit views.");
+    project.tick();
     assert_eq!(project.github.project_views("acme", 1).len(), 3);
     let views = project.github.project_views("acme", 1);
     insta::assert_json_snapshot!("cockpit-views-created", cockpit_views(&project));
@@ -1482,7 +1627,7 @@ fn cockpit_views_are_created_and_reconciled_without_touching_user_views_or_workf
         .unwrap();
     let options=field["options"].as_array().unwrap().iter().map(|o|serde_json::json!({"name":o["name"],"color":o["color"],"description":o["description"]})).collect::<Vec<_>>();
     insta::assert_json_snapshot!("needs-you-option", options);
-    project.ok(["update", "cockpit-views"]);
+    project.tick();
     assert_eq!(project.github.project_views("acme", 1), views);
     assert_eq!(project.github.project_views("acme", 1)[0], user_view);
     assert_eq!(project.github.project_workflows("acme", 1), workflows);
@@ -1508,6 +1653,7 @@ fn cockpit_drifted_owned_views_and_options_are_repaired_and_missing_ones_recreat
         .github
         .seed_project_view("acme", 1, "My view", "table", "label:mine", &[]);
     project.create("repair-cockpit", "bug", "Keep the cockpit configured.");
+    project.tick();
     let views = project.github.project_views("acme", 1);
     assert_eq!(views.len(), 3);
     assert_eq!(
@@ -1541,7 +1687,7 @@ fn cockpit_drifted_owned_views_and_options_are_repaired_and_missing_ones_recreat
         "Needs you",
         &serde_json::json!({"layout":"board","filter":"is:closed"}),
     );
-    project.ok(["update", "repair-cockpit"]);
+    project.tick();
     assert_eq!(project.github.project_views("acme", 1), views);
     let restored = project
         .github
@@ -1552,7 +1698,7 @@ fn cockpit_drifted_owned_views_and_options_are_repaired_and_missing_ones_recreat
     assert_eq!(restored, field);
     project.github.remove_project_field("acme", 1, "Needs you");
     project.github.remove_project_view("acme", 1, "Needs you");
-    project.ok(["update", "repair-cockpit"]);
+    project.tick();
     assert_eq!(cockpit_views(&project), expected);
 }
 
@@ -1565,6 +1711,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "feature",
         "A person approves the intended outcome.",
     );
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "update",
@@ -1573,8 +1720,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--reason",
         "Ask the owner.",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 1));
     project.ok(["update", "person-wait", "--release"]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     approvals_config(&project, "peer", "human");
     project.ok([
@@ -1584,9 +1733,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd",
         "The intended outcome.",
     ]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     approvals_config(&project, "human", "human");
-    project.ok(["update", "person-wait"]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
@@ -1595,6 +1745,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd-review-findings",
         "Approved.",
     ]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "stamp",
@@ -1604,6 +1755,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--phase",
         "prd_review",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
@@ -1612,6 +1764,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd-review-findings",
         "The review must be assessed again.",
     ]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "stamp",
@@ -1621,6 +1774,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--phase",
         "prd_review",
     ]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
@@ -1637,6 +1791,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--phase",
         "prd_review",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 1));
     project.ok([
         "update",
@@ -1654,8 +1809,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "--session",
         "thread-host:person-1",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 1));
     project.ok(["update", "person-wait", "--release"]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
@@ -1664,6 +1821,7 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd",
         "A revised outcome needs a new approval.",
     ]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.ok([
         "artifacts",
@@ -1672,9 +1830,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "prd",
         "The intended outcome.",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 1));
     approvals_config(&project, "peer", "human");
-    project.ok(["update", "person-wait"]);
+    project.tick();
     assert!(!marked_needs_you(&project, 1));
     project.create(
         "task-person-wait",
@@ -1688,9 +1847,10 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
         "task-plan",
         "Run the documented task.",
     ]);
+    project.tick();
     assert!(marked_needs_you(&project, 2));
     approvals_config(&project, "peer", "peer");
-    project.ok(["update", "task-person-wait"]);
+    project.tick();
     assert!(!marked_needs_you(&project, 2));
 }
 
@@ -1698,24 +1858,30 @@ fn cockpit_needs_you_tracks_holds_and_human_approval_configuration_and_clears_re
 #[test]
 fn cockpit_setup_failure_keeps_issue_reflection_and_retries_without_duplicate_views() {
     let project = Project::new();
+    // An unauthorized (401) board-setup failure stays with the board: its
+    // cause remains visibly pending while unrelated issue and artifact
+    // reflection still runs in the same tick (`github-apps`, Installation
+    // credentials).
     project.github.respond_once(
         "POST",
         "/orgs/acme/projectsV2/1/views",
         CannedResponse {
-            status: 503,
+            status: 401,
             headers: Vec::new(),
-            body: serde_json::json!({"message":"Service unavailable"}),
+            body: serde_json::json!({"message":"Bad credentials"}),
         },
     );
-    let pending = project.create("retry-views", "bug", "Keep the cockpit retryable.");
+    project.create("retry-views", "bug", "Keep the cockpit retryable.");
+    project.tick();
+    let pending = project.ok(["show", "retry-views"]);
     assert_eq!(project.github.issues(REPOSITORY).len(), 1);
     assert_eq!(project.github.artifacts(REPOSITORY, 1).len(), 1);
     assert!(project.github.project_views("acme", 1).is_empty());
     insta::assert_snapshot!("cockpit-view-setup-pending", redact(&pending));
-    project.ok(["update", "retry-views"]);
+    project.tick();
     let views = project.github.project_views("acme", 1);
     assert_eq!(views.len(), 2);
-    project.ok(["update", "retry-views"]);
+    project.tick();
     assert_eq!(project.github.project_views("acme", 1), views);
 }
 
@@ -1754,6 +1920,7 @@ fn cockpit_setup_finds_owned_views_after_user_views_and_reconciles_duplicate_own
         "bug",
         "Retain the existing cockpit and user views.",
     );
+    project.tick();
     assert_eq!(project.github.project_views("acme", 1), expected);
 }
 
@@ -1762,6 +1929,7 @@ fn cockpit_setup_finds_owned_views_after_user_views_and_reconciles_duplicate_own
 fn cockpit_repair_failure_stays_pending_for_an_already_reflected_item() {
     let project = Project::new();
     project.create("reflected-cockpit", "bug", "Keep cockpit failures visible.");
+    project.tick();
     project.github.remove_project_view("acme", 1, "Board");
     project.github.respond_once(
         "POST",
@@ -1772,12 +1940,13 @@ fn cockpit_repair_failure_stays_pending_for_an_already_reflected_item() {
             body: serde_json::json!({"message":"Service unavailable"}),
         },
     );
+    project.tick();
     insta::assert_snapshot!(
         "reflected-item-cockpit-pending",
-        redact(&project.ok(["update", "reflected-cockpit"]))
+        redact(&project.ok(["show", "reflected-cockpit"]))
     );
     let snapshot = project.github.comments(REPOSITORY, 1);
-    project.ok(["update", "reflected-cockpit"]);
+    project.tick();
     assert_eq!(project.github.comments(REPOSITORY, 1), snapshot);
     assert_eq!(project.github.project_views("acme", 1).len(), 2);
 }

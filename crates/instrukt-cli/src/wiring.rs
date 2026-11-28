@@ -108,6 +108,10 @@ pub fn core_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
         configured_runtimes: None,
+        proposal_recording: Some(Arc::new(instrukt_company::proposals::Recording::new(
+            ctx.clock.shared(),
+            Arc::new(instrukt_runner::runtime::adapter),
+        ))),
     })
 }
 
@@ -125,6 +129,7 @@ pub fn publication_wiring(ctx: &Ctx) -> anyhow::Result<CoreWiring> {
         flavor_schema: Some(Arc::new(WorkflowSchema)),
         graph_generation: _blueprint::graph_generation(ctx)?,
         configured_runtimes: configured_runtimes(ctx)?,
+        proposal_recording: None,
     })
 }
 
@@ -141,6 +146,7 @@ pub fn runner_wiring(ctx: &Ctx) -> anyhow::Result<RunnerWiring> {
         workflow: _workflow::assignments(ctx, evidence.clone())?,
         standings: _workflow::standings(ctx, evidence)?,
         company: Some(company()),
+        evaluation: Some(_work::evaluation(ctx)?),
     })
 }
 

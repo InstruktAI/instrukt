@@ -739,6 +739,14 @@ fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
     )
     .unwrap();
     let env = &crew.project.env;
+    env.git(
+        workspace,
+        [
+            "add",
+            "docs/project/policy/house.md",
+            "docs/project/index.yaml",
+        ],
+    );
     env.instrukt(workspace)
         .env("T3CODE_THREAD_ID", session)
         .args([
@@ -749,9 +757,6 @@ fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
             "guidance",
             "--message",
             "Select the house policy\n\nThe project's agents follow it.",
-            "--only",
-            "docs/project/policy/house.md",
-            "docs/project/index.yaml",
         ])
         .assert()
         .success();

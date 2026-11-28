@@ -54,183 +54,69 @@ together. An unknown stamp,
 missing target, unresolved required evidence, missing required attribution or
 invalid resulting state is refused without a partial local stamp.
 
-| Fact family | Bound evidence |
-| --- | --- |
-| Review verdict | Current target and complete review report. |
-| Approval | Current reviewed artifact, source attribution, and whether a human or peer approved. |
-| Intent-checked | Intent version, originating conversation and checking session. |
-| Kickback | Affected evidence and recorded reason. |
-| Task-firing started | Particular scheduled occurrence and firing start. |
-| Architecture skip | Applicable work item and recorded reason. |
-| Drift judgment | Affected artifact and the evidence examined. |
-| Settled diagnosis | Current diagnosis content. |
-| Build start | Original base commit and current approved plan digest. |
-| Build completion | Current build evidence and clean shared todo-branch head; completion releases the attempt atomically. Any later todo-branch change clears completion until restamped. |
-| Role completion | Setup/finalizer or preparation doc-writer role and attempt, exact clean branch head and required artifact/commit references; releases the attempt atomically, independently of build completion or readiness. |
-| Deferrals processed | Dispositions covering the current deferrals artifact; `deferrals.pending` is false only while this binding is current. |
-| Verification disposition | Exact candidate commit at the clean shared todo-branch head and the current complete `verification-findings` report; a hotfix deferral also its tracked follow-up. From a bound verifier it releases the attempt atomically. |
-| Finalize readiness | Candidate commit handed to integration. |
-| Task-firing outcome | Particular execution and its result or failure reason. |
-
-The command retains the verdict and readiness forms, including
-`--kickback --reason` and `--task-firing-started`, and adds `--intent-checked`.
-Approval forms record whether a human or a peer gave the approval.
-
-The workflow engine derives its next state from these facts. The stamp
-surface retains the fact; it does not independently perform the transition
-or repeat runtime side effects. The finalize-ready write also records its handoff
-and idempotent event-log append as specified above. Workflow owns phase-specific admissibility.
-
-Approval attribution and intent-check binding are owned by
-`project/instrukt/spec/feature/work/approvals`. Reflection and replay of
-saved evidence are owned by
-`project/instrukt/spec/feature/work/github-record`.
-
-Task execution records its result with
-`instrukt todo stamp <slug> --task-outcome success|error [--reason <text>]`,
-bound to the particular task execution; the reason records failure evidence.
-
-`instrukt todo stamp <slug> --deferrals-processed` records the disposition
-bound to the current deferrals artifact. `deferrals.pending` becomes false
-only while that binding covers the current artifact. For a bound deferrer
-attempt, the stamp requires its clean worktree at the captured todo head and
-releases the attempt in the same transaction without advancing a branch.
-
 ### Decision attention and completion evidence
 
-An applied approval or request-changes decision retains pending attention for
-the todo's current live claim-holding orchestrator with the as-soon-as-possible
-intent. With no live orchestrator it is only a record update for next pickup or
-a deliberate start. The recording transaction precedes runtime delivery;
-session-continuity owns retry and claim revalidation. Replaying the same
-applied decision creates no second notice. This applies to CLI recording and
-GitHub intake alike.
+Approval and change-request writes create a pending attention record in the
+same transaction. Attention delivery tracks the current claim and retries from
+that pending record. Replaying an applied decision creates no duplicate.
 
-Stamps, verdicts and changes requested are tracking and evaluation evidence;
-they are not published events to drive worker dispatch. A worker's ending
-reaches its parent through native runtime delivery, and that parent
-reads the stamps before deciding what follows. The exact-candidate
-`workflow.finalized` handoff remains the existing integrator event, not a second
-worker-ending or approval notice.
+A completion stamp releases the caller's open workspace or child attempt in the
+same transaction. A workspace attempt requires the bound worktree and branch
+at a clean head. A worktree-less attempt has no Git placement to check. An
+unchanged replay returns its retained stamp. A caller without an open attempt
+can record the fact without releasing anyone else's attempt. A structural
+holder accepts completion or replay of its own bound attempt through
+`--role-complete`.
 
 ### Stamp forms
 
 | Command suffix after `instrukt todo stamp <slug>` | Bound evidence and result |
 | --- | --- |
-| `--verdict approve\|needs_work --phase prd_review\|architecture_review\|plan_review` | Current phase target and complete phase-specific findings digest. |
-| `--verdict approve\|changes_requested --phase build_review` | Reviewed commit, complete build findings digest and review round. |
-| `--architecture-skipped <reason>` | Applicable preparation and the recorded skip reason. |
-| `--diagnosis-settled` | Current diagnosis digest; when a diagnoser attempt is bound, verifies the clean read-only shared worktree and releases that attempt atomically without duplicating the stamp on replay. |
-| `--diagnosis-unresolved --reason <text>` | Current diagnosis and the unresolved reason; establishes the dispatch hold. |
-| `--drift-reviewed <artifact> cosmetic\|substantive <reason>` | Artifact, classification, reason and examined evidence anchor. |
-| `--intent-checked` | Current input version, originating conversation and checking session. |
-| `--kickback --reason <text>` | Current input, invalidated plan and review evidence; sets `<r>.cleared_by_substantive_drift` for preparation reviews invalidated by the kickback. |
-| `--task-firing-started` | Particular due occurrence and start; the runner's last-fired accounting. |
-| `--build-complete` | Bound builder/fixer attempt's clean committed todo head; releases the attempt and clears the previous build-review verdict and finalize readiness in one transaction. |
-| `--role-complete` | Bound setup/finalizer or preparation doc-writer attempt, required outputs and clean committed branch head. Records `role_complete` and releases the attempt atomically without build completion or finalization event. |
-| `--verification pass\|fail\|blocked\|tier_0_skip\|hotfix_deferred [--follow-up <slug>]` | Exact candidate commit at the clean shared head and complete `verification-findings` digest; a hotfix deferral also its follow-up todo. From a bound `verifier` attempt it releases the attempt atomically; from the claim-holding orchestrator it is record-only. |
+| `--verdict approve\|needs_work --phase prd_review\|architecture_review\|plan_review` | Current phase target and findings digest. |
+| `--verdict approve\|changes_requested --phase build_review` | Exact commit and current `review-findings` digest. Approval requires an independent session. |
+| `--architecture-skipped <reason>` | Applicable item and recorded reason. |
+| `--diagnosis-settled` | Current diagnosis digest. |
+| `--diagnosis-unresolved --reason <text>` | Current diagnosis and the unresolved reason. Establishes the dispatch hold. |
+| `--drift-reviewed <artifact> cosmetic\|substantive <reason>` | Artifact, classification, reason, digest and current grounding. |
+| `--intent-checked [--conversation <runtime:id>]` | Current `input` digest, checking actor and supplied conversation when present. |
+| `--kickback --reason <text>` | Current input, invalidated plan and affected review evidence. |
+| `--build-started` | Original base commit and current plan digest. Requires configured PRD approval where applicable. |
+| `--build-complete` | Current commit. A later build-completion stamp clears recorded finalize readiness. |
+| `--role-complete` | Completion, with role and attempt number when bound and Git coordinates when the bound attempt has a workspace. |
+| `--deferrals-processed` | Current deferrals digest. |
+| `--finalize-ready` | Exact integration candidate. Appends `workflow.finalized` in the same transaction. |
+| `--verification pass\|fail\|blocked\|tier_0_skip\|hotfix_deferred [--follow-up <slug>]` | Exact commit and current `verification-findings` digest. A pass requires an independent session. |
+| `--task-firing-started [--occurrence <RFC 3339>]` | Due occurrence and start. Requires configured task-plan approval. |
+| `--task-outcome success\|error [--reason <text>] [--occurrence <RFC 3339>]` | Result of the caller's current execution. An error has a reason. |
 
-Approval forms with `--by` and optional `--session` are owned by the approvals
-spec; build start, finalize readiness, deferral processing, verification
-disposition and task outcome forms are specified here. These forms are the
-admitted stamp set, rather than instructions to infer additional stamps.
+Approval and intent-check attribution are specified in
+`project/instrukt/spec/feature/work/approvals`. Reflection and GitHub replay are
+specified in `project/instrukt/spec/feature/work/github-record`.
 
 ### Build start, completion and review rounds
 
-`instrukt todo stamp <slug> --build-started` records the original base commit
-and approved plan digest before implementation. Reconciliation preserves that base.
+A later build-start stamp preserves the original base. A workspace completion
+stores the head at release, and `--role-complete` retains the commits between
+the captured base and released head. Historical role completions retain their
+recorded artifact references. A recorded failure releases the attempt without a
+completion stamp. Review rounds count verdict stamps.
 
-Completion resolves the caller's bound outstanding attempt and verifies the
-shared worktree is clean on the todo branch at the exact stamped head.
-`--build-complete` releases builder/fixer attempts; `--role-complete` releases
-setup/finalizer attempts. Stamp, release, new todo revision and pending reflection
-commit in one transaction. Exact replay reports the retained outcome without a
-second release. Missing or stale evidence keeps the attempt outstanding. These
-commands change no Git ref: each role commits directly on the todo branch.
-
-A build-review verdict binds the current shared worktree head and complete
-findings digest and releases its reviewer in the same transaction. That tree
-must remain clean at the head captured for review. Deferral processing likewise
-releases its bound read-only attempt only against current dispositions. New
-workspace work after release requires a new attempt with shared isolation.
-Preparation doc writers (`intaker`, `architect`, `planner`) also record
-`--role-complete` at the clean preparation-worktree head. The stamp binds the
-current digest of the writer's required artifact (`prd`, `architecture` or
-`implementation-plan`), that head, and the commits the attempt authored since
-its captured head. The commit list is empty when the attempt changed no
-repository file, and the writer then completes at its captured head. It
-releases that writer so the parent can dispatch independent review. Preparation
-verdict stamps release their corresponding reviewer attempts; commit reviews
-retain the exact SHA and report-note binding. Drift review stamps
-(`--drift-reviewed`) release their bound read-only `drift-analyzer` attempt
-against the clean captured head on the first judgment and admit additional
-artifact stamps from that attempt (preserving the original releasing completion
-sequence) until later workspace work begins; exact replay of a still-current
-judgment reconciles an unreleased attempt without duplicating the stamp. A
-required artifact with no version keeps the writer outstanding. Commit review
-remains owed after writer release.
-
-Review rounds count verdict stamps; repeated evaluation counts no round.
-
-The finalizer's `--role-complete` requires a clean shared worktree whose head,
-local todo branch and published todo head match. It may complete after changing
-the earlier reviewed candidate. Release permits independent review of that
-current head in the same worktree; readiness still waits for current approval.
-A failed attempt records only failure under the todo-attempt contract, never
-completion or readiness.
-
-`instrukt todo stamp <slug> --finalize-ready` requires current independent
-approval, a current verification disposition that admits handoff
-(`project/instrukt/spec/feature/workflow/delivery-cycle`), no outstanding
-workspace-role attempt, the latest successful finalizer completion and equality
-of its clean shared worktree head, local todo branch, published todo branch and
-completed candidate. Readiness uses the caller's retained finalizer binding
-after release and admits no further workspace work. New changes require a new
-finalizer attempt and its completion.
-
-The readiness stamp and `workflow.finalized` event append commit together,
-idempotently by project/todo/SHA. It records the exact candidate for integration
-and does not release the execution claim.
+Finalize readiness requires the three integrity checks in
+`project/instrukt/spec/feature/workflow/delivery-cycle`. Its stamp and
+`workflow.finalized` event commit together, with event identity keyed by
+project, todo and commit. The execution claim stays held.
 
 ### Verification dispositions
 
-A verification disposition records what is established about the live
-behavior of a candidate commit. Its vocabulary is closed: pass, fail, blocked,
-Tier 0 skip and hotfix deferral, with the meanings
-`sdlc/policy/live-verification` gives them. Any other value is refused.
+A disposition binds the exact commit and the current digest of
+`verification-findings`. A hotfix deferral requires `--follow-up <slug>` naming
+another todo in the project that is neither delivered nor withdrawn. The stamp
+keeps that todo's durable identity, which survives rename. The other
+dispositions take no follow-up.
 
-`instrukt todo stamp <slug> --verification <disposition>` records one. A
-disposition is commit-bound and report-bound. It names the exact candidate
-commit, which is the clean head of the shared todo worktree when it is
-recorded, and binds the current digest of the complete `verification-findings`
-report. A hotfix deferral also names, with `--follow-up <slug>`, the tracked
-follow-up todo that `sdlc/policy/live-verification` requires of it: another
-todo of the same project that the work record knows and that is neither
-delivered nor withdrawn, retained by its durable identity so a rename keeps
-the reference. A disposition with no such report, a hotfix deferral that names
-no follow-up, a follow-up that names this todo or no todo the record knows, a
-follow-up on any other disposition, or a disposition recorded over a dirty
-tree, is refused without a partial record. It counts only for the
-commit and report it names: a later candidate commit carries none until one is
-recorded for it, and a rewritten report leaves the earlier disposition as
-history.
-
-A disposition recorded from a bound `verifier` attempt is admitted only while
-the clean shared worktree is still at the head captured for that attempt, and
-releases the attempt in the same transaction, as a build-review verdict
-releases its reviewer. A head that moved refuses the disposition and leaves the
-attempt outstanding. Exact replay reports the retained outcome without a second
-release. A disposition recorded by the claim-holding orchestrator is a
-record-only write and releases nothing; its exact replay, with the same
-disposition, commit, report and follow-up, reports the retained stamp without
-recording a second. Which session may record which
-disposition, which disposition may follow another for the same commit, and
-what finalize readiness requires of it, is workflow's rule in
-`project/instrukt/spec/feature/workflow/delivery-cycle`.
-
-The raw evidence a disposition rests on is part of neither the stamp nor the
-reflected report, and instrukt keeps no store of it. Where a run may keep it is
-the publication boundary of `sdlc/policy/live-verification`.
+The latest disposition counts for handoff when it admits handoff and both the
+commit and report digest match. The raw verification evidence is outside the
+stamp and is not stored by instrukt.
 
 ## Use cases
 
