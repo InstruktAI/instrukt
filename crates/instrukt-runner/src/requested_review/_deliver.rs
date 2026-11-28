@@ -16,7 +16,7 @@ use crate::state::RunnerState;
 
 use super::_admission::{self, Coordinates, Kind};
 use super::_rendering;
-use super::_route::{self, Preflight, ReReviewOutcome, ReReviewPlan, ReuseImpossible};
+use super::_route::{self, ReReviewOutcome, ReReviewPlan, ReuseImpossible};
 use super::_store::{self, Ask, Delivery, RecordOutcome};
 use super::{
     AskContext, AskError, Check, Reached, Reply, canonicalize_path, claim_key, failed,
@@ -174,19 +174,23 @@ impl Delivering<'_> {
                     standing,
                 )?;
                 let target_guard = self.claim_target_if_distinct(&target.key)?;
-                self.check_preflight_for_dispute(state, &target, &session)?;
+                let active_guard = target_guard.as_ref().unwrap_or(self.guard);
+                self.check_preflight_for_dispute(active_guard, &target, &session)?;
                 (Route::Wake { target, session }, target_guard, None)
             }
             Kind::ReReview => match rereview_plan {
                 Some(ReReviewPlan::Wake(reviewer)) => {
                     let target_guard = self.claim_target_if_distinct(&reviewer.target.key)?;
-                    match _route::preflight_wake(
-                        state,
+                    let active_guard = target_guard.as_ref().unwrap_or(self.guard);
+                    match keyed::check_wake(
+                        active_guard,
                         self.adapter,
                         &reviewer.target,
                         &reviewer.session,
-                    )? {
-                        Preflight::Ready => (
+                    )
+                    .map_err(failed)?
+                    {
+                        None => (
                             Route::Wake {
                                 target: reviewer.target,
                                 session: reviewer.session,
@@ -196,7 +200,11 @@ impl Delivering<'_> {
                                 earlier: reviewer.earlier,
                             }),
                         ),
-                        Preflight::Gone => {
+                        Some(
+                            NotWoken::Gone { .. }
+                            | NotWoken::NotBound { .. }
+                            | NotWoken::DifferentGeneration { .. },
+                        ) => {
                             drop(target_guard);
                             let reason = ReuseImpossible::ReviewerGone {
                                 earlier: reviewer.earlier,
@@ -208,33 +216,7 @@ impl Delivering<'_> {
                                 Some(ReReviewOutcome::FreshReviewer(reason)),
                             )
                         }
-                        Preflight::TurnInProgress => {
-                            return Err(refused(
-                                Check::Outstanding,
-                                format!(
-                                    "the requested reviewer {} has a turn in progress; ask again once it ends",
-                                    reviewer.session
-                                ),
-                            ));
-                        }
-                        Preflight::ReadinessUnknown => {
-                            return Err(refused(
-                                Check::Runtime,
-                                format!(
-                                    "the runtime cannot say whether the requested reviewer {} has a turn in progress; run the same command again once it answers",
-                                    reviewer.session
-                                ),
-                            ));
-                        }
-                        Preflight::Misplaced(cause) => {
-                            return Err(refused(
-                                Check::Runtime,
-                                format!(
-                                    "the requested reviewer {} is misplaced ({cause}); run the same command again once the placement issue is resolved",
-                                    reviewer.session
-                                ),
-                            ));
-                        }
+                        Some(reason) => return Err(self.refuse_not_woken(reason, false)),
                     }
                 }
                 Some(ReReviewPlan::Fresh(reason)) => (
@@ -273,38 +255,24 @@ impl Delivering<'_> {
 
     fn check_preflight_for_dispute(
         &self,
-        state: &RunnerState,
+        active_guard: &KeyGuard,
         target: &WakeTarget,
         session: &SessionRef,
     ) -> Result<(), AskError> {
-        match _route::preflight_wake(state, self.adapter, target, session)? {
-            Preflight::Ready => Ok(()),
-            Preflight::Gone => Err(refused(
+        match keyed::check_wake(active_guard, self.adapter, target, session).map_err(failed)? {
+            None => Ok(()),
+            Some(
+                NotWoken::Gone { .. }
+                | NotWoken::NotBound { .. }
+                | NotWoken::DifferentGeneration { .. },
+            ) => Err(refused(
                 Check::ReviewState,
                 format!(
                     "the requested reviewer {session} that recorded {}'s verdict was archived or deleted, and a successor did not record it; a revised head is the way forward",
                     self.head()
                 ),
             )),
-            Preflight::TurnInProgress => Err(refused(
-                Check::Outstanding,
-                format!(
-                    "the requested reviewer {session} of {} has a turn in progress; ask again once it ends",
-                    self.head()
-                ),
-            )),
-            Preflight::ReadinessUnknown => Err(refused(
-                Check::Runtime,
-                format!(
-                    "the runtime cannot say whether the requested reviewer {session} has a turn in progress; run the same command again once it answers"
-                ),
-            )),
-            Preflight::Misplaced(cause) => Err(refused(
-                Check::Runtime,
-                format!(
-                    "the requested reviewer {session} is misplaced ({cause}); run the same command again once the placement issue is resolved"
-                ),
-            )),
+            Some(reason) => Err(self.refuse_not_woken(reason, true)),
         }
     }
 
@@ -331,34 +299,19 @@ impl Delivering<'_> {
         }
         match keyed::wake_target(state, runtime, &bound.session).map_err(failed)? {
             WakeTargetLookup::Found(target) if target.key == self.key => {
-                match _route::preflight_wake(state, self.adapter, &target, &bound.session)? {
-                    Preflight::Ready => Ok(Route::Wake {
+                match keyed::check_wake(self.guard, self.adapter, &target, &bound.session)
+                    .map_err(failed)?
+                {
+                    None => Ok(Route::Wake {
                         target,
                         session: bound.session,
                     }),
-                    Preflight::Gone => Ok(Route::Successor),
-                    Preflight::TurnInProgress => Err(refused(
-                        Check::Outstanding,
-                        format!(
-                            "the requested reviewer {} of {} has a turn in progress; ask again once it ends",
-                            bound.session,
-                            self.head()
-                        ),
-                    )),
-                    Preflight::ReadinessUnknown => Err(refused(
-                        Check::Runtime,
-                        format!(
-                            "the runtime cannot say whether the requested reviewer {} has a turn in progress; run the same command again once it answers",
-                            bound.session
-                        ),
-                    )),
-                    Preflight::Misplaced(cause) => Err(refused(
-                        Check::Runtime,
-                        format!(
-                            "the requested reviewer {} is misplaced ({cause}); run the same command again once the placement issue is resolved",
-                            bound.session
-                        ),
-                    )),
+                    Some(
+                        NotWoken::Gone { .. }
+                        | NotWoken::NotBound { .. }
+                        | NotWoken::DifferentGeneration { .. },
+                    ) => Ok(Route::Successor),
+                    Some(reason) => Err(self.refuse_not_woken(reason, true)),
                 }
             }
             _ => Ok(Route::Successor),
@@ -613,27 +566,6 @@ impl Delivering<'_> {
             WakeOutcome::Woken => Ok(WakeAttempt::Accepted(Box::new(
                 self.accepted(ask, session, replayed, re_review)?,
             ))),
-            WakeOutcome::Refused(NotWoken::NotAccepted { error, .. }) => {
-                Err(self.not_accepted("wake", &error))
-            }
-            WakeOutcome::Refused(NotWoken::TurnInProgress { session }) => Err(refused(
-                Check::Outstanding,
-                format!(
-                    "the requested reviewer {session} has a turn in progress; ask again once it ends"
-                ),
-            )),
-            WakeOutcome::Refused(NotWoken::ReadinessUnknown { session }) => Err(refused(
-                Check::Runtime,
-                format!(
-                    "the runtime cannot say whether the requested reviewer {session} has a turn in progress; run the same command again once it answers"
-                ),
-            )),
-            WakeOutcome::Refused(NotWoken::Misplaced { session, cause }) => Err(refused(
-                Check::Runtime,
-                format!(
-                    "the requested reviewer {session} is misplaced ({cause}); run the same command again once the placement issue is resolved"
-                ),
-            )),
             WakeOutcome::Refused(
                 reason @ (NotWoken::Gone { .. }
                 | NotWoken::NotBound { .. }
@@ -642,6 +574,41 @@ impl Delivering<'_> {
                 let fallback_reason = self.close_dead_wake(ask, reason.kind())?;
                 Ok(WakeAttempt::ClosedDeadWake(fallback_reason))
             }
+            WakeOutcome::Refused(reason) => Err(self.refuse_not_woken(reason, false)),
+        }
+    }
+
+    fn refuse_not_woken(&self, reason: NotWoken, head_scoped: bool) -> AskError {
+        match reason {
+            NotWoken::NotAccepted { error, .. } => self.not_accepted("wake", &error),
+            NotWoken::TurnInProgress { session } if head_scoped => refused(
+                Check::Outstanding,
+                format!(
+                    "the requested reviewer {session} of {} has a turn in progress; ask again once it ends",
+                    self.head()
+                ),
+            ),
+            NotWoken::TurnInProgress { session } => refused(
+                Check::Outstanding,
+                format!(
+                    "the requested reviewer {session} has a turn in progress; ask again once it ends"
+                ),
+            ),
+            NotWoken::ReadinessUnknown { session } => refused(
+                Check::Runtime,
+                format!(
+                    "the runtime cannot say whether the requested reviewer {session} has a turn in progress; run the same command again once it answers"
+                ),
+            ),
+            NotWoken::Misplaced { session, cause } => refused(
+                Check::Runtime,
+                format!(
+                    "the requested reviewer {session} is misplaced ({cause}); run the same command again once the placement issue is resolved"
+                ),
+            ),
+            NotWoken::NotBound { .. }
+            | NotWoken::DifferentGeneration { .. }
+            | NotWoken::Gone { .. } => failed(reason),
         }
     }
 

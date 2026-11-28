@@ -166,17 +166,12 @@ fn refuse(key: &str, session: &SessionRef, reason: NotWoken) -> WakeOutcome {
     WakeOutcome::Refused(reason)
 }
 
-/// Sends `text` to `session` under `command_id` while holding `guard` for
-/// `target.key`. Never starts a session and never advances a generation.
-pub fn wake(
+fn check_eligibility(
     guard: &KeyGuard,
     adapter: &dyn RuntimeAdapter,
     target: &WakeTarget,
     session: &SessionRef,
-    command_id: &str,
-    text: &str,
-    now: Timestamp,
-) -> Result<WakeOutcome, SessionsError> {
+) -> Result<Result<(), (NotWoken, Option<SessionsError>)>, SessionsError> {
     if guard.key != target.key {
         return Err(SessionsError::Refused(format!(
             "key guard for `{}` cannot wake target key `{}`",
@@ -184,45 +179,41 @@ pub fn wake(
         )));
     }
     let Some(current) = super::bound(&guard.state, &guard.runtime, &target.key)? else {
-        return Ok(refuse(
-            &target.key,
-            session,
+        return Ok(Err((
             NotWoken::NotBound {
                 session: session.clone(),
             },
-        ));
+            None,
+        )));
     };
     if current.generation != target.generation || &current.session != session {
-        return Ok(refuse(
-            &target.key,
-            session,
+        return Ok(Err((
             NotWoken::DifferentGeneration {
                 session: session.clone(),
                 current_generation: current.generation,
             },
-        ));
+            None,
+        )));
     }
     let thread = match adapter.read_state(session) {
         Ok(thread) => thread,
         Err(SessionsError::Gone(_)) => {
-            return Ok(refuse(
-                &target.key,
-                session,
+            return Ok(Err((
                 NotWoken::Gone {
                     session: session.clone(),
                 },
-            ));
+                None,
+            )));
         }
         Err(error) => return Err(error),
     };
     if thread.presence != Presence::Present || thread.state == SessionState::Gone {
-        return Ok(refuse(
-            &target.key,
-            session,
+        return Ok(Err((
             NotWoken::Gone {
                 session: session.clone(),
             },
-        ));
+            None,
+        )));
     }
     let placement = (|| {
         if target.recorded_project {
@@ -235,51 +226,74 @@ pub fn wake(
         adapter.verify_thread_project(checkout, &thread, Some(&target.key))
     })();
     if let Err(error) = placement {
-        super::note(
-            &guard.state,
-            adapter.runtime(),
-            &target.key,
-            now,
-            Err(&error),
-        );
-        return Ok(refuse(
-            &target.key,
-            session,
+        return Ok(Err((
             NotWoken::Misplaced {
                 session: session.clone(),
                 cause: error.to_string(),
             },
-        ));
+            Some(error),
+        )));
     }
     match thread.state {
-        SessionState::Running | SessionState::NeedsInput => {
-            return Ok(refuse(
+        SessionState::Running | SessionState::NeedsInput => Ok(Err((
+            NotWoken::TurnInProgress {
+                session: session.clone(),
+            },
+            None,
+        ))),
+        SessionState::Unknown => Ok(Err((
+            NotWoken::ReadinessUnknown {
+                session: session.clone(),
+            },
+            None,
+        ))),
+        SessionState::Gone => Ok(Err((
+            NotWoken::Gone {
+                session: session.clone(),
+            },
+            None,
+        ))),
+        SessionState::InputReady | SessionState::EndedFailed => Ok(Ok(())),
+    }
+}
+
+/// Inspects whether `session` under `target` is currently eligible for a keyed
+/// wake while holding `guard`, without delivering input or recording a
+/// placement note.
+pub fn check_wake(
+    guard: &KeyGuard,
+    adapter: &dyn RuntimeAdapter,
+    target: &WakeTarget,
+    session: &SessionRef,
+) -> Result<Option<NotWoken>, SessionsError> {
+    match check_eligibility(guard, adapter, target, session)? {
+        Ok(()) => Ok(None),
+        Err((reason, _)) => Ok(Some(reason)),
+    }
+}
+
+/// Sends `text` to `session` under `command_id` while holding `guard` for
+/// `target.key`. Never starts a session and never advances a generation.
+pub fn wake(
+    guard: &KeyGuard,
+    adapter: &dyn RuntimeAdapter,
+    target: &WakeTarget,
+    session: &SessionRef,
+    command_id: &str,
+    text: &str,
+    now: Timestamp,
+) -> Result<WakeOutcome, SessionsError> {
+    if let Err((reason, misplaced)) = check_eligibility(guard, adapter, target, session)? {
+        if let Some(error) = misplaced {
+            super::note(
+                &guard.state,
+                adapter.runtime(),
                 &target.key,
-                session,
-                NotWoken::TurnInProgress {
-                    session: session.clone(),
-                },
-            ));
+                now,
+                Err(&error),
+            );
         }
-        SessionState::Unknown => {
-            return Ok(refuse(
-                &target.key,
-                session,
-                NotWoken::ReadinessUnknown {
-                    session: session.clone(),
-                },
-            ));
-        }
-        SessionState::Gone => {
-            return Ok(refuse(
-                &target.key,
-                session,
-                NotWoken::Gone {
-                    session: session.clone(),
-                },
-            ));
-        }
-        SessionState::InputReady | SessionState::EndedFailed => {}
+        return Ok(refuse(&target.key, session, reason));
     }
     match adapter.dispatch_send(session, command_id, text, &mut || Ok(())) {
         Ok(_) => Ok(WakeOutcome::Woken),

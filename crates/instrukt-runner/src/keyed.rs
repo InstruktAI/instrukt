@@ -16,7 +16,9 @@ mod _wake;
 use crate::sessions::SessionsError;
 use crate::state::{self, RunnerState, StateError};
 pub(crate) use _findings::note;
-pub use _wake::{NotWoken, WakeOutcome, WakeTarget, WakeTargetLookup, wake, wake_target};
+pub use _wake::{
+    NotWoken, WakeOutcome, WakeTarget, WakeTargetLookup, check_wake, wake, wake_target,
+};
 
 pub fn encode(value: &str) -> String {
     let mut out = String::new();

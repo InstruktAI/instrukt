@@ -1,7 +1,6 @@
 //! Routing for requested reviews (`requested-review`, Reaching the reviewer):
-//! project-scoped prior-report trace (digest then canonical path), reviewer of
-//! record validation under project-scoped requested-reviewer keys, and
-//! pre-record target inspection.
+//! project-scoped prior-report trace (digest then canonical path) and reviewer
+//! of record validation under project-scoped requested-reviewer keys.
 
 use std::fmt;
 use std::path::Path;
@@ -11,8 +10,6 @@ use serde::Serialize;
 
 use crate::interfaces::VerdictStanding;
 use crate::keyed::{self, WakeTarget, WakeTargetLookup};
-use crate::runtime::{Presence, RuntimeAdapter};
-use crate::sessions::{SessionState, SessionsError};
 use crate::state::RunnerState;
 
 use super::_admission;
@@ -241,58 +238,5 @@ pub(super) fn resolve_dispute_target(
                 "dispute recorder admission failed to reject non-project reviewer {recorder}"
             )))
         }
-    }
-}
-
-/// Pre-record inspection of a wake target under its held `KeyGuard`.
-pub(super) enum Preflight {
-    Ready,
-    Gone,
-    TurnInProgress,
-    ReadinessUnknown,
-    Misplaced(String),
-}
-
-/// Inspects a wake target's binding, presence, placement, and turn before
-/// recording an ask.
-pub(super) fn preflight_wake(
-    state: &RunnerState,
-    adapter: &dyn RuntimeAdapter,
-    target: &WakeTarget,
-    session: &SessionRef,
-) -> Result<Preflight, AskError> {
-    let runtime = adapter.runtime().name();
-    let Some(current) = keyed::bound(state, runtime, &target.key).map_err(failed)? else {
-        return Ok(Preflight::Gone);
-    };
-    if current.generation != target.generation || &current.session != session {
-        return Ok(Preflight::Gone);
-    }
-    let thread = match adapter.read_state(session) {
-        Ok(thread) => thread,
-        Err(SessionsError::Gone(_)) => return Ok(Preflight::Gone),
-        Err(error) => return Err(failed(error)),
-    };
-    if thread.presence != Presence::Present || thread.state == SessionState::Gone {
-        return Ok(Preflight::Gone);
-    }
-    let placement = (|| {
-        if target.recorded_project {
-            keyed::verify_recorded_project(state, &target.key, &thread)?;
-        }
-        let checkout = target
-            .checkout
-            .as_deref()
-            .ok_or_else(|| keyed::unverified_project(&target.key, session))?;
-        adapter.verify_thread_project(checkout, &thread, Some(&target.key))
-    })();
-    if let Err(error) = placement {
-        return Ok(Preflight::Misplaced(error.to_string()));
-    }
-    match thread.state {
-        SessionState::Running | SessionState::NeedsInput => Ok(Preflight::TurnInProgress),
-        SessionState::Unknown => Ok(Preflight::ReadinessUnknown),
-        SessionState::Gone => Ok(Preflight::Gone),
-        SessionState::InputReady | SessionState::EndedFailed => Ok(Preflight::Ready),
     }
 }
