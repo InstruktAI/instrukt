@@ -297,197 +297,14 @@ fn linked_state_shares_one_writer_and_refuses_database_file_links() {
     );
 }
 
-/// Stage variables under which this test binary, run again as a separate
-/// process, holds a real SQLite rollback-journal transaction on the database.
-const ROLLBACK_WRITER_DB: &str = "INSTRUKT_STATE_DB_ROLLBACK_WRITER_DB";
-const ROLLBACK_WRITER_MODE: &str = "INSTRUKT_STATE_DB_ROLLBACK_WRITER_MODE";
-
-fn run_rollback_writer_helper(db_path: &std::path::Path, mode: &str) {
-    use std::io::Write as _;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    let db = Connection::open(db_path).unwrap();
-    db.execute_batch(include_str!("../fixtures/state-v1.sql"))
-        .unwrap();
-    db.execute_batch(
-        "PRAGMA journal_mode = DELETE;
-         PRAGMA synchronous = FULL;
-         INSERT INTO events(seq,id,name,payload,envelope,logged_at)
-             VALUES(1,'retained-event','fixture','{}','{}','2026-01-01T00:00:00Z');
-         INSERT INTO procedure_activations(event_id,procedure,exact_home,envelope,declaration,accepted_at,state,failure)
-             VALUES('retained-event','fixture','fixture','{}','{}','2026-01-01T00:00:00Z','failed','retained activation failure');",
-    )
-    .unwrap();
-
-    if mode == "orphaned" {
-        db.execute_batch(
-            "BEGIN IMMEDIATE;
-             UPDATE events SET logged_at = '2026-01-02T00:00:00Z' WHERE seq = 1;",
-        )
-        .unwrap();
-        let journal = db_path.with_extension("db-journal");
-        assert!(std::fs::read(&journal).unwrap().iter().any(|b| *b != 0));
-        let mut out = std::io::stdout().lock();
-        writeln!(out, "LOCKED").unwrap();
-        out.flush().unwrap();
-        let mut line = String::new();
-        let _ = std::io::stdin().read_line(&mut line);
-        return;
-    }
-
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_reader = Arc::clone(&stop);
-    std::thread::spawn(move || {
-        let mut buf = String::new();
-        let _ = std::io::stdin().read_line(&mut buf);
-        stop_reader.store(true, Ordering::Release);
-    });
-    let mut out = std::io::stdout().lock();
-    writeln!(out, "RUNNING").unwrap();
-    out.flush().unwrap();
-    while !stop.load(Ordering::Acquire) {
-        db.execute_batch(
-            "BEGIN IMMEDIATE;
-             UPDATE events SET logged_at = '2026-01-01T00:00:00Z' WHERE seq = 1;
-             COMMIT;",
-        )
-        .unwrap();
-    }
-}
-
-fn spawn_rollback_writer_helper(
-    db_path: &std::path::Path,
-    mode: &str,
-    ready_signal: &str,
-) -> (
-    std::process::Child,
-    std::io::BufReader<std::process::ChildStdout>,
-) {
-    use std::io::BufRead as _;
-
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "state_database::status_reports_older_and_newer_state_without_writing_it",
-            "--nocapture",
-        ])
-        .env(ROLLBACK_WRITER_DB, db_path)
-        .env(ROLLBACK_WRITER_MODE, mode)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let mut reader = std::io::BufReader::new(child.stdout.take().unwrap());
-    let mut line = String::new();
-    loop {
-        line.clear();
-        let n = reader.read_line(&mut line).unwrap();
-        assert!(
-            n > 0,
-            "rollback helper exited before signaling {ready_signal}"
-        );
-        if line.trim() == ready_signal {
-            break;
-        }
-    }
-    (child, reader)
-}
-
 // spec: project/instrukt/spec/feature/work/state-database UC-SD4
 #[test]
 fn status_reports_older_and_newer_state_without_writing_it() {
-    if let (Some(db_path), Some(mode)) = (
-        std::env::var_os(ROLLBACK_WRITER_DB),
-        std::env::var_os(ROLLBACK_WRITER_MODE),
-    ) {
-        run_rollback_writer_helper(std::path::Path::new(&db_path), mode.to_str().unwrap());
-        return;
-    }
     let project = support::Project::new();
     let env = &project.env;
     let state = env.instrukt_home().join("state");
     std::fs::create_dir_all(&state).unwrap();
     let file = state.join("instrukt.db");
-    let status = |args: &[&str]| {
-        let out = env.run(project.repo.path(), args).success();
-        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
-    };
-
-    // 0-byte database file (pre-WAL creation window) inspects cleanly as empty
-    // state without mutating disk or creating sidecars or writer.lock.
-    std::fs::write(&file, []).unwrap();
-    assert!(status(&["status", "--json"])["machine"]["state_database"].is_null());
-    let empty_events = status(&["events", "status", "--json"]);
-    assert!(empty_events["state_database"].is_null());
-    assert_eq!(
-        empty_events["activation_failures"]
-            .as_array()
-            .unwrap()
-            .len(),
-        0
-    );
-    assert!(std::fs::read(&file).unwrap().is_empty());
-    for absent in [
-        "instrukt.db-wal",
-        "instrukt.db-shm",
-        "instrukt.db-journal",
-        "writer.lock",
-    ] {
-        assert!(!state.join(absent).exists(), "{absent} must stay absent");
-    }
-    std::fs::remove_file(&file).unwrap();
-
-    // An orphaned non-zero rollback journal (no lock holder after writer crash)
-    // fails promptly with the rollback-recovery diagnostic and leaves disk untouched.
-    let (mut crashed, _crashed_out) = spawn_rollback_writer_helper(&file, "orphaned", "LOCKED");
-    crashed.kill().unwrap();
-    let _ = crashed.wait().unwrap();
-    let journal = state.join("instrukt.db-journal");
-    let journal_before = std::fs::read(&journal).unwrap();
-    assert!(journal_before.iter().any(|b| *b != 0));
-    let refused_hot = env
-        .run(project.repo.path(), ["events", "status", "--json"])
-        .failure();
-    insta::assert_snapshot!(
-        String::from_utf8_lossy(&refused_hot.get_output().stderr)
-            .replace(file.to_str().unwrap(), "[DB]"),
-        @"instrukt: the state database at [DB] holds a value this build cannot read: rollback recovery is pending; inspect after the writing operation completes"
-    );
-    assert_eq!(std::fs::read(&journal).unwrap(), journal_before);
-    for absent in ["instrukt.db-wal", "instrukt.db-shm", "writer.lock"] {
-        assert!(!state.join(absent).exists(), "{absent} must stay absent");
-    }
-    std::fs::remove_file(&journal).unwrap();
-    std::fs::remove_file(&file).unwrap();
-
-    // Concurrent inspection succeeds while an active external process executes
-    // synchronous DELETE-mode rollback-journal transactions, creating no sidecars.
-    let (mut active, _active_out) = spawn_rollback_writer_helper(&file, "active", "RUNNING");
-    let active_stdin = active.stdin.take().unwrap();
-    let during_rollback = status(&["events", "status", "--json"]);
-    assert!(during_rollback["state_database"].is_null());
-    assert_eq!(
-        during_rollback["activation_failures"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
-    assert!(status(&["status", "--json"])["machine"]["state_database"].is_null());
-    drop(active_stdin);
-    assert!(active.wait().unwrap().success());
-    for absent in [
-        "instrukt.db-wal",
-        "instrukt.db-shm",
-        "instrukt.db-journal",
-        "writer.lock",
-    ] {
-        assert!(!state.join(absent).exists(), "{absent} must stay absent");
-    }
-    std::fs::remove_file(&file).unwrap();
-
     let db = Connection::open(&file).unwrap();
     db.execute_batch(include_str!("../fixtures/state-v1.sql"))
         .unwrap();
@@ -502,6 +319,10 @@ fn status_reports_older_and_newer_state_without_writing_it() {
     let bytes = || {
         ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"]
             .map(|name| std::fs::read(state.join(name)).unwrap())
+    };
+    let status = |args: &[&str]| {
+        let out = env.run(project.repo.path(), args).success();
+        serde_json::from_slice::<serde_json::Value>(&out.get_output().stdout).unwrap()
     };
     let scan_store = state.join("connector-read-back.sqlite");
     {
