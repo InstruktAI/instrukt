@@ -538,6 +538,32 @@ removed in the same transaction. A failed refresh changes no mark. Observed quot
 restrictions remain independent: applying a snapshot never changes a manual one. Availability and skip diagnostics retain cause
 and expiry. Launch-error text supplies no quota evidence or no-start proof.
 
+Observed execution outcomes also supply capacity evidence, independently of
+quota snapshots. The runtime adapter translates a completed run's actual
+provider instance and selected model, native run identity and event time. For
+T3 it reads `orchestration.getThreadProjection`: only a structured error with
+`failure.class: usage_limit` establishes quota exhaustion, and `failure.resetAt`
+supplies its reset when present. Neither CLI error text nor agent prose is parsed.
+This observation accompanies existing execution inspection and the recording
+of a failed native attempt; it adds no polling task or launch-time probe.
+
+The runner retains the newest capacity outcome per runtime, instance and model.
+A quota outcome restricts every configured profile using that instance and
+model until the reported reset. Without a reset it uses the existing one-hour
+retry default, anchored to the failure's event time and labelled as a retry
+cooldown. Expiry permits an attempt; it establishes no provider recovery.
+Re-observing an outcome never renews or reinstates its restriction. An observed
+successful run that started after the restriction's failure clears that
+execution-derived restriction; older successful runs and other failure classes
+clear nothing. Its retained event time also prevents older failures being
+reinstated after success. Snapshot refreshes and absent quota telemetry never
+clear execution-derived restrictions, and neither outcome changes manual
+restrictions or independently applicable snapshot restrictions.
+
+Subsequent selections use these restrictions through the existing configured
+order. Existing sessions retain their identities and native recovery; a quota
+outcome alone neither replaces a worker nor establishes rejection before creation.
+
 The selected adapter supplies the selection-realization report: generic starts,
 standing assignments and generations carry it without declaring native limits.
 Configuration retains neutral effort and extra settings; the T3 boundary maps

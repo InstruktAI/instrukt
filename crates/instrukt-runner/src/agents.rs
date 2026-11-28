@@ -1,4 +1,9 @@
 //! Ordered role/profile selection and expiring local capacity marks.
+mod _capacity;
+
+pub use _capacity::observe as observe_capacity;
+
+const QUOTA_DEFAULT_SECONDS: i64 = 3600;
 use crate::interfaces::{AgentPreference, Tier};
 use instrukt_core::config::Configuration;
 use instrukt_core::ids::ProfileName;
@@ -78,10 +83,12 @@ pub fn availability(
 ) -> Result<Vec<Availability>, crate::sessions::SessionsError> {
     use crate::state::{self, RunnerState};
     let state = RunnerState::new(home);
-    let rows=state.read(|conn,path| {
+    let mut rows=state.read(|conn,path| {
         let mut q=conn.prepare("SELECT agent,model,status,status_until,reason FROM agent_availability UNION ALL SELECT agent,model,status,status_until,reason FROM agent_quota ORDER BY agent,model").map_err(state::sql(path))?;
         q.query_map([],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Option<String>>(4)?))).map_err(state::sql(path))?.collect::<Result<Vec<_>,_>>().map_err(state::sql(path))
     })?.unwrap_or_default();
+    rows.extend(_capacity::marks(home)?);
+    rows.sort_by(|left, right| (&left.0, &left.1).cmp(&(&right.0, &right.1)));
     rows.into_iter()
         .map(|(profile, model, status, until, reason)| {
             let until = until
@@ -115,21 +122,21 @@ pub fn mark_availability(
 ) -> Result<(), crate::sessions::SessionsError> {
     use crate::state::{self, RunnerState, StateError};
     use instrukt_core::state_db::rusqlite::params;
-    if !instrukt_core::config::Agents::load(home)?
-        .profiles
-        .contains_key(&mark.profile)
-    {
+    let profiles = instrukt_core::config::Agents::load(home)?;
+    let Some(profile) = profiles.profiles.get(&mark.profile) else {
         return Err(crate::sessions::SessionsError::Refused(format!(
             "unknown profile `{}`",
             mark.profile
         )));
-    }
+    };
     if mark.model.as_ref().is_some_and(|m| m.trim().is_empty()) {
         return Err(crate::sessions::SessionsError::Refused(
             "model name must be nonempty".into(),
         ));
     }
     if mark.status == AvailabilityStatus::Available {
+        let instance = &profile.instance;
+        let runtime = Configuration::load(home, None)?.runner_runtime()?;
         RunnerState::new(home).write::<_, StateError>(|tx| {
             tx.execute(
                 "DELETE FROM agent_availability WHERE agent=?1 AND model=?2",
@@ -141,6 +148,14 @@ pub fn mark_availability(
                 params![mark.profile.as_str(), mark.model.as_deref().unwrap_or("")],
             )
             .map_err(state::sql(&state::db_path(tx)))?;
+            if let Some(model) = &mark.model {
+                tx.execute(
+                    "UPDATE agent_execution_capacity SET status_until=NULL,reason=NULL
+                     WHERE runtime=?1 AND instance=?2 AND model=?3",
+                    params![runtime.name(), instance.as_str(), model],
+                )
+                .map_err(state::sql(&state::db_path(tx)))?;
+            }
             Ok(())
         })?;
         return Ok(());
@@ -313,7 +328,6 @@ fn apply_windows(
     snapshot: &crate::runtime::ProviderSnapshot,
     observed_at: jiff::Timestamp,
 ) -> Result<(), crate::sessions::SessionsError> {
-    const QUOTA_DEFAULT_SECONDS: i64 = 3600;
     let agents = instrukt_core::config::Agents::load(home)?;
     let mut covered = Vec::new();
     for (name, profile) in &agents.profiles {

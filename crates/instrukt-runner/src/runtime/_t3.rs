@@ -190,6 +190,17 @@ impl instrukt_core::interfaces::CallerIdentityLookup for T3 {
 }
 
 impl RuntimeAdapter for T3 {
+    fn capacity_outcome(
+        &self,
+        session: &SessionRef,
+    ) -> Result<Option<super::CapacityOutcome>, SessionsError> {
+        if session.runtime.as_str() != "t3" {
+            return Err(SessionsError::UnknownRuntime(session.runtime.to_string()));
+        }
+        let value =
+            super::_t3_readiness::thread_projection(&self.operation_home()?, &self.env, session)?;
+        super::_t3_capacity::outcome(value, session)
+    }
     fn diagnostic(&self, operation: &str, error: &SessionsError) -> super::NativeDiagnostic {
         let native = match error {
             SessionsError::Failed { detail, .. } => super::_t3_diagnostics::cause(detail),

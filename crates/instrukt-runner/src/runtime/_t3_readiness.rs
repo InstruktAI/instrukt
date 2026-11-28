@@ -1188,6 +1188,29 @@ pub(super) fn exact_project_id(
     result
 }
 
+/// Read normalized run outcomes independently of provider quota snapshots.
+pub(super) fn thread_projection(
+    home: &Home,
+    env: &Env,
+    session: &instrukt_core::ids::SessionRef,
+) -> Result<serde_json::Value, SessionsError> {
+    let endpoint = server_endpoint(home, env)?;
+    let mut token = Token::issue_scoped("orchestration:read", "instrukt-execution-capacity")?;
+    let result = rpc(
+        &endpoint,
+        &token.secret,
+        "orchestration.getThreadProjection",
+        "execution capacity",
+        json!({"threadId":session.id.as_str()}),
+        &mut || Ok(()),
+    )
+    .map_err(DispatchError::into_inner);
+    if let Err(error) = token.revoke() {
+        tracing::warn!(event="capacity_token_cleanup_failed", %error);
+    }
+    result
+}
+
 /// Launch metadata is acquired independently of provider readiness/capacity.
 pub(super) fn resolve_launch(
     home: &Home,
