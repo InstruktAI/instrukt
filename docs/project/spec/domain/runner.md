@@ -179,8 +179,9 @@ Native agent-operation prose is supplied by configuration and rendered through `
 
 - **Owns:** Per-computer history extraction/search and merged history queries;
   module-aware runner execution; todo dispatch policy; procedure
-  activation from events; the admission, rendering and start of requested
-  reviews; the runtime-adapter trait, operational session inspection and session reuse behavior;
+  activation from events; the admission, rendering, start and wake of
+  requested reviews and the return of their verdicts to the sessions that
+  asked; the runtime-adapter trait, operational session inspection and session reuse behavior;
   runtime capability translation;
   unattended event/approval delivery and runner-owned execution observation; time
   eligibility and missed-run decisions; anomaly-notification routing; the
