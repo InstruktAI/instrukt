@@ -408,7 +408,7 @@ pub(crate) async fn scan(
             )
             .map_err(sql)
         })?;
-        if let Some(at) = stored_wait(progress.retry_at, clock(), waited_out) {
+        if let Some(at) = stored_wait(progress.retry_at, requested, waited_out) {
             return Ok(Scanned::Waiting {
                 until: Timestamp::from_microsecond(at).map_err(failed)?,
                 pause: None,
