@@ -48,7 +48,7 @@ pub use _agents::{
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
-pub use _agents_file::{agents_revision, agents_value, patch_agents};
+pub use _agents_file::{AgentsMigration, agents_revision, agents_value, patch_agents};
 
 pub use _admitted::{
     AdmissionError, Admitted, AdmittedCompany, AdmittedProject, AdmittedSecrets, Candidate,
@@ -59,7 +59,7 @@ pub use _backup::{
     DEFAULT_BACKUP_TIME, SecretValue, inspect_global_backup, withholds_backup,
 };
 pub use _company::{Member, Members};
-pub use _company_document::{COMPANY_DOCUMENT, convert_company_document, write_company_settings};
+pub use _company_document::{COMPANY_DOCUMENT, write_company_settings};
 pub use _connectors::{
     ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
     install_connector_declarations,
@@ -177,7 +177,7 @@ pub fn company_homes(home: &Home) -> Result<Vec<CompanyHome>, ConfigError> {
 /// The folders below `~/.instrukt/companies/` whose name is a valid company
 /// name, sorted, each with why it cannot be inspected; nothing in them is
 /// read.
-pub(crate) fn company_folders(
+pub fn company_folders(
     home: &Home,
 ) -> Result<Vec<(ProjectSlug, Option<ConfigError>)>, ConfigError> {
     let dir = home.companies_dir();

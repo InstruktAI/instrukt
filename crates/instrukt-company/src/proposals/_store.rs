@@ -10,7 +10,7 @@ use std::time::Duration;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_core::state_db::rusqlite::params;
-use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreError, StoreLock};
+use instrukt_core::state_db::{Migration, Store, StoreDb, StoreError, StoreLock};
 
 const NAME: &str = "the knowledge-proposal store";
 
@@ -92,7 +92,7 @@ pub(super) fn read(
     company: &ProjectSlug,
 ) -> Result<BTreeMap<String, Recorded>, StoreError> {
     let store = store(home, company);
-    let Some(Read::Current(conn)) = store.read(true)? else {
+    let Some(conn) = store.read()? else {
         return Ok(BTreeMap::new());
     };
     let sql = |source| StoreError::Sqlite {

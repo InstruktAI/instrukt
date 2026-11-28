@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/harness.rs
+assertion_line: 40
 expression: help
 ---
 Read, edit, initialize and validate `instrukt.yaml`
@@ -14,10 +15,10 @@ Commands:
   schema    Show what the addressed document can declare, from the types validation reads
   patch     Apply a merge patch (YAML mapping) to the project layer, the global layer with --global,
             or the agents file with --agents, if it is still at --revision
-  init      Create the layer with the current schema version and defaults, or migrate an existing
-            older one. With --company, also append each ignore line the home's .gitignore lacks —
-            /company.yaml, /secrets.env, /projects/ and /.instrukt/ — keeping every other line, in a
-            new home or an existing one
+  init      Create the layer with the current schema version and defaults, or migrate an older
+            project layer. Older machine layers require instrukt install. With --company, also
+            append each ignore line the home's .gitignore lacks — /company.yaml, /secrets.env,
+            /projects/ and /.instrukt/ — keeping every other line, in a new home or an existing one
   validate  Report the layer's findings; exits non-zero when there are any. With --company, two
             kinds: the configuration's, among them each local-only path the home's repository tracks
             or does not ignore, and the findings of rendering the home's AGENTS.md from its working

@@ -1,13 +1,12 @@
-//! The agents file of an instrukt home (`Home::agents_file`) on disk: what
-//! the next writing command does to it, its read and the revision of its
-//! stored bytes, and every write to it under its one lock — the entry's
-//! convergence, and the revision-checked patch that keeps the file to its
+//! The agents file of an instrukt home (`Home::agents_file`) on disk: explicit
+//! migration, its read and the revision of its stored bytes, and every write
+//! to it under its one lock — the revision-checked patch keeps the file to its
 //! overrides of the shipped defaults
 //! (`project/instrukt/spec/feature/configuration/configuration-editing`,
 //! Agents file).
 use super::_agents::{Agents, VERSION, overrides_only};
 use super::_merge::merge_patch;
-use super::{ConfigError, Layer, Revision};
+use super::{ConfigError, Revision};
 use crate::{
     fsx::{LockGuard, atomic_write},
     home::Home,
@@ -62,6 +61,10 @@ pub fn agents_value(home: &Home, path: Option<&str>) -> Result<Value, ConfigErro
 /// over in memory, merged over the shipped defaults — validated, as literal
 /// data. Nothing is locked or written.
 fn agents_document(home: &Home) -> Result<Value, ConfigError> {
+    if !home.is_inspection() {
+        super::_layer::require_global_current(home)?;
+        require_agents_current(home)?;
+    }
     let stored = read_existing(&home.agents_file())?;
     let global = super::_layer::read(&home.global_config())?.map(|document| document.value);
     let text = Agents::selection_text(stored, global.as_ref())?;
@@ -70,19 +73,45 @@ fn agents_document(home: &Home) -> Result<Value, ConfigError> {
     Ok(document)
 }
 
+/// What explicit migration `agents.yaml` needs, if any.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentsMigration {
+    /// An unedited copy of earlier shipped defaults to remove along with its deployment record.
+    RemoveDefaultsCopy,
+    /// An older `agents.yaml` shape to convert to the current schema version.
+    Convert { from: u64, to: u64 },
+}
+
+/// Refuses an unmigrated `agents.yaml` (older schema or unedited defaults copy)
+/// without modifying disk, directing to `instrukt install`.
+pub(super) fn require_agents_current(home: &Home) -> Result<(), ConfigError> {
+    require_agents_bytes_current(home, read_existing(&home.agents_file())?.as_deref())
+}
+
+pub(super) fn require_agents_bytes_current(
+    home: &Home,
+    bytes: Option<&[u8]>,
+) -> Result<(), ConfigError> {
+    match pending_migration(home, bytes)? {
+        None => Ok(()),
+        Some(AgentsMigration::RemoveDefaultsCopy) => Err(ConfigError::PendingAgentsMigration {
+            path: home.agents_file(),
+        }),
+        Some(AgentsMigration::Convert { from, to }) => Err(ConfigError::OlderSchema {
+            path: home.agents_file(),
+            found: from,
+            current: to,
+            door: "instrukt install".into(),
+        }),
+    }
+}
+
 /// Applies merge `patch` to the agents file's overrides, only while its
 /// stored bytes still have revision `expected` and the resulting effective
 /// selection is valid, and stores only what differs from the shipped
 /// defaults: the file is written atomically, or removed when no override
-/// remains. Returns the new revision. A patch that changes the file makes
-/// every other patch from `expected` stale; one that leaves the stored bytes
-/// as they were (such as an empty patch on an absent file) leaves `expected`
-/// current.
-///
-/// As a layer patch does with the machine's layer, the patch first persists,
-/// under the same locks, what the next writing command does to the file —
-/// its shape conversion or recognised-copy removal, and an older global
-/// layer's selection carried into it — and keeps that when it refuses.
+/// remains. Returns the new revision. Refuses unmigrated global or agents
+/// configuration without mutating disk, directing to `instrukt install`.
 pub fn patch_agents(
     home: &Home,
     expected: &Revision,
@@ -91,21 +120,19 @@ pub fn patch_agents(
     if !patch.is_mapping() {
         return Err(ConfigError::PatchNotAMapping);
     }
+    super::_layer::require_global_current(home)?;
+    require_agents_current(home)?;
     let started = Instant::now();
-    // Lock order: the global layer's lock, then the agents file's.
-    let global = super::_layer::lock_if_older(home, &Layer::Global)?;
-    let agents = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
+    let _agents = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
+    super::_layer::require_global_current(home)?;
+    require_agents_current(home)?;
     let path = home.agents_file();
-    let inspected = revision_of(read_existing(&path)?.as_deref());
-    converge_holding(home, &agents)?;
-    if let Some(ref global_lock) = global {
-        super::_layer::migrate_holding(home, &Layer::Global, global_lock, Some(&agents))?;
-    }
     let before = read_existing(&path)?;
+    let inspected = revision_of(before.as_deref());
     if &inspected != expected {
         return Err(ConfigError::RevisionMismatch {
             expected: expected.to_string(),
-            current: revision_of(before.as_deref()).to_string(),
+            current: inspected.to_string(),
         });
     }
     let (revision, removed) = match stored_overrides(before.as_deref(), patch, &path)? {
@@ -178,15 +205,21 @@ fn stored_overrides(
     Ok((!empty).then_some(reduced))
 }
 
-fn converge_holding(home: &Home, _agents: &LockGuard) -> Result<(), ConfigError> {
+fn converge_holding(
+    home: &Home,
+    _agents: &LockGuard,
+) -> Result<Option<AgentsMigration>, ConfigError> {
     let path = home.agents_file();
     let state = home.agents_deployment_file();
     let Some(current) = read_existing(&path)? else {
-        return Ok(());
+        return Ok(None);
     };
     match next_write(&current, Deployment::load(&state).as_ref())? {
-        NextWrite::Keep => {}
-        NextWrite::Remove => remove_copy(&path, &state)?,
+        NextWrite::Keep => Ok(None),
+        NextWrite::Remove => {
+            remove_copy(&path, &state)?;
+            Ok(Some(AgentsMigration::RemoveDefaultsCopy))
+        }
         NextWrite::Convert(converted) => {
             atomic_write(&path, &converted.bytes)?;
             tracing::info!(
@@ -194,55 +227,75 @@ fn converge_holding(home: &Home, _agents: &LockGuard) -> Result<(), ConfigError>
                 from_version = converted.from,
                 to_version = VERSION
             );
+            Ok(Some(AgentsMigration::Convert {
+                from: converted.from,
+                to: VERSION,
+            }))
         }
     }
-    Ok(())
 }
 
 impl Agents {
-    /// What a writing command does to `agents.yaml` before reading it. A full
-    /// copy of shipped defaults the deployment record recognises as unedited
-    /// is removed, and then the record; any other file is kept and has a due
-    /// shape conversion persisted. Removal comes first, so a recognised copy
-    /// is never converted and kept.
-    pub fn converge_file(home: &Home) -> Result<(), ConfigError> {
-        let path = home.agents_file();
-        let state = home.agents_deployment_file();
-        let Some(before) = read_existing(&path)? else {
-            return Ok(());
-        };
-        if next_write(&before, Deployment::load(&state).as_ref())? == NextWrite::Keep {
-            return Ok(());
+    /// Whether `agents.yaml` has a pending migration (unedited shipped-defaults
+    /// copy removal or older shape conversion), checked read-only without
+    /// acquiring any lock or mutating files.
+    pub fn pending_migration(home: &Home) -> Result<Option<AgentsMigration>, ConfigError> {
+        pending_migration(home, read_existing(&home.agents_file())?.as_deref())
+    }
+
+    /// Explicitly migrates `agents.yaml` under its lock (`instrukt install` and
+    /// `instrukt backup restore`). A full copy of shipped defaults the
+    /// deployment record recognises as unedited is removed along with the
+    /// record; any other older file has its shape conversion persisted.
+    pub fn migrate_file(home: &Home) -> Result<Option<AgentsMigration>, ConfigError> {
+        if Self::pending_migration(home)?.is_none() {
+            return Ok(None);
         }
         let lock = LockGuard::acquire(&agents_lock(home), LOCK_TIMEOUT)?;
         converge_holding(home, &lock)
     }
 
-    /// What a reading command reports about `agents.yaml`: the change the
-    /// next writing command makes to it, if any, without making it.
+    /// What a diagnostic inspection command reports about `agents.yaml`: the
+    /// migration `instrukt install` will perform, if any, without making it.
     pub fn inspection_notice(home: &Home) -> Result<Option<String>, ConfigError> {
         let path = home.agents_file();
-        let Some(bytes) = read_existing(&path)? else {
-            return Ok(None);
-        };
-        let state = home.agents_deployment_file();
-        Ok(
-            match next_write(&bytes, Deployment::load(&state).as_ref())? {
-                NextWrite::Keep => None,
-                NextWrite::Remove => Some(format!(
-                    "{}: an unedited copy of earlier shipped defaults; the next writing command removes it and the shipped defaults apply",
-                    path.display()
-                )),
-                NextWrite::Convert(_) => Some(format!(
-                    "{}: selection configuration inspected in memory; file migrates on the next writing command",
-                    path.display()
-                )),
-            },
-        )
+        Ok(match Self::pending_migration(home)? {
+            None => None,
+            Some(AgentsMigration::RemoveDefaultsCopy) => Some(format!(
+                "{}: an unedited copy of earlier shipped defaults; `instrukt install` removes it and the shipped defaults apply",
+                path.display()
+            )),
+            Some(AgentsMigration::Convert { from, to }) => Some(format!(
+                "{}: selection configuration schema_version {from} inspected as {to}; migrate it with `instrukt install`",
+                path.display()
+            )),
+        })
     }
 }
 
-/// What the next writing command does to `agents.yaml`.
+fn pending_migration(
+    home: &Home,
+    bytes: Option<&[u8]>,
+) -> Result<Option<AgentsMigration>, ConfigError> {
+    let Some(bytes) = bytes else {
+        return Ok(None);
+    };
+    Ok(
+        match next_write(
+            bytes,
+            Deployment::load(&home.agents_deployment_file()).as_ref(),
+        )? {
+            NextWrite::Keep => None,
+            NextWrite::Remove => Some(AgentsMigration::RemoveDefaultsCopy),
+            NextWrite::Convert(converted) => Some(AgentsMigration::Convert {
+                from: converted.from,
+                to: VERSION,
+            }),
+        },
+    )
+}
+
+/// What explicit migration does to `agents.yaml`.
 #[derive(Debug, PartialEq, Eq)]
 enum NextWrite {
     /// Nothing for this operation: the file is not a recognised copy and no
@@ -519,14 +572,25 @@ mod tests {
     }
 
     #[test]
-    fn of_two_concurrent_patches_from_the_absent_revision_over_an_older_global_layer_exactly_one_lands()
+    fn patching_agents_refuses_an_older_global_layer_and_concurrent_patches_after_migration_let_one_land()
      {
         let (_dir, home) = temp_home();
-        std::fs::write(
-            home.global_config(),
-            "schema_version: 1\nagents:\n  order: [codex, claude]\n",
-        )
-        .unwrap();
+        let old_global = "schema_version: 1\nagents:\n  order: [codex, claude]\n";
+        std::fs::write(home.global_config(), old_global).unwrap();
+        let rev = super::agents_revision(&home).unwrap();
+        let refused = super::patch_agents(&home, &rev, &yaml("roles: {builder: {tier: light}}"));
+        assert!(
+            matches!(refused, Err(super::ConfigError::OlderSchema { .. })),
+            "{refused:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.global_config()).unwrap(),
+            old_global
+        );
+        assert!(!home.agents_file().exists());
+
+        // Explicit migration brings global + carried selection forward; then concurrent patches serialize.
+        super::super::migrate(&home, &super::super::Layer::Global).unwrap();
         let rev = super::agents_revision(&home).unwrap();
         let outcomes: Vec<Result<super::Revision, super::ConfigError>> =
             std::thread::scope(|scope| {
@@ -571,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn patching_a_v3_full_copy_converts_it_and_prunes_to_overrides() {
+    fn patching_a_v3_full_copy_refuses_until_migrated_then_prunes_to_overrides() {
         let (_dir, home) = temp_home();
         let mut full = yaml(SHIPPED_AGENTS);
         full["schema_version"] = Value::from(3_u64);
@@ -594,8 +658,28 @@ mod tests {
             })
             .unwrap();
         full["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order.clone());
-        std::fs::write(home.agents_file(), serde_yaml_ng::to_string(&full).unwrap()).unwrap();
+        let v3_text = serde_yaml_ng::to_string(&full).unwrap();
+        std::fs::write(home.agents_file(), &v3_text).unwrap();
 
+        let rev = super::agents_revision(&home).unwrap();
+        let refused = super::patch_agents(
+            &home,
+            &rev,
+            &yaml("roles: {builder: {order: [antigravity]}}"),
+        );
+        assert!(
+            matches!(
+                refused,
+                Err(super::ConfigError::OlderSchema { found: 3, .. })
+            ),
+            "{refused:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.agents_file()).unwrap(),
+            v3_text
+        );
+
+        super::Agents::migrate_file(&home).unwrap();
         let rev = super::agents_revision(&home).unwrap();
         super::patch_agents(
             &home,

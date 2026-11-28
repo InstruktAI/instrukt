@@ -10,7 +10,7 @@ use std::time::Duration;
 use instrukt_core::home::Home;
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, params};
 use instrukt_core::state_db::{
-    Migration, Read, StateDb, StateDbError, StateRead, Store, StoreDb, StoreLock,
+    Migration, StateDb, StateDbError, StateRead, Store, StoreDb, StoreLock,
 };
 
 use crate::state::{self, StateError};
@@ -31,7 +31,7 @@ CREATE TABLE reachability_move (
 
 const MIGRATIONS: &[Migration] = &[Migration::Sql(V1)];
 
-fn store(home: &Home) -> Store {
+pub(crate) fn store(home: &Home) -> Store {
     Store {
         name: "the Redis reachability store",
         file: home.redis_reachability_db_file(),
@@ -142,10 +142,10 @@ fn move_in(home: &Home, db: &mut StoreDb) -> Result<(), StateError> {
 /// the state database. Lock-free no-op when read-only, already moved, or when
 /// no legacy table exists.
 pub(crate) fn ensure_migrated(home: &Home) -> Result<(), StateError> {
-    if home.is_state_read_only() {
+    if home.is_inspection() {
         return Ok(());
     }
-    if let Some(Read::Current(conn)) = store(home).read(false).map_err(StateDbError::from)?
+    if let Some(conn) = store(home).read().map_err(StateDbError::from)?
         && move_done(&conn, &home.redis_reachability_db_file())?
     {
         return Ok(());
@@ -166,10 +166,10 @@ pub(crate) fn ensure_migrated(home: &Home) -> Result<(), StateError> {
 /// transitions acquire `in_process` and [`Home::redis_reachability_lock_file`],
 /// re-check under the lock, persist the new state, and emit one transition log.
 pub(crate) fn record(home: &Home, source: &str, reachable: bool, in_process: &Mutex<()>) {
-    if home.is_state_read_only() {
+    if home.is_inspection() {
         return;
     }
-    if let Ok(Some(Read::Current(conn))) = store(home).read(false) {
+    if let Ok(Some(conn)) = store(home).read() {
         let path = home.redis_reachability_db_file();
         if move_done(&conn, &path).unwrap_or(false)
             && read_source(&conn, &path, source).ok().flatten() == Some(reachable)
@@ -210,10 +210,10 @@ pub(crate) fn record(home: &Home, source: &str, reachable: bool, in_process: &Mu
 /// when read-only, when the store does not exist yet, or when no obsolete row
 /// is present.
 pub(crate) fn retire_unconfigured(home: &Home, active_sources: &[&str]) -> Result<(), StateError> {
-    if home.is_state_read_only() {
+    if home.is_inspection() {
         return Ok(());
     }
-    let Some(Read::Current(conn)) = store(home).read(false).map_err(StateDbError::from)? else {
+    let Some(conn) = store(home).read().map_err(StateDbError::from)? else {
         return Ok(());
     };
     let path = home.redis_reachability_db_file();

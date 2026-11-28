@@ -5,7 +5,7 @@
 use instrukt_core::home::Home;
 use instrukt_core::ids::ProjectSlug;
 use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
-use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreLock};
+use instrukt_core::state_db::{Migration, Store, StoreDb, StoreLock};
 use serde_json::Value;
 
 use crate::ci::{Cached, CiError, Fetched, conditional_get};
@@ -28,7 +28,7 @@ CREATE TABLE pages (
 
 const MIGRATIONS: &[Migration] = &[Migration::Sql(V1)];
 
-fn store(home: &Home) -> Store {
+pub(crate) fn store(home: &Home) -> Store {
     Store {
         name: "the pull-request observation store",
         file: home.review_observation_db_file(),
@@ -40,7 +40,7 @@ fn store(home: &Home) -> Store {
 /// The page this store keeps for `project`, read without a lock.
 fn kept(home: &Home, project: &ProjectSlug, page: usize) -> Result<Option<Cached>, CiError> {
     let read = || -> Result<Option<Cached>, instrukt_core::state_db::StoreError> {
-        let Some(Read::Current(conn)) = store(home).read(false)? else {
+        let Some(conn) = store(home).read()? else {
             return Ok(None);
         };
         conn.query_row(

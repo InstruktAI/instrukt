@@ -145,13 +145,18 @@ impl Admitted {
     /// candidate incomplete; a finding against a project's module withholds
     /// that module.
     pub fn load(home: &Home) -> Result<Candidate, AdmissionError> {
-        // Admission reads and never writes: older documents are converted in
-        // memory, and the profiles are the shipped ones when there is no file.
+        // Diagnostic admission converts in memory; a serving invocation needs
+        // machine-owned files upgraded explicitly before it can consume them.
         let global_path = home.global_config();
         let raw_global = read(&global_path)?.map(|doc| doc.value);
         let global_layer = raw_global
             .clone()
-            .map(|raw| inspected(&Layer::Global, &global_path, raw))
+            .map(|raw| {
+                if !home.is_inspection() {
+                    super::_layer::require_usable(&Layer::Global, &global_path, &raw)?;
+                }
+                inspected(&Layer::Global, &global_path, raw)
+            })
             .transpose()?;
         let agents_path = home.agents_file();
         let agents_bytes = match std::fs::read(&agents_path) {
@@ -165,6 +170,9 @@ impl Admitted {
                 .into());
             }
         };
+        if !home.is_inspection() {
+            super::_agents_file::require_agents_bytes_current(home, agents_bytes.as_deref())?;
+        }
         let agents = Arc::new(Agents::from_documents(agents_bytes, raw_global.as_ref())?);
         let records: Vec<PublishedRecord> = PublishedRecord::load_all(home)?;
         let published = !records.is_empty();
@@ -434,12 +442,7 @@ fn admit_company(
 ) -> Result<Option<AdmittedCompany>, Vec<Finding>> {
     let layer = Layer::Company(name.clone());
     let document = layer.located(home);
-    let value = read_layer(home, &layer)
-        .and_then(|found| {
-            found
-                .map(|(path, doc)| inspected(&layer, &path, doc.value))
-                .transpose()
-        })
+    let value = super::_layer::read_usable(home, &layer)
         .map_err(|error| vec![unreadable(document.clone(), &error)])?;
     let Some(value) = value else {
         return Ok(None);
@@ -985,7 +988,7 @@ mod tests {
     }
 
     #[test]
-    fn a_home_made_before_company_yaml_is_admitted_with_its_settings_unconverted() {
+    fn a_legacy_company_is_withheld_until_upgrade_but_can_be_inspected() {
         let dir = scratch("legacy-company");
         let home = Home::at_user_home(dir.clone());
         let company = ProjectSlug::parse("acme").unwrap();
@@ -996,7 +999,10 @@ mod tests {
             super::super::COMPANY_SCHEMA_VERSION
         );
         std::fs::write(company_dir.join(super::super::CONFIG_FILE_NAME), &legacy).unwrap();
-        let candidate = Admitted::load(&home).unwrap();
+        let ordinary = Admitted::load(&home).unwrap();
+        assert!(!ordinary.complete);
+        assert!(ordinary.generation.company(&company).is_none());
+        let candidate = Admitted::load(&home.for_inspection()).unwrap();
         assert!(candidate.complete, "{:?}", candidate.findings);
         let admitted = candidate.generation.company(&company).unwrap();
         assert_eq!(
@@ -1058,7 +1064,7 @@ mod tests {
         let company = ProjectSlug::parse("acme").unwrap();
         let company_dir = home.company_dir(&company);
         std::fs::create_dir_all(&company_dir).unwrap();
-        let document = company_dir.join(super::super::CONFIG_FILE_NAME);
+        let document = company_dir.join(super::super::COMPANY_DOCUMENT);
         std::fs::write(
             &document,
             format!(

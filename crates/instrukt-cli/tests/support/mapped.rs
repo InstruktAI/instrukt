@@ -273,7 +273,8 @@ pub fn machine_engine(env: &TestEnv, engine: &Path) {
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
         format!(
-            "schema_version: 1\nblueprint:\n  engine: {}\n",
+            "schema_version: {}\nblueprint:\n  engine: {}\n",
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION,
             engine.display()
         ),
     )

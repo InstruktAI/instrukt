@@ -6,6 +6,7 @@ mod _backup;
 mod _demand;
 mod _event_status;
 pub(crate) mod _launch;
+pub(crate) mod _migrate;
 mod _package;
 mod _proposals;
 mod _redis;
@@ -39,6 +40,8 @@ pub enum InstallationError {
     Filesystem(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
     State(#[from] crate::state::StateError),
+    #[error("live-home migration failed: {0}")]
+    Migration(String),
 }
 fn inspection_error(resource: &'static str, error: impl std::fmt::Display) -> InstallationError {
     InstallationError::Inspection {
@@ -220,6 +223,9 @@ pub struct Request<'a> {
     /// The company hosted here, whose conversations section the report
     /// shows; none shows none.
     pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
+    /// Additional module SQLite stores (outside `instrukt-runner`) checked and
+    /// backed up / migrated by `instrukt install`.
+    pub extra_stores: Vec<instrukt_core::state_db::Store>,
 }
 /// A failed resource leaves completed resources recorded, so a rerun repairs
 /// observed drift rather than trusting the previous overall outcome.
@@ -232,7 +238,23 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
             std::time::Duration::from_secs(30),
         )?)
     };
+    let inspection_home = request.home.for_inspection();
+    let effective;
+    let request = if request.check {
+        effective = Request {
+            home: &inspection_home,
+            wake: WakeUp {
+                home: &inspection_home,
+                ..request.wake.clone()
+            },
+            ..request.clone()
+        };
+        &effective
+    } else {
+        request
+    };
     let mut report = Report::default();
+    let migrated = _migrate::run(request, &mut report)?;
     if request.scheduler == Scheduler::Launchd
         && request.wake.locations.launch_agents
             != request
@@ -268,18 +290,15 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         }
     }
     let global = Configuration::load_global(request.home)?;
-    if let Some(notice) =
-        instrukt_core::config::inspect_layer(request.home, &instrukt_core::config::Layer::Global)?
-            .migration
-    {
-        report.notices.push(notice);
-    }
     if (request.module.is_none() && !request.conversations)
         || request.module == Some(Module::Blueprint)
     {
         graphify(request, &demand.blueprint, &mut report);
     }
     if request.module == Some(Module::Blueprint) {
+        if migrated && _services::registered(request, ResourceKind::Runner) {
+            runner_service(request, &demand, &mut report);
+        }
         return Ok(report);
     }
     if !request.check {
@@ -302,7 +321,9 @@ pub fn converge(request: &Request<'_>) -> Result<Report, InstallationError> {
         admission_findings(request, &mut report);
         _backup::converge(request, &mut report);
     }
-    if request.module.is_none() {
+    if request.module.is_none()
+        || (migrated && _services::registered(request, ResourceKind::Runner))
+    {
         runner_service(request, &demand, &mut report);
     }
     runtime_projects(request, &demand, &mut report);

@@ -33,6 +33,17 @@ use jiff::Timestamp;
 use _store::Recorded;
 use _store::{Asked, Entry};
 
+/// Every company home's knowledge-proposal store under `home`, for explicit
+/// installation migration and pre-migration snapshotting.
+pub fn stores(
+    home: &Home,
+) -> Result<Vec<instrukt_core::state_db::Store>, instrukt_core::config::ConfigError> {
+    Ok(instrukt_core::config::company_folders(home)?
+        .into_iter()
+        .filter_map(|(name, unreadable)| unreadable.is_none().then(|| _store::store(home, &name)))
+        .collect())
+}
+
 /// How long the recording asks the speaker lookup again after an error
 /// before it records the commit unestablished.
 const SPEAKER_RETRY: Duration = Duration::from_secs(5);

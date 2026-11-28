@@ -231,7 +231,7 @@ impl From<PublicationError> for SyncError {
 /// could not, and reports those it still cannot whatever its outcome.
 pub fn sync(request: &SyncRequest<'_>) -> Result<SyncReport, SyncError> {
     let started = Instant::now();
-    config::migrate(request.home, &Layer::Global).map_err(PublicationError::from)?;
+    config::bring_current(request.home, &Layer::Global).map_err(PublicationError::from)?;
     let mut project = _source::locate(request.cwd)?;
     if request.home.is_development() {
         project.primary = project.worktree.clone();
@@ -368,7 +368,7 @@ fn publish(
     report: &mut Reported<'_>,
 ) -> Result<SyncOutcome, PublicationError> {
     let home = request.home;
-    config::migrate(home, &Layer::Global)?;
+    config::bring_current(home, &Layer::Global)?;
     config::bring_current(home, &Layer::Project(project.worktree.clone()))?;
     let committed = Committed::read(&project.primary, commit)?;
     let checkout = crate::fsx::temp_dir(tempfile::Builder::new().prefix("instrukt-sync-"))

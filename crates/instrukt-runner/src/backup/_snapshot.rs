@@ -132,8 +132,8 @@ pub(super) fn collect(home: &Home) -> Result<SnapshotPlan, BackupError> {
         )?;
     }
 
-    // Company homes: confine companies/ and each companies/<name> BEFORE invoking
-    // configuration's forward conversion, then collect company.yaml, secrets.env,
+    // Company homes: confine companies/ and each companies/<name> before checking
+    // the settings' schema, then collect company.yaml, secrets.env,
     // and .instrukt/ (excluding .instrukt/schemas/).
     let companies_rel = Path::new("companies");
     if exists_confined_dir(&resolved_home, companies_rel)? {
@@ -167,8 +167,10 @@ pub(super) fn collect(home: &Home) -> Result<SnapshotPlan, BackupError> {
             };
             let company_rel = companies_rel.join(slug.as_str());
             let _confined_company = confine_path(&resolved_home, &company_rel)?;
-            // Bring any pre-migration legacy company instrukt.yaml forward to company.yaml.
-            instrukt_core::config::convert_company_document(home, &slug)?;
+            instrukt_core::config::bring_current(
+                &home.for_writing(),
+                &instrukt_core::config::Layer::Company(slug),
+            )?;
             for file in ["company.yaml", "secrets.env"] {
                 let rel = company_rel.join(file);
                 collect_single_file(&resolved_home, &rel, &rel, &mut plan)?;
@@ -591,13 +593,13 @@ mod tests {
         std::fs::write(home.git_dir().join("index.md"), b"notes").unwrap();
         std::fs::create_dir_all(home.root().join("explore")).unwrap();
         std::fs::write(home.root().join("explore/report.md"), b"explore").unwrap();
-        // Company home with legacy instrukt.yaml, secrets, .instrukt/schemas, and DB
+        // Company home with settings, secrets, .instrukt/schemas, and DB.
         let acme = ProjectSlug::parse("acme").unwrap();
         let acme_dir = home.company_dir(&acme);
         std::fs::create_dir_all(acme_dir.join(".instrukt/schemas")).unwrap();
         std::fs::create_dir_all(acme_dir.join("projects/sub")).unwrap();
         std::fs::write(
-            acme_dir.join("instrukt.yaml"),
+            acme_dir.join("company.yaml"),
             "schema_version: 6\ncompany: acme\n",
         )
         .unwrap();
@@ -665,7 +667,7 @@ mod tests {
                 "unexpected {forbidden} in {paths:?}"
             );
         }
-        // Legacy company instrukt.yaml was converted forward to company.yaml.
+        // Collection leaves the company's settings in place.
         assert!(acme_dir.join("company.yaml").exists());
         assert!(!acme_dir.join("instrukt.yaml").exists());
     }

@@ -85,7 +85,7 @@ fn read_legacy_worker_rows(
 /// newer files, then drops the legacy table. Lock-free no-op when read-only,
 /// when no state database exists, or when the legacy table is already gone.
 pub(crate) fn ensure_workers_migrated(home: &Home) -> Result<(), StateError> {
-    if home.is_state_read_only() {
+    if home.is_inspection() {
         return Ok(());
     }
     let rows = match StateRead::open(home)? {

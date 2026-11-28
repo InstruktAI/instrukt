@@ -92,9 +92,8 @@ meaning and the writes of the conversation tables.
   runs out reflects nothing that run, and the next tick tries again. Commands
   that write the record take only the writer lock, mark reflection pending and
   return without touching GitHub or the reflection lock. Lock order is always
-  reflection → writer. Current-schema local readers take neither lock. Readers
-  of an older database enter the same migration path under the writer lock
-  before consuming it, except status inspection and documentation reads.
+  reflection → writer. Local readers take neither lock and never escalate to
+  writing or schema migration.
 - A withdrawal holds the per-computer withdrawal lock
   `~/.instrukt/state/withdrawal.lock` from before it records its intent
   (`withdrawal_intents`) until it has committed or abandoned it, or returned
@@ -158,29 +157,34 @@ adapter; an actor as JSON text, one of
 
 - `PRAGMA user_version` is the schema version. instrukt ships an ordered
   sequence of migrations and owns every one of them.
-- Opening the database for writing applies each pending migration in its own
-  transaction under the writer lock, and sets `user_version` in that same
-  transaction. Opening older owned state for reading first performs that same
-  locked migration, then opens a current-schema reader. Current-schema reads
-  do not migrate or take the writer lock.
+- Opening an absent or empty database (`user_version == 0`) for writing
+  initializes it at the current schema version under the writer lock.
+- Opening an existing database whose schema version is older than this build's
+  (`0 < found < known`) is refused on both reading and writing paths without
+  running DDL or mutating the database; the refusal names both versions and
+  directs the operator to `instrukt install`.
+- Reading (`StateRead::open`) is strictly read-only (`PRAGMA query_only = true`):
+  it never takes `writer.lock`, never executes DDL on disk or in memory, and
+  never escalates to `StateDb::open`.
+- `instrukt install` is the sole explicit live-home migration boundary
+  (`project/instrukt/spec/feature/runner/module-installation`): it writes an
+  owner-only pre-migration backup snapshot (using SQLite's online backup API
+  verified with `PRAGMA quick_check`) before applying each pending migration in
+  its own transaction under the store's lock and updating `user_version` in
+  that same transaction. Guarded live-home restore (`instrukt backup restore`)
+  likewise runs the explicit migration path for restored older databases.
 - A database whose version is newer than the running instrukt knows is
-  refused for writing; the refusal names both versions and prints the command
-  that installs the current instrukt. A status command reads an older database
-  through a migrated in-memory image and changes nothing on disk, and reports a
-  newer one as a finding while still reporting independently readable sections.
-  Neither `instrukt status` nor `instrukt events status` takes the writer lock
-  or changes the database, WAL or shared-memory files.
-- Documentation reads — `instrukt docs validate`, `docs get`, `docs index`
-  and `docs schema`, with their caller's admission, the todo-existence lookup
-  and a `--target` lookup — read an older database the same way, through a
-  migrated in-memory image: they take no writer lock and leave the database
-  and its sidecars as found. The todo-existence lookup reads that way for
-  every caller.
-
-
+  refused for reading and writing; the refusal names both versions and prints
+  the command that installs the current instrukt.
+- Diagnostic inspection commands (`instrukt status`, `instrukt events status`,
+  and `instrukt install --check`) report an older or newer database as a
+  finding naming `instrukt install` (for older) or the installer command (for
+  newer) while still reporting independently readable sections. Neither
+  `instrukt status`, `instrukt events status`, nor `instrukt install --check`
+  takes the writer lock or changes the database, WAL or shared-memory files.
 - A process that has opened the database through SQLite, such as the runner,
-  reads it through SQLite from then on, also where a status or documentation
-  read takes the in-memory image elsewhere.
+  reads it through SQLite with `PRAGMA query_only = true` from then on,
+  preserving its POSIX locks on the database file.
 
 
 Version 2 preserves version-1 session bindings while introducing role attempts. Their placement and assignment stay explicitly unknown when the older record supplied no such facts; no native key or successful completion is inferred. Record-envelope schema 2 carries the native attempt evidence and role output bindings.
@@ -1297,14 +1301,17 @@ And writes from different homes that share the state directory wait for the same
 But a link to an individual database file or sidecar is refused with the directory-link recovery
 ```
 
-### UC-SD4: Inspect the computer when its database schema differs
+### UC-SD4: Inspect and migrate the computer when its database schema differs
 
 ```gherkin
 Given the computer has a state database from another release
 When the operator inspects status
-Then older state is read with its retained records and no disk changes
-And newer state is reported with the installer command while configuration is still shown
-And a write against newer state is refused with the installer command
+Then an older database is reported with the instrukt install door while independently readable sections remain shown and no disk changes or locks are taken
+And a newer database is reported with the installer command while configuration is still shown
+And ordinary reads and writes against an older database are refused naming instrukt install without taking the writer lock or modifying the database
+And a write or read against a newer database is refused with the installer command
+When the operator runs instrukt install against an older database
+Then a verified pre-migration backup snapshot is taken before the database migrates to the current schema
 ```
 
 ### UC-SD5: Local work and runner writes proceed while GitHub reflection is in flight

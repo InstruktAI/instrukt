@@ -48,7 +48,20 @@ const FIXED_HOME_LOCKS: &[&str] = &[
 /// Dropping releases every held lock automatically.
 #[derive(Debug)]
 pub(super) struct LiveHomeLocks {
-    _guards: Vec<LockGuard>,
+    guards: Vec<(PathBuf, LockGuard)>,
+}
+
+impl LiveHomeLocks {
+    /// Keeps competing lifecycle operations out while migrations acquire
+    /// their own document and store locks.
+    pub(super) fn enter_migration(&mut self, home: &Path, state: &Path) {
+        let boundaries = [
+            home.join("locks/installation.lock"),
+            state.join("runner.lock"),
+            state.join("backup.lock"),
+        ];
+        self.guards.retain(|(path, _)| boundaries.contains(path));
+    }
 }
 
 /// Verifies confinement on and acquires every fixed and dynamically discovered
@@ -169,7 +182,7 @@ pub(super) fn acquire_live_home_locks(
     let mut guards = Vec::with_capacity(lock_paths.len());
     for lock_path in lock_paths {
         match LockGuard::try_acquire(&lock_path)? {
-            Some(guard) => guards.push(guard),
+            Some(guard) => guards.push((lock_path, guard)),
             None => {
                 let holder = read_lock_holder(&lock_path);
                 return Err(BackupError::LiveHomeBusy {
@@ -180,7 +193,7 @@ pub(super) fn acquire_live_home_locks(
         }
     }
 
-    Ok(LiveHomeLocks { _guards: guards })
+    Ok(LiveHomeLocks { guards })
 }
 
 fn collect_dir_locks(

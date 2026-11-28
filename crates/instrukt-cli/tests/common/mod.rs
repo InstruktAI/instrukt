@@ -610,6 +610,15 @@ impl TestEnv {
         self.instrukt(cwd).args(args).assert()
     }
 
+    /// Explicit operator upgrade without convergence of unrelated services.
+    pub fn upgrade(&self) {
+        self.instrukt(self.home())
+            .env_remove("T3CODE_THREAD_ID")
+            .args(["install", "--module", "blueprint"])
+            .assert()
+            .success();
+    }
+
     /// Runs `git <args>` in `dir` with this test's environment; returns
     /// trimmed stdout and fails the test on a non-zero exit.
     pub fn git<I, S>(&self, dir: &Path, args: I) -> String

@@ -391,7 +391,10 @@ fn requires_run(project_modules: &str) -> Vec<Finding> {
     std::fs::create_dir_all(home.path().join(".instrukt")).unwrap();
     std::fs::write(
         home.path().join(".instrukt/instrukt.yaml"),
-        "schema_version: 1\nmodules:\n  todos: false\n",
+        format!(
+            "schema_version: {}\nmodules:\n  todos: false\n",
+            crate::config::GLOBAL_SCHEMA_VERSION
+        ),
     )
     .unwrap();
     std::fs::write(

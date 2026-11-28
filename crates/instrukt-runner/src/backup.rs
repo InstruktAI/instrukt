@@ -21,7 +21,7 @@ use instrukt_core::machine::{MachineId, existing_machine_id, machine_id};
 use jiff::Timestamp;
 
 pub use _archive::{ARCHIVE_EXTENSION, StagedArchive, StagingDir, archive_filename};
-pub use _restore::{IdentityInput, RestoreOptions, RestoreReport, restore};
+pub use _restore::{IdentityInput, RestoreOptions, RestoreReport, restore, restore_with_stores};
 pub use _standing::{STALENESS_THRESHOLD, Standing, check_staleness_on_wake, events_status_json};
 pub use _state::{BackupOutcome, BackupState, STATE_SCHEMA_VERSION};
 pub use _storage::{

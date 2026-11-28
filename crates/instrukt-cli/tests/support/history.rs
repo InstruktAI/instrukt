@@ -25,7 +25,10 @@ impl T3Store {
         computer(env, "aaaaaaaaaaaaaaaa");
         std::fs::write(
             env.instrukt_home().join("instrukt.yaml"),
-            "schema_version: 1\nrunner: {runtime: t3}\n",
+            format!(
+                "schema_version: {}\nrunner: {{runtime: t3}}\n",
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION
+            ),
         )
         .unwrap();
         Self::create(env)
@@ -806,7 +809,14 @@ pub fn computer(env: &TestEnv, id: &str) {
 }
 
 pub fn configure_cluster(env: &TestEnv, url: &str) {
-    std::fs::write(env.instrukt_home().join("instrukt.yaml"),format!("schema_version: 1\nmodules: {{events: false, todos: false}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: {url}\n")).unwrap();
+    std::fs::write(
+        env.instrukt_home().join("instrukt.yaml"),
+        format!(
+            "schema_version: {}\nmodules: {{events: false, todos: false}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: {url}\n",
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
+        ),
+    )
+    .unwrap();
 }
 pub struct Runner(Child);
 impl Drop for Runner {

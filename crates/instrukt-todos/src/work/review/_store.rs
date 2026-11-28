@@ -6,7 +6,7 @@
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, Transaction, params};
-use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreLock};
+use instrukt_core::state_db::{Migration, Store, StoreDb, StoreLock};
 use jiff::Timestamp;
 
 use super::{Moment, ReviewError, Standing, Verdict, Version};
@@ -75,7 +75,7 @@ CREATE INDEX versions_name ON versions (name);
 
 const MIGRATIONS: &[Migration] = &[Migration::Sql(V1), Migration::Sql(V2)];
 
-fn store(home: &Home) -> Store {
+pub(super) fn store(home: &Home) -> Store {
     Store {
         name: "the review evidence store",
         file: home.review_db_file(),
@@ -90,28 +90,10 @@ pub(super) fn open(home: &Home) -> Result<StoreDb, ReviewError> {
     Ok(StoreDb::open(&store(home))?)
 }
 
-/// Opens the store for reading without its lock; `None` when it holds
-/// nothing yet. A store at an older schema is brought forward first,
-/// except from an inspection home, which reads only a current store.
+/// Opens the store strictly for reading without its lock; `None` when it holds
+/// nothing yet. Older stores are refused directing to `instrukt install`.
 pub(super) fn reader(home: &Home) -> Result<Option<Connection>, ReviewError> {
-    let store = store(home);
-    if home.is_state_read_only() {
-        return Ok(match store.read(true)? {
-            Some(Read::Current(conn)) => Some(conn),
-            Some(Read::Behind) | None => None,
-        });
-    }
-    match store.read(false)? {
-        Some(Read::Current(conn)) => Ok(Some(conn)),
-        None => Ok(None),
-        Some(Read::Behind) => {
-            drop(open(home)?);
-            match store.read(false)? {
-                Some(Read::Current(conn)) => Ok(Some(conn)),
-                _ => Ok(None),
-            }
-        }
-    }
+    Ok(store(home).read()?)
 }
 
 /// What this computer holds of a commit's head verdict.
@@ -759,20 +741,20 @@ mod tests {
         let beta = ProjectSlug::parse("beta").unwrap();
         let gamma = ProjectSlug::parse("gamma").unwrap();
 
-        // Inspection read upgrades in memory without mutating the V1 file on disk.
+        // Both inspection and ordinary reads refuse a V1 file without mutating it on disk.
         let inspection = home.for_inspection();
-        assert_eq!(
-            commit_with_report(&inspection, &alpha, &digest).unwrap(),
-            Some(head_a_newer.clone())
-        );
-        assert_eq!(
-            commit_with_report(&inspection, &beta, &digest).unwrap(),
-            Some(head_b.clone())
-        );
-        assert_eq!(
-            commit_with_report(&inspection, &gamma, &digest).unwrap(),
-            None
-        );
+        assert!(matches!(
+            commit_with_report(&inspection, &alpha, &digest),
+            Err(ReviewError::Store(
+                instrukt_core::state_db::StoreError::Older { found: 1, .. }
+            ))
+        ));
+        assert!(matches!(
+            commit_with_report(&home, &alpha, &digest),
+            Err(ReviewError::Store(
+                instrukt_core::state_db::StoreError::Older { found: 1, .. }
+            ))
+        ));
         {
             let raw = Connection::open(home.review_db_file()).unwrap();
             let version: u32 = raw
@@ -781,7 +763,8 @@ mod tests {
             assert_eq!(version, 1);
         }
 
-        // First read on a writable home upgrades on disk to V2 and builds `versions_name`.
+        // Explicit migration upgrades on disk to V2 and builds `versions_name`.
+        drop(StoreDb::open_migrating(&store(&home)).unwrap());
         assert_eq!(
             commit_with_report(&home, &alpha, &digest).unwrap(),
             Some(head_a_newer.clone())
@@ -790,6 +773,7 @@ mod tests {
             commit_with_report(&home, &beta, &digest).unwrap(),
             Some(head_b.clone())
         );
+        assert_eq!(commit_with_report(&home, &gamma, &digest).unwrap(), None);
         assert_eq!(
             commit_with_report(&home, &alpha, &ContentDigest::of("unrecorded")).unwrap(),
             None

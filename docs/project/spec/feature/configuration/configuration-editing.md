@@ -21,13 +21,13 @@ default, the global layer with `--global` and a company home's document with
 
 | Verb | Does |
 | --- | --- |
-| `init` | creates the layer document with the current `schema_version` and defaults when it is absent; `--company <name>` creates that company's home folder and its document (`project/instrukt/spec/feature/configuration/company-homes`); the project layer's `project` is the primary worktree's folder name normalized to a slug, including when invoked in a linked worktree. An empty normalized slug is refused, directing the caller to `instrukt init --slug <slug>`. An existing document is not overwritten; it is migrated when older (`project/instrukt/spec/feature/configuration/layered-configuration`). |
+| `init` | creates the layer document with the current `schema_version` and defaults when it is absent; `--company <name>` creates that company's home folder and its document (`project/instrukt/spec/feature/configuration/company-homes`); the project layer's `project` is the primary worktree's folder name normalized to a slug, including when invoked in a linked worktree. An empty normalized slug is refused, directing the caller to `instrukt init --slug <slug>`. An existing project document is migrated when older; an older machine-owned document requires `instrukt install` (`project/instrukt/spec/feature/configuration/owned-files`). |
 | `get [<path>]` | answers the value at a dotted path, or the whole document without a path, from the effective configuration (the global layer with `--global`, a company home's document with `--company <name>`), interpolated (`project/instrukt/spec/feature/configuration/interpolation`). A scalar value prints bare. A path that does not exist fails non-zero, naming the missing segment. |
 | `patch --revision <rev>` | applies a merge patch to the addressed layer (below). |
 | `schema [<path>]` | shows what the addressed document can declare, from the types validation reads (Schema, below). |
 | `validate` | reports the addressed layer's findings (`project/instrukt/spec/feature/configuration/layered-configuration`). |
 
-Configuration migration precedes refusal or skip on every verb, not only init.
+Machine-owned configuration is upgraded explicitly through `instrukt install`; ordinary verbs refuse unmigrated files without rewriting them. Diagnostic validation converts them in memory.
 Owned-file evolution and protected secret commands are
 `project/instrukt/spec/feature/configuration/owned-files`.
 
@@ -71,13 +71,11 @@ overrides of the shipped agent selection
   needs no `init`.
 - **Patch:** `patch --agents --revision <rev>` takes the input, merge and
   revision check of a layer patch and applies them to the stored overrides.
-  As for a layer (`project/instrukt/spec/feature/configuration/owned-files`),
-  the patch checks the revision against the bytes it finds on disk and, under
-  the same lock, persists what the next writing command does to the file
-  first: its shape conversion or recognised-copy removal
-  (`project/instrukt/spec/feature/configuration/agent-selection`), and an
-  older global layer's selection carried into it. That conversion stays when
-  the patch is refused. The resulting effective selection is validated as one
+  An older agents file or global layer is refused with the `instrukt install`
+  door before a patch writes anything
+  (`project/instrukt/spec/feature/configuration/owned-files`). After explicit
+  migration, the patch checks the revision against the bytes it finds on disk
+  under the agents-file lock. The resulting effective selection is validated as one
   document; any finding refuses the patch and writes none of it. A file that
   differs from an older global layer's selection is refused by the read and
   the patch alike, until the two are reconciled.

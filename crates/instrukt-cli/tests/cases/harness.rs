@@ -359,7 +359,7 @@ fn extract(env: &TestEnv) -> Option<i32> {
     history::computer(env, "aaaaaaaaaaaaaaaa");
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.instrukt(env.home())

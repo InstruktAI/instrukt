@@ -50,8 +50,7 @@ fn snippet(taxonomy: &str, extra: &str, body: &str) -> String {
 
 /// The machine's runtime mapping: one agent CLI, `claude`, that dispatch
 /// defaults may name.
-const MACHINE: &str =
-    "schema_version: 1\nrunner: {runtime: t3}\nagents: {order: [claude], tier: standard}\n";
+const MACHINE: &str = "schema_version: 8\nrunner: {runtime: t3}\n";
 
 /// A repository declaring project `demo` that publishes the `acme` domain,
 /// on a machine whose runtime mapping can start `claude`.
@@ -1267,7 +1266,7 @@ fn pending_docs_validate_without_a_todo_store_and_without_writing_home_state() {
     )
     .unwrap();
     let backed = validate(&work.env, &work.repo, &[]);
-    assert!(backed.success, "{}{}", backed.out, backed.err);
+    assert!(!backed.success, "{}{}", backed.out, backed.err);
     assert!(backed.out.is_empty(), "{}", backed.out);
     drop(lock);
 

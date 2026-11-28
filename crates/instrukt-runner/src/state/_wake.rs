@@ -172,7 +172,7 @@ fn read_json_file<T: serde::de::DeserializeOwned>(path: &Path) -> Result<Option<
 /// both legacy tables in one transaction. Lock-free no-op when read-only, when
 /// no state database exists, or when neither legacy table exists.
 pub(crate) fn ensure_wake_loop_migrated(home: &Home) -> Result<(), StateError> {
-    if home.is_state_read_only() {
+    if home.is_inspection() {
         return Ok(());
     }
     let (legacy_skipped, legacy_admission) = match StateRead::open(home)? {

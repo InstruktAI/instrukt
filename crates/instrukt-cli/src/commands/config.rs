@@ -48,7 +48,8 @@ enum ConfigCommand {
     /// at --revision.
     Patch(PatchArgs),
     /// Create the layer with the current schema version and defaults, or
-    /// migrate an existing older one. With --company, also append each
+    /// migrate an older project layer. Older machine layers require instrukt
+    /// install. With --company, also append each
     /// ignore line the home's .gitignore lacks — /company.yaml,
     /// /secrets.env, /projects/ and /.instrukt/ — keeping every other line,
     /// in a new home or an existing one.

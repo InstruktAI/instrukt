@@ -73,11 +73,31 @@ enum SwapStep {
     MovedSidecar { sidecar: PathBuf, trash: PathBuf },
 }
 
-/// Executes a guarded restore according to `options`.
+/// Executes a guarded restore according to `options`, explicitly migrating any
+/// restored older-schema configs and SQLite stores when restoring into the live
+/// home.
 pub fn restore(home: &Home, options: &RestoreOptions) -> Result<RestoreReport, BackupError> {
+    restore_with_stores(home, options, |_| Ok(Vec::new()))
+}
+
+/// Executes a guarded restore according to `options`, also migrating any
+/// module SQLite stores discovered after the live-home swap, including homes
+/// that did not exist before restore.
+pub fn restore_with_stores(
+    home: &Home,
+    options: &RestoreOptions,
+    extra_stores: impl FnOnce(&Home) -> Result<Vec<instrukt_core::state_db::Store>, BackupError>,
+) -> Result<RestoreReport, BackupError> {
     let cfg = super::admitted_backup_config(home)?;
     let storage = S3Storage::new(&cfg);
-    restore_with_storage(home, &cfg, &storage, options, HEADROOM_FLOOR_BYTES)
+    restore_with_storage(
+        home,
+        &cfg,
+        &storage,
+        options,
+        HEADROOM_FLOOR_BYTES,
+        extra_stores,
+    )
 }
 
 fn restore_with_storage(
@@ -86,6 +106,7 @@ fn restore_with_storage(
     storage: &S3Storage,
     options: &RestoreOptions,
     headroom_floor_bytes: u64,
+    extra_stores: impl FnOnce(&Home) -> Result<Vec<instrukt_core::state_db::Store>, BackupError>,
 ) -> Result<RestoreReport, BackupError> {
     let started = Instant::now();
 
@@ -214,7 +235,7 @@ fn restore_with_storage(
     }
 
     // 11. Live-home lock guard (held across the entire destination swap).
-    let _live_locks = if live_home {
+    let mut live_locks = if live_home {
         Some(acquire_live_home_locks(
             home,
             &canonical_dest,
@@ -268,6 +289,21 @@ fn restore_with_storage(
         separate_state_volume,
         &planned_swaps,
     )?;
+
+    // Migrations take their own store/layer locks. Keep competing runners,
+    // installations and backups excluded until they complete.
+    if let Some(locks) = live_locks.as_mut() {
+        locks.enter_migration(&canonical_dest, &resolved_state);
+    }
+
+    // 14. Explicitly migrate any restored older-schema configs or SQLite stores
+    //     in the live home (skipping uninitialized `user_version == 0` files).
+    if live_home {
+        let writing_home = home.for_writing();
+        let stores = extra_stores(&writing_home)?;
+        crate::installation::_migrate::migrate_restored(&writing_home, &stores)
+            .map_err(|error| BackupError::Failed(error.to_string()))?;
+    }
 
     let elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     tracing::info!(
@@ -1111,7 +1147,7 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &bad_ext, 0),
+            restore_with_storage(&home, &cfg, &storage, &bad_ext, 0, |_| Ok(Vec::new())),
             Err(BackupError::UnsupportedArchiveFormat { .. })
         ));
 
@@ -1124,7 +1160,8 @@ mod tests {
             identity: IdentityInput::Path(PathBuf::from(raw_key)),
             yes: true,
         };
-        let err = restore_with_storage(&home, &cfg, &storage, &raw_opts, 0).unwrap_err();
+        let err = restore_with_storage(&home, &cfg, &storage, &raw_opts, 0, |_| Ok(Vec::new()))
+            .unwrap_err();
         assert!(!err.to_string().contains(raw_key));
         assert!(matches!(err, BackupError::InvalidIdentity(_)));
     }
@@ -1177,7 +1214,7 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &opts, 0),
+            restore_with_storage(&home, &cfg, &storage, &opts, 0, |_| Ok(Vec::new())),
             Err(BackupError::UnsafeArchiveEntry { .. })
         ));
         // Aborted restore must not leave an empty destination directory behind.
@@ -1210,7 +1247,7 @@ mod tests {
             yes: true,
         };
         assert!(matches!(
-            restore_with_storage(&home, &cfg, &storage, &opts_db, 0),
+            restore_with_storage(&home, &cfg, &storage, &opts_db, 0, |_| Ok(Vec::new())),
             Err(BackupError::Database { .. })
         ));
         assert!(!dest.exists());
@@ -1223,11 +1260,17 @@ mod tests {
         std::fs::create_dir_all(home.state_dir()).unwrap();
         std::fs::write(home.global_config(), "schema_version: 8\n").unwrap();
         std::fs::write(home.secrets_file(), "TOKEN=original\n").unwrap();
+        let archived_secret = std::fs::read(home.secrets_file()).unwrap();
         let mid = instrukt_core::machine::machine_id(&home).unwrap();
 
         let db_path = home.state_db_file();
         {
-            let _db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+            let current = instrukt_core::state_db::Store::state(&home);
+            let older = instrukt_core::state_db::Store {
+                migrations: &current.migrations[..1],
+                ..current
+            };
+            drop(instrukt_core::state_db::StoreDb::open(&older).unwrap());
         }
 
         let identity = age::x25519::Identity::generate();
@@ -1275,7 +1318,7 @@ mod tests {
                 yes: true,
             };
             assert!(matches!(
-                restore_with_storage(&home, &cfg, &storage, &opts_alias, 0),
+                restore_with_storage(&home, &cfg, &storage, &opts_alias, 0, |_| Ok(Vec::new())),
                 Err(BackupError::LiveHomeBusy { .. })
             ));
         }
@@ -1288,14 +1331,49 @@ mod tests {
             identity: IdentityInput::Path(id_file.clone()),
             yes: true,
         };
-        let report = restore_with_storage(&home, &cfg, &storage, &opts_live, 0).unwrap();
+        let report = restore_with_storage(&home, &cfg, &storage, &opts_live, 0, |restored| {
+            assert_eq!(
+                std::fs::read(restored.secrets_file()).unwrap(),
+                archived_secret
+            );
+            Ok(Vec::new())
+        })
+        .unwrap();
         assert!(report.live_home);
         assert_eq!(report.verified_databases, 1);
+        let restored = instrukt_core::state_db::StateRead::open(&home)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored
+                .conn()
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            instrukt_core::state_db::schema_version()
+        );
+        drop(restored);
+        let saved = std::fs::read_dir(home.root().join("backups"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("state/instrukt.db");
+        let saved = instrukt_core::state_db::rusqlite::Connection::open(saved).unwrap();
+        assert_eq!(
+            saved
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            1
+        );
         assert_eq!(
             std::fs::read_to_string(home.secrets_file()).unwrap(),
             "TOKEN=original\n"
         );
-        assert!(!wal_path.exists());
+        if wal_path.exists() {
+            assert_ne!(std::fs::read(&wal_path).unwrap(), b"stale-wal-bytes");
+        }
+        instrukt_core::state_db::integrity_check(&db_path).unwrap();
         assert_eq!(
             std::fs::metadata(home.secrets_file())
                 .unwrap()
@@ -1317,8 +1395,18 @@ mod tests {
             identity: IdentityInput::Path(id_file),
             yes: true,
         };
-        let alt_report = restore_with_storage(&home, &cfg, &storage, &opts_alt, 0).unwrap();
+        let alt_report =
+            restore_with_storage(&home, &cfg, &storage, &opts_alt, 0, |_| Ok(Vec::new())).unwrap();
         assert!(!alt_report.live_home);
+        let extracted =
+            instrukt_core::state_db::rusqlite::Connection::open(alt.join("state/instrukt.db"))
+                .unwrap();
+        assert_eq!(
+            extracted
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            1
+        );
         assert_eq!(
             std::fs::read_to_string(alt.join("secrets.env")).unwrap(),
             "TOKEN=original\n"

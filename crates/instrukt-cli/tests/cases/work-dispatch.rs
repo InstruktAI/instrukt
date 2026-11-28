@@ -190,7 +190,7 @@ fn whether_run_has_a_company_to_serve_is_what_admission_decides() {
     // something to serve.
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\nmodules: {todos: false, events: false, history: false}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\nmodules: {todos: false, events: false, history: false}\n",
     )
     .unwrap();
     crate::fixtures::conversing::company_home(

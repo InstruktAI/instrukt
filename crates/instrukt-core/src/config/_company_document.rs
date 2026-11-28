@@ -13,8 +13,8 @@ use serde_yaml_ng::{Mapping, Value};
 
 use super::_error::{ConfigError, Finding, FindingKind};
 use super::_layer::{
-    CONFIG_FILE_NAME, InitOutcome, Layer, MigrationOutcome, WRITE_LOCK_TIMEOUT, elapsed_ms,
-    lock_path, migrate, persists_conversion, write,
+    CONFIG_FILE_NAME, InitOutcome, Layer, WRITE_LOCK_TIMEOUT, elapsed_ms, lock_path,
+    require_machine_layer_current, write,
 };
 use super::_schema::COMPANY_SCHEMA_VERSION;
 use crate::fsx::{FsError, LockGuard, atomic_write};
@@ -100,12 +100,6 @@ fn is_company_document(path: &Path) -> Result<bool, ConfigError> {
         return Ok(false);
     }
     Ok(super::_layer::read(path)?.is_some_and(|document| declares_company(&document.value)))
-}
-
-/// Public entry point for runner/backup to bring a company home's legacy
-/// settings document forward to `company.yaml` before snapshotting.
-pub fn convert_company_document(home: &Home, name: &ProjectSlug) -> Result<(), ConfigError> {
-    convert(home, name)
 }
 
 /// Converts the legacy settings document of company `name`'s home to
@@ -214,41 +208,39 @@ pub(crate) fn ignore_local_material(dir: &Path) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Converts a company's legacy document to `company.yaml` where reading
-/// `layer` through `home` persists conversion; nothing otherwise.
-pub(super) fn converted(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
-    match layer {
-        Layer::Company(name) if persists_conversion(home, layer) => convert(home, name),
-        _ => Ok(()),
-    }
-}
-
-/// [`init`](super::_layer::init) of the company home `name`, its folder made and its legacy
-/// document converted: an existing document is migrated, both present
-/// refused, an absent one written as `company.yaml`.
+/// [`init`](super::_layer::init) of the company home `name`: an existing legacy
+/// or older document is refused directing to `instrukt install`; both present
+/// is refused; a current document keeps its content and adds any missing ignore
+/// lines; an absent one creates the folder, ignore lines and `company.yaml`.
 pub(super) fn init_company(
     home: &Home,
     layer: &Layer,
     name: &ProjectSlug,
     started: Instant,
 ) -> Result<InitOutcome, ConfigError> {
+    let dir = home.company_dir(name);
     match resolve(home, name)? {
         CompanyDocument::Both { company, legacy } => {
             return Err(ConfigError::BothCompanyDocuments { company, legacy });
         }
-        CompanyDocument::Present(_) | CompanyDocument::Legacy(_) => {
-            return match migrate(home, layer)? {
-                MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
-                MigrationOutcome::AlreadyCurrent | MigrationOutcome::Absent => {
-                    Ok(InitOutcome::AlreadyCurrent)
-                }
-            };
+        CompanyDocument::Legacy(path) => {
+            return Err(ConfigError::LegacyCompanyDocument { path });
+        }
+        CompanyDocument::Present(_) => {
+            let _ = require_machine_layer_current(home, layer)?;
+            ignore_local_material(&dir)?;
+            return Ok(InitOutcome::AlreadyCurrent);
         }
         CompanyDocument::Absent => {}
     }
+    crate::fsx::create_dir_all(&dir).map_err(|source| ConfigError::CreateHome {
+        path: dir.clone(),
+        source,
+    })?;
+    ignore_local_material(&dir)?;
     let path = layer.path(home);
     let _lock = LockGuard::acquire(&lock_path(home, &path), WRITE_LOCK_TIMEOUT)?;
-    if !write_company_settings(&home.company_dir(name), name)? {
+    if !write_company_settings(&dir, name)? {
         return Ok(InitOutcome::AlreadyCurrent);
     }
     tracing::debug!(
@@ -313,7 +305,7 @@ pub(super) fn local_material(
 mod tests {
     use super::{
         COMPANY_DOCUMENT, CONFIG_FILE_NAME, CompanyDocument, ConfigError, Home, PathBuf,
-        ProjectSlug, Value, convert, declares_company, lock_path, resolve, write_company_settings,
+        ProjectSlug, convert, declares_company, lock_path, resolve, write_company_settings,
     };
 
     fn acme() -> ProjectSlug {
@@ -473,18 +465,19 @@ mod tests {
     }
 
     #[test]
-    fn a_writing_read_converts_the_legacy_document() {
+    fn a_writing_read_refuses_an_unmigrated_legacy_document_without_renaming_it() {
         let (_root, home, dir) = home_with(&[(CONFIG_FILE_NAME, LEGACY)]);
         let layer = super::super::Layer::Company(acme());
-        let value = super::super::_layer::read_usable(&home, &layer)
-            .unwrap()
-            .unwrap();
-        assert_eq!(value, serde_yaml_ng::from_str::<Value>(LEGACY).unwrap());
+        let error = super::super::_layer::read_usable(&home, &layer).unwrap_err();
+        assert!(
+            matches!(error, ConfigError::LegacyCompanyDocument { .. }),
+            "{error}"
+        );
+        assert!(!dir.join(COMPANY_DOCUMENT).exists());
         assert_eq!(
-            std::fs::read_to_string(dir.join(COMPANY_DOCUMENT)).unwrap(),
+            std::fs::read_to_string(dir.join(CONFIG_FILE_NAME)).unwrap(),
             LEGACY
         );
-        assert!(!dir.join(CONFIG_FILE_NAME).exists());
     }
 
     #[test]

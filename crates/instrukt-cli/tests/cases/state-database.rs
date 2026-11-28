@@ -44,6 +44,7 @@ fn a_documentation_transfer_failure_leaves_the_last_completed_state() {
     );
     let before = project.ok(["show", "list-depth"]);
     let retained = retain_historical_starts(&project.env);
+    project.env.upgrade();
 
     // Grouping saves the parent and child in one transaction, then transfers
     // pending documentation before committing. An existing destination stops
@@ -109,6 +110,7 @@ fn an_owned_v1_database_keeps_its_existing_binding_when_attempt_records_are_intr
     db.execute("INSERT INTO artifact_versions(todo_id,name,sequence,digest,writer,created_at,content,derived_from,grounding) VALUES (?1,'input',1,?2,'{\"person\":\"Test Developer\"}','2026-01-01T00:00:00Z',?3,'[]',?4)",instrukt_core::state_db::rusqlite::params![id,instrukt_todos::evidence::ContentDigest::of(content).to_string(),content,serde_json::to_string(&instrukt_todos::evidence::Grounding::default()).unwrap()]).unwrap();
     db.execute("INSERT INTO session_bindings(todo_id,role,session) VALUES (?1,'prepare-orchestrator','t3:legacy-driver')",[id]).unwrap();
     drop(db);
+    project.env.upgrade();
     let shown = project.ok(["show", "legacy"]);
     insta::assert_snapshot!("migrated-v1-binding", support::redact(&shown));
     let db = Connection::open(&file).unwrap();
@@ -317,8 +319,10 @@ fn status_reports_older_and_newer_state_without_writing_it() {
              VALUES('retained-event','fixture','fixture','{}','{}','2026-01-01T00:00:00Z','failed','retained activation failure');"
     ).unwrap();
     let bytes = || {
-        ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"]
-            .map(|name| std::fs::read(state.join(name)).unwrap())
+        ["instrukt.db", "instrukt.db-wal", "instrukt.db-shm"].map(|name| {
+            let path = state.join(name);
+            path.exists().then(|| std::fs::read(path).unwrap())
+        })
     };
     let status = |args: &[&str]| {
         let out = env.run(project.repo.path(), args).success();
@@ -339,21 +343,78 @@ fn status_reports_older_and_newer_state_without_writing_it() {
         ["sqlite-wal", "sqlite-shm"].map(|suffix| scan_store.with_extension(suffix));
     assert!(scan_sidecars.iter().all(|path| !path.exists()));
     let older = bytes();
-    assert!(status(&["status", "--json"])["machine"]["state_database"].is_null());
+    let machine = status(&["status", "--json"])["machine"].clone();
+    insta::assert_snapshot!(machine["state_database"]["reason"].as_str().unwrap().replace(file.to_str().unwrap(), "[DB]").replace(&instrukt_core::state_db::schema_version().to_string(), "[CURRENT]"), @"the state database at [DB] is at schema version 1, older than the [CURRENT] this instrukt requires; migrate it with `instrukt install`");
     let events = status(&["events", "status", "--json"]);
-    assert!(events["state_database"].is_null());
-    assert_eq!(
-        events["activation_failures"][0]["failure"],
-        "retained activation failure"
-    );
-    assert_eq!(
-        events["conversations"]["read_back_failures"][0]["cause"],
-        "retained scan failure"
-    );
+    assert_eq!(events["state_database"], machine["state_database"]);
+    assert!(events["admission"].is_object());
     assert_eq!(std::fs::read(scan_store).unwrap(), scan_bytes);
     assert!(scan_sidecars.iter().all(|path| !path.exists()));
     assert_eq!(bytes(), older);
+    assert!(!state.join("writer.lock").exists());
+    project.todo(["list"]).failure();
+    project
+        .todo([
+            "create",
+            "older-state",
+            "Write work.",
+            "--kind",
+            "change",
+            "--approved",
+        ])
+        .failure();
+    assert_eq!(bytes(), older);
+    assert!(!state.join("writer.lock").exists());
+    let backup_root = env.instrukt_home().join("backups");
+    std::fs::write(&backup_root, b"occupied").unwrap();
+    env.run(env.home(), ["install", "--module", "blueprint"])
+        .failure();
+    assert_eq!(bytes(), older);
+    assert!(!state.join("writer.lock").exists());
+    std::fs::remove_file(backup_root).unwrap();
+    env.upgrade();
+    let backup_dir = std::fs::read_dir(env.instrukt_home().join("backups"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let backup_file = backup_dir.join("state/instrukt.db");
+    instrukt_core::state_db::quick_check(&backup_file).unwrap();
+    let backup = Connection::open(&backup_file).unwrap();
+    assert_eq!(
+        backup
+            .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        backup
+            .query_row(
+                "SELECT count(*) FROM events WHERE id='retained-event'",
+                [],
+                |r| r.get::<_, u32>(0)
+            )
+            .unwrap(),
+        1
+    );
+    use std::os::unix::fs::PermissionsExt as _;
+    assert_eq!(
+        std::fs::metadata(&backup_file)
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
+    assert_eq!(
+        db.pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+            .unwrap(),
+        instrukt_core::state_db::schema_version()
+    );
     let current = instrukt_core::state_db::schema_version();
+    drop(db);
+    let db = Connection::open(&file).unwrap();
     db.pragma_update(None, "user_version", current + 1).unwrap();
     let newer = bytes();
     let machine = status(&["status", "--json"])["machine"].clone();
@@ -727,9 +788,7 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         assert_eq!(version, 33);
     }
 
-    // Opening the database through StateDb applies v34 forward migration cleanly.
-    let db = instrukt_core::state_db::StateDb::open(&home).unwrap();
-    drop(db);
+    env.upgrade();
 
     let session = instrukt_core::ids::SessionRef::parse("t3:legacy-conv").unwrap();
     let assignment = instrukt_company::conversations::conversation_assignment(&home, &session)
@@ -847,9 +906,10 @@ fn golden_v35_database_upgrades_to_v36_keeping_its_work_and_gaining_empty_withdr
         work_rows(&db)
     };
 
-    // The real CLI migrates the database to v36 and reads the work through
+    // Explicit installation migrates the database; ordinary commands read
     // the current work model: the todo, its claim and hold, its artifacts and
     // their versions, its stamp and its reflection.
+    project.env.upgrade();
     let listed = project.ok(["list"]);
     let raw = Connection::open(&file).unwrap();
     let version: u32 = raw
@@ -976,15 +1036,15 @@ fn golden_v37_database_upgrades_to_v38_keeping_its_work_and_gaining_its_lookups(
         })
     };
 
-    // Read-only inspection of the v37 database preserves active workers and
-    // wake-loop rows while leaving the file on disk byte-for-byte untouched
-    // and creating neither wake-loop state file.
+    // Inspection refuses the older schema without transferring legacy state.
     let v37_bytes = std::fs::read(&file).unwrap();
-    let pre_upgrade_workers = read_workers(&project.env);
-    let pre_upgrade_wake_loop = read_wake_loop_status(&project.env);
+    assert!(read_workers(&project.env).is_null());
     assert_eq!(std::fs::read(&file).unwrap(), v37_bytes);
     assert!(!state.join("runner-skipped-wake.json").exists());
     assert!(!state.join("runner-admission.json").exists());
+    project.env.upgrade();
+    let pre_upgrade_workers = read_workers(&project.env);
+    let pre_upgrade_wake_loop = read_wake_loop_status(&project.env);
     insta::assert_json_snapshot!(pre_upgrade_workers, @r#"
     [
       {

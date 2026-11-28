@@ -28,18 +28,11 @@ impl Ctx {
     pub fn inspection() -> anyhow::Result<Self> {
         Self::load(true)
     }
-    pub fn configuration_read() -> anyhow::Result<Self> {
-        let mut ctx = Self::load(true)?;
-        ctx.home = ctx.home.for_configuration_read();
-        Ok(ctx)
-    }
     /// Turns a context built for reading into a writing one, for a command
-    /// that learns only after its context exists that it writes: the home
-    /// writes, and the owned configuration is brought current as on any
-    /// writing entry. Its GitHub access keeps the home it was built with.
+    /// that learns only after its context exists that it writes.
     pub fn enter_writing(&mut self) -> anyhow::Result<()> {
         self.home = self.home.for_writing();
-        enter_writing(&self.home, &self.cwd)
+        Ok(())
     }
     fn load(inspection: bool) -> anyhow::Result<Self> {
         let home = Home::from_env()?;
@@ -49,9 +42,6 @@ impl Ctx {
             home
         };
         let cwd = std::env::current_dir().context("cannot read the working directory")?;
-        if !inspection {
-            enter_writing(&home, &cwd)?;
-        }
         let clock = Clock::from_process()?;
         let github = std::sync::Arc::new(instrukt_todos::work::GitHubAccess::new(home.clone()));
         Ok(Self {
@@ -63,12 +53,4 @@ impl Ctx {
             receiver: None,
         })
     }
-}
-
-/// Every writing command enters with current owned configuration, before its
-/// module's refusal or unchanged-work decision.
-fn enter_writing(home: &Home, cwd: &std::path::Path) -> anyhow::Result<()> {
-    instrukt_core::config::Agents::converge_file(home)?;
-    instrukt_core::config::Configuration::load_at(home, cwd)?;
-    Ok(())
 }

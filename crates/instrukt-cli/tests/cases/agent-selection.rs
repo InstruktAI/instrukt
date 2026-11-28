@@ -234,7 +234,7 @@ fn a_file_overriding_one_roles_order_leaves_every_other_role_on_its_shipped_sele
 
 // spec: project/instrukt/spec/feature/configuration/agent-selection UC-AS3
 #[test]
-fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_write() {
+fn a_version_one_agents_file_is_refused_until_install_converts_it() {
     let env = TestEnv::new();
     env.run(env.home(), ["config", "init", "--global"])
         .success();
@@ -244,8 +244,13 @@ fn a_version_one_agents_file_is_inspected_in_memory_and_converted_on_the_next_wr
         .replace("schema_version: 4", "schema_version: 1")
         .replace("effort: high", "reasoningEffort: high");
     std::fs::write(&file, &old).unwrap();
-    let output = env.run(env.home(), ["config", "show", "agents"]).success();
+    env.run(env.home(), ["config", "show", "agents"]).failure();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), old);
+    env.run(env.home(), ["config", "validate", "--global"])
+        .success();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), old);
+    env.run(env.home(), ["install"]).success();
+    let output = env.run(env.home(), ["config", "show", "agents"]).success();
     let revision = env
         .run(env.home(), ["config", "get", "--global", "--revision"])
         .success();

@@ -7,7 +7,7 @@
 use instrukt_core::home::Home;
 use instrukt_core::ids::{CommitSha, ProjectSlug};
 use instrukt_core::state_db::rusqlite::{Connection, OptionalExtension, Transaction, params};
-use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreLock};
+use instrukt_core::state_db::{Migration, Store, StoreDb, StoreLock};
 use jiff::Timestamp;
 
 use super::_publication::Published;
@@ -57,7 +57,7 @@ CREATE TABLE derived (
 
 const MIGRATIONS: &[Migration] = &[Migration::Sql(V1)];
 
-fn store(home: &Home) -> Store {
+pub(super) fn store(home: &Home) -> Store {
     Store {
         name: "the review publication store",
         file: home.review_publication_db_file(),
@@ -71,22 +71,10 @@ pub(super) fn open(home: &Home) -> Result<StoreDb, ReviewError> {
     Ok(StoreDb::open(&store(home))?)
 }
 
-/// Opens the store for reading without its lock; `None` when it holds
-/// nothing yet.
+/// Opens the store strictly for reading without its lock; `None` when it holds
+/// nothing yet. Older stores are refused directing to `instrukt install`.
 pub(super) fn reader(home: &Home) -> Result<Option<Connection>, ReviewError> {
-    let store = store(home);
-    let snapshot = home.is_state_read_only();
-    match store.read(snapshot)? {
-        Some(Read::Current(conn)) => Ok(Some(conn)),
-        Some(Read::Behind) if !snapshot => {
-            drop(open(home)?);
-            match store.read(false)? {
-                Some(Read::Current(conn)) => Ok(Some(conn)),
-                _ => Ok(None),
-            }
-        }
-        _ => Ok(None),
-    }
+    Ok(store(home).read()?)
 }
 
 /// Where a verdict is delivered.

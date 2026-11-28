@@ -2086,6 +2086,7 @@ fn legacy_answer_attempt_releases_conversation() {
     c.runner_dies();
     c.slack.fail_held_posts();
     let state = seed_v22_answer_attempt(&c, &conversation);
+    c.env.upgrade();
     c.run();
     wait("the retained legacy piece is posted and recorded", || {
         c.slack.posts_beginning("The legacy answer.") == 1 && answers_recorded(&c)
@@ -3131,6 +3132,7 @@ fn an_upgraded_connector_reads_before_the_newest_retained_message() {
         .unwrap();
     state.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); CREATE TABLE runner_workers (worker TEXT PRIMARY KEY, failure TEXT NOT NULL, since TEXT NOT NULL); CREATE TABLE redis_reachability (source TEXT PRIMARY KEY NOT NULL, reachable INTEGER NOT NULL); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     state.pragma_update(None, "user_version", 25).unwrap();
+    c.env.upgrade();
 
     c.slack.read_back_channels(&["D30"]);
     projected(&c);

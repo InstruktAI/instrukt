@@ -146,6 +146,14 @@ pub enum ConfigError {
         current: u64,
         door: String,
     },
+    #[error(
+        "{path} is a legacy company settings document; migrate it to company.yaml with `instrukt install`"
+    )]
+    LegacyCompanyDocument { path: PathBuf },
+    #[error(
+        "{path} is an unedited copy of earlier shipped defaults; migrate it with `instrukt install`"
+    )]
+    PendingAgentsMigration { path: PathBuf },
     #[error("{path}: schema_version is missing or not a positive integer")]
     UnknownSchema { path: PathBuf },
     #[error("{path} does not exist; create it with `{door}`")]

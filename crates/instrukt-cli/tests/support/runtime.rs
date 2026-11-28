@@ -134,7 +134,8 @@ pub fn global_layer_with(env: &TestEnv, modules: &str, runtimes: &[&FakeRuntime]
     std::fs::write(
         file,
         format!(
-            "schema_version: 1\nmodules: {{{modules}}}\nrunner:\n  runtime: t3\n{notify}{redis}{extra}"
+            "schema_version: {}\nmodules: {{{modules}}}\nrunner:\n  runtime: t3\n{notify}{redis}{extra}",
+            instrukt_core::config::GLOBAL_SCHEMA_VERSION
         ),
     )
     .unwrap();

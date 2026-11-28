@@ -308,6 +308,8 @@ where
         }
         Err(error) => return Err(error),
     };
+    let mut extra_stores = instrukt_todos::work::review::stores(&ctx.home);
+    extra_stores.extend(instrukt_company::proposals::stores(&ctx.home)?);
     action(&instrukt_runner::installation::Request {
         home: &ctx.home,
         cwd: &ctx.cwd,
@@ -325,6 +327,7 @@ where
         github: ctx.github.as_ref(),
         now: ctx.clock.now(),
         company: Some(company.as_ref()),
+        extra_stores,
     })
     .map_err(Into::into)
 }
