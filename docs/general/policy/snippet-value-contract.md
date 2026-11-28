@@ -319,9 +319,10 @@ would violate `general/principle/intelligence-boundaries`.
   `init-scaffolding` describe shapes worth considering, not slots to fill.
   Each row is conditional on the value test.
 <!-- planned:doctrine-commands-and-scan -->
-- Review (`sdlc/policy/definition-of-done-lanes`, Doc-snippet hygiene) catches
-  commands written outside backticks and `instrukt` command syntax in shared
-  doctrine.
+- Reviewers enforce the shared-doctrine command rules procedurally during
+  snippet review, catching commands written outside backticks or fenced code
+  blocks and `instrukt` command syntax in shared doctrine, with no automated
+  scanner (`general/principle/intelligence-boundaries`).
 <!-- /planned:doctrine-commands-and-scan -->
 
 ## Exceptions
