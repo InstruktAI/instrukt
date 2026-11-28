@@ -14,8 +14,9 @@ visibility: 'public'
 <!-- change:doctrine-commands-and-scan -->
 - When a procedure that requires this policy is your session's launch
   assignment, read the contract of each command it uses with `<command> -h`
-  before starting the assigned work; shared doctrine names operations and
-  leaves exact CLI syntax to `-h` (`general/policy/snippet-value-contract`).
+  before starting the assigned work; shared doctrine names commands where they
+  apply and leaves exact `--flag` syntax to `-h`
+  (`general/policy/snippet-value-contract`).
 <!-- /planned-change:doctrine-commands-and-scan -->
 - When you read that procedure inline, during other work, keep your current
   session's tool context.

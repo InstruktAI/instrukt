@@ -153,18 +153,28 @@ The default is **skip unless justified**, not "produce when applicable."
 <!-- planned:doctrine-commands-and-scan -->
 ### Commands and placeholders in shared doctrine
 
-- **Operations, not CLI syntax.** Shared doctrine (`general` and every domain)
-  names the operation a step performs, never `instrukt` CLI syntax; `-h`
-  supplies current syntax (`general/policy/command-contract-read`), applying
-  the ban on restatement above.
-- **Placeholders for machine-specific steps.** Machine-specific steps —
-  instrukt bookkeeping included, such as reserving a round — sit behind
-  placeholders filled per target: from configured runtime values locally, and
-  from generic text or nothing in a published skill.
-- **Code-container convention and project exemption.** Commands in snippets
-  appear inside inline code spans (backticks) or fenced code blocks
+- **No redundant retrieval commands.** How to retrieve snippets is stated once
+  per target (`general/policy/context-retrieval` locally; `SKILL.md` in
+  published skills). Outside the baseline and schema snippets that define local
+  retrieval (`general/policy/context-retrieval`,
+  `general/policy/agent-artifact-governance`,
+  `general/spec/snippet-authoring-schema`,
+  `general/policy/referencing-doc-snippets`,
+  `general/concept/documentation-snippets`), every other snippet body simply
+  names the snippet ID ("read `<id>`") rather than repeating `instrukt docs get`.
+- **No copied `--flag` recipes.** Local-only shared doctrine keeps naming
+  `instrukt <subcommand>` as an exact tool anchor and leaves flag syntax to
+  `<command> -h` (`general/policy/command-contract-read`), applying the ban on
+  restatement above.
+- **Placeholders for multi-target steps.** Where a snippet serves multiple
+  targets (local runtimes alongside published skills or remote targets),
+  target-specific steps sit behind `<!-- @config: ... -->` placeholders filled
+  per target rather than replacing local commands with vague prose operation
+  names.
+- **Code-container convention and project exemption.** CLI commands written in
+  snippets sit inside inline code spans (backticks) or fenced code blocks
   (`general/spec/snippet-authoring-schema`). Project snippets are exempt from
-  the shared-doctrine command ban.
+  the shared-doctrine retrieval and `--flag` restrictions.
 <!-- /planned:doctrine-commands-and-scan -->
 
 ### A statement's owner decides its home
@@ -280,10 +290,12 @@ such copy is a fence a test could bind to the owner's current wording, and a
 change at the owner leaves every copy stale.
 
 <!-- planned:doctrine-commands-and-scan -->
-Copied CLI syntax in shared doctrine drifts whenever flags change and couples
-reusable doctrine to one local binary; naming operations lets `-h` remain the
-single syntax authority, placeholders keep machine-specific bookkeeping
-portable across runtimes and published skills, and project specs stay exempt
+Repeating `instrukt docs get` beside every reference duplicates retrieval
+mechanics already taught once per target, and copying `--flag` recipes drifts
+whenever command flags move. Keeping `instrukt <subcommand>` in local-only
+shared doctrine preserves exact tool anchors so agents do not drift back to raw
+defaults, `<!-- @config: ... -->` placeholders adapt multi-target snippets
+without turning local commands into vague prose, and project specs stay exempt
 because describing a project's own commands is their job.
 <!-- /planned:doctrine-commands-and-scan -->
 
@@ -319,8 +331,9 @@ would violate `general/principle/intelligence-boundaries`.
   `init-scaffolding` describe shapes worth considering, not slots to fill.
   Each row is conditional on the value test.
 <!-- planned:doctrine-commands-and-scan -->
-- Reviewers catch commands written outside backticks or fenced code blocks and
-  `instrukt` command syntax in shared doctrine during snippet review.
+- Reviewers check changed snippets for unbackticked commands, redundant
+  `instrukt docs get` invocations, and copied `--flag` recipes during snippet
+  review.
 <!-- /planned:doctrine-commands-and-scan -->
 
 ## Exceptions

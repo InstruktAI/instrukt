@@ -223,9 +223,10 @@ this spec does not restate them. Across every type:
 <!-- planned:doctrine-commands-and-scan -->
 - **Commands in code containers.** Every CLI command written in a snippet sits
   inside an inline code span (backticks) or a fenced code block. Shared
-  doctrine (`general` and every domain) names operations or placeholders rather
-  than `instrukt` CLI invocations (`general/policy/snippet-value-contract`);
-  `project` snippets are exempt.
+  doctrine (`general` and every domain) omits redundant retrieval commands and
+  copied `--flag` recipes, using `<!-- @config: ... -->` placeholders only
+  where a snippet serves multiple targets
+  (`general/policy/snippet-value-contract`); `project` snippets are exempt.
 <!-- /planned:doctrine-commands-and-scan -->
 
 A procedure's optional `Discipline` section is required once an agent command

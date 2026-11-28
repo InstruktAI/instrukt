@@ -692,12 +692,14 @@ keyword scanner.
 
 <!-- planned:doctrine-commands-and-scan -->
 **Shared-doctrine command check.** For changed regions in `docs/general/` and
-`docs/domain/**`, verify that commands sit inside backticks or fenced code
-blocks (`general/spec/snippet-authoring-schema`) and that shared doctrine names
-operations or placeholders rather than `instrukt` CLI syntax
-(`general/policy/snippet-value-contract`). Catch commands written in plain prose
-outside backticks and `instrukt` command invocations or flag syntax in shared
-doctrine; `docs/project/**` snippets are exempt.
+`docs/domain/**`, verify that CLI commands sit inside backticks or fenced code
+blocks (`general/spec/snippet-authoring-schema`) and honour
+`general/policy/snippet-value-contract`: flag commands written in plain prose
+outside code containers, redundant `instrukt docs get` invocations outside the
+retrieval-defining baseline snippets, and copied `--flag` recipes (local-only
+doctrine retains `instrukt <subcommand>` and multi-target snippets use
+`<!-- @config: ... -->` placeholders). `docs/project/**` snippets are exempt
+from the shared-doctrine retrieval and `--flag` restrictions.
 <!-- /planned:doctrine-commands-and-scan -->
 
 For each changed snippet body, flag the Narration anti-pattern in its four forms
@@ -815,9 +817,10 @@ Severity guidance:
   **Critical** when it conflicts with the applicable language owner or directs
   implementation through the wrong language mechanism.
 <!-- planned:doctrine-commands-and-scan -->
-- A command written outside backticks or fenced code blocks, or `instrukt` CLI
-  syntax introduced in shared doctrine (`docs/general/`, `docs/domain/**`) →
-  **Important**.
+- A CLI command written outside backticks or fenced code blocks, a redundant
+  `instrukt docs get` outside retrieval-defining baseline snippets, or a copied
+  `--flag` recipe introduced in shared doctrine (`docs/general/`,
+  `docs/domain/**`) → **Important**.
 <!-- /planned:doctrine-commands-and-scan -->
 - Pre-existing narration in a region this change did not touch → **drop the
   observation; it is not a finding** (the sweep owns it, not this review).
