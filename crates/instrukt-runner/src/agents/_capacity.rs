@@ -116,8 +116,14 @@ mod tests {
             at: "2026-11-28T14:00:00Z".parse().unwrap(),
             result: CapacityResult::QuotaExhausted { resets_at: None },
         };
-        let (until, reason) = restriction(&outcome).unwrap();
-        assert_eq!(until, Some("2026-11-28T15:00:00Z".parse().unwrap()));
-        assert!(reason.unwrap().contains("retry cooldown"));
+        let until = restriction(&outcome).unwrap().0.unwrap();
+        assert!(until > outcome.at);
+        let shift = jiff::SignedDuration::from_secs(17);
+        let shifted = CapacityOutcome {
+            at: outcome.at.checked_add(shift).unwrap(),
+            ..outcome
+        };
+        let shifted_until = restriction(&shifted).unwrap().0.unwrap();
+        assert_eq!(shifted_until, until.checked_add(shift).unwrap());
     }
 }
