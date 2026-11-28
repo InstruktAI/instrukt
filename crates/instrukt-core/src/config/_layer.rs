@@ -92,6 +92,13 @@ impl Layer {
             Layer::Company(name) => format!("instrukt config init --company {name}"),
         }
     }
+
+    pub(crate) fn migration_door(&self) -> String {
+        match self {
+            Layer::Global | Layer::Company(_) => "instrukt install".into(),
+            Layer::Project(_) => "instrukt config init".into(),
+        }
+    }
 }
 
 /// An opaque digest of a layer document's content.
@@ -147,8 +154,7 @@ pub(crate) fn read(path: &Path) -> Result<Option<Document>, ConfigError> {
 /// from: a company's resolved document (its legacy `instrukt.yaml` until
 /// converted; both present refused), the project layer unless its file
 /// holds a company's settings, the machine's layer. `None` when there is
-/// none. Nothing is converted; the paths that persist a conversion run
-/// [`converted`](super::_company_document::converted) first.
+/// none. Nothing is converted; explicit [`migrate`] owns persisted conversion.
 pub(crate) fn read_layer(
     home: &Home,
     layer: &Layer,
@@ -219,49 +225,45 @@ pub(crate) fn require_usable(layer: &Layer, path: &Path, value: &Value) -> Resul
             path: path.to_path_buf(),
             found,
             current,
-            door: layer.init_door(),
+            door: layer.migration_door(),
         }),
     }
 }
 
-/// Whether reading `layer` through `home` persists its conversion: only the
-/// documents the machine owns (its layer and its company homes) outside
-/// inspection. A project layer is committed to its
-/// repository, so ordinary paths convert it in memory and leave the file as
-/// committed; [`migrate`] (the `config` writing verbs and the pre-commit
-/// hook) and [`patch`] are the paths that write it
-/// (`docs/project/spec/feature/configuration/owned-files.md`).
-pub(super) fn persists_conversion(home: &Home, layer: &Layer) -> bool {
-    !home.is_inspection() && matches!(layer, Layer::Global | Layer::Company(_))
-}
-
-/// Reads a layer for a read command: absent is `None`; an unusable schema
-/// version is refused.
-pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
-    if !persists_conversion(home, layer) {
-        return Ok(inspect_layer(home, layer)?.value);
+/// Reads a machine-owned layer (`Global` or `Company`) and refuses any legacy
+/// company filename or older/newer schema without mutating disk.
+pub(crate) fn require_machine_layer_current(
+    home: &Home,
+    layer: &Layer,
+) -> Result<Option<(PathBuf, Document)>, ConfigError> {
+    if let Layer::Company(name) = layer
+        && let CompanyDocument::Legacy(path) = _company_document::resolve(home, name)?
+    {
+        return Err(ConfigError::LegacyCompanyDocument { path });
     }
-    migrate_if_needed(home, layer)?;
     match read_layer(home, layer)? {
         Some((path, doc)) => {
             require_usable(layer, &path, &doc.value)?;
-            Ok(Some(doc.value))
+            Ok(Some((path, doc)))
         }
         None => Ok(None),
     }
 }
 
-pub(crate) fn migrate_if_needed(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
-    if !persists_conversion(home, layer) {
-        return Ok(());
-    }
-    _company_document::converted(home, layer)?;
-    if read_layer(home, layer)?
-        .is_some_and(|(_, doc)| matches!(version(&doc.value, layer.kind()), Version::Older(_)))
-    {
-        migrate(home, layer)?;
-    }
+/// Refuses an older or newer global `instrukt.yaml` without mutating disk.
+pub(super) fn require_global_current(home: &Home) -> Result<(), ConfigError> {
+    let _ = require_machine_layer_current(home, &Layer::Global)?;
     Ok(())
+}
+
+/// Reads a layer for a command: absent is `None`; committed project layers and
+/// inspection reads convert older schemas in memory; ordinary reads of
+/// machine-owned layers refuse older schemas directing to `instrukt install`.
+pub(crate) fn read_usable(home: &Home, layer: &Layer) -> Result<Option<Value>, ConfigError> {
+    if home.is_inspection() || matches!(layer, Layer::Project(_)) {
+        return Ok(inspect_layer(home, layer)?.value);
+    }
+    Ok(require_machine_layer_current(home, layer)?.map(|(_, doc)| doc.value))
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -346,12 +348,37 @@ pub fn inspect_layer(home: &Home, layer: &Layer) -> Result<LayerInspection, Conf
     if let Some(document) = document {
         let value = document.value;
         view.schema_version = value.get("schema_version").and_then(Value::as_u64);
-        if let Version::Older(from) = version(&value, layer.kind()) {
-            view.migration = Some(format!(
-                "{}: schema_version {from} inspected as {}; file migrates on the next writing command",
-                path.display(),
-                layer.kind().current_schema_version()
-            ));
+        let legacy_company = matches!(layer, Layer::Company(_))
+            && path.file_name() == Some(std::ffi::OsStr::new(CONFIG_FILE_NAME));
+        match (layer, legacy_company, version(&value, layer.kind())) {
+            (Layer::Company(_), true, Version::Older(from)) => {
+                view.migration = Some(format!(
+                    "{}: legacy company document at schema_version {from} inspected as {}; migrate it to company.yaml with `instrukt install`",
+                    path.display(),
+                    layer.kind().current_schema_version()
+                ));
+            }
+            (Layer::Company(_), true, _) => {
+                view.migration = Some(format!(
+                    "{}: legacy company document; migrate it to company.yaml with `instrukt install`",
+                    path.display()
+                ));
+            }
+            (Layer::Global | Layer::Company(_), false, Version::Older(from)) => {
+                view.migration = Some(format!(
+                    "{}: schema_version {from} inspected as {}; migrate it with `instrukt install`",
+                    path.display(),
+                    layer.kind().current_schema_version()
+                ));
+            }
+            (Layer::Project(_), _, Version::Older(from)) => {
+                view.migration = Some(format!(
+                    "{}: schema_version {from} inspected as {}; file migrates on the next writing command",
+                    path.display(),
+                    layer.kind().current_schema_version()
+                ));
+            }
+            _ => {}
         }
         view.value = Some(inspected(layer, &path, value)?);
     }
@@ -374,21 +401,20 @@ pub(crate) fn inspected(
     Ok(value)
 }
 
-/// The current revision of `layer`.
+/// The current revision of `layer`. Never migrates files on disk.
 pub fn revision(home: &Home, layer: &Layer) -> Result<Revision, ConfigError> {
-    let persists = persists_conversion(home, layer);
-    if persists {
-        migrate_if_needed(home, layer)?;
-    } else {
-        inspect_layer(home, layer)?;
+    if matches!(layer, Layer::Global | Layer::Company(_)) && !home.is_inspection() {
+        return match require_machine_layer_current(home, layer)? {
+            Some((_, doc)) => Ok(Revision::of(&doc.bytes)),
+            None => Err(ConfigError::NoLayer {
+                path: layer.path(home),
+                door: layer.init_door(),
+            }),
+        };
     }
+    inspect_layer(home, layer)?;
     match read_layer(home, layer)? {
-        Some((path, doc)) => {
-            if persists {
-                require_usable(layer, &path, &doc.value)?;
-            }
-            Ok(Revision::of(&doc.bytes))
-        }
+        Some((_, doc)) => Ok(Revision::of(&doc.bytes)),
         None => Err(ConfigError::NoLayer {
             path: layer.path(home),
             door: layer.init_door(),
@@ -409,7 +435,9 @@ pub fn parse_patch(text: &str) -> Result<Value, ConfigError> {
 /// Applies merge `patch` to `layer`, only when the document is still at
 /// `expected` and the whole result is valid; writes atomically and returns
 /// the new revision. Of two patches from one revision, one succeeds and
-/// the other is refused.
+/// the other is refused. Machine-owned layers (`Global` and `Company`) are
+/// never silently migrated by `patch`; an older schema or legacy company
+/// filename is refused directing to `instrukt install`.
 pub fn patch(
     home: &Home,
     layer: &Layer,
@@ -420,32 +448,25 @@ pub fn patch(
         return Err(ConfigError::PatchNotAMapping);
     }
     if matches!(layer, Layer::Project(_)) {
-        migrate_if_needed(home, &Layer::Global)?;
+        require_global_current(home)?;
     }
-    _company_document::converted(home, layer)?;
+    if matches!(layer, Layer::Global | Layer::Company(_)) {
+        let _ = require_machine_layer_current(home, layer)?;
+    }
     let started = Instant::now();
     let _lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
-    let Some((path, mut doc)) = read_layer(home, layer)? else {
+    let found = if matches!(layer, Layer::Global | Layer::Company(_)) {
+        require_machine_layer_current(home, layer)?
+    } else {
+        read_layer(home, layer)?
+    };
+    let Some((path, doc)) = found else {
         return Err(ConfigError::NoLayer {
             path: layer.path(home),
             door: layer.init_door(),
         });
     };
     let inspected_revision = Revision::of(&doc.bytes);
-    // The machine's documents keep their conversion even when the patch is
-    // refused; a project layer is converted only by the write that applies
-    // the patch.
-    if matches!(layer, Layer::Global | Layer::Company(_))
-        && let Version::Older(from) = version(&doc.value, layer.kind())
-    {
-        super::_migrate::carry_over(home, layer, &mut doc.value, None)?;
-        doc.value = super::_migrate::upcycle(doc.value, from, layer.kind());
-        write(&path, &doc.bytes, &doc.value)?;
-        doc = read(&path)?.ok_or_else(|| ConfigError::NoLayer {
-            path: path.clone(),
-            door: layer.init_door(),
-        })?;
-    }
     let (before, next) = patched(layer, &path, &doc, patch)?;
     let current = Revision::of(&doc.bytes);
     if &inspected_revision != expected {
@@ -601,14 +622,19 @@ pub enum MigrationOutcome {
     Migrated { from: u64 },
 }
 
-/// Brings `layer` to its kind's current schema version for a path that is not an
-/// `instrukt config` writing verb — publication, installation, ticks: the
-/// machine's layer is migrated on disk ([`migrate`]); a project layer is
-/// checked and converted in memory only, its file left as committed. Either
-/// way a newer or unknown version is refused.
+/// Verifies `layer` is usable without silently migrating machine-owned files on
+/// disk: for `Global` and `Company` outside inspection, an older schema or
+/// legacy company filename is refused directing to `instrukt install`; a
+/// committed project layer (and any layer under inspection) is converted in
+/// memory only, leaving the file untouched. A newer or unknown version is
+/// always refused.
 pub fn bring_current(home: &Home, layer: &Layer) -> Result<(), ConfigError> {
-    if persists_conversion(home, layer) {
-        migrate(home, layer)?;
+    if matches!(layer, Layer::Global | Layer::Company(_)) && !home.is_inspection() {
+        if let Some((path, doc)) = require_machine_layer_current(home, layer)?
+            && matches!(version(&doc.value, layer.kind()), Version::Unknown)
+        {
+            return Err(ConfigError::UnknownSchema { path });
+        }
         return Ok(());
     }
     let Some((path, doc)) = read_layer(home, layer)? else {
@@ -649,36 +675,16 @@ pub fn converted_project_layer(root: &Path, bytes: &[u8]) -> Result<Option<Vec<u
     }
 }
 
-/// Acquires `layer`'s write lock when the stored document is of an older
-/// schema version; returns `None` when absent or already current, and refuses
-/// a newer or unknown schema before taking any lock.
-pub(super) fn lock_if_older(home: &Home, layer: &Layer) -> Result<Option<LockGuard>, ConfigError> {
-    let Some((path, doc)) = read_layer(home, layer)? else {
-        return Ok(None);
-    };
-    let current = layer.kind().current_schema_version();
-    match version(&doc.value, layer.kind()) {
-        Version::Current => Ok(None),
-        Version::Older(_) => Ok(Some(LockGuard::acquire(
-            &lock_path(home, &layer.path(home)),
-            WRITE_LOCK_TIMEOUT,
-        )?)),
-        Version::Newer(found) => Err(ConfigError::NewerSchema {
-            path,
-            found,
-            current,
-        }),
-        Version::Unknown => Err(ConfigError::UnknownSchema { path }),
-    }
-}
-
-/// Brings `layer` to its kind's current schema version with its settings kept:
-/// an older document is rewritten through the same atomic write as a
-/// patch; a current one is left untouched; a newer one is refused.
-/// `init`, the `config` writing verbs, the pre-commit hook and, for the
-/// machine's layer, [`bring_current`] run this.
+/// Explicitly brings `layer` to its kind's current schema version with its
+/// settings kept: an older document is rewritten through the same atomic write
+/// as a patch; a current one is left untouched; a newer one is refused.
+/// For machine-owned layers (`Global` and `Company`), called only from
+/// `instrukt install` and `instrukt backup restore`; for `Project`, called by
+/// `config init` and the pre-commit hook.
 pub fn migrate(home: &Home, layer: &Layer) -> Result<MigrationOutcome, ConfigError> {
-    _company_document::converted(home, layer)?;
+    if let Layer::Company(name) = layer {
+        _company_document::convert(home, name)?;
+    }
     let lock = LockGuard::acquire(&lock_path(home, &layer.path(home)), WRITE_LOCK_TIMEOUT)?;
     migrate_holding(home, layer, &lock, None)
 }
@@ -723,9 +729,9 @@ pub(super) fn migrate_holding(
 }
 
 /// Creates `layer` with its kind's current schema version (and, for a project,
-/// its slug) when absent; migrates an existing one. The project slug is
-/// `slug` when given, otherwise the primary worktree's folder name
-/// normalized; an empty normalization is refused.
+/// its slug) when absent. For a project layer, migrates an existing older one;
+/// for machine-owned layers (`Global` and `Company`), refuses an existing older
+/// schema or legacy company filename directing to `instrukt install`.
 pub fn init(
     home: &Home,
     layer: &Layer,
@@ -734,16 +740,17 @@ pub fn init(
     let started = Instant::now();
     let path = layer.path(home);
     if let Layer::Company(name) = layer {
-        let dir = home.company_dir(name);
-        crate::fsx::create_dir_all(&dir).map_err(|source| ConfigError::CreateHome {
-            path: dir.clone(),
-            source,
-        })?;
-        _company_document::ignore_local_material(&dir)?;
-        _company_document::convert(home, name)?;
         return _company_document::init_company(home, layer, name, started);
     }
     if path.exists() {
+        if matches!(layer, Layer::Global) {
+            if let Some((path, doc)) = require_machine_layer_current(home, layer)?
+                && matches!(version(&doc.value, layer.kind()), Version::Unknown)
+            {
+                return Err(ConfigError::UnknownSchema { path });
+            }
+            return Ok(InitOutcome::AlreadyCurrent);
+        }
         return match migrate(home, layer)? {
             MigrationOutcome::Migrated { from } => Ok(InitOutcome::Migrated { from }),
             MigrationOutcome::AlreadyCurrent | MigrationOutcome::Absent => {

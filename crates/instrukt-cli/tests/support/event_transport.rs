@@ -59,7 +59,14 @@ impl Computer {
 
     pub fn config_urls(&self, cluster: &str, local: Option<&str>) {
         let local = local.map_or(String::new(), |url| format!("  local:\n    url: '{url}'\n"));
-        std::fs::write(self.env.instrukt_home().join("instrukt.yaml"), format!("schema_version: 1\nmodules: {{events: true}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: '{cluster}'\n{local}")).unwrap();
+        std::fs::write(
+            self.env.instrukt_home().join("instrukt.yaml"),
+            format!(
+                "schema_version: {}\nmodules: {{events: true}}\nrunner: {{runtime: t3}}\nredis:\n  cluster:\n    url: '{cluster}'\n{local}",
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION
+            ),
+        )
+        .unwrap();
     }
 
     pub fn tick(&self) {

@@ -6,6 +6,8 @@ mod _projection;
 mod _store;
 mod _watch;
 
+pub(crate) use _db::{migrate, store};
+
 use instrukt_core::{
     config::{Current, Env},
     home::Home,
@@ -66,6 +68,9 @@ impl HistoryError {
                 instrukt_core::INSTALLER_COMMAND
             )
             .into(),
+            Self::Store(StoreError::Older { .. }) | Self::Db(StateDbError::Older { .. }) => {
+                "history storage uses an older schema; run `instrukt install` to back it up and migrate it".into()
+            }
             Self::Store(StoreError::Symlink { .. }) | Self::Db(StateDbError::Symlink { .. }) => {
                 "history storage is a symbolic link; link the instrukt home or state/ directory instead".into()
             }

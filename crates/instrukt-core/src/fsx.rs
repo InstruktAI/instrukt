@@ -27,11 +27,37 @@ pub use _fence::{
 };
 
 /// Fences the locations the startup environment names in
-/// [`FENCE_VARIABLE`] for the rest of this process. Called once, first, by
-/// the binary; a record it names that cannot be opened stops the binary
-/// before it does anything.
+/// [`FENCE_VARIABLE`], together with the automatic development-build fence on
+/// `$HOME/.instrukt` and `$HOME/.local/bin/instrukt` for non-release builds,
+/// for the rest of this process. Called once, first, by the binary; a record
+/// it names that cannot be opened stops the binary before it does anything.
 pub fn fence(env: &crate::config::Env) -> Result<(), FenceRecordUnavailable> {
-    _fence::install(&env.write_fence())
+    let dev_roots = dev_build_fence_roots(crate::is_release_build(), env);
+    _fence::install_with_dev_roots(&env.write_fence(), &dev_roots)
+}
+
+fn dev_build_fence_roots(release_build: bool, env: &crate::config::Env) -> Vec<PathBuf> {
+    if release_build {
+        return Vec::new();
+    }
+    let Some(home) = env.get("HOME").filter(|value| !value.is_empty()) else {
+        return Vec::new();
+    };
+    let home = PathBuf::from(home);
+    if !home.is_absolute() {
+        return Vec::new();
+    }
+    vec![
+        home.join(crate::home::HOME_DIR_NAME),
+        home.join(".local").join("bin").join("instrukt"),
+    ]
+}
+
+/// Whether `candidate` itself or what it resolves to (following symbolic links,
+/// resolving existing ancestors, and accounting for case-folding volumes) lies
+/// at or under `root`.
+pub(crate) fn path_under(candidate: &Path, root: &Path) -> bool {
+    _fence::path_under(candidate, root)
 }
 
 /// Whether this process refused a write at its fence: the binary then ends

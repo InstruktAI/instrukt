@@ -40,18 +40,20 @@ fn inspection_converts_old_config_in_memory_without_creating_locks_or_agents() {
     std::fs::write(&file, original).unwrap();
     let result = env
         .run(env.home(), ["install", "--check", "--json"])
-        .success();
+        .failure();
     let report: serde_json::Value = serde_json::from_slice(&result.get_output().stdout).unwrap();
-    assert!(!report["notices"].as_array().unwrap().is_empty());
+    assert!(!report["findings"].as_array().unwrap().is_empty());
     let report = status(&env, env.home());
     assert_eq!(report["machine"]["schema_version"], 1);
     env.run(env.home(), ["config", "get", "--global", "--json"])
-        .success();
+        .failure();
     assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     assert!(!env.instrukt_home().join("locks").exists());
     assert!(!env.instrukt_home().join("agents.yaml").exists());
     env.run(env.home(), ["config", "init", "--global"])
-        .success();
+        .failure();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    env.upgrade();
     let current: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&std::fs::read_to_string(file).unwrap()).unwrap();
     assert_eq!(
@@ -206,19 +208,22 @@ fn status_reports_adoption_publication_modules_and_other_projects_without_change
 
 // spec: project/instrukt/spec/feature/configuration/configuration-editing UC-CE2
 #[test]
-fn revision_from_old_inspection_is_accepted_by_the_next_atomic_writing_command() {
+fn an_old_machine_layer_refuses_revision_reads_until_install() {
     let env = TestEnv::new();
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
     let file = env.instrukt_home().join("instrukt.yaml");
     let original = "schema_version: 2\nticks: off\n";
     std::fs::write(&file, original).unwrap();
+    env.run(env.home(), ["config", "get", "--global", "--revision"])
+        .failure();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    env.upgrade();
     let revision = env
         .run(env.home(), ["config", "get", "--global", "--revision"])
         .success();
     let revision = String::from_utf8_lossy(&revision.get_output().stdout)
         .trim()
         .to_owned();
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
     env.run(
         env.home(),
         [

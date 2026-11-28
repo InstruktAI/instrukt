@@ -83,7 +83,11 @@ pub fn inspect(request: &Request<'_>) -> Report {
     let mut machine = json!({"configured":configured,"path":home.global_config(),"schema_version":global.as_ref().and_then(|v|v.schema_version),"migration":global.as_ref().and_then(|v|v.migration.clone()),"findings":findings,"selection_migration":selection_migration,"errors":machine_errors});
     if let Err(failure) = crate::state_db::StateRead::open(&home) {
         machine["state_database"] = error(&home.state_db_file(), &failure);
-        if !matches!(failure, crate::state_db::StateDbError::Newer { .. }) {
+        if !matches!(
+            failure,
+            crate::state_db::StateDbError::Newer { .. }
+                | crate::state_db::StateDbError::Older { .. }
+        ) {
             machine_errors.push(error(&home.state_db_file(), failure));
             machine["errors"] = json!(machine_errors);
         }

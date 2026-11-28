@@ -46,13 +46,29 @@ resolves current and previous signing references at each request for rotation.
 
 ### Owned-shape migration
 
-Owned file shapes are versioned and migrated when they change. Configuration
-migration runs before refusal or skip on every path. Read-only inspection commands
-convert older configuration in memory, leave files and locks untouched, and report
-that the file migrates on the next writing command. For the files instrukt owns on
-the machine, the global layer and company home documents among them, writing commands, publication,
-installation convergence and ticks persist the conversion before proceeding; a sync
-compares its outputs only after migration, whether or not main has moved.
+Owned file shapes are versioned and migrated explicitly when they change.
+For the files instrukt owns on the machine — the global layer
+(`~/.instrukt/instrukt.yaml`), `agents.yaml`, and company home documents
+(including legacy `companies/<name>/instrukt.yaml` awaiting rename to
+`company.yaml`) — `instrukt install` is the sole explicit migration boundary
+(`project/instrukt/spec/feature/runner/module-installation`). Before mutating
+any machine-owned configuration file or SQLite store, `instrukt install` writes
+an owner-only pre-migration backup snapshot under
+`<home>/backups/pre-migrate-<timestamp>/` and aborts before any mutation if
+backup creation fails.
+
+Ordinary commands (reads and writes alike, including `config get`,
+`config patch`, `config init` on an existing older machine file, `sync`,
+`tick`, and `todo` commands) never silently migrate machine-owned
+configuration on disk: they refuse an older machine-owned configuration or
+legacy company document, naming the file, version and the `instrukt install`
+door, and leave the bytes on disk untouched. Diagnostic inspection commands
+(`instrukt status`, `instrukt events status`, `instrukt ticks status`,
+`instrukt config validate`, and `instrukt install --check`) convert older
+machine-owned configuration in memory, leave files and locks untouched, and
+report that `instrukt install` migrates them. Guarded live-home restore
+(`instrukt backup restore`) explicitly migrates any older-schema machine
+configuration restored into the live home.
 
 A project layer is committed to its repository, so it changes only in a commit,
 as do the editor modelines and the repository's generated root `AGENTS.md`
@@ -74,16 +90,18 @@ keys it changes, comments and formatting included. A conversion
 preserves supported user settings and writes atomically; a failed conversion leaves its source intact
 and reports the cause. Existing rejection of a configuration version newer
 than the binary remains the upgrade door. A revision read during inspection names
-the bytes on disk. A revision-checked writing patch verifies those bytes and
-performs conversion under the same configuration write lock. Receiver inspection
-and signature rejection use the in-memory view; a verified valid delivery persists
-conversion before event publication.
+the bytes on disk. A revision-checked writing patch verifies those bytes under
+the configuration write lock (converting only a committed project layer; refusing
+an older machine-owned layer with `instrukt install`). Receiver inspection
+and signature rejection use the in-memory view; a verified valid delivery refuses
+an unmigrated machine layer rather than rewriting it implicitly.
 
 Migration preserves explicit module settings and configuration inheritance.
 An absent history setting follows the configuration owner
 (`project/instrukt/spec/feature/configuration/layered-configuration`); migration
-inserts no project override that would mask a global choice. Inspection remains
-in-memory, and writing paths persist the converted document atomically.
+inserts no project override that would mask a global choice. Diagnostic
+inspection remains in-memory, and explicit migration writes the converted
+document atomically.
 
 Other owned files gain a version when their shape first changes. Their readers
 use the owned migration path rather than treating prior data as malformed or
@@ -136,9 +154,13 @@ scheduler files follow their separate native/location-specific inputs, not
 the development root. The wrapper selects its app log directory through
 `INSTRUKT_LOG_DIR` without moving HOME or XDG bases.
 
-An installed instrukt in ordinary project worktrees retains the machine home;
+An installed release instrukt in ordinary project worktrees retains the machine home;
 claims and todos remain shared there. Merely entering a linked worktree redirects
-nothing. The repository's worktree cleanup integration removes the development
+nothing. Any development build (compiled without release build identity)
+unconditionally refuses to target `$HOME/.instrukt` (with no runtime opt-out),
+automatically fences writes to `$HOME/.instrukt` and `$HOME/.local/bin/instrukt`,
+and names `scripts/dev-instrukt` and an isolated `INSTRUKT_HOME` as its doors.
+The repository's worktree cleanup integration removes the development
 home where such a hook exists; otherwise its cleanup is documented. The home
 contents are indexed in `project/instrukt/design/architecture/overview`.
 
@@ -165,17 +187,20 @@ And no output discloses its value
 But an unreadable or insufficiently protected required file refuses the dependent operation
 ```
 
-### UC-OF2: Migrate before publication, even when main has not moved
+### UC-OF2: Migrate machine configuration explicitly through install while committed project layers convert on commit
 
 ```gherkin
 Given the machine and project configurations use an older owned schema
 And canonical main equals the last published commit
-When sync runs after an instrukt upgrade
-Then configuration migrates before anything is published
-And the machine configuration is written at the current schema while the project configuration stays as committed
-And ordinary reads inspect the converted configuration without writing it and report the pending migration
-And ticks persist the machine migration before schema-based refusal or skip
-And a failed conversion preserves the source and reports the failure
+When an ordinary command such as sync or tick runs before migration
+Then it refuses the older machine configuration naming instrukt install without rewriting files
+And diagnostic inspection inspects the converted configuration in memory without writing it and reports the pending instrukt install migration
+When instrukt install runs
+Then it writes an owner-only pre-migration backup snapshot before mutating anything
+And the machine configuration is migrated to the current schema while the project configuration stays as committed
+And a failed conversion or backup preserves the source and reports the failure
+When sync runs afterwards
+Then publication runs against the migrated machine configuration and the in-memory project configuration
 When the developer next commits in that repository
 Then the commit carries the project configuration at the current schema
 ```

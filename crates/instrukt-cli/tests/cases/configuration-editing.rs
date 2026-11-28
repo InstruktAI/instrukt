@@ -574,6 +574,12 @@ fn config_agents_cli_wiring_reads_and_patches_a_v3_copy_in_a_bound_session() {
     full["roles"][other_role.as_str()]["order"] = Value::Sequence(reversed_order.clone());
     let agents_path = handler.computer.env.instrukt_home().join("agents.yaml");
     std::fs::write(&agents_path, serde_yaml_ng::to_string(&full).unwrap()).unwrap();
+    handler
+        .call(&["config", "get", "--agents"])
+        .assert()
+        .failure();
+    // Upgrade is operator-owned; a bound worker cannot install machine state.
+    handler.computer.env.upgrade();
 
     let agents_rev = stdout(
         &handler

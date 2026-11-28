@@ -14,7 +14,7 @@ use super::{
 use instrukt_core::{
     home::Home,
     state_db::{
-        Migration, Read, StateDb, StateRead, Store, StoreDb, StoreLock,
+        Migration, StateDb, StateRead, Store, StoreDb, StoreLock,
         rusqlite::{self, Connection, OptionalExtension, Transaction, params},
     },
 };
@@ -148,7 +148,7 @@ fn version_2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn store(home: &Home) -> Store {
+pub(crate) fn store(home: &Home) -> Store {
     Store {
         name: "the history store",
         file: home.history_db_file(),
@@ -157,10 +157,25 @@ fn store(home: &Home) -> Store {
     }
 }
 
-/// Takes the history lock and opens the store for writing: brought to the
-/// current schema version, the space that freed reclaimed, and the move of
-/// earlier history completed, in that order. The lock is held for as long
-/// as the handle lives; a second handle waits for it, in this process too.
+/// Explicitly migrates an existing older history store to the current schema,
+/// reclaims freed space, and completes any pending legacy history move.
+pub(crate) fn migrate(home: &Home) -> Result<Option<(u32, u32)>, HistoryError> {
+    let store = store(home);
+    let pending = store.needs_migration()?;
+    if pending.is_none() {
+        return Ok(None);
+    }
+    let mut db = StoreDb::open_migrating(&store)?;
+    reclaim(&mut db)?;
+    move_in(home, &mut db)?;
+    Ok(pending)
+}
+
+/// Takes the history lock and opens the store for writing: initializes a brand-new
+/// store, refuses an older existing schema directing to `instrukt install`, reclaims
+/// freed space when pending, and completes moving earlier history out of the state
+/// database. The lock is held for as long as the handle lives; a second handle waits
+/// for it, in this process too.
 pub(super) fn open(home: &Home) -> Result<StoreDb, HistoryError> {
     let mut db = StoreDb::open(&store(home))?;
     reclaim(&mut db)?;
@@ -195,20 +210,17 @@ fn reclaim(db: &mut StoreDb) -> Result<(), HistoryError> {
 }
 
 /// Opens the store for reading without the history lock. An inspection home
-/// reads an existing store as it is, an earlier schema version brought
-/// forward in memory only, and never creates, migrates on disk or moves it;
-/// `None` means it holds no store. Any other home runs the write path first
-/// while the store is at an earlier schema version or the move is not
-/// recorded complete, creating the store when absent, and always returns it.
+/// reads an existing current store strictly read-only without creating or
+/// moving it (`None` when absent; `Err(Older)` when older). Any other home
+/// refuses older schemas directing to `instrukt install`, and runs the write
+/// path only when the store does not yet exist or its move from the state
+/// database is not yet recorded complete.
 pub(super) fn read(home: &Home) -> Result<Option<Connection>, HistoryError> {
     let store = store(home);
-    if home.is_state_read_only() {
-        return Ok(match store.read(true)? {
-            Some(Read::Current(conn)) => Some(conn),
-            Some(Read::Behind) | None => None,
-        });
+    if home.is_inspection() {
+        return Ok(store.read()?);
     }
-    if let Some(Read::Current(conn)) = store.read(false)?
+    if let Some(conn) = store.read()?
         && progress(&conn)? == Some(Progress::Complete)
     {
         return Ok(Some(conn));
@@ -219,15 +231,14 @@ pub(super) fn read(home: &Home) -> Result<Option<Connection>, HistoryError> {
 
 /// The messages that carry a role of conversation `thread` from `source`,
 /// in order: one keyed read of a snapshot taken without the history lock,
-/// which changes nothing on disk; a store at an earlier schema version is
-/// brought forward in memory for it. `None` when no store exists or it has
-/// not retained the conversation.
+/// which changes nothing on disk. `None` when no store exists or it has not
+/// retained the conversation.
 pub(super) fn retained_messages(
     home: &Home,
     source: &str,
     thread: &str,
 ) -> Result<Option<Vec<RetainedMessage>>, HistoryError> {
-    let Some(Read::Current(conn)) = store(home).read(true)? else {
+    let Some(conn) = store(home).read()? else {
         return Ok(None);
     };
     _store::messages(&conn, source, thread)
@@ -635,6 +646,13 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
                 )
                 .unwrap();
         }
+        assert!(matches!(
+            open(&home),
+            Err(HistoryError::Store(
+                instrukt_core::state_db::StoreError::Older { found: 1, .. }
+            ))
+        ));
+        assert_eq!(migrate(&home).unwrap(), Some((1, 2)));
         let db = open(&home).unwrap();
         assert_eq!(progress(db.conn()).unwrap(), Some(Progress::Complete));
         let ids: Vec<(i64, String)> = db
@@ -774,6 +792,19 @@ CREATE TABLE history_source_positions (source TEXT PRIMARY KEY,position_json TEX
             panic!("the fixture holds four conversations");
         };
 
+        assert!(matches!(
+            open(&home),
+            Err(HistoryError::Store(
+                instrukt_core::state_db::StoreError::Older { found: 1, .. }
+            ))
+        ));
+        assert!(matches!(
+            read(&home),
+            Err(HistoryError::Store(
+                instrukt_core::state_db::StoreError::Older { found: 1, .. }
+            ))
+        ));
+        assert_eq!(migrate(&home).unwrap(), Some((1, 2)));
         drop(open(&home).unwrap());
 
         let db = raw(&file);

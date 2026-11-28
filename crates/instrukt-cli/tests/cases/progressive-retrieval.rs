@@ -649,7 +649,7 @@ fn an_agent_finds_the_file_behind_a_snippet_it_read() {
     insta::assert_snapshot!("snippet-source", stdout(&env, &read));
 }
 
-const RUNTIMES: &str = "schema_version: 1\nrunner: {runtime: t3}\n";
+const RUNTIMES: &str = "schema_version: 8\nrunner: {runtime: t3}\n";
 
 /// A machine whose runtime mapping knows one agent CLI.
 fn machine(env: &TestEnv) {

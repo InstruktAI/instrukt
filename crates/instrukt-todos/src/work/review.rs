@@ -35,6 +35,12 @@ use _store::Held;
 
 use crate::evidence::ContentDigest;
 
+/// The review SQLite stores owned under `home`, for explicit installation
+/// migration and pre-migration snapshotting.
+pub fn stores(home: &Home) -> Vec<instrukt_core::state_db::Store> {
+    vec![_store::store(home), _published::store(home)]
+}
+
 /// The remote whose canonical branch evidence is judged against.
 const REMOTE: &str = "origin";
 

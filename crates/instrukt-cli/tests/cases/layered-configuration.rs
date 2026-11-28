@@ -46,7 +46,7 @@ fn a_project_value_overrides_the_machine_default_only_inside_that_project() {
     let env = TestEnv::new();
     write_global(
         &env,
-        "schema_version: 1\nblueprint:\n  engine: machine-engine\nmodules:\n  todos: true\n",
+        "schema_version: 8\nblueprint:\n  engine: machine-engine\nmodules:\n  todos: true\n",
     );
     let own = project(
         &env,
@@ -71,6 +71,7 @@ fn a_project_value_overrides_the_machine_default_only_inside_that_project() {
 fn a_cloned_project_cannot_declare_what_runs_on_the_machine() {
     let env = TestEnv::new();
     write_global(&env, MACHINE);
+    env.upgrade();
     let remote = env.bare_remote("hostile");
     let author = env.git_repo("author");
     author.write(
@@ -141,6 +142,7 @@ fn thread_finishing_resolves_from_the_machine_entry() {
     let mut env = TestEnv::new();
     let fake = t3::FakeT3::create(&env);
     write_global(&env, MACHINE);
+    env.upgrade();
     // Every read below is made by an identified agent in its own session.
     fake.seed(
         "agent",
@@ -224,6 +226,7 @@ fn thread_finishing_resolves_from_the_machine_entry() {
     );
     env.run(env.path("").as_path(), ["config", "validate", "--global"])
         .success();
+    env.upgrade();
     insta::assert_snapshot!("thread-finishing-overridden", rendered());
 
     assert_eq!(std::fs::read(&session).unwrap(), before);
@@ -236,6 +239,7 @@ fn thread_finishing_resolves_from_the_machine_entry() {
 fn a_declared_regenerable_location_outside_the_checkout_is_reported_and_withholds_reclamation() {
     let env = TestEnv::new();
     write_global(&env, MACHINE);
+    env.upgrade();
     let repo = documented::project(&env, "demo", &[]);
     documented::sync(&env, &repo);
     let declare = |entry: &str| {
@@ -305,7 +309,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
     let validated = env.run(repo.path(), ["config", "validate"]).success();
     insta::assert_snapshot!(stdout(&env, &validated), @"");
     insta::assert_snapshot!(stderr(&env, &validated), @r"
-    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 8; file migrates on the next writing command
+    instrukt: [TMP]/home/.instrukt/instrukt.yaml: schema_version 1 inspected as 8; migrate it with `instrukt install`
     instrukt: [TMP]/kept/instrukt.yaml: schema_version 1 inspected as 6; file migrates on the next writing command
     ");
     assert_eq!(
@@ -314,6 +318,7 @@ fn configuration_written_by_an_earlier_instrukt_validates_and_keeps_working() {
         "the committed file is left as committed"
     );
 
+    env.upgrade();
     env.run(repo.path(), ["config", "init"]).success();
     env.run(repo.path(), ["config", "init", "--global"])
         .success();

@@ -327,9 +327,9 @@ impl Agents {
 
     /// The effective selection: the admitted one when served, else the file
     /// merged over the shipped defaults, or the shipped defaults when there
-    /// is no file. A writing home first brings the file to its current state
-    /// ([`Self::converge_file`]); an inspection home writes and removes
-    /// nothing.
+    /// is no file. An inspection home converts older files in memory without
+    /// writing; an ordinary home refuses any unmigrated `agents.yaml` or
+    /// global `instrukt.yaml` directing to `instrukt install`.
     pub fn load(home: &Home) -> Result<Self, ConfigError> {
         if let Some(admitted) = super::_admitted::served(home) {
             return Ok(admitted.agents().clone());
@@ -339,8 +339,8 @@ impl Agents {
             let global = super::_layer::read(&home.global_config())?.map(|doc| doc.value);
             return Self::from_documents(existing, global.as_ref());
         }
-        super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
-        Self::converge_file(home)?;
+        super::_layer::require_global_current(home)?;
+        super::_agents_file::require_agents_current(home)?;
         let existing = read_existing(&home.agents_file())?;
         Self::from_documents(existing, None)
     }

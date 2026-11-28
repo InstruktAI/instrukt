@@ -31,6 +31,7 @@ impl Handler {
             &agents_before,
         )
         .unwrap();
+        computer.env.upgrade();
         let role = role
             .map(|role| format!("role: {role}\n"))
             .unwrap_or_default();

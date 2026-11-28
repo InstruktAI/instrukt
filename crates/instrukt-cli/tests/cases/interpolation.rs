@@ -47,7 +47,7 @@ fn runtime_action_directives_render_the_selected_global_entry_without_a_caller_o
     let fake = t3::FakeT3::create(&env);
     let global = env.instrukt_home().join("instrukt.yaml");
     std::fs::create_dir_all(global.parent().unwrap()).unwrap();
-    std::fs::write(&global,"schema_version: 1\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    dispatch: Delegate the supplied native assignment with shared isolation.\n    message_child: Continue the recorded native child.\n").unwrap();
+    std::fs::write(&global,"schema_version: 8\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    dispatch: Delegate the supplied native assignment with shared isolation.\n    message_child: Continue the recorded native child.\n").unwrap();
     let body = "<!-- @config: runtime.dispatch -->\n\n<!-- @config: runtime.message_child -->\n";
     let repo = documented::project(
         &env,
@@ -77,7 +77,7 @@ fn runtime_action_directives_render_the_selected_global_entry_without_a_caller_o
         ),
     );
     insta::assert_snapshot!("configured-native-actions", rendered);
-    std::fs::write(&global,"schema_version: 1\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    dispatch: Use the explicitly configured instrukt fallback for the missing native capability.\n").unwrap();
+    std::fs::write(&global,"schema_version: 8\nrunner: {runtime: t3}\nruntimes:\n  t3:\n    dispatch: Use the explicitly configured instrukt fallback for the missing native capability.\n").unwrap();
     let fallback = env
         .run(repo.path(), ["docs", "get", "acme/procedure/delegate"])
         .success();
@@ -90,7 +90,7 @@ fn runtime_action_directives_render_the_selected_global_entry_without_a_caller_o
             )
         )
     );
-    std::fs::write(&global, "schema_version: 1\n").unwrap();
+    std::fs::write(&global, "schema_version: 8\n").unwrap();
     env.run(repo.path(), ["docs", "get", "acme/procedure/delegate"])
         .failure();
     assert_eq!(fake.threads().len(), 0);

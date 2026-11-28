@@ -54,7 +54,7 @@ regenerable, ephemeral, and git-governed trees.
 | Machine SQLite stores | Every `*.db` and `*.sqlite` database discovered dynamically under `state/` (including the work/runner state database, retained history, review stores, requested-review store, connector read-back store, and any future stores added there). |
 | Machine configuration, secrets and durable state | Global `instrukt.yaml`, `agents.yaml`, `secrets.env`, `state/machine-id`, `state/eval-fingerprint/`, `state/agents-deployment.json`, `state/known-issues/` (excluding lock files), and `state/company-generation/` when present. |
 | Global research and exploration notes | Durable research notes under `git/` (such as `index.md`, `history.md`, and repo-scoped non-checkout notes) and `explore/` (cross-project exploration reports), included when present and skipped cleanly when absent. |
-| Company home local state | Under `companies/<name>/`, after `configuration`'s owned-shape forward conversion brings any pre-migration settings document to `company.yaml` (`project/instrukt/spec/feature/configuration/owned-files`, `project/instrukt/spec/feature/configuration/company-homes`): `company.yaml`, `secrets.env`, local state under `.instrukt/`, and every `*.db` and `*.sqlite` database discovered dynamically under `.instrukt/` (such as `knowledge-proposals.db`). |
+| Company home local state | Under `companies/<name>/`, with older machine-owned settings requiring explicit `instrukt install` first (`project/instrukt/spec/feature/configuration/owned-files`): `company.yaml`, `secrets.env`, local state under `.instrukt/`, and every `*.db` and `*.sqlite` database discovered dynamically under `.instrukt/` (such as `knowledge-proposals.db`). Collection never migrates settings. |
 
 Excluded unconditionally from every snapshot:
 
@@ -209,6 +209,12 @@ symlink entries (`sdlc/policy/security-awareness`).
 - **Alternate target (`--into <dir>`):** When `<dir>` resolves outside the
   active instrukt home, extracts the verified backup contents into `<dir>`
   without acquiring or modifying the live instrukt home.
+- **Restored schemas:** After a live-home swap, restore snapshots restored
+  older configuration and databases before explicitly migrating them, using
+  the install migration boundary. Runner, installation, and backup locks stay
+  held until migration finishes; per-store and document locks are acquired by
+  their migration owners. An alternate target keeps the archived schemas for
+  inspection. Restore requires services to be stopped and does not start them.
 - **Overwrite confirmation:** Restore prompts unconditionally for confirmation
   before modifying the destination unless `--yes` is supplied. When
   `--identity -` consumes standard input on an interactive terminal,

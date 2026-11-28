@@ -74,7 +74,7 @@ fn project(env: &TestEnv, slug: &str, modules: &str) -> Repo {
     crate::fixtures::t3::FakeT3::create(env);
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     repo.write(
@@ -2311,15 +2311,13 @@ fn blueprint_installs_private_pin_reuses_it_and_repairs_drift() {
     env.run(env.home(), ["install", "--check", "--module", "blueprint"])
         .failure();
     assert!(before.changed().is_empty(), "{:?}", before.changed());
-    env.run(env.home(), ["install", "--module", "blueprint"])
-        .success();
+    env.upgrade();
     let binary = env.instrukt_home().join("tools/bin/graphify");
     assert!(binary.is_file());
     let installed = std::fs::read(&binary).unwrap();
     // A matching install needs no package operation (nor a working uv).
     std::fs::write(env.path("runtime-bin/uv"), "#!/bin/sh\nexit 23\n").unwrap();
-    env.run(env.home(), ["install", "--module", "blueprint"])
-        .success();
+    env.upgrade();
     env.run(env.home(), ["install", "--check"]).success();
     assert!(!env.path("runtime-bin/calls").exists());
     for tool in ["#!/bin/sh\necho 'graphify 0.0.0'\n", "#!/bin/sh\nexit 8\n"] {

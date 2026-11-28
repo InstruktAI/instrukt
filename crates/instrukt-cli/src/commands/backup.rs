@@ -109,7 +109,12 @@ pub fn run(args: BackupArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 identity,
                 yes: restore_args.yes,
             };
-            let report = instrukt_runner::backup::restore(&ctx.home, &options)?;
+            let report =
+                instrukt_runner::backup::restore_with_stores(&ctx.home, &options, |home| {
+                    let mut stores = instrukt_todos::work::review::stores(home);
+                    stores.extend(instrukt_company::proposals::stores(home)?);
+                    Ok(stores)
+                })?;
             ctx.out.line(&format!(
                 "restored {} into {} ({} files, {} SQLite databases verified)",
                 report.generation,

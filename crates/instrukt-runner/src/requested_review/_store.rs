@@ -13,7 +13,7 @@ use instrukt_core::ids::{CommitSha, ProjectSlug, SessionRef};
 use instrukt_core::state_db::rusqlite::{
     self, Connection, OptionalExtension, Row, Transaction, params,
 };
-use instrukt_core::state_db::{Migration, Read, Store, StoreDb, StoreError, StoreLock};
+use instrukt_core::state_db::{Migration, Store, StoreDb, StoreError, StoreLock};
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
@@ -90,7 +90,7 @@ fn version_2(tx: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn store(home: &Home) -> Store {
+pub(crate) fn store(home: &Home) -> Store {
     Store {
         name: NAME,
         file: home.requested_review_db_file(),
@@ -457,22 +457,10 @@ pub(super) fn close_unaccepted(
     })
 }
 
-/// A connection to the store without its lock; `None` when it holds nothing
-/// yet. Uses non-migrating `Store::read(true)` for every home so readers
-/// migrate older stores in memory without writing to disk; only writing
-/// commands bring the on-disk file to its current version.
+/// A read-only connection to the store without its lock; `None` when it holds
+/// nothing yet. Refuses older schemas directing to `instrukt install`.
 fn reader(home: &Home) -> Result<Option<Connection>, StoreError> {
-    let store = store(home);
-    match store.read(true)? {
-        Some(Read::Current(conn)) => Ok(Some(conn)),
-        None => Ok(None),
-        Some(Read::Behind) => Err(StoreError::Invalid {
-            store: NAME,
-            path: home.requested_review_db_file(),
-            message: "store schema is behind and could not be migrated in memory for reading"
-                .into(),
-        }),
-    }
+    store(home).read()
 }
 
 /// Every recorded ask of `head`, oldest first.
@@ -672,27 +660,46 @@ mod tests {
         let bytes = std::fs::read(&staging).unwrap();
         instrukt_core::fsx::write(home.requested_review_db_file(), &bytes).unwrap();
 
-        // Reading migrates in memory: backfills both rows without ENOENT and keeps on-disk V1.
-        let asks1 = asks(&home, &project, &head1).unwrap();
-        assert_eq!(asks1.len(), 1);
-        assert_eq!(asks1[0].asker, None);
-        assert_eq!(asks1[0].trace, None);
-        assert_eq!(asks1[0].closed_at, None);
-        let canonical_missing_file = canonical_report(&missing_file_report).unwrap();
-        assert_eq!(asks1[0].report, canonical_missing_file);
+        // Ordinary reads and writes refuse an unmigrated V1 store without mutating it.
+        assert!(matches!(
+            asks(&home, &project, &head1),
+            Err(StoreError::Older {
+                found: 1,
+                known: 2,
+                ..
+            })
+        ));
 
-        let asks2 = asks(&home, &project, &head2).unwrap();
-        assert_eq!(asks2.len(), 1);
-        assert_eq!(asks2[0].report, missing_parent_report);
-
-        assert_eq!(
-            latest_by_report(&home, &project, &canonical_missing_file, &head3).unwrap(),
-            Some(head1.clone())
-        );
-        assert_eq!(
-            latest_by_report(&home, &project, &canonical_missing_file, &head1).unwrap(),
-            None
-        );
+        let report3 = canonical_report(&existing_reports.join("three.md")).unwrap();
+        let asker = SessionRef::parse("t3:dev-1").unwrap();
+        let trace = EarlierHead {
+            head: head1.clone(),
+            traced_by: TracedBy::Digest,
+        };
+        let new_ask = NewAsk {
+            project: &project,
+            head: &head3,
+            kind: "re-review",
+            coordinates: "[]",
+            rendering: "rendered-3",
+            digest: "sha256:3",
+            start_key: "instrukt:review:demo:h1",
+            checkout: Path::new("/tmp/wt"),
+            delivery: Delivery::Send,
+            send_generation: Some(1),
+            admitted_at: ts("2026-11-26T12:00:00Z"),
+            asker: Some(&asker),
+            trace: Some(&trace),
+            report: &report3,
+        };
+        assert!(matches!(
+            record(&home, &new_ask, None),
+            Err(StoreError::Older {
+                found: 1,
+                known: 2,
+                ..
+            })
+        ));
 
         let (v1_rendering1, v1_rendering2) = {
             let raw = Connection::open(home.requested_review_db_file()).unwrap();
@@ -716,46 +723,39 @@ mod tests {
                 .unwrap();
             (r1, r2)
         };
-        assert!(!asks1[0].rendering.is_empty());
-        assert_eq!(asks1[0].rendering, v1_rendering1);
-        assert!(!asks2[0].rendering.is_empty());
-        assert_eq!(asks2[0].rendering, v1_rendering2);
 
-        // Writing migrates on disk to user_version == 2.
-        let report3 = canonical_report(&existing_reports.join("three.md")).unwrap();
-        let asker = SessionRef::parse("t3:dev-1").unwrap();
-        let trace = EarlierHead {
-            head: head1.clone(),
-            traced_by: TracedBy::Digest,
-        };
-        let outcome = record(
-            &home,
-            &NewAsk {
-                project: &project,
-                head: &head3,
-                kind: "re-review",
-                coordinates: "[]",
-                rendering: "rendered-3",
-                digest: "sha256:3",
-                start_key: "instrukt:review:demo:h1",
-                checkout: Path::new("/tmp/wt"),
-                delivery: Delivery::Send,
-                send_generation: Some(1),
-                admitted_at: ts("2026-11-26T12:00:00Z"),
-                asker: Some(&asker),
-                trace: Some(&trace),
-                report: &report3,
-            },
-            None,
-        )
-        .unwrap();
-        assert!(matches!(outcome, RecordOutcome::Recorded(_)));
+        // Explicit migration brings the store to user_version == 2 and backfills reports.
+        drop(StoreDb::open_migrating(&store(&home)).unwrap());
 
         let raw = Connection::open(home.requested_review_db_file()).unwrap();
         let version: u32 = raw
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 2);
+
+        let asks1 = asks(&home, &project, &head1).unwrap();
+        assert_eq!(asks1.len(), 1);
+        assert_eq!(asks1[0].asker, None);
+        assert_eq!(asks1[0].trace, None);
+        assert_eq!(asks1[0].closed_at, None);
+        let canonical_missing_file = canonical_report(&missing_file_report).unwrap();
+        assert_eq!(asks1[0].report, canonical_missing_file);
+
+        let asks2 = asks(&home, &project, &head2).unwrap();
+        assert_eq!(asks2.len(), 1);
+        assert_eq!(asks2[0].report, missing_parent_report);
+
+        assert_eq!(
+            latest_by_report(&home, &project, &canonical_missing_file, &head3).unwrap(),
+            Some(head1.clone())
+        );
+        assert_eq!(
+            latest_by_report(&home, &project, &canonical_missing_file, &head1).unwrap(),
+            None
+        );
+
+        let outcome = record(&home, &new_ask, None).unwrap();
+        assert!(matches!(outcome, RecordOutcome::Recorded(_)));
 
         assert_eq!(
             asks(&home, &project, &head1).unwrap()[0].rendering,

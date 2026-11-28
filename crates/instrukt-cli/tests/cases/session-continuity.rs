@@ -173,7 +173,7 @@ fn an_unset_runtime_is_the_compiled_one() {
     let p = Tracked::new(false);
     std::fs::write(
         p.env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\n",
+        "schema_version: 8\n",
     )
     .unwrap();
     p.env
@@ -1099,6 +1099,7 @@ fn a_titleless_persisted_request_retries_with_its_original_key_only_title() {
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
+    p.env.upgrade();
     p.tick();
     let normalized: String = db
         .query_row("SELECT request FROM runtime_bindings", [], |r| r.get(0))
@@ -1288,6 +1289,7 @@ fn retain_previous_driver_input(p: &Tracked, id: &str) {
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
+    p.env.upgrade();
 }
 /// The readable title the binding of session `id` carries after
 /// conversion.
@@ -1481,6 +1483,7 @@ fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     db.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
     crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 14).unwrap();
+    p.env.upgrade();
     fake.change("s1", "title", key.clone().into());
     p.env
         .instrukt(&tree)

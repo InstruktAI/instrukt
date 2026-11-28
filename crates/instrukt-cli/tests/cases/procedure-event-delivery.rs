@@ -1008,7 +1008,8 @@ fn an_interrupted_historical_reservation_retries_its_captured_native_selection_a
     db.pragma_update(None, "user_version", 9).unwrap();
     drop(db);
 
-    // The real retained-reservation consumer upgrades the database before replay.
+    r.computer.env.upgrade();
+    // The retained-reservation consumer reads the explicitly upgraded database.
     let replay = reserve();
     let replay: instrukt_runner::standing::ManualReservation =
         serde_json::from_slice(&replay.get_output().stdout).unwrap();
@@ -1224,6 +1225,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         format!("schema_version: {older}\ncompany: acme\nprofiles: [{profile}]\n"),
     )
     .unwrap();
+    r.computer.env.upgrade();
     // The company role's tier is not the machine default's.
     std::fs::write(
         r.computer.env.instrukt_home().join("agents.yaml"),
@@ -1261,8 +1263,7 @@ fn each_agent_works_in_the_home_its_event_names_and_only_the_company_agent_has_c
         .collect();
     expected.sort();
     assert_eq!(folders, expected);
-    // The writing tick persisted the company document at the current
-    // schema before work ran there.
+    // Explicit install persisted the company document before work ran there.
     let stored: serde_yaml_ng::Value =
         serde_yaml_ng::from_slice(&std::fs::read(&document).unwrap()).unwrap();
     assert_eq!(

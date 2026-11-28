@@ -40,6 +40,8 @@ jobs:
         with:
           targets: ${{ matrix.target }}
       - name: build
+        env:
+          INSTRUKT_RELEASE_BUILD: "1"
         run: cargo build --release --locked --bin instrukt --target ${{ matrix.target }}
       - name: package
         run: scripts/package-release.sh "$GITHUB_REF_NAME" ${{ matrix.target }}

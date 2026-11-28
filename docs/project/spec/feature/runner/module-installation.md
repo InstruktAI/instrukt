@@ -52,10 +52,40 @@ unused; withdrawal waits for a complete demand read.
 | A company home's MCP server declared with sign-in (`project/instrukt/spec/feature/runner/mcp-access`) | On the computer that holds the home: cluster Redis reachable and `ingress.url` set. Without them it is an unmet finding naming the company and the server, with its door: set the missing settings, then `instrukt install`. No receiver on that computer solely for sign-in. |
 | The ingress computer with events enabled and `ingress.url` set | The events dependencies and the receiver/socket service, which serves the sign-in return whether or not a source is declared. |
 
-The local database is created/migrated on commands that need it under its own
-contract. Todos may record finalize-ready events locally while events are off;
+A brand-new local database is initialized on commands that need it under its
+own contract, while upgrading an existing older live-home database or
+machine-owned configuration happens exclusively through `instrukt install`
+(below). Todos may record finalize-ready events locally while events are off;
 this creates no Redis dependency or event activation. Blueprint's hook behavior
 adds no wake-up/Redis/receiver demand.
+
+### Live-home schema migration and pre-migration backup
+
+`instrukt install` is the sole explicit upgrade boundary for live-home schema
+migrations across machine-owned configuration (`instrukt.yaml`, `agents.yaml`,
+company documents including legacy `companies/<name>/instrukt.yaml`) and every
+home-owned SQLite store (`state/instrukt.db`, `state/history.db`,
+`state/requested-review.db`, `state/review-observation.db`,
+`state/redis-reachability.db`, `state/review.db`,
+`state/review-publication.db`, and company `knowledge-proposals.db`).
+
+- **`instrukt install --check`** inspects all machine-owned configurations and
+  SQLite stores read-only without taking locks or modifying files, reporting
+  every pending migration as an unmet finding naming the path, versions, and
+  `instrukt install`, and exiting non-zero when any migration is pending.
+- **`instrukt install`** (without `--check`), whenever at least one
+  configuration or SQLite migration is pending, first writes an owner-only
+  (`0700`/`0600`) pre-migration snapshot under
+  `<home>/backups/pre-migrate-<timestamp>/` containing present owned
+  configuration files and SQLite `online_backup` snapshots (each verified with
+  `PRAGMA quick_check`) of `state/instrukt.db` and every migrating SQLite
+  store. If any backup or verification step fails (including a symlink at the
+  backup directory or source file), installation aborts before running any
+  migration or mutating any live file.
+- After the backup succeeds, `instrukt install` applies each pending
+  configuration and SQLite migration under its own lock, reports the backup
+  path and completed migrations in its notices, and ensures any registered
+  owned runner service restarts onto the upgraded home.
 
 `modules.events` is authoritative. Sources with events off are a configuration
 finding, never an implicit enablement. Empty `webhooks: {}` creates no endpoint
@@ -98,8 +128,8 @@ one rule whatever the root is:
 | `instrukt config get [<path>] [--global] [--json]` and `instrukt config get --revision [--global]` | Read settings and revision with credentials redacted or references preserved. |
 | `instrukt config patch --revision <rev> [--global] --from-file <file>` | Validate and atomically record desired configuration; standard input and `--yaml` retain their existing alternatives. Installs nothing. |
 | `instrukt config validate [--global]` | Validate layer, effective module/runtime prerequisites and source references; names findings without exposing secret values. |
-| `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results and remaining findings. |
-| `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, capabilities, ownership and retained-reader readiness; nonzero for unmet demand or unsafe drift. Older configuration is converted in memory and reported as migrating on the next writing command. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
+| `instrukt install [--module todos\|events\|history\|blueprint\|conversations]` | Back up and migrate any pending live-home configurations and SQLite stores, read machine-wide demand, install/reuse/repair its resources and withdraw unneeded instrukt-owned units; report per-resource results, migration notices and remaining findings. |
+| `instrukt install --check [--module todos\|events\|history\|blueprint\|conversations]` | Read-only comparison of desired and actual infrastructure, pending live-home schema migrations, capabilities, ownership and retained-reader readiness; nonzero for unmet demand, pending migrations or unsafe drift. Older configuration is inspected in memory and reported as an unmet finding naming `instrukt install`. Creates no file, including logs, SQLite sidecars, locks or defaults; takes no lock and mutates no package, service, configuration, group position or data. |
 | `instrukt ticks status` | Show registration mode, last wake and stale/missing wake findings. |
 | `instrukt events status` | Show this computer's machine ID and its `ingress.computer` and `ingress.reactions` as it reads them, enabled projects, scoped Redis reachability, per-consumer stream positions/lag/pending, activation/delivery failures, undeliverable requested-review verdict notices with their count and the most recent ones, receiver placement/health, the runner service's state, the last skipped wake with its time and cause until a wake that is not skipped, and each connector's connection; masks credentials. |
 | `instrukt events dead-letters` | Inspect retained dead-letter identity, original transport coordinate and failure facts without arbitrary Redis operations. |

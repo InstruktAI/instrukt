@@ -140,12 +140,10 @@ pub fn repository_local(matches: &ArgMatches) -> bool {
     )
 }
 
-/// The documentation reads, as the catalog classifies them: they inspect the
-/// state database, so an older one is read through its migrated in-memory
-/// image and the file stays as found
-/// (`project/instrukt/spec/feature/work/state-database`).
-pub fn state_inspection(matches: &ArgMatches) -> bool {
-    action(&command_path(matches).0) == Some(Action::DocsRead)
+/// Whether the command is `instrukt config validate`, a diagnostic command
+/// that inspects older layers in memory without mutating disk.
+pub fn config_validate(matches: &ArgMatches) -> bool {
+    command_path(matches).0 == ["config", "validate"]
 }
 
 /// The commands that write no log: `docs render [--plugin] [--check]`, `docs plugin
@@ -175,15 +173,6 @@ fn root_project(ctx: &Ctx) -> anyhow::Result<Option<instrukt_core::ids::ProjectS
             _ => None,
         },
     )
-}
-
-/// The commands that know only once they run whether they write: `mcp
-/// clients` lists read-only in an admin's direct message and materializes
-/// registrations for the local operator
-/// (`project/instrukt/spec/feature/runner/mcp-access`). They enter reading
-/// and turn writing themselves ([`crate::context::Ctx::enter_writing`]).
-pub fn deferred_writing(matches: &ArgMatches) -> bool {
-    command_path(matches).0 == ["mcp", "clients"]
 }
 
 pub fn strict_inspection(matches: &ArgMatches) -> bool {

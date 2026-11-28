@@ -119,6 +119,14 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     let mut fx = BackupFixture::new(5, Some("hosts")).unwrap();
     fx.env.set_env("INSTRUKT_NOW", "2030-01-06T03:00:00Z");
     let home = fx.env.instrukt_home();
+    let company = home.join("companies/acme");
+    std::fs::create_dir_all(&company).unwrap();
+    std::fs::write(
+        company.join("instrukt.yaml"),
+        "schema_version: 5\ncompany: acme\n",
+    )
+    .unwrap();
+    fx.env.upgrade();
 
     // Keep an active WAL connection open with an uncheckpointed row residing
     // solely in `instrukt.db-wal` throughout `instrukt backup run`, so a raw
@@ -178,15 +186,9 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     std::fs::create_dir_all(home.join("explore")).unwrap();
     std::fs::write(home.join("explore/report.md"), "# report\n").unwrap();
 
-    // Legacy company home (instrukt.yaml should forward-convert to company.yaml).
-    let company = home.join("companies/acme");
+    // Company settings have already crossed the explicit install boundary.
     std::fs::create_dir_all(company.join(".instrukt/schemas")).unwrap();
     std::fs::create_dir_all(company.join(".git")).unwrap();
-    std::fs::write(
-        company.join("instrukt.yaml"),
-        "schema_version: 5\ncompany: acme\n",
-    )
-    .unwrap();
     std::fs::write(company.join("secrets.env"), "COMPANY_KEY=secret\n").unwrap();
     std::fs::write(company.join(".instrukt/schemas/s.json"), "{}\n").unwrap();
     std::fs::write(company.join("tracked.md"), "git tracked\n").unwrap();

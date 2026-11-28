@@ -698,7 +698,10 @@ mod tests {
         .unwrap();
         std::fs::write(
             home_dir.join(".instrukt/instrukt.yaml"),
-            "schema_version: 1\nmodules:\n  todos: true\n",
+            format!(
+                "schema_version: {}\nmodules:\n  todos: true\n",
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION
+            ),
         )
         .unwrap();
         std::fs::write(

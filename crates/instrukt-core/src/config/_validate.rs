@@ -502,8 +502,8 @@ pub fn connector_procedure_finding(
 /// the inspection notice, and the next commit brings it current
 /// (`docs/project/spec/feature/configuration/owned-files.md`).
 pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError> {
-    super::_layer::migrate_if_needed(home, layer)?;
-    let view = super::_layer::inspect_layer(home, layer)?;
+    let inspection = home.for_inspection();
+    let view = super::_layer::inspect_layer(&inspection, layer)?;
     let path = view.path;
     let Some(value) = view.value else {
         return Err(ConfigError::NoLayer {
@@ -511,13 +511,17 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
             door: layer.init_door(),
         });
     };
-    let mut findings = findings_for(home, layer, &path, &value)?;
+    let mut findings = findings_for(&inspection, layer, &path, &value)?;
     if let Layer::Company(name) = layer {
-        findings.extend(super::_company_document::local_material(home, name, &path)?);
+        findings.extend(super::_company_document::local_material(
+            &inspection,
+            name,
+            &path,
+        )?);
         if let Some(entries) = value.get("connectors").and_then(Value::as_mapping)
             && !entries.is_empty()
         {
-            let agents = super::Agents::load(&home.for_inspection()).ok();
+            let agents = super::Agents::load(&inspection).ok();
             let mut reported_default = false;
             for (key, entry) in entries {
                 let Some(connector_name) = key.as_str() else {
@@ -528,7 +532,7 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
                     .and_then(Value::as_str)
                     .unwrap_or(super::COMPANY_AGENT_ROLE);
                 if let Some(finding) = connector_role_procedure_finding(
-                    home,
+                    &inspection,
                     name,
                     connector_name,
                     role,
@@ -546,7 +550,7 @@ pub fn validate(home: &Home, layer: &Layer) -> Result<Vec<Finding>, ConfigError>
         }
     }
     if layer.kind() == LayerKind::Global
-        && let Err(error) = super::Agents::load(home)
+        && let Err(error) = super::Agents::load(&inspection)
     {
         findings.push(Finding {
             document: home.agents_file(),

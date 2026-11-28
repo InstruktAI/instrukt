@@ -71,8 +71,8 @@ discarded); a deliberate edit goes through
 migrations follow `project/instrukt/spec/feature/configuration/owned-files`.
 
 A file that is a full copy of shipped defaults, recognised as unedited by the
-deployment record kept beside it, is removed by the first writing command, which
-then deletes the record. A file the record does not recognise as unedited —
+deployment record kept beside it, is removed by explicit `instrukt install`,
+which then deletes the record. A file the record does not recognise as unedited —
 edited, unrecognised, or with the record unreadable — is kept and overrides
 everything it names. Reading commands change neither, and with the record gone
 nothing is converted again.

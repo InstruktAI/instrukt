@@ -248,7 +248,7 @@ fn an_engine_that_answers_no_free_questions_says_so() {
     std::fs::create_dir_all(global.parent().unwrap()).unwrap();
     std::fs::write(
         &global,
-        "schema_version: 1\nblueprint:\n  engine: own-engine\n",
+        "schema_version: 8\nblueprint:\n  engine: own-engine\n",
     )
     .unwrap();
     let repo = project(&env, true);

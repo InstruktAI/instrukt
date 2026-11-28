@@ -26,6 +26,7 @@ use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
 pub use _held::{HeldCandidate, HeldCommit, PresenceAnswer, SessionPresence};
+pub(crate) use _observation::store as observation_store;
 pub use _proposals::ProposalReports;
 pub(crate) use _requests::live;
 pub use _requests::{Disposition, Request, Standing, observed_red, requests};

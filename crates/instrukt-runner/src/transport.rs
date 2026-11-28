@@ -15,7 +15,7 @@ use crate::state::RunnerState;
 pub(crate) use _endpoint::Endpoint;
 pub(crate) use _reachability::{
     ensure_migrated as ensure_reachability_migrated,
-    retire_unconfigured as retire_unconfigured_reachability,
+    retire_unconfigured as retire_unconfigured_reachability, store as reachability_store,
 };
 
 /// Logical source identities for the currently configured Redis endpoints,

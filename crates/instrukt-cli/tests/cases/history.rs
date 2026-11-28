@@ -522,7 +522,7 @@ fn development_history_reads_the_machine_runtime_instead_of_its_output_home() {
     std::fs::create_dir_all(&development).unwrap();
     std::fs::write(
         development.join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     env.set_env("INSTRUKT_HOME", development.to_str().unwrap())
@@ -560,6 +560,7 @@ fn upgrading_history_preserves_previously_retained_text_absent_from_the_runtime(
     )
     .unwrap();
     drop(db);
+    env.upgrade();
     // The retained conversation keeps its thread and its message, its text
     // once, and nothing its tool records held.
     let out = env

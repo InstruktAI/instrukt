@@ -12,7 +12,7 @@ fn focused_reviewer() -> TestEnv {
         .success();
     std::fs::write(
         env.instrukt_home().join("instrukt.yaml"),
-        "schema_version: 1\nrunner: {runtime: t3}\n",
+        "schema_version: 8\nrunner: {runtime: t3}\n",
     )
     .unwrap();
     let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
@@ -243,6 +243,7 @@ fn a_retained_baseline_worker_keeps_command_access_with_explicitly_unknown_dispa
     crate::common::recreate_pre_v40_listing_copies(&db);
     db.pragma_update(None, "user_version", 12).unwrap();
     drop(db);
+    crew.project.env.upgrade();
     let caller = worker["session"]
         .as_str()
         .unwrap()

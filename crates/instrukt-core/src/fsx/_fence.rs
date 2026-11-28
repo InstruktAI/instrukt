@@ -66,18 +66,43 @@ impl Setting {
     }
 }
 
+/// Why a root is fenced: explicit `INSTRUKT_WRITE_FENCE` entry, or automatic
+/// development-build protection of live-home locations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RootSource {
+    EnvVariable,
+    DevBuild,
+}
+
+impl RootSource {
+    fn clause(self) -> &'static str {
+        match self {
+            Self::EnvVariable => "INSTRUKT_WRITE_FENCE keeps off limits",
+            Self::DevBuild => "development builds keep off limits",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FencedRoot {
+    path: PathBuf,
+    origin: RootSource,
+}
+
 /// A write the fence refused.
 #[derive(Debug, thiserror::Error)]
 #[error(
-    "write refused at the fence: {} resolves to {}, under {} which {VARIABLE} keeps off limits",
+    "write refused at the fence: {} resolves to {}, under {} which {}",
     path.display(),
     target.display(),
-    root.display()
+    root.display(),
+    origin.clause()
 )]
 pub struct Refusal {
     path: PathBuf,
     target: PathBuf,
     root: PathBuf,
+    origin: RootSource,
 }
 
 /// The fence's record could not be opened, so nothing is run.
@@ -89,7 +114,7 @@ pub struct RecordUnavailable {
 }
 
 struct Fence {
-    roots: Vec<PathBuf>,
+    roots: Vec<FencedRoot>,
     record: Option<Record>,
 }
 
@@ -102,23 +127,39 @@ struct Record {
 static FENCE: OnceLock<Fence> = OnceLock::new();
 static REFUSED: AtomicBool = AtomicBool::new(false);
 
-/// Fences `setting` for the rest of this process. No roots install
-/// nothing; a second installation changes nothing. A named record must
-/// already exist as a regular file in a directory outside every fenced
-/// location; it is opened here, once, without following a link, so a
-/// refusal never looks a path up again.
-pub fn install(setting: &Setting) -> Result<(), RecordUnavailable> {
-    if setting.roots.is_empty() {
+/// Fences `setting` and any automatic `dev_roots` for the rest of this
+/// process. `setting.roots` come first so explicit `INSTRUKT_WRITE_FENCE`
+/// entries keep their precedence and wording; `dev_roots` follow for
+/// non-release builds. No roots install nothing; a second installation changes
+/// nothing. A named record must already exist as a regular file in a directory
+/// outside every fenced location; it is opened here, once, without following a
+/// link, so a refusal never looks a path up again.
+pub fn install_with_dev_roots(
+    setting: &Setting,
+    dev_roots: &[PathBuf],
+) -> Result<(), RecordUnavailable> {
+    let mut roots: Vec<FencedRoot> = setting
+        .roots
+        .iter()
+        .cloned()
+        .map(|path| FencedRoot {
+            path,
+            origin: RootSource::EnvVariable,
+        })
+        .collect();
+    roots.extend(dev_roots.iter().cloned().map(|path| FencedRoot {
+        path,
+        origin: RootSource::DevBuild,
+    }));
+    if roots.is_empty() {
         return Ok(());
     }
+    let root_paths: Vec<PathBuf> = roots.iter().map(|root| root.path.clone()).collect();
     let record = match &setting.record {
-        Some(directory) => Some(open_record(&setting.roots, directory)?),
+        Some(directory) => Some(open_record(&root_paths, directory)?),
         None => None,
     };
-    let _ = FENCE.set(Fence {
-        roots: setting.roots.clone(),
-        record,
-    });
+    let _ = FENCE.set(Fence { roots, record });
     Ok(())
 }
 
@@ -227,27 +268,52 @@ pub fn admit(path: &Path) -> io::Result<()> {
             (entry(&absolute).unwrap_or_else(|| whole.clone()), whole)
         }
     };
-    let roots: Vec<Root<'_>> = fence
+    let roots: Vec<(Root<'_>, RootSource)> = fence
         .roots
         .iter()
-        .map(|root| Root::at(root, &mut parents))
+        .map(|root| (Root::at(&root.path, &mut parents), root.origin))
         .collect();
     let second = (whole != entry).then_some(whole);
     for target in std::iter::once(entry).chain(second) {
         let mut target = Target::new(&target);
-        if let Some(root) = roots.iter().find(|root| root.holds(&mut target)) {
-            return Err(refuse(fence, path, &target.resolved.path, root.name));
+        if let Some((root, origin)) = roots.iter().find(|(root, _)| root.holds(&mut target)) {
+            return Err(refuse(
+                fence,
+                path,
+                &target.resolved.path,
+                root.name,
+                *origin,
+            ));
         }
     }
     Ok(())
 }
 
-fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path) -> io::Error {
+/// Whether `candidate` itself or what it resolves to lies at or under `root`
+/// (or where `root` leads when `root` is a symbolic link).
+pub(crate) fn path_under(candidate: &Path, root: &Path) -> bool {
+    let mut parents = Parents::default();
+    let root = Root::at(root, &mut parents);
+    let abs = absolute(candidate);
+    let whole = resolved(&abs);
+    let entry_res = entry(&abs).unwrap_or_else(|| whole.clone());
+    let second = (whole != entry_res).then_some(whole);
+    for place in std::iter::once(entry_res).chain(second) {
+        let mut target = Target::new(&place);
+        if root.holds(&mut target) {
+            return true;
+        }
+    }
+    false
+}
+
+fn refuse(fence: &Fence, path: &Path, target: &Path, root: &Path, origin: RootSource) -> io::Error {
     REFUSED.store(true, Ordering::SeqCst);
     let refusal = Refusal {
         path: path.to_path_buf(),
         target: target.to_path_buf(),
         root: root.to_path_buf(),
+        origin,
     };
     let line = format!("instrukt: {refusal}");
     // The record first, before any diagnostic. A refusal it cannot keep
@@ -790,5 +856,25 @@ mod tests {
                 record: Some(PathBuf::from("/test/fence")),
             }
         );
+    }
+
+    #[test]
+    fn path_under_resolves_symlinks_ancestors_and_component_boundaries() {
+        let scratch = tempfile::tempdir().unwrap();
+        let base = std::fs::canonicalize(scratch.path()).unwrap();
+        let live = base.join("user/.instrukt");
+        std::fs::create_dir_all(&live).unwrap();
+        let link = base.join("alias");
+        std::os::unix::fs::symlink(&live, &link).unwrap();
+        let dangling = base.join("dangling");
+        std::os::unix::fs::symlink(live.join("missing/child"), &dangling).unwrap();
+
+        assert!(path_under(&live, &live));
+        assert!(path_under(&live.join("state/instrukt.db"), &live));
+        assert!(path_under(&link, &live));
+        assert!(path_under(&link.join("nested"), &live));
+        assert!(path_under(&dangling, &live));
+        assert!(!path_under(&base.join("user/.instrukt-dev"), &live));
+        assert!(!path_under(&base.join("isolated"), &live));
     }
 }

@@ -40,6 +40,7 @@ use serde::Serialize;
 pub use _admission::{Coordinate, Coordinates, FormRefusal, Kind, RawCoordinates, SourcePointer};
 pub use _notices::{NoticeError, RecordedVersion, queue_verdict_notices};
 pub use _route::{ReReviewOutcome, ReuseImpossible};
+pub(crate) use _store::store;
 pub use _store::{EarlierHead, TracedBy};
 
 use crate::installation::RunnerWakeup;

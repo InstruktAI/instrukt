@@ -118,8 +118,29 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     let machine_current = Some(instrukt_core::config::GLOBAL_SCHEMA_VERSION);
     let project_current = Some(instrukt_core::config::PROJECT_SCHEMA_VERSION);
 
-    // Sync on an unchanged main: the machine layer is written current, the
-    // committed project layer stays as committed.
+    // Ordinary commands leave the machine layer untouched until install.
+    let refused = env.run(repo.path(), ["sync"]).failure();
+    insta::assert_snapshot!(String::from_utf8_lossy(&refused.get_output().stderr).replace(global.to_str().unwrap(), "[GLOBAL]"), @"instrukt: [GLOBAL] has schema_version 1, older than the current 8; migrate it with `instrukt install`");
+    assert_eq!(std::fs::read_to_string(&global).unwrap(), old_global);
+    env.upgrade();
+    let backups = std::fs::read_dir(env.instrukt_home().join("backups")).unwrap();
+    let backup = backups.map(|entry| entry.unwrap().path()).next().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(backup.join("instrukt.yaml")).unwrap(),
+        old_global
+    );
+    assert_eq!(
+        std::fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(
+        std::fs::metadata(backup.join("instrukt.yaml"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777,
+        0o600
+    );
     env.run(repo.path(), ["sync"]).success();
     let machine = std::fs::read_to_string(&global).unwrap();
     assert_eq!(schema_version(&machine), machine_current);
@@ -138,14 +159,15 @@ fn an_upgrade_migrates_the_machine_layer_and_the_next_commit_carries_the_project
     insta::assert_snapshot!(notice, @"instrukt: [REPO]/instrukt.yaml: schema_version 2 inspected as 6; file migrates on the next writing command");
     assert_eq!(repo.read("instrukt.yaml"), project);
 
-    // A tick persists the machine migration before its refusal.
+    // A tick refuses the machine migration and preserves its source.
     std::fs::write(&global, old_global).unwrap();
     env.run(repo.path(), ["tick"]).failure();
     assert_eq!(
         schema_version(&std::fs::read_to_string(&global).unwrap()),
-        machine_current
+        Some(1)
     );
     assert_eq!(repo.read("instrukt.yaml"), project);
+    env.upgrade();
 
     // A conversion that fails keeps its source.
     let current_global = std::fs::read_to_string(&global).unwrap();
@@ -413,6 +435,7 @@ fn history_migration_setup(global: &str, project: &str) -> (TestEnv, common::Rep
     std::fs::create_dir_all(env.instrukt_home()).unwrap();
     std::fs::write(env.instrukt_home().join("instrukt.yaml"), global).unwrap();
     repo.write("instrukt.yaml", project);
+    env.upgrade();
     (env, repo)
 }
 fn effective_history(env: &TestEnv, repo: &common::Repo) -> serde_json::Value {

@@ -191,36 +191,14 @@ fn run() -> ExitCode {
     {
         return report(&err);
     }
-    let deferred_patch = matches
-        .subcommand()
-        .is_some_and(|(name, args)| name == "config" && args.subcommand_name() == Some("patch"));
-    let agents_patch = matches.subcommand().is_some_and(|(name, args)| {
-        name == "config"
-            && args
-                .subcommand_matches("patch")
-                .is_some_and(|patch| patch.get_flag("agents"))
-    });
-    // Adding a company reads no working directory and converges nothing
-    // before its caller is admitted (`project-initialization`, Adding a
-    // company).
-    let company_init = authorization::company_init(&matches);
     let mut ctx = match if let Some(ctx) = activated.take() {
         Ok(ctx)
-    } else if deferred_patch
-        || company_init
-        || matches!(&cli.command, Command::Backup(_))
+    } else if matches!(&cli.command, Command::Backup(_))
         || authorization::strict_inspection(&matches)
+        || authorization::config_validate(&matches)
         || authorization::untraced(&matches)
     {
         Ctx::inspection()
-    } else if authorization::state_inspection(&matches) {
-        // A documentation read, and its admission, inspect the state database.
-        Ctx::inspection()
-    } else if authorization::read_only(&matches)
-        || authorization::repository_local(&matches)
-        || authorization::deferred_writing(&matches)
-    {
-        Ctx::configuration_read()
     } else {
         Ctx::from_process()
     } {
@@ -231,8 +209,13 @@ fn run() -> ExitCode {
         && !authorization::repository_local(&matches)
         && !matches!(&cli.command, Command::Install(_) | Command::Backup(_))
     {
+        let diagnostic =
+            authorization::strict_inspection(&matches) || authorization::config_validate(&matches);
         let notice_result = (|| -> anyhow::Result<()> {
-            let mut layers = vec![instrukt_core::config::Layer::Global];
+            let mut layers = Vec::new();
+            if diagnostic {
+                layers.push(instrukt_core::config::Layer::Global);
+            }
             // A read naming its owning project reads that project's layer,
             // wherever the caller stands; one this computer does not record is
             // refused by the command itself.
@@ -246,14 +229,8 @@ fn run() -> ExitCode {
             if let Some(root) = root {
                 layers.push(instrukt_core::config::Layer::Project(root));
             }
-            if matches.subcommand().is_some_and(|(name, args)| {
-                name == "agents"
-                    || (name == "config"
-                        && (args.subcommand_name() == Some("show")
-                            || args
-                                .subcommand_matches("get")
-                                .is_some_and(|get| get.get_flag("agents"))))
-            }) && let Some(notice) = instrukt_core::config::Agents::inspection_notice(&ctx.home)?
+            if diagnostic
+                && let Some(notice) = instrukt_core::config::Agents::inspection_notice(&ctx.home)?
             {
                 eprintln!("instrukt: {notice}");
             }
@@ -270,7 +247,10 @@ fn run() -> ExitCode {
         // notice about converting it does not stand in its way.
         match notice_result {
             Ok(()) => {}
-            Err(error) if authorization::strict_inspection(&matches) => {
+            Err(error)
+                if authorization::strict_inspection(&matches)
+                    || authorization::config_validate(&matches) =>
+            {
                 tracing::debug!(event = "inspection_notice_unavailable", %error);
             }
             Err(error) => return report(&error),
@@ -287,19 +267,6 @@ fn run() -> ExitCode {
             tracing::debug!(event = "inspection_caller_undetermined", %error);
         }
         Err(error) => return report(&error),
-    }
-    if deferred_patch || company_init {
-        ctx.home = ctx.home.for_writing();
-        if !agents_patch && let Err(error) = instrukt_core::config::Agents::converge_file(&ctx.home)
-        {
-            return report(&error.into());
-        }
-    }
-    // The global layer, which adding a company reads, is brought current as
-    // on any writing entry; no project layer is read.
-    if company_init && let Err(error) = instrukt_core::config::Configuration::load(&ctx.home, None)
-    {
-        return report(&error.into());
     }
     let outcome = match cli.command {
         Command::Bugs(args) => bugs::run(args, &mut ctx),

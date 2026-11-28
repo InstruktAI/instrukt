@@ -216,7 +216,11 @@ impl FakeGitHub {
         let path = env.instrukt_home().join("instrukt.yaml");
         let mut layer: serde_yaml_ng::Value = match std::fs::read_to_string(&path) {
             Ok(text) => serde_yaml_ng::from_str(&text).unwrap(),
-            Err(_) => serde_yaml_ng::from_str("schema_version: 1").unwrap(),
+            Err(_) => serde_yaml_ng::from_str(&format!(
+                "schema_version: {}",
+                instrukt_core::config::GLOBAL_SCHEMA_VERSION
+            ))
+            .unwrap(),
         };
         let root = layer.as_mapping_mut().unwrap();
         let github = root

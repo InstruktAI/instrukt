@@ -104,7 +104,6 @@ impl Configuration {
     /// admitted machine layer.
     pub fn load(home: &Home, repo_root: Option<&Path>) -> Result<Self, ConfigError> {
         if let Some(admitted) = super::_admitted::served(home) {
-            converted_in_place(home, &Layer::Global);
             if let Some(config) = admitted.layer(repo_root) {
                 return Ok(config.clone());
             }
@@ -167,7 +166,6 @@ impl Configuration {
     pub fn load_company(home: &Home, name: &ProjectSlug) -> Result<Self, ConfigError> {
         let layer = Layer::Company(name.clone());
         if let Some(admitted) = super::_admitted::served(home) {
-            converted_in_place(home, &layer);
             if let Some(company) = admitted.company(name) {
                 return Ok(company.config.clone());
             }
@@ -837,17 +835,6 @@ fn invalid(key: &str, message: &str) -> ConfigError {
 
 /// Defaults, then the global layer, then the project layer — each layer
 /// contributing only the keys it may hold.
-/// A writing command keeps converting an older document of `layer` in
-/// place, as reading it always did, while it uses the admitted values: the
-/// conversion changes how the document is written, not what it says.
-fn converted_in_place(home: &Home, layer: &Layer) {
-    if !home.is_inspection()
-        && let Err(error) = read_usable(home, layer)
-    {
-        tracing::debug!(event = "served_layer_unconverted", %error);
-    }
-}
-
 pub(crate) fn effective_value(
     global: Option<&Value>,
     project: Option<&Value>,

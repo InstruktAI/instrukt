@@ -168,7 +168,8 @@ pub fn events_status(request: &Request<'_>) -> Result<serde_json::Value, Install
     let mut status = match retained_event_status(request) {
         Ok(status) => status,
         Err(InstallationError::State(crate::state::StateError::Db(
-            error @ instrukt_core::state_db::StateDbError::Newer { .. },
+            error @ (instrukt_core::state_db::StateDbError::Newer { .. }
+            | instrukt_core::state_db::StateDbError::Older { .. }),
         ))) => {
             serde_json::json!({"state_database": {"path": home.state_db_file(), "reason": error.to_string()}})
         }

@@ -7,10 +7,10 @@
 //! instrukt is its only writer. Every write runs while the process holds
 //! the per-computer writer lock `~/.instrukt/state/writer.lock`; SQLite's
 //! own locking is not the serialization contract. Opening for writing
-//! applies the pending migrations, each in its own transaction that also
-//! sets `PRAGMA user_version`; a reader of older state first takes that same
-//! migration path. A database
-//! newer than this build knows is refused.
+//! initializes an absent database. Existing older state is migrated only at
+//! the explicit install/restore boundary, each step in its own transaction
+//! that also sets `PRAGMA user_version`. Ordinary readers and writers refuse
+//! older and newer schemas without migrating them.
 //!
 //! The work context owns the file, its migrations and the work tables; the
 //! runner context owns the runner tables. Both reach the file through this
@@ -72,6 +72,15 @@ pub enum StateDbError {
         found: u32,
         known: u32,
     },
+    #[error(
+        "the state database at {} is at schema version {found}, older than the {known} this instrukt requires; migrate it with `instrukt install`",
+        path.display()
+    )]
+    Older {
+        path: PathBuf,
+        found: u32,
+        known: u32,
+    },
     #[error("{} is a symbolic link; link the instrukt home or state/ directory instead", path.display())]
     Symlink { path: PathBuf },
     #[error(transparent)]
@@ -122,6 +131,16 @@ pub enum StoreError {
         found: u32,
         known: u32,
     },
+    #[error(
+        "{store} at {} is at schema version {found}, older than the {known} this instrukt requires; migrate it with `instrukt install`",
+        path.display()
+    )]
+    Older {
+        store: &'static str,
+        path: PathBuf,
+        found: u32,
+        known: u32,
+    },
     #[error("{} is a symbolic link; link the instrukt home or state/ directory instead", path.display())]
     Symlink { path: PathBuf },
     #[error(transparent)]
@@ -159,6 +178,9 @@ impl From<StoreError> for StateDbError {
             StoreError::Newer {
                 path, found, known, ..
             } => Self::Newer { path, found, known },
+            StoreError::Older {
+                path, found, known, ..
+            } => Self::Older { path, found, known },
             StoreError::Symlink { path } => Self::Symlink { path },
             StoreError::Lock(error) => Self::Lock(error),
             ref invalid @ StoreError::Invalid { ref path, .. } => Self::Invalid {
@@ -193,27 +215,9 @@ pub enum StoreLock {
     Exclusive(PathBuf, Duration),
 }
 
-/// Which copy of a store a migration brings forward.
-#[derive(Debug, Clone, Copy)]
-enum Image {
-    /// The store's file itself: the new version is durable.
-    File,
-    /// An in-memory image, such as an inspection read's copy of the file;
-    /// the file keeps its version.
-    Memory,
-}
-
-/// What reading a store found when it holds a schema.
-pub enum Read {
-    /// A connection at the store's current schema version.
-    Current(Connection),
-    /// The store is at an older schema version; it is brought forward
-    /// through [`StoreDb::open`] before it is read.
-    Behind,
-}
-
 impl Store {
-    fn state(home: &Home) -> Self {
+    /// The state database store (`state/instrukt.db` under `state/writer.lock`).
+    pub fn state(home: &Home) -> Self {
         Self {
             name: STATE_DATABASE,
             file: home.state_db_file(),
@@ -225,6 +229,27 @@ impl Store {
     /// The schema version this build writes for the store.
     pub fn version(&self) -> u32 {
         self.migrations.len() as u32
+    }
+
+    /// Whether an existing store at `self.file` has an older non-zero schema
+    /// version requiring explicit migration via `instrukt install`, returning
+    /// `Some((found, known))` when migration is owed, `None` when absent,
+    /// empty (`user_version == 0`), or already current, and `Err(StoreError::Newer)`
+    /// when newer than this build knows.
+    pub fn needs_migration(&self) -> Result<Option<(u32, u32)>, StoreError> {
+        let Some(found) = self.stored_schema()? else {
+            return Ok(None);
+        };
+        let known = self.version();
+        if found > known {
+            return Err(StoreError::Newer {
+                store: self.name,
+                path: self.file.clone(),
+                found,
+                known,
+            });
+        }
+        Ok((found > 0 && found < known).then_some((found, known)))
     }
 
     /// The schema version the store's file holds, read without migrating it
@@ -273,32 +298,45 @@ impl Store {
         false
     }
 
-    /// Opens the store for reading without its lock; `None` when no file
-    /// (or no schema) exists yet, which is empty state. With `snapshot`, an
-    /// existing file is read without opening it on disk or creating
-    /// sidecars, and older state is brought forward in memory only — unless
-    /// this process has opened the file through SQLite, which then reads it
-    /// live and permits queries only. A live read finds older state
-    /// [`Read::Behind`]. A newer store is refused.
-    pub fn read(&self, snapshot: bool) -> Result<Option<Read>, StoreError> {
+    /// Opens the store strictly for reading without its lock; `None` when no
+    /// file (or no schema) exists yet, which is empty state. Never runs DDL on
+    /// disk or in memory, never acquires any lock, and always enforces
+    /// `PRAGMA query_only = true`. An existing file is read
+    /// without opening it on disk or creating sidecars unless this process has
+    /// already opened it through SQLite. Older (`0 < found < known`) and newer
+    /// (`found > known`) stores are refused with [`StoreError::Older`] and
+    /// [`StoreError::Newer`].
+    pub fn read(&self) -> Result<Option<Connection>, StoreError> {
         let path = &self.file;
         refuse_database_links(self.name, path)?;
         if !path.exists() {
             return Ok(None);
         }
-        let copied = if snapshot {
-            _snapshot::read(self.name, path)?
-        } else {
-            None
-        };
-        let image = copied.is_some();
-        let mut conn = match copied {
+        let conn = match _snapshot::read(self.name, path)? {
             Some(conn) => {
                 configure(&conn, self.name, path)?;
                 conn
             }
             None => open_live(self.name, path)?,
         };
+        self.checked_reader(conn)
+    }
+
+    // A serving reader must see subsequent committed writes. Check a snapshot
+    // before opening SQLite on disk, so a refused older/newer schema cannot
+    // change sidecars. Once this process owns a SQLite connection, snapshot
+    // inspection already goes through SQLite to preserve its process locks.
+    fn read_live(&self) -> Result<Option<Connection>, StoreError> {
+        if self.read()?.is_none() {
+            return Ok(None);
+        }
+        self.checked_reader(open_live(self.name, &self.file)?)
+    }
+
+    fn checked_reader(&self, conn: Connection) -> Result<Option<Connection>, StoreError> {
+        let path = &self.file;
+        conn.pragma_update(None, "query_only", true)
+            .map_err(StoreError::sqlite(self.name, path))?;
         let found = stored_version(&conn, self.name, path)?;
         let known = self.version();
         if found == 0 {
@@ -312,16 +350,15 @@ impl Store {
                 known,
             });
         }
-        if image {
-            migrate_store(&mut conn, self, Image::Memory)?;
-        } else if found < known {
-            return Ok(Some(Read::Behind));
+        if found < known {
+            return Err(StoreError::Older {
+                store: self.name,
+                path: path.clone(),
+                found,
+                known,
+            });
         }
-        if snapshot {
-            conn.pragma_update(None, "query_only", true)
-                .map_err(StoreError::sqlite(self.name, path))?;
-        }
-        Ok(Some(Read::Current(conn)))
+        Ok(Some(conn))
     }
 }
 
@@ -331,7 +368,7 @@ impl Store {
 fn open_live(store: &'static str, path: &Path) -> Result<Connection, StoreError> {
     let conn = crate::fsx::open_database(
         path,
-        OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(StoreError::sqlite(store, path))?;
     configure(&conn, store, path)?;
@@ -391,9 +428,41 @@ pub struct StoreDb {
 }
 
 impl StoreDb {
-    /// Takes the store's lock and opens its file, creating it and applying
-    /// every pending migration.
+    /// Takes the store's lock and opens its file, initializing a brand-new or
+    /// empty (`user_version == 0`) store, and refusing any existing older store
+    /// (`0 < found < known`) with [`StoreError::Older`] directing to
+    /// `instrukt install`.
     pub fn open(store: &Store) -> Result<Self, StoreError> {
+        Self::open_inner(store, false)
+    }
+
+    /// Takes the store's lock, opens its file, and explicitly applies every
+    /// pending forward migration (`instrukt install`, `instrukt backup restore`,
+    /// and explicit migration tests).
+    pub fn open_migrating(store: &Store) -> Result<Self, StoreError> {
+        Self::open_inner(store, true)
+    }
+
+    fn open_inner(store: &Store, allow_migration: bool) -> Result<Self, StoreError> {
+        let known = store.version();
+        if !allow_migration && let Some(found) = store.stored_schema()? {
+            if found > known {
+                return Err(StoreError::Newer {
+                    store: store.name,
+                    path: store.file.clone(),
+                    found,
+                    known,
+                });
+            }
+            if found > 0 && found < known {
+                return Err(StoreError::Older {
+                    store: store.name,
+                    path: store.file.clone(),
+                    found,
+                    known,
+                });
+            }
+        }
         let lock = match &store.lock {
             StoreLock::Reentrant(file) => {
                 Held::Reentrant(WriterLock::acquire_file(store.name, file)?)
@@ -414,9 +483,16 @@ impl StoreDb {
         let mut conn = crate::fsx::open_database(&path, OpenFlags::default())
             .map_err(StoreError::sqlite(store.name, &path))?;
         let found = stored_version(&conn, store.name, &path)?;
-        let known = store.version();
         if found > known {
             return Err(StoreError::Newer {
+                store: store.name,
+                path,
+                found,
+                known,
+            });
+        }
+        if !allow_migration && found > 0 && found < known {
+            return Err(StoreError::Older {
                 store: store.name,
                 path,
                 found,
@@ -430,7 +506,7 @@ impl StoreDb {
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(StoreError::sqlite(store.name, &path))?;
         protect(&path)?;
-        migrate_store(&mut conn, store, Image::File)?;
+        migrate_store(&mut conn, store, true)?;
         Ok(Self {
             conn,
             path,
@@ -498,12 +574,34 @@ pub struct StateDb {
 }
 
 impl StateDb {
-    /// Takes the writer lock and opens `home`'s database, creating it and
-    /// applying every pending migration.
+    /// Takes the writer lock and opens `home`'s database, initializing a
+    /// brand-new or empty database and refusing an existing older schema with
+    /// [`StateDbError::Older`].
     pub fn open(home: &Home) -> Result<Self, StateDbError> {
         Ok(Self {
             db: StoreDb::open(&Store::state(home))?,
         })
+    }
+
+    /// Takes the writer lock, opens `home`'s database, and explicitly applies
+    /// every pending forward migration (`instrukt install`, `instrukt backup restore`,
+    /// and explicit migration tests).
+    pub fn open_migrating(home: &Home) -> Result<Self, StateDbError> {
+        Ok(Self {
+            db: StoreDb::open_migrating(&Store::state(home))?,
+        })
+    }
+
+    /// Migrates an existing older state database in `home` to the current
+    /// schema under its writer lock. Returns `Ok(Some((from, to)))` when a
+    /// migration ran, or `Ok(None)` when absent, empty, or already current.
+    pub fn migrate(home: &Home) -> Result<Option<(u32, u32)>, StateDbError> {
+        let store = Store::state(home);
+        let Some((from, to)) = store.needs_migration()? else {
+            return Ok(None);
+        };
+        drop(StoreDb::open_migrating(&store)?);
+        Ok(Some((from, to)))
     }
 
     pub fn path(&self) -> &Path {
@@ -582,7 +680,8 @@ impl StateDb {
     }
 }
 
-/// A current-schema reader; older owned state migrates under its writer lock.
+/// A strictly read-only current-schema reader: never acquires `writer.lock`,
+/// never runs DDL on disk or in memory, and refuses older/newer schemas.
 #[derive(Debug)]
 pub struct StateRead {
     conn: Connection,
@@ -590,21 +689,19 @@ pub struct StateRead {
 }
 
 impl StateRead {
-    /// Opens `home`'s database for reading; `None` when no database (or no
-    /// schema) exists yet, which is empty state.
+    /// Opens `home`'s database strictly for reading; `None` when no database
+    /// (or no schema) exists yet, which is empty state.
     pub fn open(home: &Home) -> Result<Option<Self>, StateDbError> {
         let store = Store::state(home);
-        match store.read(home.is_state_read_only())? {
-            None => Ok(None),
-            Some(Read::Current(conn)) => Ok(Some(Self {
-                conn,
-                path: store.file,
-            })),
-            Some(Read::Behind) => {
-                drop(StateDb::open(home)?);
-                Self::open(home)
-            }
-        }
+        let reader = if home.is_inspection() {
+            store.read()?
+        } else {
+            store.read_live()?
+        };
+        Ok(reader.map(|conn| Self {
+            conn,
+            path: store.file,
+        }))
     }
 
     pub fn path(&self) -> &Path {
@@ -654,7 +751,7 @@ fn stored_version(conn: &Connection, store: &'static str, path: &Path) -> Result
 /// Applies each of `store`'s migrations past the stored version, each in
 /// its own transaction that sets `user_version` too. Only a migration of
 /// the store's file is reported as the store moving to a new version.
-fn migrate_store(conn: &mut Connection, store: &Store, image: Image) -> Result<(), StoreError> {
+fn migrate_store(conn: &mut Connection, store: &Store, log_file: bool) -> Result<(), StoreError> {
     let path = &store.file;
     let sql = StoreError::sqlite(store.name, path);
     let found = stored_version(conn, store.name, path)?;
@@ -680,7 +777,7 @@ fn migrate_store(conn: &mut Connection, store: &Store, image: Image) -> Result<(
         tx.pragma_update(None, "user_version", version)
             .map_err(&sql)?;
         tx.commit().map_err(&sql)?;
-        if let Image::File = image {
+        if log_file {
             tracing::info!(
                 event = "state_db_migrated",
                 store = store.name,
@@ -706,7 +803,7 @@ fn migrate(conn: &mut Connection, path: &Path) -> Result<(), StateDbError> {
         file: path.to_path_buf(),
         ..Store::state(&Home::at_user_home(PathBuf::from("/")))
     };
-    Ok(migrate_store(conn, &store, Image::Memory)?)
+    Ok(migrate_store(conn, &store, false)?)
 }
 
 /// Inspect an existing SQLite store; the connection permits queries only.
@@ -998,7 +1095,7 @@ mod tests {
             migrations: &_schema::MIGRATIONS[..35],
             ..Store::state(&Home::at_user_home(PathBuf::from("/")))
         };
-        migrate_store(&mut conn, &at_35, Image::Memory).unwrap();
+        migrate_store(&mut conn, &at_35, false).unwrap();
         assert_eq!(user_version(&conn, path).unwrap(), 35);
         let request = |key: &str, selection: serde_json::Value| {
             serde_json::json!({
@@ -1734,8 +1831,9 @@ mod tests {
             ("keep-me".into(), "runner.test".into(), "relay-ok".into())
         );
 
-        // 2. Populated legacy tables stay intact across both read-only in-memory
-        // snapshot inspection and on-disk StateDb::open until removed explicitly.
+        // 2. Populated legacy tables stay intact when an unmigrated DB is refused
+        // by Store::read / StateDb::open and across explicit StateDb::open_migrating
+        // until removed explicitly.
         let dir = crate::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         let file = home.state_db_file();
@@ -1752,25 +1850,21 @@ mod tests {
             .unwrap();
         }
         let before_bytes = std::fs::read(&file).unwrap();
-        let snapshot = Store::state(&home).read(true).unwrap().unwrap();
-        let Read::Current(snapshot_conn) = snapshot else {
-            panic!("snapshot read should migrate in memory to current schema");
-        };
-        let worker_count: u32 = snapshot_conn
-            .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
-            .unwrap();
-        let reach_count: u32 = snapshot_conn
-            .query_row("SELECT count(*) FROM redis_reachability", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!((worker_count, reach_count), (1, 1));
-        drop(snapshot_conn);
+        assert!(matches!(
+            Store::state(&home).read(),
+            Err(StoreError::Older { found: 40, .. })
+        ));
+        assert!(matches!(
+            StateDb::open(&home),
+            Err(StateDbError::Older { found: 40, .. })
+        ));
         assert_eq!(
             std::fs::read(&file).unwrap(),
             before_bytes,
-            "read-only snapshot leaves on-disk database untouched"
+            "refused reads and opens leave on-disk database untouched"
         );
 
-        let mut db = StateDb::open(&home).unwrap();
+        let mut db = StateDb::open_migrating(&home).unwrap();
         let worker_rows: u32 = db
             .conn()
             .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
@@ -1868,8 +1962,9 @@ mod tests {
             ("keep-me".into(), "runner.test".into(), "relay-ok".into())
         );
 
-        // 2. Populated wake-loop tables stay intact across read-only in-memory
-        // snapshot inspection and on-disk StateDb::open until removed explicitly.
+        // 2. Populated wake-loop tables stay intact when an unmigrated DB is
+        // refused by Store::read / StateDb::open and across explicit
+        // StateDb::open_migrating until removed explicitly.
         let dir = crate::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf());
         let file = home.state_db_file();
@@ -1886,40 +1981,21 @@ mod tests {
             .unwrap();
         }
         let before_bytes = std::fs::read(&file).unwrap();
-        let snapshot = Store::state(&home).read(true).unwrap().unwrap();
-        let Read::Current(snapshot_conn) = snapshot else {
-            panic!("snapshot read should migrate in memory to current schema");
-        };
-        let skipped_row: (String, String) = snapshot_conn
-            .query_row(
-                "SELECT at, cause FROM runner_skipped_wake WHERE id = 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        let admission_row: (String, String) = snapshot_conn
-            .query_row(
-                "SELECT at, outcome FROM runner_admission WHERE id = 1",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )
-            .unwrap();
-        assert_eq!(
-            skipped_row,
-            ("2026-11-28T01:00:00Z".into(), "dispatch lock held".into())
-        );
-        assert_eq!(
-            admission_row,
-            ("2026-11-28T01:05:00Z".into(), "kept".into())
-        );
-        drop(snapshot_conn);
+        assert!(matches!(
+            Store::state(&home).read(),
+            Err(StoreError::Older { found: 42, .. })
+        ));
+        assert!(matches!(
+            StateDb::open(&home),
+            Err(StateDbError::Older { found: 42, .. })
+        ));
         assert_eq!(
             std::fs::read(&file).unwrap(),
             before_bytes,
-            "read-only snapshot leaves on-disk database untouched"
+            "refused reads and opens leave on-disk database untouched"
         );
 
-        let mut db = StateDb::open(&home).unwrap();
+        let mut db = StateDb::open_migrating(&home).unwrap();
         let skipped_rows: u32 = db
             .conn()
             .query_row("SELECT count(*) FROM runner_skipped_wake", [], |r| r.get(0))
@@ -1940,6 +2016,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn current_state_readers_refuse_sql_writes() {
+        let dir = crate::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        drop(StateDb::open(&home).unwrap());
+        let reader = super::StateRead::open(&home.for_inspection())
+            .unwrap()
+            .unwrap();
+        let error = reader
+            .conn()
+            .execute_batch("CREATE TABLE unexpected(id INTEGER)")
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error {
+                    code: rusqlite::ErrorCode::ReadOnly,
+                    ..
+                },
+                _
+            )
+        ));
     }
 
     #[test]

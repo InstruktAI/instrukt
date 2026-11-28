@@ -2,6 +2,7 @@
 expanded:
   - project/instrukt/concept/purpose
   - project/instrukt/policy/shared-workflows
+  - project/instrukt/policy/deployment-authority
 listed:
   - project/instrukt/spec/verification-substrate
   - project/instrukt/policy/reliability-checklist
