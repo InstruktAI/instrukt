@@ -11,11 +11,6 @@ ignore = [
   # and octocrab 0.54.9; instrukt itself uses jiff. Removal once upstream SDKs
   # migrate off chrono is tracked in todo `retire-chrono-advisory-ignore`.
   "RUSTSEC-2026-0543",
-  # Unmaintained pin-utils 0.1.1 (not a vulnerability, no Rust 1.89-compatible
-  # upgrade available; upstream aws-smithy-* dropped it in MSRV 1.94.1).
-  # Required unconditionally by aws-sdk-s3 1.122.0 / aws-smithy-* under MSRV 1.89.
-  # Removal tracked in `instrukt-home-backup` deferrals.
-  "RUSTSEC-2026-0441",
   # Unmaintained basic-toml 0.1.10 (not a vulnerability, no safe upgrade available)
   # and proc-macro-error2 2.0.1 (build-time proc-macro only; age 0.12.1 introduces
   # vulnerable crypto-bigint 0.5.5 / RUSTSEC-2026-0387). Required unconditionally

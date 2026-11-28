@@ -19,7 +19,7 @@ Or tell any coding agent **"install instrukt"**. It runs those two commands, the
 - Prebuilt for `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
 - `instrukt -h` lists every command. `instrukt status` shows what instrukt sees on this machine and in this repository.
 
-[![Rust 2024 · MSRV 1.89](https://img.shields.io/badge/rust-2024%20%7C%20MSRV%201.89-orange.svg)](Cargo.toml)
+[![Rust 2024 · MSRV 1.94.1](https://img.shields.io/badge/rust-2024%20%7C%20MSRV%201.94.1-orange.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](Cargo.toml)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe__code-forbid-brightgreen.svg)](Cargo.toml)
 
@@ -297,7 +297,7 @@ This repository is documentation-first, written using the exact system it publis
 
 ## Development
 
-One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.89, `unsafe` code forbidden, one binary.
+One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.94.1, `unsafe` code forbidden, one binary.
 
 ```sh
 make hooks          # once per clone: pre-commit runs the checks the staged files need
