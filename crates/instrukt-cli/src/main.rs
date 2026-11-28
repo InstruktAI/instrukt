@@ -17,6 +17,7 @@ mod commands;
 mod connectors;
 mod context;
 mod output;
+mod runtimes;
 mod wiring;
 
 use std::io::Write as _;
@@ -52,7 +53,7 @@ enum Command {
     /// Reach the MCP servers declared for this caller: list them, list one's
     /// tools, call a tool.
     Mcp(mcp::McpArgs),
-    /// Queue explicit replies to company conversations.
+    /// Queue explicit replies and active-turn progress updates for company conversations.
     Company(company::CompanyArgs),
     /// Store or generate protected machine-local secrets.
     Secrets(secrets::SecretsArgs),
@@ -110,9 +111,10 @@ static LOG_DESTINATION: OnceLock<LogDestination> = OnceLock::new();
 fn main() -> ExitCode {
     install_panic_hook();
     instrukt_outside::http::ensure_crypto_provider();
-    // The connector kinds this binary supports reach configuration before
-    // anything reads it.
+    // The connector kinds and runtime adapters this binary supports reach
+    // configuration before anything reads it.
     instrukt_core::config::install_connector_declarations(&connectors::DECLARATIONS);
+    instrukt_core::config::install_runtime_declarations(&runtimes::DECLARATIONS);
     if let Err(error) = instrukt_core::fsx::fence(&instrukt_core::config::Env::from_process()) {
         eprintln!("instrukt: {error}");
         return ExitCode::from(instrukt_core::fsx::FENCE_EXIT);
@@ -152,8 +154,12 @@ fn run() -> ExitCode {
         Err(error) => error.exit(),
     };
     // A machine configuration that cannot be loaded stops every command;
-    // `config validate --global` names the file's own problem.
-    if let Some(code) = unloadable_machine_layer(&matches) {
+    // `config validate --global` names the file's own problem. Active company
+    // sessions replying or updating status (`instrukt company`) continue under
+    // the runner's already-admitted generation.
+    if !matches!(&cli.command, Command::Company(_))
+        && let Some(code) = unloadable_machine_layer(&matches)
+    {
         return code;
     }
     if let Command::Status(args) = &cli.command {
@@ -208,7 +214,7 @@ fn run() -> ExitCode {
         Ok(ctx)
     } else if deferred_patch
         || company_init
-        || matches!(&cli.command, Command::Backup(_))
+        || matches!(&cli.command, Command::Backup(_) | Command::Company(_))
         || authorization::strict_inspection(&matches)
         || authorization::untraced(&matches)
     {
@@ -270,7 +276,10 @@ fn run() -> ExitCode {
         // notice about converting it does not stand in its way.
         match notice_result {
             Ok(()) => {}
-            Err(error) if authorization::strict_inspection(&matches) => {
+            Err(error)
+                if authorization::strict_inspection(&matches)
+                    || matches.subcommand_name() == Some("company") =>
+            {
                 tracing::debug!(event = "inspection_notice_unavailable", %error);
             }
             Err(error) => return report(&error),
@@ -477,6 +486,8 @@ fn init_tracing(command: &Command) -> anyhow::Result<()> {
         "instrukt_core",
         "instrukt_blueprint",
         "instrukt_runner",
+        "instrukt_runtime",
+        "instrukt_runtime_t3",
         "instrukt_todos",
         "instrukt_company",
         "instrukt_connector",

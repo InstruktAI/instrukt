@@ -349,7 +349,7 @@ pub(super) fn procedure(home: &Home) -> Result<SnippetId, AskError> {
 /// Runtime: the runner's selected runtime resolves to an adapter.
 pub(super) fn runtime(
     config: &instrukt_core::config::Configuration,
-) -> Result<instrukt_core::config::Runtime, AskError> {
+) -> Result<&'static instrukt_core::config::RuntimeDeclaration, AskError> {
     config.runner_runtime().map_err(|error| {
         refused(
             Check::Runtime,

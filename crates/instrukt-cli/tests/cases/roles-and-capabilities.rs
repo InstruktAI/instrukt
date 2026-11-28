@@ -698,6 +698,45 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     "
     );
 
+    // `instrukt company status` is admitted under `company-reply:own` for
+    // `company-agent` (passing capability admission and reaching the
+    // conversation-session check) and refused by capability admission for a
+    // role lacking `company-reply` (such as `builder`).
+    let status_admitted = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "company")
+        .args(["company", "status", "--text", "Checking records..."])
+        .assert()
+        .failure();
+    let status_admitted_err = String::from_utf8_lossy(&status_admitted.get_output().stderr);
+    assert!(
+        status_admitted_err.contains("active company conversation"),
+        "expected company-agent to pass authorization for `company status`: {status_admitted_err}"
+    );
+    {
+        let db = state_db(&env);
+        db.execute(
+            "INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session)
+             VALUES ('builder-resp','sdlc/procedure/lifecycle/work/build','platform',1,'builder-key',?1,?2,'{}','t3:builder-sess')",
+            instrukt_core::state_db::rusqlite::params![
+                env.home().to_string_lossy(),
+                r#"{"role":"builder"}"#,
+            ],
+        )
+        .unwrap();
+    }
+    let status_denied = env
+        .instrukt(env.home())
+        .env("T3CODE_THREAD_ID", "builder-sess")
+        .args(["company", "status", "--text", "Unauthorized update"])
+        .assert()
+        .failure();
+    let status_denied_err = String::from_utf8_lossy(&status_denied.get_output().stderr);
+    assert!(
+        status_denied_err.contains("not admitted") || status_denied_err.contains("builder"),
+        "expected builder to be refused `company status` at capability admission: {status_denied_err}"
+    );
+
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");

@@ -6,33 +6,36 @@
 
 use std::cell::{OnceCell, RefCell};
 use std::collections::HashMap;
+use std::sync::Arc;
 
-use instrukt_core::config::Configuration;
+use instrukt_core::config::{Configuration, Env};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, SessionRef};
 use jiff::Timestamp;
 
 use super::{PresenceAnswer, SessionPresence};
 use crate::interfaces::SessionBindings;
-use crate::runtime::{Presence, RuntimeAdapter};
+use crate::runtime::{Presence, RuntimeAdapter, RuntimeError, RuntimeRegistry};
 use crate::sessions::{SessionState, SessionsError};
 use crate::state::RunnerState;
 
-/// Presence over the selected runtime's adapter, memoized for one
-/// derivation.
 pub(crate) struct RuntimePresence<'a> {
     home: &'a Home,
+    env: &'a Env,
+    runtimes: &'a RuntimeRegistry,
     state: &'a RunnerState,
     work: Option<&'a dyn SessionBindings>,
     project: &'a ProjectSlug,
     now: Timestamp,
-    adapter: OnceCell<Result<Box<dyn RuntimeAdapter>, String>>,
+    adapter: OnceCell<Result<Arc<dyn RuntimeAdapter>, String>>,
     answers: RefCell<HashMap<String, PresenceAnswer>>,
 }
 
 impl<'a> RuntimePresence<'a> {
     pub(crate) fn new(
         home: &'a Home,
+        env: &'a Env,
+        runtimes: &'a RuntimeRegistry,
         state: &'a RunnerState,
         work: Option<&'a dyn SessionBindings>,
         project: &'a ProjectSlug,
@@ -40,6 +43,8 @@ impl<'a> RuntimePresence<'a> {
     ) -> Self {
         Self {
             home,
+            env,
+            runtimes,
             state,
             work,
             project,
@@ -49,13 +54,14 @@ impl<'a> RuntimePresence<'a> {
         }
     }
 
-    /// The selected runtime's adapter, as the tick obtains it.
     fn adapter(&self) -> Result<&dyn RuntimeAdapter, &str> {
         self.adapter
             .get_or_init(|| {
-                Configuration::load_global(self.home)
+                let runtime = Configuration::load_global(self.home)
                     .and_then(|configuration| configuration.runner_runtime())
-                    .map(crate::runtime::adapter)
+                    .map_err(|error| error.to_string())?;
+                self.runtimes
+                    .adapter(runtime.name(), self.env)
                     .map_err(|error| error.to_string())
             })
             .as_ref()
@@ -74,12 +80,12 @@ impl<'a> RuntimePresence<'a> {
                 return PresenceAnswer::CannotSay;
             }
         };
-        if session.runtime.as_str() != adapter.runtime().name() {
+        if session.runtime.as_str() != adapter.runtime_name() {
             return PresenceAnswer::NotHeld;
         }
         let thread = match adapter.read_state(&session) {
             Ok(thread) => thread,
-            Err(SessionsError::Gone(_)) => return PresenceAnswer::NotHeld,
+            Err(RuntimeError::ThreadNotFound { .. }) => return PresenceAnswer::NotHeld,
             Err(error) => {
                 tracing::warn!(event = "review_presence_unreadable", project = %self.project, session = %session, error = %error);
                 return PresenceAnswer::CannotSay;
@@ -93,8 +99,6 @@ impl<'a> RuntimePresence<'a> {
         ) {
             Ok(()) => PresenceAnswer::Held,
             Err(SessionsError::ThreadMisplaced { .. }) => PresenceAnswer::NotHeld,
-            // Delivery holds the input until the operator restores the
-            // project, and has recorded the finding for the operator.
             Err(error) => {
                 tracing::debug!(event = "review_presence_delivery_held", project = %self.project, session = %session, error = %error);
                 PresenceAnswer::CannotSay

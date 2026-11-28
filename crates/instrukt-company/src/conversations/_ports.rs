@@ -4,7 +4,6 @@ use instrukt_core::config::Admitted;
 use instrukt_core::home::Home;
 use instrukt_runner::interfaces::CompanyRelayPass;
 use instrukt_runner::runtime::RuntimeAdapter;
-use instrukt_runner::runtime::conversations::ConversationSource;
 use jiff::Timestamp;
 use std::sync::{Arc, Mutex};
 
@@ -142,23 +141,13 @@ impl instrukt_runner::interfaces::CompanyPorts for Ports {
         &self,
         home: &Home,
         admitted: &Admitted,
-        source: &dyn ConversationSource,
-        adapter: &dyn RuntimeAdapter,
+        adapter: Arc<dyn RuntimeAdapter>,
         pass: CompanyRelayPass,
     ) -> Result<(), instrukt_runner::interfaces::CompanyError> {
         let Some(workers) = self.hosted() else {
             return Ok(());
         };
-        relay(
-            home,
-            admitted,
-            source,
-            adapter,
-            &workers,
-            &self.accepted,
-            pass,
-        )
-        .map_err(company_error)
+        relay(home, admitted, adapter, &workers, &self.accepted, pass).map_err(company_error)
     }
 
     fn outstanding(&self, home: &Home) -> Result<bool, instrukt_runner::interfaces::CompanyError> {

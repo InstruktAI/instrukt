@@ -107,9 +107,7 @@ pub fn step(execution: &Execution, look: &Look) -> Step {
     }
     match &look.observed {
         Observation::Unobservable(_)
-        | Observation::State(
-            SessionState::Running | SessionState::NeedsInput | SessionState::Unknown,
-        ) => Step::Wait,
+        | Observation::State(SessionState::Running | SessionState::NeedsInput) => Step::Wait,
         Observation::State(
             SessionState::InputReady | SessionState::EndedFailed | SessionState::Gone,
         ) => match (execution.recovery_sent, execution.anomaly_raised) {
@@ -185,7 +183,7 @@ fn waiting(look: &Look) -> Option<bool> {
             | SessionState::EndedFailed
             | SessionState::Gone,
         ) => Some(false),
-        Observation::State(SessionState::Unknown) | Observation::Unobservable(_) => None,
+        Observation::Unobservable(_) => None,
     }
 }
 
@@ -430,7 +428,7 @@ impl<'a> Executions<'a> {
         let bindings = work.bindings.as_ref();
         let mut executions = self.load()?;
         let env = cx.env;
-        let sessions = Sessions::new(self.state.home(), config, env);
+        let sessions = Sessions::new(self.state.home(), config, env, cx.runtimes);
         let mut kept = Vec::with_capacity(executions.len());
         let mut transitions = Vec::new();
         for mut execution in executions.drain(..) {
@@ -517,6 +515,7 @@ impl<'a> Executions<'a> {
                             session: &execution.session,
                             worktree_path: None,
                             project: Some(project.slug.as_str()),
+                            replace_brief: false,
                             now: cx.now,
                         },
                     )
@@ -849,7 +848,6 @@ mod tests {
         let (_dir, home) = home();
         tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
         tick(&home, &seen(Observation::Unobservable("timed out".into())));
-        tick(&home, &seen(Observation::State(SessionState::Unknown)));
         tick(&home, &seen(Observation::State(SessionState::NeedsInput)));
         assert_eq!(waits(&home), [1]);
     }

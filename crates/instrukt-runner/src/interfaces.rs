@@ -143,11 +143,7 @@ pub struct PickupCandidate {
 }
 
 /// The profile a task prefers, set with `--agent <name> [--tier …]`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentPreference {
-    pub agent: instrukt_core::ids::ProfileName,
-    pub tier: Option<Tier>,
-}
+pub use instrukt_core::config::AgentPreference;
 
 pub use instrukt_core::config::Tier;
 
@@ -919,6 +915,8 @@ pub trait EvaluationAnswers: Send + Sync {
 /// slot means this computer answers no evaluation requests.
 #[derive(Clone, Default)]
 pub struct RunnerWiring {
+    /// Compiled runtime adapters registered at the CLI composition root.
+    pub runtimes: crate::runtime::RuntimeRegistry,
     pub github_credentials: Option<Arc<dyn GitHubCredentials>>,
     /// Work's answers for automatic review, wired whether or not a
     /// project's todos module is on.
@@ -969,15 +967,14 @@ pub trait CompanyPorts: Send + Sync {
     /// the runner at its start. `wake` tells the relay a message arrived;
     /// `supervise` tells the run loop a connection thread ended.
     fn start(&self, start: CompanyStart<'_>) -> Result<Box<dyn CompanySupervision>, CompanyError>;
-    /// One pass of conversation work beside links: finished turns read into
-    /// answers and posted, the next message delivered. Before
-    /// [`CompanyPorts::start`] it does nothing.
+    /// One pass of conversation work beside links: explicit replies ingested
+    /// and posted, active turns reconciled, and the next message delivered.
+    /// Before [`CompanyPorts::start`] it does nothing.
     fn relay(
         &self,
         home: &instrukt_core::home::Home,
         admitted: &instrukt_core::config::Admitted,
-        source: &dyn crate::runtime::conversations::ConversationSource,
-        adapter: &dyn crate::runtime::RuntimeAdapter,
+        adapter: Arc<dyn crate::runtime::RuntimeAdapter>,
         pass: CompanyRelayPass,
     ) -> Result<(), CompanyError>;
     /// Whether conversation work is outstanding.

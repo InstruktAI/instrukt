@@ -229,21 +229,7 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
             }
         } else {
             let id = request["payload"]["threadId"].as_str().unwrap();
-            match std::fs::read(
-                dir.parent()
-                    .unwrap()
-                    .join("t3-state")
-                    .join(format!("{id}.json")),
-            ) {
-                Ok(bytes) => {
-                    let mut thread: Value = serde_json::from_slice(&bytes).unwrap();
-                    thread["id"] = thread["threadId"].clone();
-                    json!({"_tag":"Success","value":{"thread":thread}})
-                }
-                Err(_) => {
-                    json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"Thread not found."}}]})
-                }
-            }
+            get_thread_projection(dir, id)
         };
         if request["tag"] == "orchestration.launchThread"
             && dir.parent().unwrap().join("t3-state/silent-start").exists()
@@ -257,6 +243,7 @@ fn serve(dir: &Path, home: &Path, stream: TcpStream, held: &std::sync::atomic::A
                 .to_string()
                 .into(),
         ));
+        let _ = socket.close(None);
         return;
     }
     if request["tag"] == "orchestration.dispatchCommand" {
@@ -568,8 +555,260 @@ fn dispatch(dir: &Path, _home: &Path, payload: &Value) -> Value {
         json!({"_tag":"Success","value":{"sequence":1}})
     } else {
         let detail = String::from_utf8_lossy(&output.stderr);
-        json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":detail.trim()}}]})
+        let detail = detail.trim();
+        if let Some(rejected_id) = detail.strip_prefix("PREVIOUSLY_REJECTED:") {
+            json!({
+                "_tag":"Failure",
+                "cause":[{"_tag":"Fail","error":{
+                    "_tag":"OrchestratorCommandPreviouslyRejectedError",
+                    "commandId":rejected_id,
+                    "detail":"Command was previously rejected."
+                }}]
+            })
+        } else {
+            json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":detail}}]})
+        }
     }
+}
+
+struct ShowHoldGuard(PathBuf);
+impl Drop for ShowHoldGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn save_thread_json(state_dir: &Path, id: &str, thread: &Value) {
+    let tmp = state_dir.join(format!("{id}.readiness.tmp"));
+    std::fs::write(&tmp, serde_json::to_vec(thread).unwrap()).unwrap();
+    std::fs::rename(&tmp, state_dir.join(format!("{id}.json"))).unwrap();
+}
+
+/// Synthesizes pinned T3 `v0.1.8` `orchestration.getThreadProjection` payload
+/// (`{thread, runs, messages, runtimeRequests}`) directly from `t3-state/<id>.json`.
+fn get_thread_projection(dir: &Path, id: &str) -> Value {
+    let state_dir = dir.parent().unwrap().join("t3-state");
+    if state_dir.join("down").exists() {
+        return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"connect ECONNREFUSED 127.0.0.1:3773"}}]});
+    }
+    if state_dir.join("show-failure").exists() {
+        return json!({"_tag":"Failure","cause":[{"_tag":"Fail","error":{"detail":"native show unavailable"}}]});
+    }
+    let held = state_dir.join(format!("{id}.hold-show"));
+    let marker = state_dir.join(format!("{id}.show-held"));
+    let _hold_guard = if held.exists() && !marker.exists() {
+        let _ = std::fs::write(&marker, std::process::id().to_string());
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
+        while held.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        Some(ShowHoldGuard(marker))
+    } else {
+        None
+    };
+    if state_dir.join(format!("{id}.preparing")).exists() {
+        let _ = std::fs::write(state_dir.join(format!("{id}.read-while-preparing")), "");
+    }
+    let Ok(bytes) = std::fs::read(state_dir.join(format!("{id}.json"))) else {
+        return json!({
+            "_tag":"Failure",
+            "cause":[{"_tag":"Fail","error":{
+                "_tag":"ProjectionStoreThreadNotFoundError",
+                "threadId":id,
+                "detail":"Thread not found."
+            }}]
+        });
+    };
+    let mut raw: Value = serde_json::from_slice(&bytes).unwrap();
+    if state_dir.join("busy-before-entry").exists() {
+        let counter_path = state_dir.join("entry-checks");
+        let count: u64 = std::fs::read_to_string(&counter_path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+            + 1;
+        std::fs::write(&counter_path, count.to_string()).unwrap();
+        if count >= 3 {
+            raw["status"] = json!("running");
+            if let Some(latest) = raw.get("latestRunId").cloned() {
+                raw["activeRunId"] = latest;
+            }
+            if let Some(msgs) = raw["messages"].as_array_mut() {
+                for msg in msgs {
+                    if msg["role"] == "user" && msg["queued"] != true {
+                        msg["startedAt"] = json!("2026-11-06T10:00:00Z");
+                        msg["runStatus"] = json!("running");
+                    }
+                }
+            }
+            save_thread_json(&state_dir, id, &raw);
+            let _ = std::fs::remove_file(state_dir.join("busy-before-entry"));
+            let _ = std::fs::remove_file(&counter_path);
+        }
+    }
+
+    let thread_status = raw["status"].as_str().unwrap_or("idle").to_owned();
+    let active_run_id = raw["activeRunId"].as_str().map(str::to_owned);
+    let latest_run_id = raw["latestRunId"].as_str().map(str::to_owned);
+    let settled = raw["settled"].as_bool().unwrap_or(false);
+    let hide_project_id = state_dir.join("hide-project-id").exists();
+    let inputs_hidden = std::fs::read_to_string(state_dir.join("hide-inputs"))
+        .ok()
+        .is_some_and(|text| text.split_whitespace().any(|entry| entry == id));
+
+    let mut thread = raw.clone();
+    if let Some(obj) = thread.as_object_mut() {
+        obj.remove("messages");
+        obj.remove("checkout");
+        obj.remove("threadId");
+        obj.insert("id".into(), json!(id));
+        if hide_project_id {
+            obj.remove("projectId");
+        }
+        if matches!(
+            thread_status.as_str(),
+            "idle"
+                | "completed"
+                | "stopped"
+                | "failed"
+                | "interrupted"
+                | "cancelled"
+                | "rolled_back"
+        ) {
+            obj.insert("activeRunId".into(), Value::Null);
+        }
+    }
+
+    let mut messages = Vec::new();
+    let mut runs = Vec::new();
+    let mut seen_runs = std::collections::BTreeSet::new();
+    let at = "2026-11-06T10:00:00Z";
+    let done_at = "2026-11-06T10:00:01Z";
+
+    if let Some(raw_messages) = raw["messages"].as_array() {
+        for (idx, msg) in raw_messages.iter().enumerate() {
+            let role = msg["role"].as_str().unwrap_or("user");
+            let msg_id = msg
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| format!("fake:{id}:input:{idx}"));
+            let run_id = msg.get("runId").and_then(Value::as_str).map(str::to_owned);
+            let text = msg["text"].as_str().unwrap_or("");
+            if role != "user" || !inputs_hidden {
+                messages.push(json!({
+                    "id": msg_id,
+                    "role": role,
+                    "text": text,
+                    "runId": run_id,
+                }));
+            }
+            if role == "user"
+                && let Some(ref run) = run_id
+                && seen_runs.insert(run.clone())
+            {
+                let ordinal = seen_runs.len() as u64;
+                let queued = msg["queued"].as_bool().unwrap_or(false);
+                let explicit_status = msg.get("runStatus").and_then(Value::as_str);
+                let requested_at = msg.get("requestedAt").and_then(Value::as_str).unwrap_or(at);
+                let msg_started_at = msg.get("startedAt").and_then(Value::as_str);
+                let msg_completed_at = msg.get("completedAt").and_then(Value::as_str);
+
+                let (status, started_at, completed_at) = if let Some(
+                    term @ ("completed" | "failed" | "interrupted" | "cancelled" | "rolled_back"),
+                ) = explicit_status
+                {
+                    (
+                        term,
+                        Some(msg_started_at.unwrap_or(at)),
+                        Some(msg_completed_at.unwrap_or(done_at)),
+                    )
+                } else if queued {
+                    ("queued", None, None)
+                } else if matches!(thread_status.as_str(), "preparing" | "queued") {
+                    (thread_status.as_str(), None, None)
+                } else if active_run_id.as_deref() == Some(run.as_str())
+                    && matches!(
+                        thread_status.as_str(),
+                        "running"
+                            | "starting"
+                            | "resuming"
+                            | "waiting"
+                            | "waiting_for_input"
+                            | "waiting_for_approval"
+                    )
+                {
+                    ("running", Some(msg_started_at.unwrap_or(at)), None)
+                } else if matches!(
+                    thread_status.as_str(),
+                    "failed" | "interrupted" | "cancelled" | "rolled_back"
+                ) && latest_run_id.as_deref() == Some(run.as_str())
+                {
+                    (
+                        thread_status.as_str(),
+                        Some(msg_started_at.unwrap_or(at)),
+                        Some(msg_completed_at.unwrap_or(done_at)),
+                    )
+                } else if settled
+                    || matches!(thread_status.as_str(), "idle" | "completed" | "stopped")
+                    || active_run_id.as_deref() != Some(run.as_str())
+                {
+                    (
+                        "completed",
+                        Some(msg_started_at.unwrap_or(at)),
+                        Some(msg_completed_at.unwrap_or(done_at)),
+                    )
+                } else {
+                    ("running", Some(msg_started_at.unwrap_or(at)), None)
+                };
+
+                runs.push(json!({
+                    "id": run,
+                    "ordinal": ordinal,
+                    "userMessageId": msg_id,
+                    "status": status,
+                    "requestedAt": requested_at,
+                    "startedAt": started_at,
+                    "completedAt": completed_at,
+                }));
+            }
+        }
+    }
+
+    let pending_count = raw["pendingRequestCount"].as_u64().unwrap_or(0);
+    let runtime_requests: Vec<Value> = (0..pending_count)
+        .map(|_| json!({"status": "pending"}))
+        .collect();
+
+    if state_dir.join("busy-after-idle-read").exists() {
+        let counter_path = state_dir.join("asap-checks");
+        let count: u64 = std::fs::read_to_string(&counter_path)
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(0)
+            + 1;
+        std::fs::write(&counter_path, count.to_string()).unwrap();
+        if count >= 2 {
+            raw["status"] = json!("running");
+            if let Some(latest) = raw.get("latestRunId").cloned() {
+                raw["activeRunId"] = latest;
+            }
+            save_thread_json(&state_dir, id, &raw);
+            let _ = std::fs::remove_file(state_dir.join("busy-after-idle-read"));
+            let _ = std::fs::remove_file(&counter_path);
+        }
+    }
+
+    json!({
+        "_tag": "Success",
+        "value": {
+            "thread": thread,
+            "runs": runs,
+            "messages": messages,
+            "runtimeRequests": runtime_requests,
+        }
+    })
 }
 
 /// The threads archived through `thread.archive`, in order.

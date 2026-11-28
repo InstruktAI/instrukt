@@ -46,6 +46,5 @@ connectors.slack.app_token (${NAME} secret reference, required) — the app-leve
 connectors.slack.bot_token (${NAME} secret reference, required) — the bot token Slack issues when the app is installed to the workspace; an exact ${NAME} reference into the company home's secrets file, its value written with `instrukt secrets set <NAME> --company <name>`
 connectors.slack.context_messages (integer, optional, default 30) — the largest number of earlier messages that accompany an addressed message: a positive whole number; 30 when omitted
 connectors.slack.kind (one of: slack, optional, default "slack") — registered connector kind; defaults to the map key when omitted
-connectors.slack.reply_mode (one of: turn_output | explicit, optional, default "turn_output") — whether finished turn output posts automatically or only explicit `instrukt company reply` calls post
 connectors.slack.role (string, optional, default "company-agent") — role assigned to this connector's session(s); defaults to company-agent
 connectors.slack.session_scope (one of: conversation | company, optional, default "conversation") — whether each conversation gets its own session or all admitted conversations share one standing session per (company, connector)

@@ -95,6 +95,8 @@ pub enum RunnerError {
     AsyncRuntime(std::io::Error),
     #[error(transparent)]
     History(#[from] crate::history::HistoryError),
+    #[error(transparent)]
+    Runtime(#[from] crate::runtime::RuntimeError),
     #[error("conversations: {0}")]
     Conversations(String),
     #[error(
@@ -248,7 +250,8 @@ pub fn tick(
         .global()
         .runner_runtime()
         .ok()
-        .and_then(|runtime| crate::runtime::adapter(runtime).readiness());
+        .and_then(|runtime| cx.wiring.runtimes.adapter(runtime.name(), cx.env).ok())
+        .and_then(|adapter| adapter.readiness());
     if let Some(readiness) = readiness.as_mut() {
         _readiness::refresh(cx.home, readiness.as_mut(), clock, &mut true);
     }
@@ -284,7 +287,9 @@ pub fn tick(
     }
     // Thread retention runs after the locks are released too, on the
     // runner's clock as it reads when the pass starts.
-    if let Some(pass) = crate::thread_retention::Pass::prepare(cx.home, &admitted, cx.wiring) {
+    if let Some(pass) =
+        crate::thread_retention::Pass::prepare(cx.home, cx.env, &admitted, cx.wiring)
+    {
         pass.run(clock(), &mut crate::thread_retention::Reported::default());
     }
     woke?;
@@ -358,7 +363,8 @@ pub fn run(
         .global()
         .runner_runtime()
         .ok()
-        .and_then(|runtime| crate::runtime::adapter(runtime).readiness())
+        .and_then(|runtime| cx.wiring.runtimes.adapter(runtime.name(), cx.env).ok())
+        .and_then(|adapter| adapter.readiness())
     {
         Some(readiness) => {
             match _readiness::Worker::start(cx.home, readiness, Arc::clone(&clock)) {
@@ -429,7 +435,13 @@ pub fn run(
             );
             *relay = None;
         }
-        match crate::relay::Worker::start(cx.home, cx.env, current.clone(), destinations.clone()) {
+        match crate::relay::Worker::start(
+            cx.home,
+            cx.env,
+            current.clone(),
+            cx.wiring.runtimes.clone(),
+            destinations.clone(),
+        ) {
             Ok(worker) => *relay = Some(worker),
             Err(error) => {
                 let cause = format!("conversation relay could not start: {error}");
@@ -521,7 +533,7 @@ pub fn run(
                 );
             }
         }
-        history.refresh(cx.home, cx.env, &current);
+        history.refresh(cx.home, cx.env, &current, &cx.wiring.runtimes);
         evaluation.refresh(cx.home, cx.env, &current, cx.wiring, &clock);
         let considered = considered(&admitted);
         let events_enabled = admitted.module_anywhere(Module::Events).unwrap_or(false);
@@ -565,7 +577,7 @@ pub fn run(
                 }
                 drop(invocation);
                 deferred = reclaim(&considered, cx.wiring, &mut reclaimed, deferred);
-                retention = retain(cx.home, &admitted, cx.wiring, &clock, retention);
+                retention = retain(cx.home, cx.env, &admitted, cx.wiring, &clock, retention);
             }
             Err(error) => {
                 tracing::warn!(event = "runner_wakeup_skipped", %error);
@@ -720,6 +732,7 @@ fn reclaim(
 /// lost; the next one starts.
 fn retain(
     home: &Home,
+    env: &Env,
     admitted: &Admitted,
     wiring: &RunnerWiring,
     clock: &Arc<dyn Fn() -> Timestamp + Send + Sync>,
@@ -729,7 +742,8 @@ fn retain(
         Ok(reported) => reported,
         Err(running) => return running,
     };
-    let Some(retention) = crate::thread_retention::Pass::prepare(home, admitted, wiring) else {
+    let Some(retention) = crate::thread_retention::Pass::prepare(home, env, admitted, wiring)
+    else {
         return DeferredPass::Idle(reported);
     };
     let clock = Arc::clone(clock);
@@ -823,6 +837,7 @@ fn wake(
         invocation,
         home: cx.home,
         env: cx.env,
+        runtimes: &cx.wiring.runtimes,
         now,
         tz: cx.tz,
         previous_wake: previous,
@@ -869,12 +884,12 @@ fn wake(
             .join()
             .map_err(|_| RunnerError::EventWorkerPanicked)?
     })?;
-    if let Err(error) = standing::deliver_pending(invocation, now) {
+    if let Err(error) = standing::deliver_pending(invocation, cx.env, &cx.wiring.runtimes, now) {
         tracing::warn!(event="standing_delivery_failed",error=%error);
     }
     {
-        let adapter =
-            crate::runtime::adapter(Configuration::load_global(cx.home)?.runner_runtime()?);
+        let runtime = Configuration::load_global(cx.home)?.runner_runtime()?;
+        let adapter = cx.wiring.runtimes.adapter(runtime.name(), cx.env)?;
         if let Err(error) = crate::_attention::approvals(invocation, adapter.as_ref(), now) {
             tracing::warn!(event="approval_attention_failed",error=%error);
         }

@@ -84,18 +84,25 @@ pub struct Work {
     home: Home,
     env: Env,
     clock: Clock,
+    runtimes: instrukt_runtime::RuntimeRegistry,
 }
 
 impl Work {
     /// Work over `home`, reading credentials and the caller's session from
-    /// `env` and time from `clock`.
-    pub fn new(home: Home, env: Env, clock: Clock) -> Self {
+    /// `env`, time from `clock`, and runtime adapters from `runtimes`.
+    pub fn new(
+        home: Home,
+        env: Env,
+        clock: Clock,
+        runtimes: instrukt_runtime::RuntimeRegistry,
+    ) -> Self {
         let github = Arc::new(GitHubAccess::new(home.clone()));
         Self {
             home,
             env,
             clock,
             github,
+            runtimes,
         }
     }
 
@@ -119,6 +126,10 @@ impl Work {
 
     pub(crate) fn env(&self) -> &Env {
         &self.env
+    }
+
+    pub(crate) fn runtimes(&self) -> &instrukt_runtime::RuntimeRegistry {
+        &self.runtimes
     }
 
     pub(crate) fn now(&self) -> Timestamp {

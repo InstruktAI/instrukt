@@ -861,7 +861,7 @@ fn native_dispatch_facts_carry_the_resolved_family_model_effort_and_options() {
     );
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS26
+// spec: project/instrukt/spec/feature/runtime/t3 UC-SS26
 #[test]
 fn native_delegation_translates_antigravity_effort_to_thought_level() {
     let crew = workflow::Crew::new();
@@ -1503,7 +1503,7 @@ fn a_previous_bound_runtime_request_is_normalized_before_retained_pickup() {
     assert_eq!(normalized["title"], key);
 }
 
-// spec: project/instrukt/spec/feature/runner/session-continuity UC-SS28
+// spec: project/instrukt/spec/feature/runtime/t3 UC-SS28
 #[test]
 fn a_pickup_whose_launch_answers_before_its_worktree_is_prepared_is_accepted_in_that_worktree() {
     let p = Tracked::new(true);
@@ -1637,6 +1637,7 @@ fn sessions_start_and_receive_input_only_in_their_checkouts_own_runtime_project(
     c.finish_turn(&successor, 1, "Ada signs it off.");
     wait("the second answer", || {
         c.slack.posts_beginning("Ada signs it off.") == 1
+            && c.conversations().conversations.is_empty()
     });
     // A running bound thread in the ancestor project keeps the work pending
     // and receives none of it; the runner reports the thread and the

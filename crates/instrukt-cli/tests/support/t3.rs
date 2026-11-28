@@ -201,7 +201,7 @@ def sync_inputs(updated: Thread | None = None) -> None:
             runs=set()
             for index,message in enumerate(thread['messages']):
                 if message['role']!='user': continue
-                identity='fake:'+thread['threadId']+':input:'+str(index)
+                identity=message.get('id') or ('fake:'+thread['threadId']+':input:'+str(index))
                 run=message.get('runId')
                 at='2026-11-06T10:00:00Z'
                 payload=dict(message,id=identity,threadId=thread['threadId'],streaming=False,createdAt=at,updatedAt=at)
@@ -227,7 +227,7 @@ def sync_inputs(updated: Thread | None = None) -> None:
         hidden=root/'hide-inputs'
         if hidden.exists():
             for thread in hidden.read_text().split():
-                connection.execute("DELETE FROM orchestration_v2_projection_messages WHERE message_id LIKE ?",('fake:'+thread+':input:%',))
+                connection.execute("DELETE FROM orchestration_v2_projection_messages WHERE thread_id=? AND role='user'",(thread,))
 def save(t):
     temporary=root/(t['threadId']+'.'+str(os.getpid())+'.tmp')
     temporary.write_text(json.dumps(t))
@@ -288,10 +288,12 @@ elif command=='start':
     message=sys.stdin.read() if operands[-1]=='-' else operands[-1]
     project=project_for(checkout)
     if project is None: print('No project contains '+checkout+'.',file=sys.stderr); sys.exit(1)
-    t={'runtimeMode':'full-access','interactionMode':'default','threadId':id,'projectId':project,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'role':'user','text':message,'runId':'run:'+id+':1'}]}
+    initial_msg_id=(launch.get('initialMessage',{}).get('messageId') or launch['commandId']) if launch else ('fake:'+id+':input:0')
+    t={'runtimeMode':'full-access','interactionMode':'default','threadId':id,'projectId':project,'title':flags.get('--title','Developer thread'),'status':'running','latestRunId':'run:'+id+':1','activeRunId':'run:'+id+':1','updatedAt':'2026-11-06T10:00:00Z','link':'https://example.test/threads/'+id,'providerInstanceId':flags.get('--provider','codex'),'model':flags.get('--model','gpt-test'),'settled':False,'snoozed':False,'pendingRequestCount':0,'archived':False,'worktreePath':None,'branch':None,'checkout':checkout,'messages':[{'id':initial_msg_id,'role':'user','text':message,'runId':'run:'+id+':1','requestedAt':'2026-11-06T10:00:00Z','startedAt':'2026-11-06T10:00:00Z','completedAt':None}]}
     # With `queued-start`, the runtime accepts the thread's opening input
     # and keeps it queued: neither entered nor completed.
-    if (root/'queued-start').exists(): t['status']='queued'
+    if (root/'queued-start').exists():
+        t['status']='queued'; t['messages'][0]['startedAt']=None
     # With `prepare-worktree`, a native launch into a new worktree answers
     # while T3 still prepares it: the thread is `preparing` on the requested
     # branch with no worktree path. T3 prepares on its own schedule, not the
@@ -299,7 +301,7 @@ elif command=='start':
     # and recorded only when T3 finishes (`fixture-finish-preparation`).
     preparing=root/'prepare-worktree'
     if '--worktree' in flags and launch and launch['workspaceStrategy']['type']=='worktree' and preparing.exists():
-        t['status']='preparing'; t['branch']=flags.get('--branch',flags['--worktree'])
+        t['status']='preparing'; t['messages'][0]['startedAt']=None; t['branch']=flags.get('--branch',flags['--worktree'])
         pending={'folder':str(root/'worktrees'/id),'base':flags['--worktree'],'branch':flags.get('--branch')}
         (root/(launch['threadId']+'.preparing')).write_text(json.dumps(pending)); preparing.unlink()
     elif '--worktree' in flags:
@@ -344,11 +346,15 @@ elif command=='send':
     if (root/'send-unreachable').exists():
         print('Could not reach the T3 Code server at http://127.0.0.1:3773. connect ECONNREFUSED 127.0.0.1:3773\nAuthorization: Bearer diagnostic-test-secret\n'+text,file=sys.stderr); sys.exit(1)
     command_id=os.environ.get('T3_TEST_COMMAND_ID')
+    rejected_file=root/'rejected-commands'
+    if command_id and rejected_file.exists() and command_id in rejected_file.read_text().splitlines():
+        print('PREVIOUSLY_REJECTED:'+command_id,file=sys.stderr); sys.exit(3)
     reject=root/(operands[0]+'.reject-next-command')
     if command_id and reject.exists():
         reject.unlink()
         with sqlite3.connect(pathlib.Path(os.environ['T3CODE_HOME'])/'userdata/statev2.sqlite') as db:
             db.execute("INSERT INTO orchestration_command_receipts VALUES (?,'thread',?,'message.dispatch','rejected')", (command_id, operands[0]))
+        with rejected_file.open('a') as rf: rf.write(command_id+'\n')
         print('send acknowledgment lost',file=sys.stderr); sys.exit(1)
     hold_submit=root/(operands[0]+'.hold-next-submit')
     held_submit=command_id and hold_submit.exists()
@@ -371,7 +377,8 @@ elif command=='send':
     run='run:'+t['threadId']+':'+str(len(t['messages'])+2)
     if t['status'] in ['idle','completed','stopped','failed','interrupted','cancelled','rolled_back']:
         queued=False; t['latestRunId']=run; t['activeRunId']=run; t['status']='running'
-    t['messages'].append({'role':'user','text':text,'runId':run,'queued':queued,'busy':queued})
+    msg_id=command_id if command_id else ('fake:'+t['threadId']+':input:'+str(len(t['messages'])))
+    t['messages'].append({'id':msg_id,'role':'user','text':text,'runId':run,'queued':queued,'busy':queued,'requestedAt':'2026-11-06T10:00:00Z','startedAt':None if queued else '2026-11-06T10:00:00Z','completedAt':None})
     save(t)
     if command_id:
         receipts.execute('INSERT INTO command_receipts VALUES (?)',(command_id,))
@@ -425,6 +432,9 @@ elif command=='fixture-finish-preparation':
     pending=json.loads(pending_file.read_text())
     t=find(operands[0])
     create_worktree(t,pathlib.Path(pending['folder']),pending['base'],pending['branch'])
+    for m in t.get('messages',[]):
+        if m.get('role')=='user' and not m.get('queued',False):
+            m['startedAt']='2026-11-06T10:00:00Z'
     t['status']='running'; save(t); pending_file.unlink()
 else: sys.exit(2)
 "###;
@@ -755,10 +765,85 @@ impl FakeT3 {
     pub fn set_status(&self, id: &str, value: &str) {
         let resolved = self.native_id(id);
         let id = resolved.as_str();
-        if matches!(value, "idle" | "completed" | "stopped" | "failed") {
+        let terminal = matches!(
+            value,
+            "idle"
+                | "completed"
+                | "stopped"
+                | "failed"
+                | "interrupted"
+                | "cancelled"
+                | "rolled_back"
+        );
+        if terminal {
             self.consume(id);
         }
-        self.change(id, "status", value.into());
+        let mut t = self.read(id);
+        t["status"] = value.into();
+        let latest = t["latestRunId"].as_str().map(str::to_owned);
+        if terminal {
+            t["activeRunId"] = serde_json::Value::Null;
+            if let Some(messages) = t["messages"].as_array_mut() {
+                for message in messages {
+                    if message["role"] == "user" && message["queued"] != true {
+                        let already_terminal = matches!(
+                            message.get("runStatus").and_then(serde_json::Value::as_str),
+                            Some(
+                                "completed"
+                                    | "failed"
+                                    | "interrupted"
+                                    | "cancelled"
+                                    | "rolled_back"
+                            )
+                        );
+                        if !already_terminal {
+                            let run_status = if matches!(
+                                value,
+                                "failed" | "interrupted" | "cancelled" | "rolled_back"
+                            ) && message["runId"].as_str() == latest.as_deref()
+                            {
+                                value
+                            } else {
+                                "completed"
+                            };
+                            message["runStatus"] = run_status.into();
+                            if message
+                                .get("startedAt")
+                                .is_none_or(serde_json::Value::is_null)
+                            {
+                                message["startedAt"] = "2026-11-06T10:00:00Z".into();
+                            }
+                            message["completedAt"] = "2026-11-06T10:00:01Z".into();
+                        }
+                    }
+                }
+            }
+        } else if value == "running"
+            && let Some(ref latest_id) = latest
+        {
+            t["activeRunId"] = latest_id.clone().into();
+            if let Some(messages) = t["messages"].as_array_mut() {
+                for message in messages {
+                    if message["role"] == "user"
+                        && message["runId"].as_str() == Some(latest_id.as_str())
+                    {
+                        message["runStatus"] = "running".into();
+                        message["startedAt"] = "2026-11-06T10:00:00Z".into();
+                        message["completedAt"] = serde_json::Value::Null;
+                    }
+                }
+            }
+        }
+        std::fs::write(
+            self.state.join(format!("{id}.fixture")),
+            serde_json::to_vec(&t).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            self.state.join(format!("{id}.fixture")),
+            self.state.join(format!("{id}.json")),
+        )
+        .unwrap();
     }
     pub fn consume(&self, id: &str) {
         let resolved = self.native_id(id);
@@ -774,6 +859,9 @@ impl FakeT3 {
             for message in t["messages"].as_array_mut().unwrap() {
                 if message["role"] == "user" && message["queued"] == true {
                     message["queued"] = false.into();
+                    message["runStatus"] = "running".into();
+                    message["startedAt"] = "2026-11-06T10:00:00Z".into();
+                    message["completedAt"] = serde_json::Value::Null;
                     entered = Some(message["runId"].clone());
                 }
             }

@@ -149,6 +149,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                 instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?
             };
             let env = crate::wiring::environment(ctx)?;
+            let runtimes = crate::runtimes::registry();
             let invocation = instrukt_runner::keyed::RuntimeInvocation::acquire(
                 &ctx.home,
                 std::time::Duration::from_secs(120),
@@ -169,6 +170,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                         now: ctx.clock.now(),
                         config: &config,
                         env: &env,
+                        runtimes: &runtimes,
                         entry: &entry,
                         company: args.company.as_ref(),
                         args: args.args.as_deref(),
@@ -205,6 +207,7 @@ pub fn run(args: EventsArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
                     &instrukt_runner::standing::ManualBinding {
                         config: &config,
                         env: &env,
+                        runtimes: &runtimes,
                         procedure: args.procedure.as_str(),
                         token,
                         evidence: evidence.as_ref(),

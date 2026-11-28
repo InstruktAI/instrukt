@@ -5,7 +5,7 @@ use super::{
     _store::{self, Conversation, Place, StoredTime, Text},
     HistoryError,
 };
-use crate::runtime::conversations::{ConversationText, SourcePosition};
+use crate::runtime::cold_text::{ConversationText, SourcePosition};
 use instrukt_core::{
     home::Home,
     state_db::{

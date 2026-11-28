@@ -1,17 +1,59 @@
-//! Resolve the session binding and speaker behind a company conversation, and queue explicit replies.
-use instrukt_core::config::{Configuration, ReplyMode, SessionScope, connector_declaration};
-use instrukt_core::home::Home;
-use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef};
-use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
-use instrukt_runner::keyed;
-use instrukt_runner::runtime::RuntimeAdapter;
-use instrukt_runner::state::{self, RunnerState, StateError};
-use serde::{Deserialize, Serialize};
+//! Resolve the session binding and active-turn speaker behind a company conversation.
 use std::path::PathBuf;
+use std::time::Duration;
 
-use super::_relay::split;
-use super::envelopes::Span;
-use super::{ConversationError, envelopes};
+use instrukt_core::config::SessionScope;
+use instrukt_core::home::Home;
+use instrukt_core::ids::{InputId, ProjectSlug, RoleName, SessionRef};
+use instrukt_core::state_db::rusqlite::{OptionalExtension, params};
+use instrukt_runner::runtime::{OpeningInput, Presence, RuntimeAdapter, SessionState};
+
+use super::_store::COMPANY_OWNED_MESSAGES;
+use super::envelopes::{self, Span};
+
+/// Default bounded timeout for live speaker observation calls.
+const DEFAULT_SPEAKER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Fail-closed speaker resolution errors, classified into retryable vs deterministic.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum SpeakerError {
+    /// Pre-acceptance `runtime_bindings` row exists before `connected_conversations.session` is recorded.
+    #[error(
+        "session is bound to company `{company}` but its conversation acceptance is not yet recorded"
+    )]
+    Unbound { company: String },
+    /// Transient live runtime observation error.
+    #[error("live runtime observation failed: {0}")]
+    RuntimeObservation(String),
+    /// Transient durable state read error.
+    #[error("conversation state could not be read: {0}")]
+    Store(String),
+    /// Session belongs to a retired generation in `runtime_generations` (`generation > 0`).
+    #[error("session belongs to a retired generation of company `{company}`")]
+    RetiredGeneration { company: String },
+    /// Session is not actively running (`InputReady`, `EndedFailed`, `Gone`, or not present).
+    #[error("the runtime has no turn of this session in progress")]
+    NotRunning { state: String },
+    /// Runtime reports an active state without an active turn or input identity.
+    #[error("the runtime has no active turn with an input identity")]
+    NoActiveTurn,
+    /// Active turn's input identity is unrecognized and its opening input is unavailable.
+    #[error("the active turn's opening input is unavailable to verify speaker provenance")]
+    OpeningInputUnavailable,
+    /// Active turn carries a company member envelope whose delivery is not matched.
+    #[error("the turn's addressed message is not one this conversation delivered")]
+    MismatchedTurn,
+}
+
+impl SpeakerError {
+    /// Whether retrying speaker resolution within a bounded deadline may succeed.
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            Self::Unbound { .. } | Self::RuntimeObservation(_) | Self::Store(_)
+        )
+    }
+}
 
 /// A conversation session's assignment: the connector's configured role
 /// (default `company-agent`), in its company's home; the record names no procedure.
@@ -32,7 +74,7 @@ pub fn conversation_assignment(
             // recognised from its first command. A session that is already
             // recorded is answered by its record, never by a binding alone.
             "SELECT company,semantic_key,checkout,role FROM (SELECT 0 AS rank,company,semantic_key,NULL AS checkout,role FROM connected_conversations WHERE session=?1 UNION ALL SELECT 1,c.company,c.semantic_key,g.checkout,c.role FROM runtime_generations g JOIN connected_conversations c ON c.semantic_key=g.semantic_key WHERE g.session=?1 AND g.generation>0 UNION ALL SELECT 2,c.company,c.semantic_key,b.checkout,c.role FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?2 AND b.session=?1) ORDER BY rank LIMIT 1",
-            instrukt_core::state_db::rusqlite::params![caller.to_string(), caller.runtime.as_str()],
+            params![caller.to_string(), caller.runtime.as_str()],
             |r| {
                 Ok((
                     r.get::<_, String>(0)?,
@@ -70,7 +112,8 @@ pub fn conversation_assignment(
 }
 
 /// Active conversation binding for a session currently recorded on
-/// `connected_conversations` (retired generations are excluded).
+/// `connected_conversations` or pending Turn 1 acceptance in `runtime_bindings`
+/// (retired generations are excluded).
 #[derive(Debug, Clone)]
 pub struct ConversationBinding {
     pub company: ProjectSlug,
@@ -78,10 +121,12 @@ pub struct ConversationBinding {
     pub conversation: String,
     pub role: RoleName,
     pub session_scope: SessionScope,
-    pub reply_mode: ReplyMode,
 }
 
-/// Look up the active conversation binding for `caller`.
+/// Look up the accepted conversation binding recorded on `connected_conversations`
+/// for `caller`. Pre-acceptance `runtime_bindings` rows are recognized by
+/// [`conversation_assignment`], not by `conversation_binding`; retired
+/// generations are excluded.
 pub fn conversation_binding(
     home: &Home,
     caller: &SessionRef,
@@ -92,7 +137,9 @@ pub fn conversation_binding(
     let row = db
         .conn()
         .query_row(
-            "SELECT company,connector,conversation,role,session_scope,reply_mode FROM connected_conversations WHERE session=?1",
+            "SELECT company,connector,conversation,role,session_scope
+             FROM connected_conversations
+             WHERE session=?1",
             [caller.to_string()],
             |r| {
                 Ok((
@@ -101,13 +148,12 @@ pub fn conversation_binding(
                     r.get::<_, String>(2)?,
                     r.get::<_, String>(3)?,
                     r.get::<_, String>(4)?,
-                    r.get::<_, String>(5)?,
                 ))
             },
         )
         .optional()
         .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let Some((company, connector, conversation, role, session_scope, reply_mode)) = row else {
+    let Some((company, connector, conversation, role, session_scope)) = row else {
         return Ok(None);
     };
     let company = ProjectSlug::parse(&company)
@@ -120,177 +166,45 @@ pub fn conversation_binding(
             format!("unknown session_scope `{session_scope}`"),
         )
     })?;
-    let reply_mode = ReplyMode::parse(&reply_mode).ok_or_else(|| {
-        instrukt_core::state_db::StateDbError::invalid(
-            db.path(),
-            format!("unknown reply_mode `{reply_mode}`"),
-        )
-    })?;
     Ok(Some(ConversationBinding {
         company,
         connector,
         conversation,
         role,
         session_scope,
-        reply_mode,
     }))
 }
 
-/// Summary of an explicit reply queued into `conversation_answers`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueuedReply {
-    pub company: String,
-    pub connector: String,
+/// Resolved Outcome 1 active addressed turn with its speaker and turn identity.
+#[derive(Debug, Clone)]
+pub(super) struct ActiveTurnMatch {
+    pub speaker: instrukt_runner::mcp::Speaker,
     pub conversation: String,
-    pub turn: String,
-    pub pieces: usize,
+    pub message: String,
+    pub input_id: InputId,
 }
 
-/// Queue an explicit reply from an active company conversation session into
-/// the durable `conversation_answers` outbox, exactly as the agent wrote it,
-/// split to the connector's declared message character limit.
-pub fn queue_reply(
-    home: &Home,
-    caller: &SessionRef,
-    requested_conversation: Option<&str>,
-    text: &str,
-) -> Result<QueuedReply, ConversationError> {
-    let Some(binding) = conversation_binding(home, caller).map_err(StateError::from)? else {
-        return Err(ConversationError::Refused(
-            "this session is not bound to an active company conversation".into(),
-        ));
-    };
-    if text.trim().is_empty() {
-        return Err(ConversationError::Refused(
-            "reply text must not be empty".into(),
-        ));
-    }
-    let state = RunnerState::new(home);
-    let target = match binding.session_scope {
-        SessionScope::Conversation => {
-            if let Some(requested) = requested_conversation
-                && requested != binding.conversation
-            {
-                return Err(ConversationError::Refused(format!(
-                    "conversation `{requested}` is outside this session's bound conversation `{}`",
-                    binding.conversation
-                )));
-            }
-            binding.conversation.clone()
-        }
-        SessionScope::Company => {
-            let requested = requested_conversation
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .ok_or_else(|| {
-                    ConversationError::Refused(
-                        "--conversation is required when the connector uses session_scope: company"
-                            .into(),
-                    )
-                })?;
-            let admitted = state
-                .read(|conn, path| {
-                    conn.query_row(
-                        "SELECT EXISTS(
-                            SELECT 1 FROM conversation_messages m
-                            WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3
-                              AND m.admitted_at IS NOT NULL AND m.state <> 'refused'
-                              AND NOT EXISTS (
-                                  SELECT 1 FROM connected_conversations cc
-                                  WHERE cc.company=m.company AND cc.connector=m.connector
-                                    AND cc.conversation=m.conversation AND cc.session_scope='conversation'
-                              )
-                        )",
-                        params![binding.company.as_str(), binding.connector, requested],
-                        |row| row.get::<_, bool>(0),
-                    )
-                    .map_err(state::sql(path))
-                })?
-                .unwrap_or(false);
-            if !admitted {
-                return Err(ConversationError::Refused(format!(
-                    "conversation `{requested}` has no admitted message for connector `{}` in company `{}`",
-                    binding.connector, binding.company
-                )));
-            }
-            requested.to_owned()
-        }
-    };
-    let declared = Configuration::load_company(&home.for_inspection(), &binding.company)?
-        .connectors()?
-        .into_iter()
-        .find(|declared| declared.key == binding.connector)
-        .ok_or_else(|| {
-            ConversationError::Refused(format!(
-                "connector `{}` is no longer declared for company `{}`",
-                binding.connector, binding.company
-            ))
-        })?;
-    let declaration = connector_declaration(&declared.kind).ok_or_else(|| {
-        ConversationError::Refused(format!(
-            "connector kind `{}` is not registered in this build",
-            declared.kind
-        ))
-    })?;
-    let message_chars = declaration.message_chars;
-    let parts = split(text, message_chars);
-    if parts.is_empty() {
-        return Err(ConversationError::Refused(
-            "reply text must not be empty".into(),
-        ));
-    }
-    let turn = format!("reply:{}", keyed::request_id()?);
-    state.write::<_, StateError>(|tx| {
-        let path = state::db_path(tx);
-        let admission_position: i64 = tx
-            .query_row(
-                "SELECT coalesce(MAX(admission_position), 0) FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3",
-                params![binding.company.as_str(), binding.connector, target],
-                |row| row.get(0),
-            )
-            .map_err(state::sql(&path))?;
-        for (piece, part) in parts.iter().enumerate() {
-            tx.execute(
-                "INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,admission_position)
-                 VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                params![
-                    binding.company.as_str(),
-                    binding.connector,
-                    target,
-                    turn,
-                    i64::try_from(piece).unwrap_or(i64::MAX),
-                    part,
-                    admission_position
-                ],
-            )
-            .map_err(state::sql(&path))?;
-        }
-        Ok(())
-    })?;
-    Ok(QueuedReply {
-        company: binding.company.to_string(),
-        connector: binding.connector,
-        conversation: target,
-        turn,
-        pieces: parts.len(),
-    })
-}
-
-/// The speaker of `session`'s current turn: the sender recorded with the
-/// addressed message that opened the turn the runtime has in progress. The
-/// turn is correlated with its stored delivery by the delivery's boundary
-/// token, which the member envelope of the turn's opening input carries. A
-/// session bound to no conversation, and a turn whose opening input carries
-/// no member envelope, have no speaker. A conversation's session the runner
-/// has bound but not yet recorded as the conversation's is refused as
-/// unbound: it is never a session nobody is asking in. Any other
-/// uncertainty refuses.
-pub fn speaker(
+/// Fail-closed 3-outcome active-turn speaker resolution:
+/// - Outcome 1 (`Ok(Some)`): active `connected_conversations` session in
+///   `Running`/`NeedsInput` whose `active_turn.input_id` matches an in-flight
+///   (`state IN ('pending','failed','sent') AND superseded_at IS NULL`) row's
+///   `dispatch_command_id`.
+/// - Outcome 2 (`Err(SpeakerError)`): pre-acceptance `runtime_bindings`
+///   (`Unbound`), retired `runtime_generations` (`RetiredGeneration`), store or
+///   live observation failure, non-active state, missing `active_turn`/`input_id`,
+///   `OpeningInput::Unavailable`, or unrecognized `input_id` whose opening text
+///   carries a company member envelope (`MismatchedTurn`).
+/// - Outcome 3 (`Ok(None)`): non-company session, or confirmed `Running`/`NeedsInput`
+///   non-company (direct-operator) turn on an active company session.
+pub(super) fn resolve_active_turn_within(
     home: &Home,
     session: &SessionRef,
     adapter: &dyn RuntimeAdapter,
-) -> Result<Option<instrukt_runner::mcp::Speaker>, instrukt_runner::mcp::McpError> {
-    let Some(db) = instrukt_core::state_db::StateRead::open(home)? else {
+    timeout: Duration,
+) -> Result<Option<ActiveTurnMatch>, SpeakerError> {
+    let Some(db) = instrukt_core::state_db::StateRead::open(home)
+        .map_err(|err| SpeakerError::Store(err.to_string()))?
+    else {
         return Ok(None);
     };
     let conversation = db
@@ -308,82 +222,223 @@ pub fn speaker(
             },
         )
         .optional()
-        .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let Some((company, connector, conversation, session_scope)) = conversation else {
+        .map_err(|err| SpeakerError::Store(err.to_string()))?;
+    let Some((company, connector, binding_conversation, session_scope)) = conversation else {
         let bound = db
             .conn()
             .query_row(
-                "SELECT c.company FROM runtime_bindings b JOIN connected_conversations c ON c.semantic_key=b.semantic_key WHERE b.runtime=?1 AND b.session=?2 LIMIT 1",
-                instrukt_core::state_db::rusqlite::params![
-                    session.runtime.as_str(),
-                    session.to_string()
-                ],
+                "SELECT c.company FROM runtime_bindings b
+                 JOIN connected_conversations c ON c.semantic_key=b.semantic_key
+                 WHERE b.runtime=?1 AND b.session=?2 LIMIT 1",
+                params![session.runtime.as_str(), session.to_string()],
                 |r| r.get::<_, String>(0),
             )
             .optional()
-            .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-        return match bound {
-            Some(company) => Err(instrukt_runner::mcp::McpError::Unbound { company }),
-            None => Ok(None),
-        };
-    };
-    let opening = adapter
-        .active_turn_input(session)
-        .map_err(|error| instrukt_runner::mcp::McpError::Turn {
-            cause: error.to_string(),
-        })?
-        .ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
-            cause: "the runtime has no turn of this session in progress".into(),
-        })?;
-    let member = envelopes::segment(&opening)
-        .into_iter()
-        .find_map(|span| match span {
-            Span::Member {
-                conversation,
-                boundary,
-                ..
-            } => Some((conversation.to_owned(), boundary.to_owned())),
-            _ => None,
-        });
-    let Some((span_conversation, boundary)) = member else {
+            .map_err(|err| SpeakerError::Store(err.to_string()))?;
+        if let Some(company) = bound {
+            return Err(SpeakerError::Unbound { company });
+        }
+        let retired = db
+            .conn()
+            .query_row(
+                "SELECT c.company FROM runtime_generations g
+                 JOIN connected_conversations c ON c.semantic_key=g.semantic_key
+                 WHERE g.session=?1 AND g.generation>0 LIMIT 1",
+                [session.to_string()],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(|err| SpeakerError::Store(err.to_string()))?;
+        if let Some(company) = retired {
+            return Err(SpeakerError::RetiredGeneration { company });
+        }
         return Ok(None);
     };
-    let target_conversation = if session_scope == SessionScope::Company.as_str() {
-        span_conversation
-    } else {
-        conversation
+    let thread = adapter
+        .read_state_within(session, timeout)
+        .map_err(|err| SpeakerError::RuntimeObservation(err.to_string()))?;
+    if thread.presence != Presence::Present {
+        return Err(SpeakerError::NotRunning {
+            state: format!("{:?}", thread.presence).to_lowercase(),
+        });
+    }
+    if !matches!(
+        thread.state,
+        SessionState::Running | SessionState::NeedsInput
+    ) {
+        return Err(SpeakerError::NotRunning {
+            state: thread.state.as_str().to_owned(),
+        });
+    }
+    let Some(active_turn) = thread.active_turn else {
+        return Err(SpeakerError::NoActiveTurn);
     };
-    let row = db
-        .conn()
-        .query_row(
-            "SELECT message, sender, sender_name, sender_email, sender_is_admin, is_direct FROM conversation_messages
-             WHERE company=?1 AND connector=?2 AND conversation=?3 AND boundary=?4",
-            [&company, &connector, &target_conversation, &boundary],
-            |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, Option<String>>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, i32>(4)? != 0,
-                    r.get::<_, i32>(5)? != 0,
-                ))
-            },
-        )
-        .optional()
-        .map_err(instrukt_core::state_db::StateDbError::sqlite(db.path()))?;
-    let (message, identity, name, email, is_admin, is_direct) =
-        row.ok_or_else(|| instrukt_runner::mcp::McpError::Turn {
-            cause: "the turn's addressed message is not one this conversation delivered".into(),
-        })?;
-    let company = instrukt_core::ids::ProjectSlug::parse(&company).map_err(|error| {
-        instrukt_core::state_db::StateDbError::invalid(
-            db.path(),
-            format!("a conversation's company `{company}` is no company key: {error}"),
-        )
+    let Some(input_id) = active_turn.input_id else {
+        return Err(SpeakerError::NoActiveTurn);
+    };
+    let is_company_scope = session_scope == SessionScope::Company.as_str();
+    let row = if is_company_scope {
+        db.conn()
+            .query_row(
+                &format!(
+                    "SELECT conversation, message, sender, sender_name, sender_email, sender_is_admin, is_direct
+                     FROM conversation_messages
+                     WHERE company=?1 AND connector=?2 AND dispatch_command_id=?3
+                       AND state IN ('pending','failed','sent','answered') AND superseded_at IS NULL
+                       AND {COMPANY_OWNED_MESSAGES}
+                     LIMIT 1"
+                ),
+                params![company, connector, input_id.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i32>(5)? != 0,
+                        r.get::<_, i32>(6)? != 0,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|err| SpeakerError::Store(err.to_string()))?
+    } else {
+        db.conn()
+            .query_row(
+                "SELECT conversation, message, sender, sender_name, sender_email, sender_is_admin, is_direct
+                 FROM conversation_messages
+                 WHERE company=?1 AND connector=?2 AND conversation=?3 AND dispatch_command_id=?4
+                   AND state IN ('pending','failed','sent','answered') AND superseded_at IS NULL
+                 LIMIT 1",
+                params![company, connector, binding_conversation, input_id.as_str()],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, Option<String>>(2)?,
+                        r.get::<_, Option<String>>(3)?,
+                        r.get::<_, Option<String>>(4)?,
+                        r.get::<_, i32>(5)? != 0,
+                        r.get::<_, i32>(6)? != 0,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|err| SpeakerError::Store(err.to_string()))?
+    };
+    let Some((target_conversation, message, identity, name, email, is_admin, is_direct)) = row
+    else {
+        return match active_turn.opening_input {
+            OpeningInput::Unavailable => Err(SpeakerError::OpeningInputUnavailable),
+            OpeningInput::Text(text) => {
+                // Late-surfaced `send_unknown` delivery whose exact delivered
+                // envelope now appears on the runtime under a different input id.
+                let late_row = if is_company_scope {
+                    db.conn()
+                        .query_row(
+                            &format!(
+                                "SELECT conversation, message, sender, sender_name, sender_email, sender_is_admin, is_direct
+                                 FROM conversation_messages
+                                 WHERE company=?1 AND connector=?2 AND content=?3
+                                   AND send_unknown_at IS NOT NULL AND superseded_at IS NULL
+                                   AND state IN ('pending','failed','sent')
+                                   AND {COMPANY_OWNED_MESSAGES}
+                                 LIMIT 1"
+                            ),
+                            params![company, connector, text],
+                            |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, String>(1)?,
+                                    r.get::<_, Option<String>>(2)?,
+                                    r.get::<_, Option<String>>(3)?,
+                                    r.get::<_, Option<String>>(4)?,
+                                    r.get::<_, i32>(5)? != 0,
+                                    r.get::<_, i32>(6)? != 0,
+                                ))
+                            },
+                        )
+                        .optional()
+                        .map_err(|err| SpeakerError::Store(err.to_string()))?
+                } else {
+                    db.conn()
+                        .query_row(
+                            "SELECT conversation, message, sender, sender_name, sender_email, sender_is_admin, is_direct
+                             FROM conversation_messages
+                             WHERE company=?1 AND connector=?2 AND conversation=?3 AND content=?4
+                               AND send_unknown_at IS NOT NULL AND superseded_at IS NULL
+                               AND state IN ('pending','failed','sent')
+                             LIMIT 1",
+                            params![company, connector, binding_conversation, text],
+                            |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, String>(1)?,
+                                    r.get::<_, Option<String>>(2)?,
+                                    r.get::<_, Option<String>>(3)?,
+                                    r.get::<_, Option<String>>(4)?,
+                                    r.get::<_, i32>(5)? != 0,
+                                    r.get::<_, i32>(6)? != 0,
+                                ))
+                            },
+                        )
+                        .optional()
+                        .map_err(|err| SpeakerError::Store(err.to_string()))?
+                };
+                if let Some((
+                    target_conversation,
+                    message,
+                    identity,
+                    name,
+                    email,
+                    is_admin,
+                    is_direct,
+                )) = late_row
+                {
+                    let company_slug = ProjectSlug::parse(&company).map_err(|error| {
+                        SpeakerError::Store(format!(
+                            "a conversation's company `{company}` is no company key: {error}"
+                        ))
+                    })?;
+                    let speaker = instrukt_runner::mcp::Speaker {
+                        company: company_slug,
+                        name: name
+                            .or_else(|| identity.clone())
+                            .unwrap_or_else(|| "an unnamed sender".to_owned()),
+                        identity,
+                        email: email.filter(|email| !email.trim().is_empty()),
+                        is_admin,
+                        is_direct,
+                        connector: Some(connector),
+                        conversation: Some(target_conversation.clone()),
+                        message: Some(message.clone()),
+                    };
+                    return Ok(Some(ActiveTurnMatch {
+                        speaker,
+                        conversation: target_conversation,
+                        message,
+                        input_id,
+                    }));
+                }
+                let has_member_frame = envelopes::segment(&text)
+                    .into_iter()
+                    .any(|span| matches!(span, Span::Member { .. }));
+                if has_member_frame {
+                    Err(SpeakerError::MismatchedTurn)
+                } else {
+                    Ok(None)
+                }
+            }
+        };
+    };
+    let company_slug = ProjectSlug::parse(&company).map_err(|error| {
+        SpeakerError::Store(format!(
+            "a conversation's company `{company}` is no company key: {error}"
+        ))
     })?;
-    Ok(Some(instrukt_runner::mcp::Speaker {
-        company,
+    let speaker = instrukt_runner::mcp::Speaker {
+        company: company_slug,
         name: name
             .or_else(|| identity.clone())
             .unwrap_or_else(|| "an unnamed sender".to_owned()),
@@ -392,7 +447,33 @@ pub fn speaker(
         is_admin,
         is_direct,
         connector: Some(connector),
-        conversation: Some(target_conversation),
-        message: Some(message),
+        conversation: Some(target_conversation.clone()),
+        message: Some(message.clone()),
+    };
+    Ok(Some(ActiveTurnMatch {
+        speaker,
+        conversation: target_conversation,
+        message,
+        input_id,
     }))
+}
+
+/// Resolve the active-turn speaker of `session` within the default timeout.
+pub fn speaker(
+    home: &Home,
+    session: &SessionRef,
+    adapter: &dyn RuntimeAdapter,
+) -> Result<Option<instrukt_runner::mcp::Speaker>, SpeakerError> {
+    speaker_within(home, session, adapter, DEFAULT_SPEAKER_TIMEOUT)
+}
+
+/// Resolve the active-turn speaker of `session`, clamping live runtime
+/// observation to `timeout`.
+pub fn speaker_within(
+    home: &Home,
+    session: &SessionRef,
+    adapter: &dyn RuntimeAdapter,
+    timeout: Duration,
+) -> Result<Option<instrukt_runner::mcp::Speaker>, SpeakerError> {
+    Ok(resolve_active_turn_within(home, session, adapter, timeout)?.map(|matched| matched.speaker))
 }

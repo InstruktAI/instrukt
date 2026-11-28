@@ -1,10 +1,9 @@
 //! Persisted conversation bindings, message stages, and relay work queries.
-use instrukt_core::config::{ReplyMode, SessionScope};
+use instrukt_core::config::SessionScope;
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName, SessionRef};
 use instrukt_core::state_db::rusqlite::params;
 use instrukt_runner::keyed;
-use instrukt_runner::runtime::conversations::SourcePosition;
 use instrukt_runner::state::{self, RunnerState, StateError};
 use jiff::Timestamp;
 
@@ -86,11 +85,9 @@ pub(super) struct Conversation {
     pub(super) opening_conversation: Option<String>,
     pub(super) request: Option<String>,
     pub(super) session: Option<SessionRef>,
-    pub(super) source_identity: Option<String>,
-    pub(super) position: Option<SourcePosition>,
     pub(super) role: RoleName,
     pub(super) session_scope: SessionScope,
-    pub(super) reply_mode: ReplyMode,
+    pub(super) needs_explicit_rollover: bool,
 }
 
 #[derive(Clone)]
@@ -111,11 +108,13 @@ pub(super) struct Message {
     pub(super) send_unknown: bool,
     pub(super) dispatch_id: Option<String>,
     pub(super) dispatch_write_at: Option<Timestamp>,
+    pub(super) observed_run_id: Option<String>,
+    pub(super) terminal_error_queued_at: Option<Timestamp>,
 }
 
-const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,opening_conversation,request,session,source_identity,position_json,role,session_scope,reply_mode";
+const CONVERSATION_COLUMNS: &str = "company,connector,conversation,semantic_key,opening,opening_conversation,request,session,role,session_scope,needs_explicit_rollover";
 
-const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3) OR (state='failed' AND superseded_at IS NULL AND boundary IS NOT NULL)
+const RELAY_WORK: &str = "SELECT company,connector,conversation FROM conversation_messages WHERE state IN (?1,?2,?3) OR (state='failed' AND superseded_at IS NULL AND boundary IS NOT NULL AND terminal_error_queued_at IS NULL)
     UNION ALL SELECT company,connector,conversation FROM conversation_answers WHERE posted_at IS NULL";
 
 /// SQL predicate restricting a company-scoped binding to conversations that
@@ -158,11 +157,9 @@ pub(super) fn conversations(
                     r.get::<_, Option<String>>(5)?,
                     r.get::<_, Option<String>>(6)?,
                     r.get::<_, Option<String>>(7)?,
-                    r.get::<_, Option<String>>(8)?,
-                    r.get::<_, Option<String>>(9)?,
-                    r.get::<_, String>(10)?,
-                    r.get::<_, String>(11)?,
-                    r.get::<_, String>(12)?,
+                    r.get::<_, String>(8)?,
+                    r.get::<_, String>(9)?,
+                    r.get::<_, i32>(10)? != 0,
                 ))
             })
             .map_err(state::sql(path))?
@@ -181,11 +178,9 @@ pub(super) fn conversations(
                 opening_conversation,
                 request,
                 session,
-                source_identity,
-                position,
                 role,
                 session_scope,
-                reply_mode,
+                needs_explicit_rollover,
             )| {
                 Ok(Conversation {
                     company: ProjectSlug::parse(&company)
@@ -200,8 +195,6 @@ pub(super) fn conversations(
                         .map(|s| SessionRef::parse(&s))
                         .transpose()
                         .map_err(|e| ConversationError::Refused(e.to_string()))?,
-                    source_identity,
-                    position: position.map(|p| serde_json::from_str(&p)).transpose()?,
                     role: RoleName::parse(&role)
                         .map_err(|e| ConversationError::Refused(e.to_string()))?,
                     session_scope: SessionScope::parse(&session_scope).ok_or_else(|| {
@@ -209,9 +202,7 @@ pub(super) fn conversations(
                             "unknown session_scope `{session_scope}`"
                         ))
                     })?,
-                    reply_mode: ReplyMode::parse(&reply_mode).ok_or_else(|| {
-                        ConversationError::Refused(format!("unknown reply_mode `{reply_mode}`"))
-                    })?,
+                    needs_explicit_rollover,
                 })
             },
         )
@@ -240,7 +231,7 @@ pub(super) fn open_messages(
         .read(|conn, path| {
             let (sql, by_company) = match c.session_scope {
                 SessionScope::Conversation => (
-                    "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
+                    "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at,observed_run_id,terminal_error_queued_at
                      FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND state NOT IN (?4,?5) AND superseded_at IS NULL
                      ORDER BY state='failed', retry_at, written_us, message"
                         .to_owned(),
@@ -248,7 +239,7 @@ pub(super) fn open_messages(
                 ),
                 SessionScope::Company => (
                     format!(
-                        "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at
+                        "SELECT conversation,message,state,boundary,content,attempted_at,failure,retry_at,failed_turns,send_unknown_at IS NOT NULL,dispatch_command_id,dispatch_write_at,observed_run_id,terminal_error_queued_at
                          FROM conversation_messages WHERE company=?1 AND connector=?2 AND state NOT IN (?3,?4) AND superseded_at IS NULL AND {COMPANY_OWNED_MESSAGES}
                          ORDER BY state='failed', retry_at, written_us, conversation, message"
                     ),
@@ -270,6 +261,8 @@ pub(super) fn open_messages(
                     r.get::<_, bool>(9)?,
                     r.get::<_, Option<String>>(10)?,
                     r.get::<_, Option<String>>(11)?,
+                    r.get::<_, Option<String>>(12)?,
+                    r.get::<_, Option<String>>(13)?,
                 ))
             };
             if by_company {
@@ -314,6 +307,8 @@ pub(super) fn open_messages(
                 send_unknown,
                 dispatch_id,
                 dispatch_write_at,
+                observed_run_id,
+                terminal_error_queued_at,
             )| {
                 Ok(Message {
                     conversation,
@@ -336,6 +331,13 @@ pub(super) fn open_messages(
                     dispatch_write_at: dispatch_write_at.map(|at| at.parse()).transpose().map_err(
                         |_| ConversationError::Refused("invalid dispatch frame write time".into()),
                     )?,
+                    observed_run_id,
+                    terminal_error_queued_at: terminal_error_queued_at
+                        .map(|at| at.parse())
+                        .transpose()
+                        .map_err(|_| {
+                            ConversationError::Refused("invalid terminal error time".into())
+                        })?,
                 })
             },
         )
@@ -447,25 +449,13 @@ pub(super) fn prune_superseded_failures(
 }
 
 /// A conversation without remaining answer work has no answer-read failure
-/// to report. Clear it without locking the conversation or reading T3, even
-/// when all other work is also finished.
-pub(super) fn clear_idle_answer_failures(
-    state: &RunnerState,
-    source_identity: &str,
-) -> Result<(), StateError> {
-    let idle_failure = format!(
-        "failure IS NOT NULL AND (source_identity=?4 OR (session IS NULL AND position_json IS NULL AND request IS NULL AND opening IS NULL)) AND NOT {}",
-        relay_work_filter()
-    );
+/// to report. Clear it without locking the conversation or calling the runtime.
+pub(super) fn clear_idle_answer_failures(state: &RunnerState) -> Result<(), StateError> {
+    let idle_failure = format!("failure IS NOT NULL AND NOT {}", relay_work_filter());
     let due = state.read(|conn, path| {
         conn.query_row(
             &format!("SELECT EXISTS(SELECT 1 FROM connected_conversations WHERE {idle_failure})"),
-            params![
-                relay_stages()[0],
-                relay_stages()[1],
-                relay_stages()[2],
-                source_identity
-            ],
+            relay_stages(),
             |row| row.get::<_, bool>(0),
         )
         .map_err(state::sql(path))
@@ -476,23 +466,19 @@ pub(super) fn clear_idle_answer_failures(
     state.write(|tx| {
         tx.execute(
             &format!("UPDATE connected_conversations SET failure=NULL WHERE {idle_failure}"),
-            params![
-                relay_stages()[0],
-                relay_stages()[1],
-                relay_stages()[2],
-                source_identity
-            ],
+            relay_stages(),
         )
         .map_err(state::sql(&state::db_path(tx)))?;
         Ok(())
     })
 }
 
-/// Whether any conversation work is outstanding. A sent message stays
-/// outstanding until its turn is harvested: a native wake can precede
-/// readable completion evidence, and that read needs another chance even
-/// when the source makes no further write.
+/// Whether any conversation work is outstanding, including any explicit reply
+/// rows in `state/company-replies.db` not yet ingested into `conversation_answers`.
 pub fn outstanding(home: &Home) -> Result<bool, ConversationError> {
+    if super::_replies_db::has_uningested_replies(home)? {
+        return Ok(true);
+    }
     Ok(RunnerState::new(home)
         .read(|conn, path| {
             conn.query_row(

@@ -190,11 +190,14 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
     let home = instrukt_core::home::Home::at_user_home(env.home().into());
     let source_env =
         instrukt_core::config::Env::from_pairs([("HOME", env.home().display().to_string())]);
-    let source_id = instrukt_runner::runtime::adapter(instrukt_core::config::Runtime::T3)
-        .conversation_source(&home, &source_env)
-        .unwrap()
-        .identity()
-        .to_owned();
+    let source_id = {
+        use instrukt_runtime::RuntimeAdapter as _;
+        instrukt_runtime_t3::T3::with_env(source_env.clone())
+            .cold_text_source(&home, &source_env)
+            .unwrap()
+            .identity()
+            .to_owned()
+    };
     // How many of the conversation's messages history holds; a conversation
     // it does not hold yet is refused.
     let messages_of = |conversation: &str| {

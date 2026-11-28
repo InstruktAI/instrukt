@@ -1,8 +1,9 @@
 //! Conversations (`conversations` spec): a person addresses a company's
 //! agent through a connector; each conversation is bound to one plain agent
 //! session in the company's home, every addressed message is its own turn,
-//! and the answer of that turn is posted back. No event is emitted and no
-//! subscribed procedure is activated on this path.
+//! and the agent replies explicitly via `instrukt company reply` (and may
+//! optionally publish short active-turn progress via `instrukt company status`).
+//! No event is emitted and no subscribed procedure is activated on this path.
 //!
 //! The record moves each addressed message through its stages: received
 //! (retained, with its sender's connector identity, before the connector
@@ -10,8 +11,8 @@
 //! one of the company's own), pending (its sender admitted and its
 //! accompanying messages captured), sent (accepted by the runtime as its own
 //! turn), failed (its turn failed without a reply), and answered (its turn
-//! finished with an answer or successfully produced nothing). Each answer piece stays pending
-//! until the connector accepted its post.
+//! finished with an explicit reply or settled terminally with a standard error
+//! reply). Each answer piece stays pending until the connector accepted its post.
 
 mod _availability;
 mod _delivery;
@@ -19,9 +20,11 @@ mod _envelopes;
 mod _intake;
 mod _ports;
 mod _relay;
+mod _replies_db;
 mod _speaker;
 mod _status;
 mod _store;
+mod _turn_status;
 mod _turns;
 pub mod read_back;
 
@@ -36,24 +39,34 @@ pub use _availability::{
     INTAKE_INTERVAL, NOTICE_AFTER, Notice, NoticeStep, Unfinished, effective_since, notice_posted,
     notice_step, notices, unfinished,
 };
+pub use _delivery::{FAILED_RETRY_DELAY, FAILED_RETRY_LIMIT, FAILED_RETRY_MAX_ATTEMPTS};
 pub(crate) use _intake::context_exclusions;
 pub use _intake::{
     Intake, Refusal, Unread, admitted, admitted_demand, captured, demand, intake_failed,
     refusal_posted, refusals, refused, retain_with_policy, unread, waiting,
 };
 pub use _ports::Ports;
-pub use _relay::{Accepted, relay_state, split};
+pub use _relay::{ANSWER_OPERATOR_BOUND, Accepted, relay_state, split};
+pub use _replies_db::{
+    QueuedReply, has_uningested_replies, ingest_explicit_replies, queue_explicit_reply,
+};
 pub use _speaker::{
-    ConversationBinding, QueuedReply, conversation_assignment, conversation_binding, queue_reply,
-    speaker,
+    ConversationBinding, SpeakerError, conversation_assignment, conversation_binding, speaker,
+    speaker_within,
 };
 pub use _status::{
     ConnectionState, ConnectorStatus, ConversationStatus, Status, connector_state, status,
     status_at,
 };
 pub use _store::{COMPANY_SCOPE_CONVERSATION, company_key, key, outstanding};
+pub use _turn_status::{
+    MAX_STATUS_BYTES, StatusText, TURN_STATUS_SCHEMA_VERSION, TurnStatusFile, TurnStatusSummary,
+    read_turn_status, set_turn_status,
+};
+pub use _turns::{STANDARD_ERROR_REPLY, UNOBSERVED_SENT_GRACE};
 
 use instrukt_core::config::ConfigError;
+use instrukt_runner::runtime::RuntimeError;
 use instrukt_runner::sessions::SessionsError;
 use instrukt_runner::state::StateError;
 
@@ -71,7 +84,7 @@ pub enum ConversationError {
     #[error(transparent)]
     Sessions(#[from] SessionsError),
     #[error(transparent)]
-    Source(#[from] instrukt_runner::runtime::conversations::SourceError),
+    Runtime(#[from] RuntimeError),
     #[error(transparent)]
     Lock(#[from] instrukt_core::fsx::FsError),
     #[error(transparent)]
@@ -86,8 +99,6 @@ pub enum ConversationError {
     NoProcedure { role: String },
     #[error("conversation: {0}")]
     Refused(String),
-    #[error("conversation source configuration: {0}")]
-    SourceConfiguration(String),
 }
 
 #[cfg(test)]

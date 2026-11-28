@@ -177,7 +177,14 @@ impl<'w> Session<'w> {
         let Actor::Session(session) = actor else {
             return (None, ModelProvenance::OutsideSession);
         };
-        match Sessions::new(self.work.home(), &self.config, self.work.env()).model(session) {
+        match Sessions::new(
+            self.work.home(),
+            &self.config,
+            self.work.env(),
+            self.work.runtimes(),
+        )
+        .model(session)
+        {
             Some((model, version)) => (
                 Some(ModelIdentity { model, version }),
                 ModelProvenance::Reported,

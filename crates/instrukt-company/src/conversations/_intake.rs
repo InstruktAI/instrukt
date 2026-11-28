@@ -1,6 +1,6 @@
 //! Retain addressed messages, record sender decisions, and capture accompanying context.
 use instrukt_connector::{Accompanying, ConversationDisplay, Incoming, RefusalReason, Sender};
-use instrukt_core::config::{Admitted, ConfigError, DeclaredConnector, ReplyMode, SessionScope};
+use instrukt_core::config::{Admitted, ConfigError, DeclaredConnector, SessionScope};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName};
 use instrukt_core::state_db::rusqlite::params;
@@ -20,21 +20,19 @@ pub enum Intake {
     Repeated,
 }
 
-/// Retain one incoming addressed message with the connector's declared `role`,
-/// `session_scope`, and `reply_mode`. Nothing here waits on the network and
-/// nothing here decides who is answered.
+/// Retain one incoming addressed message with the connector's declared `role`
+/// and `session_scope`. Nothing here waits on the network and nothing here
+/// decides who is answered.
 pub fn retain_with_policy(
     home: &Home,
     company: &ProjectSlug,
     incoming: &Incoming,
     role: &RoleName,
     session_scope: SessionScope,
-    reply_mode: ReplyMode,
     now: Timestamp,
 ) -> Result<Intake, ConversationError> {
     let state = RunnerState::new(home);
-    let inserted =
-        state.write(|tx| retain_in(tx, company, incoming, role, session_scope, reply_mode, now))?;
+    let inserted = state.write(|tx| retain_in(tx, company, incoming, role, session_scope, now))?;
     if inserted == 0 {
         return Ok(Intake::Repeated);
     }
@@ -48,7 +46,6 @@ pub(super) fn retain_in(
     incoming: &Incoming,
     role: &RoleName,
     session_scope: SessionScope,
-    reply_mode: ReplyMode,
     now: Timestamp,
 ) -> Result<usize, StateError> {
     let path = state::db_path(tx);
@@ -83,15 +80,14 @@ pub(super) fn retain_in(
             if !owned_by_conversation {
                 let semantic = company_key(company, &incoming.connector);
                 tx.execute(
-                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope,reply_mode) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
+                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
                     params![
                         company.as_str(),
                         incoming.connector,
                         COMPANY_SCOPE_CONVERSATION,
                         semantic,
                         role.as_str(),
-                        SessionScope::Company.as_str(),
-                        reply_mode.as_str()
+                        SessionScope::Company.as_str()
                     ],
                 )
                 .map_err(state::sql(&path))?;
@@ -115,15 +111,14 @@ pub(super) fn retain_in(
             if !owned_by_company {
                 let semantic = key(company, &incoming.connector, &incoming.conversation);
                 tx.execute(
-                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope,reply_mode) VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT DO NOTHING",
+                    "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,role,session_scope) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
                     params![
                         company.as_str(),
                         incoming.connector,
                         incoming.conversation,
                         semantic,
                         role.as_str(),
-                        SessionScope::Conversation.as_str(),
-                        reply_mode.as_str()
+                        SessionScope::Conversation.as_str()
                     ],
                 )
                 .map_err(state::sql(&path))?;

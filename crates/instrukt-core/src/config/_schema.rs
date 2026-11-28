@@ -24,7 +24,7 @@ pub const PROJECT_SCHEMA_VERSION: u64 = 6;
 /// The schema version of a company home's document
 /// (`~/.instrukt/companies/<name>/company.yaml`) this instrukt writes. The
 /// first is 1.
-pub const COMPANY_SCHEMA_VERSION: u64 = 6;
+pub const COMPANY_SCHEMA_VERSION: u64 = 7;
 
 pub(super) const DEFAULT_DEPENDENCY_BRANCH_PREFIX: &str = "renovate/";
 

@@ -4,7 +4,7 @@ use instrukt_connector::{
     Connector, ConnectorError, Incoming, ReadBackCoverage, ReadBackGap, ReadBackPage,
 };
 use instrukt_core::{
-    config::{ReplyMode, SessionScope},
+    config::SessionScope,
     fsx::{self, FsError},
     home::Home,
     ids::{ProjectSlug, RoleName},
@@ -343,7 +343,6 @@ pub(crate) async fn scan(
     key: &str,
     role: &RoleName,
     session_scope: SessionScope,
-    reply_mode: ReplyMode,
     connector: &dyn Connector,
     clock: &(dyn Fn() -> Timestamp + Sync),
     quit: &(dyn Fn() -> bool + Sync),
@@ -473,7 +472,6 @@ pub(crate) async fn scan(
                 key,
                 role,
                 session_scope,
-                reply_mode,
                 &page,
                 &window,
                 clock,
@@ -518,7 +516,6 @@ fn retain_page(
     key: &str,
     role: &RoleName,
     session_scope: SessionScope,
-    reply_mode: ReplyMode,
     page: &ReadBackPage,
     window: &ScanWindow,
     clock: &dyn Fn() -> Timestamp,
@@ -561,15 +558,8 @@ fn retain_page(
                 let mut missed = Vec::with_capacity(novel.len());
                 for (item, link) in &novel {
                     if item.written_at >= answer_from {
-                        inserted |= retain_in(
-                            tx,
-                            company,
-                            item,
-                            role,
-                            session_scope,
-                            reply_mode,
-                            arrived_at,
-                        )? != 0;
+                        inserted |=
+                            retain_in(tx, company, item, role, session_scope, arrived_at)? != 0;
                         missed.push(None);
                     } else {
                         missed.push(miss_in(tx, company, item)?.then_some(*link));

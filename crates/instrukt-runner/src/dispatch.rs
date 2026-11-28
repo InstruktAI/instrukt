@@ -43,6 +43,7 @@ pub const TASK_RUNNER_ROLE: &str = "task-runner";
 pub struct DispatchContext<'a> {
     pub home: &'a Home,
     pub env: &'a Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
     pub now: Timestamp,
     pub tz: &'a TimeZone,
     pub previous_wake: Option<Timestamp>,
@@ -263,7 +264,7 @@ fn dispatch_one(
             return None;
         }
     };
-    let sessions = Sessions::new(cx.home, config, cx.env);
+    let sessions = Sessions::new(cx.home, config, cx.env, cx.runtimes);
     let runtime = match sessions.runner_runtime() {
         Ok(runtime) => runtime,
         Err(error) => {
@@ -356,7 +357,7 @@ fn dispatch_one(
             return None;
         }
         Err(err) => {
-            if crate::keyed::report_start_finding(cx.state, runtime, &err) {
+            if crate::keyed::report_start_finding(cx.state, runtime.name(), &err) {
                 tracing::warn!(event="dispatch_pending",project=%project.slug,todo=%todo,error=%err);
             }
             return Some(Dispatched::StartUncertain { todo: todo.clone() });
@@ -630,7 +631,7 @@ fn notify_task_failures(cx: &DispatchContext<'_>, config: &Configuration, projec
             return;
         }
     };
-    let sessions = Sessions::new(cx.home, config, cx.env);
+    let sessions = Sessions::new(cx.home, config, cx.env, cx.runtimes);
     for failure in &mut failures {
         if failure.notified || failure.project != project.slug {
             continue;

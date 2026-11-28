@@ -13,15 +13,13 @@ use instrukt_core::{
     home::Home,
     ids::{ProjectSlug, SessionId, SessionRef},
 };
-use instrukt_runner::{
-    process,
-    runtime::{
-        ArchiveOutcome, ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart,
-        T3,
-        conversations::{Role, SourceWake},
-    },
-    sessions::SessionState,
+use instrukt_runner::process;
+use instrukt_runtime::{
+    ArchiveOutcome, ExecutionRootMode, InputState, NativeLaunch, RuntimeAdapter, RuntimeStart,
+    SessionState,
+    cold_text::{Role, SourceWake},
 };
+use instrukt_runtime_t3::T3;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::{
@@ -34,7 +32,7 @@ use std::{
 use tungstenite::{Message, client::IntoClientRequest};
 
 pub const TEST: &str = "t3_contract::a_release_and_its_fake_are_checked_without_a_model_account";
-pub const VERSION: &str = include_str!("../../../instrukt-runner/t3.version");
+pub const VERSION: &str = include_str!("../../../instrukt-runtime-t3/t3.version");
 const BOUND: Duration = Duration::from_secs(20);
 const REAL_WORKER_TIMEOUT: Duration = Duration::from_secs(180);
 const FAKE_WORKER_TIMEOUT: Duration = Duration::from_secs(60);
@@ -1143,26 +1141,28 @@ pub fn real(root: &Path) -> Result<()> {
         &["thread", "show", "--json", "--messages", "100", id],
         None,
     )?)?;
-    let source = adapter.conversation_source(&home, &env)?;
-    let only = [SessionId::parse(id)?];
+    let source = adapter.cold_text_source(&home, &env)?;
+    let _only = [SessionId::parse(id)?];
     let mut position = None;
-    let mut records = Vec::new();
+    let mut conversations = Vec::new();
     loop {
-        let changes = source.changed_since(position.as_ref(), &only)?;
+        let changes = source.text_since(position.as_ref())?;
         position = Some(changes.position);
-        records.extend(changes.records);
+        conversations.extend(changes.conversations);
         if !changes.has_more {
             break;
         }
     }
     ensure!(
-        records.iter().any(|r| r.conversation_id == id),
-        "real projection payloads absent"
+        conversations
+            .iter()
+            .any(|c| c.conversation().as_str() == id),
+        "real cold text projection payloads absent"
     );
-    let mut unchanged = source.changed_since(position.as_ref(), &only)?;
+    let mut unchanged = source.text_since(position.as_ref())?;
     ensure!(
-        unchanged.records.is_empty() && !unchanged.has_more,
-        "unchanged source duplicated records"
+        unchanged.conversations.is_empty() && !unchanged.has_more,
+        "unchanged cold text source duplicated records"
     );
     let mut notifications = source.subscribe()?;
     adapter.send(
@@ -1182,14 +1182,39 @@ pub fn real(root: &Path) -> Result<()> {
     }
     let mut changed = false;
     loop {
-        let changes = source.changed_since(Some(&unchanged.position), &only)?;
-        changed |= !changes.records.is_empty();
+        let changes = source.text_since(Some(&unchanged.position))?;
+        changed |= !changes.conversations.is_empty();
         unchanged = changes;
         if !unchanged.has_more {
             break;
         }
     }
     ensure!(changed, "durable input change was not observed");
+    // Verify live orchestration.getThreadProjection returns runs[], messages[], and runtimeRequests[]
+    // and maps missing thread to ProjectionStoreThreadNotFoundError.
+    let live_projection = rpc(
+        &token.secret,
+        "orchestration.getThreadProjection",
+        json!({"threadId": id}),
+    )?;
+    ensure!(
+        live_projection["runs"].is_array()
+            && live_projection["messages"].is_array()
+            && live_projection["runtimeRequests"].is_array(),
+        "orchestration.getThreadProjection must expose runs[], messages[], and runtimeRequests[]"
+    );
+    let missing_exit = rpc_exit(
+        &token.secret,
+        "orchestration.getThreadProjection",
+        json!({"threadId": "contract-missing"}),
+    )?;
+    ensure!(
+        missing_exit
+            .pointer("/cause/0/error/_tag")
+            .and_then(Value::as_str)
+            == Some("ProjectionStoreThreadNotFoundError"),
+        "missing thread must return ProjectionStoreThreadNotFoundError: {missing_exit}"
+    );
     let result = observe(id)?;
     let websocket = websocket_dispatch(id)?;
     retention_fixture(&token.secret, &project)?;

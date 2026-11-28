@@ -8,12 +8,13 @@ use std::collections::BTreeSet;
 
 use super::_relay::Accepted;
 use super::_store::{Conversation, Stage};
+use super::_turn_status::read_turn_status;
 use super::ConversationError;
 
 /// When a message's no-work interval opened, as the status and the notice
-/// both read it: its own interval, or, while the relay cannot acquire the
-/// conversation source, that failure's start clamped at the message's
-/// admission, whichever is earlier. `None` while neither is open.
+/// both read it: its own interval, or, while the relay cannot operate, that
+/// failure's start clamped at the message's admission, whichever is earlier.
+/// `None` while neither is open.
 pub fn effective_since(
     own: Option<Timestamp>,
     admitted: Option<Timestamp>,
@@ -41,22 +42,23 @@ pub struct Unfinished {
 
 /// The admitted messages of one company's connector that are not complete,
 /// oldest written first, each with what its status shows. A message is
-/// complete once its answer is posted, or its turn completed with nothing to
-/// post; one whose answer is not yet posted stays unfinished. It shows the
-/// unavailable text while its effective interval ([`effective_since`]) is
-/// open, the newest message the agent has written in its turn once there is
-/// one, until its answer is posted, and the working text otherwise.
+/// complete once its explicit reply or standard error reply is posted. While
+/// waiting, it shows the unavailable text if its effective interval
+/// ([`effective_since`]) is open, any curated progress update published via
+/// `instrukt company status` for its currently active turn, or the calm
+/// working text otherwise.
 pub fn unfinished(
     home: &Home,
     company: &ProjectSlug,
     connector: &str,
 ) -> Result<Vec<Unfinished>, ConversationError> {
     Ok(RunnerState::new(home)
-        .read(|conn, path| read_unfinished(conn, path, company, connector))?
+        .read(|conn, path| read_unfinished(Some(home), conn, path, company, connector))?
         .unwrap_or_default())
 }
 
 fn read_unfinished(
+    home: Option<&Home>,
     conn: &instrukt_core::state_db::rusqlite::Connection,
     path: &std::path::Path,
     company: &ProjectSlug,
@@ -67,6 +69,8 @@ fn read_unfinished(
         String,
         Option<String>,
         Option<String>,
+        Option<String>,
+        String,
         Option<String>,
         Option<String>,
     );
@@ -79,8 +83,26 @@ fn read_unfinished(
         .optional()
         .map_err(state::sql(path))?;
     let mut q = conn
-            .prepare("SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.turn_update FROM conversation_messages m WHERE m.company=?1 AND m.connector=?2 AND m.send_unknown_at IS NULL AND ((m.state=?3 AND m.sender_name IS NOT NULL) OR m.state IN (?4,?5) OR (m.state=?6 AND m.superseded_at IS NULL) OR (m.state=?7 AND EXISTS(SELECT 1 FROM conversation_answers x WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation AND x.turn=m.turn AND x.posted_at IS NULL))) ORDER BY m.written_us, m.message")
-            .map_err(state::sql(path))?;
+        .prepare(
+            "SELECT m.conversation,m.message,m.sender,m.unavailable_since,m.admitted_at,m.state,m.dispatch_command_id,
+                    (SELECT c.conversation FROM connected_conversations c
+                     WHERE c.company=m.company AND c.connector=m.connector
+                       AND (c.conversation=m.conversation OR (c.session_scope='company' AND c.conversation=''))
+                     ORDER BY c.session_scope='conversation' DESC LIMIT 1)
+             FROM conversation_messages m
+             WHERE m.company=?1 AND m.connector=?2 AND m.send_unknown_at IS NULL
+               AND ((m.state=?3 AND m.sender_name IS NOT NULL)
+                    OR m.state IN (?4,?5)
+                    OR (m.state=?6 AND m.superseded_at IS NULL)
+                    OR (m.state=?7 AND EXISTS(
+                        SELECT 1 FROM conversation_answers x
+                        WHERE x.company=m.company AND x.connector=m.connector AND x.conversation=m.conversation
+                          AND (x.source_message=m.message OR (x.source_message IS NULL AND x.turn=m.turn))
+                          AND x.posted_at IS NULL
+                    )))
+             ORDER BY m.written_us, m.message",
+        )
+        .map_err(state::sql(path))?;
     let rows: Vec<Row> = q
         .query_map(
             params![
@@ -100,6 +122,8 @@ fn read_unfinished(
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
+                    r.get(7)?,
                 ))
             },
         )
@@ -116,21 +140,49 @@ fn read_unfinished(
     };
     let relay = at(relay.flatten())?;
     rows.into_iter()
-        .map(|(conversation, message, sender, own, admitted, update)| {
-            let since = effective_since(at(own)?, at(admitted)?, relay);
-            let status = match update {
-                _ if since.is_some() => instrukt_connector::Status::Unavailable,
-                Some(update) => instrukt_connector::Status::Update(update),
-                _ => instrukt_connector::Status::Working,
-            };
-            Ok(Unfinished {
+        .map(
+            |(
                 conversation,
                 message,
                 sender,
-                since,
-                status,
-            })
-        })
+                own,
+                admitted,
+                stage,
+                dispatch_command_id,
+                binding_conversation,
+            )| {
+                let since = effective_since(at(own)?, at(admitted)?, relay);
+                let status = if since.is_some() {
+                    instrukt_connector::Status::Unavailable
+                } else if let (Some(home), Some(input_id), Some(binding_conv)) = (
+                    home.filter(|_| stage == Stage::Sent.as_str()),
+                    dispatch_command_id.as_deref(),
+                    binding_conversation.as_deref(),
+                ) {
+                    match read_turn_status(
+                        home,
+                        company.as_str(),
+                        connector,
+                        binding_conv,
+                        &conversation,
+                        &message,
+                        input_id,
+                    ) {
+                        Some(curated) => instrukt_connector::Status::Update(curated),
+                        None => instrukt_connector::Status::Working,
+                    }
+                } else {
+                    instrukt_connector::Status::Working
+                };
+                Ok(Unfinished {
+                    conversation,
+                    message,
+                    sender,
+                    since,
+                    status,
+                })
+            },
+        )
         .collect()
 }
 
@@ -169,7 +221,7 @@ pub fn notices(
             retire_notices(tx, company.as_str(), connector, &conversation)?;
         }
         let mut due = BTreeSet::new();
-        for message in read_unfinished(tx, &path, company, connector)? {
+        for message in read_unfinished(None, tx, &path, company, connector)? {
             if message.since.is_some_and(|since| since + NOTICE_AFTER <= now)
                 && let Some(sender) = message.sender
             {
@@ -207,7 +259,7 @@ pub fn notice_step(
     let accepted_turns = accepted.turns(company, connector, &notice.conversation);
     RunnerState::new(home).write::<_, ConversationError>(|tx| {
         let path = state::db_path(tx);
-        let overdue = read_unfinished(tx, &path, company, connector)?.into_iter().any(|message| {
+        let overdue = read_unfinished(None, tx, &path, company, connector)?.into_iter().any(|message| {
             message.conversation == notice.conversation
                 && message.sender.as_deref() == Some(notice.sender.as_str())
                 && message.since.is_some_and(|since| since + NOTICE_AFTER <= now)
@@ -215,7 +267,19 @@ pub fn notice_step(
         if !overdue { return Ok(NoticeStep::Cancelled); }
         for turn in accepted_turns {
             let answered = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM conversation_messages WHERE company=?1 AND connector=?2 AND conversation=?3 AND sender=?4 AND turn=?5)",
+                "SELECT EXISTS(
+                    SELECT 1 FROM conversation_messages m
+                    WHERE m.company=?1 AND m.connector=?2 AND m.conversation=?3 AND m.sender=?4
+                      AND (
+                          m.turn=?5
+                          OR EXISTS(
+                              SELECT 1 FROM conversation_answers x
+                              WHERE x.company=m.company AND x.connector=m.connector
+                                AND x.conversation=m.conversation AND x.turn=?5
+                                AND x.source_message=m.message
+                          )
+                      )
+                 )",
                 params![company.as_str(), connector, notice.conversation, notice.sender, turn],
                 |row| row.get::<_, bool>(0),
             ).map_err(state::sql(&path))?;
@@ -303,25 +367,6 @@ pub(super) fn available(
     })
 }
 
-/// Keep `update`, the newest message the agent has written in the running
-/// turn of `message`, as what its status shows.
-pub(super) fn turn_update(
-    state: &RunnerState,
-    c: &Conversation,
-    conversation: &str,
-    message: &str,
-    update: Option<&str>,
-) -> Result<(), StateError> {
-    state.write(|tx| {
-        tx.execute(
-            "UPDATE conversation_messages SET turn_update=?5 WHERE company=?1 AND connector=?2 AND conversation=?3 AND message=?4 AND turn_update IS NOT ?5",
-            params![c.company.as_str(), c.connector, conversation, message, update],
-        )
-        .map_err(state::sql(&state::db_path(tx)))?;
-        Ok(())
-    })
-}
-
 /// A recovered no-work interval rearms the person's next outage notice.
 pub(super) fn retire_notices(
     tx: &instrukt_core::state_db::rusqlite::Transaction<'_>,
@@ -331,7 +376,7 @@ pub(super) fn retire_notices(
 ) -> Result<usize, StateError> {
     let path = state::db_path(tx);
     let company_id = ProjectSlug::parse(company).map_err(|error| state::invalid(&path, error))?;
-    let active = read_unfinished(tx, &path, &company_id, connector)?
+    let active = read_unfinished(None, tx, &path, &company_id, connector)?
         .into_iter()
         .filter(|message| message.conversation == conversation && message.since.is_some())
         .filter_map(|message| message.sender)

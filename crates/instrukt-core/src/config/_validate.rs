@@ -12,7 +12,7 @@ use super::_features::{Feature, availability};
 use super::_interpolate::{Interpolator, Mode, join, key_text};
 use super::_layer::{Layer, read_usable};
 use super::_module::Module;
-use super::_runtime::Runtime;
+use super::_runtime::{RuntimeDeclaration, resolve_runtime};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, KeyFinding, LayerKind};
 use crate::home::Home;
 
@@ -708,18 +708,15 @@ pub(super) fn thread_retention_unavailable(effective: &Value) -> Option<KeyFindi
     ))
 }
 
-/// The runtime the effective document `effective` chooses: the compiled
-/// one when `runner.runtime` is unset; `None` when it names no compiled
-/// runtime, which is its own finding.
-fn chosen_runtime(effective: &Value) -> Option<Runtime> {
-    match effective
+/// The runtime the effective document `effective` chooses: the sole compiled
+/// one when `runner.runtime` is unset; `None` when resolution fails, which
+/// is its own finding.
+fn chosen_runtime(effective: &Value) -> Option<&'static RuntimeDeclaration> {
+    let configured = effective
         .get("runner")
         .and_then(|r| r.get("runtime"))
-        .and_then(Value::as_str)
-    {
-        Some(name) => Runtime::named(name),
-        None => Some(Runtime::COMPILED),
-    }
+        .and_then(Value::as_str);
+    resolve_runtime(configured).ok()
 }
 
 /// A module switch this layer turns on whose features the chosen runtime
@@ -844,12 +841,16 @@ fn runner_runtime(value: &Value, _effective: &Value, out: &mut Vec<KeyFinding>) 
         .get("runner")
         .and_then(|r| r.get("runtime"))
         .and_then(Value::as_str)
-        && Runtime::named(name).is_none()
+        && let Err(error) = resolve_runtime(Some(name))
     {
+        let message = match error {
+            ConfigError::InvalidValue { message, .. } => message,
+            other => other.to_string(),
+        };
         out.push(KeyFinding::new(
             "runner.runtime",
             FindingKind::UnknownRuntime,
-            format!("unknown compiled runtime adapter `{name}`; available: t3"),
+            message,
         ));
     }
 }
@@ -902,12 +903,7 @@ fn workflow_capabilities(home: &Home, effective: &Value, out: &mut Vec<KeyFindin
     {
         return;
     }
-    let Some(runtime) = effective
-        .get("runner")
-        .and_then(|r| r.get("runtime"))
-        .and_then(Value::as_str)
-        .and_then(Runtime::named)
-    else {
+    let Some(runtime) = chosen_runtime(effective) else {
         return;
     };
     let domain = effective
@@ -991,6 +987,7 @@ mod tests {
     }
     #[test]
     fn t3_supports_todos_and_queued_event_delivery() {
+        crate::config::_runtime::install_fixture();
         let doc = current_document(
             LayerKind::Global,
             "runner: {runtime: t3}\nmodules: {todos: true, events: true}\nredis: {cluster: {url: 'redis://127.0.0.1:6379'}}",
@@ -1001,6 +998,7 @@ mod tests {
     #[test]
     fn a_declared_connector_needs_a_chosen_runtime_that_carries_conversations() {
         crate::config::_connectors::install_fixture();
+        crate::config::_runtime::install_fixture();
         let company = current_document(
             LayerKind::Company,
             "company: acme\nconnectors: {slack: {app_token: '${A}', bot_token: '${B}'}}",
@@ -1034,6 +1032,7 @@ mod tests {
     #[test]
     fn named_connectors_default_kind_and_validate_settings() {
         crate::config::_connectors::install_fixture();
+        crate::config::_runtime::install_fixture();
         let global = current_document(LayerKind::Global, "runner: {runtime: t3}");
 
         // Multiple named Slack connectors with explicit kind and policy settings.
@@ -1049,7 +1048,6 @@ connectors:
     role: company-agent
     admit: admins_only
     session_scope: company
-    reply_mode: explicit
     app_token: '${APP_B}'
     bot_token: '${BOT_B}'
 "#,
@@ -1067,16 +1065,14 @@ connectors:
             first.session_scope,
             super::super::SessionScope::Conversation
         );
-        assert_eq!(first.reply_mode, super::super::ReplyMode::TurnOutput);
 
         let second = parsed.iter().find(|c| c.key == "second").unwrap();
         assert_eq!(second.kind, "slack");
         assert_eq!(second.role.as_str(), "company-agent");
         assert_eq!(second.admit, super::super::ConnectorAdmit::AdminsOnly);
         assert_eq!(second.session_scope, super::super::SessionScope::Company);
-        assert_eq!(second.reply_mode, super::super::ReplyMode::Explicit);
 
-        // Unknown kind, invalid admit/session_scope/reply_mode are all reported at their paths.
+        // Unknown kind, invalid admit/session_scope, and retired reply_mode are reported at their paths.
         let invalid = current_document(
             LayerKind::Company,
             r#"company: acme
@@ -1087,7 +1083,7 @@ connectors:
     kind: slack
     admit: everyone
     session_scope: global
-    reply_mode: silent
+    reply_mode: explicit
     app_token: '${APP}'
     bot_token: '${BOT}'
 "#,
@@ -1118,7 +1114,7 @@ connectors:
         assert!(
             keys.contains(&(
                 "connectors.bad-opts.reply_mode".into(),
-                FindingKind::InvalidValue
+                FindingKind::UnknownKey
             )),
             "{keys:?}"
         );
@@ -1127,6 +1123,7 @@ connectors:
     #[test]
     fn named_connector_secrets_and_roles_validate_against_home() {
         crate::config::_connectors::install_fixture();
+        crate::config::_runtime::install_fixture();
         let dir = tempfile::tempdir().unwrap();
         let home = Home::at_user_home(dir.path().to_path_buf()).for_writing();
         std::fs::create_dir_all(home.root()).unwrap();

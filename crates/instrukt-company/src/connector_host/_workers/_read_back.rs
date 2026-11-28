@@ -54,14 +54,13 @@ pub(super) async fn worker(
                 .map(|connector| (policy, connector))
         });
         let result = match prepared {
-            Ok(((role, _, session_scope, reply_mode), connector)) => {
+            Ok(((role, _, session_scope), connector)) => {
                 read_back::scan(
                     home,
                     company,
                     key,
                     &role,
                     session_scope,
-                    reply_mode,
                     connector.as_ref(),
                     &|| connection.connectors.now(),
                     &|| *stop.borrow(),

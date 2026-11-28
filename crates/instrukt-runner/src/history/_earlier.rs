@@ -51,7 +51,35 @@ impl From<ConversionError> for rusqlite::Error {
 /// `history_conversations` of the history store or the state database. A
 /// runtime conversation's document and searchable text are never loaded:
 /// its records hold everything the current shape keeps of it.
-pub(super) const EARLIER: &str = "SELECT id,source,native_id,computer,title,parent,aliases,limitations,CASE WHEN substr(source,1,3)='t3:' THEN NULL ELSE document END,CASE WHEN substr(source,1,3)='t3:' THEN NULL ELSE body END FROM history_conversations";
+pub(super) fn earlier_sql() -> String {
+    let predicate = runtime_source_predicate();
+    format!(
+        "SELECT id,source,native_id,computer,title,parent,aliases,limitations,CASE WHEN ({predicate}) THEN NULL ELSE document END,CASE WHEN ({predicate}) THEN NULL ELSE body END FROM history_conversations"
+    )
+}
+
+fn runtime_source_predicate() -> String {
+    let declarations = instrukt_core::config::runtime_declarations();
+    if declarations.is_empty() {
+        return "0".to_owned();
+    }
+    declarations
+        .iter()
+        .map(|declaration| {
+            let prefix = format!("{}:", declaration.name());
+            let escaped = prefix.replace('\'', "''");
+            format!("substr(source,1,{})='{escaped}'", prefix.chars().count())
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+fn declaration_for_source(
+    source: &str,
+) -> Option<&'static instrukt_core::config::RuntimeDeclaration> {
+    let (prefix, _) = source.split_once(':')?;
+    instrukt_core::config::runtime_declaration(prefix)
+}
 
 /// One conversation row of the earlier shape.
 pub(super) struct Earlier {
@@ -69,7 +97,7 @@ pub(super) struct Earlier {
 }
 
 impl Earlier {
-    /// Maps a row of [`EARLIER`].
+    /// Maps a row of [`earlier_sql`].
     pub(super) fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
         let document: Option<String> = r.get(8)?;
         let body: Option<String> = r.get(9)?;
@@ -113,8 +141,13 @@ impl Current {
 /// Converts `earlier`, reading a runtime conversation's records from
 /// `records`, the database that holds the earlier rows.
 pub(super) fn convert(records: &Connection, earlier: &Earlier) -> Result<Current, ConversionError> {
-    if earlier.source.starts_with("t3:") {
-        return runtime(records, &earlier.source, &earlier.native_id);
+    if let Some(declaration) = declaration_for_source(&earlier.source) {
+        return runtime(
+            records,
+            &earlier.source,
+            &earlier.native_id,
+            declaration.legacy_history_normalizer,
+        );
     }
     let Some((document, body)) = &earlier.held else {
         return Err(ConversionError::Shape(
@@ -142,12 +175,15 @@ pub(super) fn convert(records: &Connection, earlier: &Earlier) -> Result<Current
 }
 
 /// A runtime conversation: its conversation record's native record as
-/// `thread`, and one text for each of its message records but T3's reports
-/// that a background command finished (`runtime::reports_background_command`),
-/// placed in `messages`, each record without the members of its composer
-/// context that hold what T3 captured, as `runtime::without_captured_context`
-/// names them. Its run, subagent and turn-item records are not read.
-fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, ConversionError> {
+/// `thread`, and one text for each of its message records accepted by the
+/// runtime declaration's `legacy_history_normalizer` (if any), placed in
+/// `messages`. Its run, subagent and turn-item records are not read.
+fn runtime(
+    records: &Connection,
+    source: &str,
+    thread: &str,
+    normalizer: Option<instrukt_core::config::LegacyHistoryNormalizer>,
+) -> Result<Current, ConversionError> {
     let mut statement = records.prepare_cached(
         "SELECT projection,native_id,payload_json FROM history_projection_records WHERE source=?1 AND thread_id=?2 AND projection IN ('conversation','message')",
     )?;
@@ -174,10 +210,11 @@ fn runtime(records: &Connection, source: &str, thread: &str) -> Result<Current, 
             conversation = Some(native);
             continue;
         }
-        if crate::runtime::reports_background_command(&native) {
+        if let Some(normalize) = normalizer
+            && !normalize(&mut native)
+        {
             continue;
         }
-        crate::runtime::without_captured_context(&mut native);
         // The native record's text, where it has one; a record an earlier
         // state migration repaired holds that text twice in its own.
         let text = match native
@@ -283,4 +320,18 @@ fn mirror(mut document: Value) -> Current {
         }
     }
     Current { document, texts }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn earlier_sql_matches_registered_runtime_prefixes() {
+        let sql = earlier_sql();
+        assert!(sql.starts_with(
+            "SELECT id,source,native_id,computer,title,parent,aliases,limitations,CASE WHEN ("
+        ));
+        assert!(sql.ends_with("FROM history_conversations"));
+    }
 }

@@ -265,7 +265,7 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
         .find(|session| *session != first && *session != second)
         .unwrap();
     assert!(!c.input(&third, 0).contains(history));
-    c.finish_turn(&third, 0, "NOOP");
+    c.finish_turn(&third, 0, "Noted.");
     let conversation = format!("{channel}/{root}");
     wait(
         "the reply has completed before the root event arrives",
@@ -345,7 +345,7 @@ fn a_first_tag_brings_the_most_recent_messages_before_it() {
         ).unwrap()
         },
     );
-    c.finish_turn(&session, 0, "NOOP");
+    c.finish_turn(&session, 0, "Noted.");
     wait("the retried reply reaches the agent", || {
         c.runtime.message_count(&session) == 2
     });

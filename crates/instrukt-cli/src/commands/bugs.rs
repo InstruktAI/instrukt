@@ -180,6 +180,7 @@ fn work_at(ctx: &Ctx, root: &std::path::Path) -> anyhow::Result<(Work, ProjectRe
         ctx.home.clone(),
         crate::wiring::environment(ctx)?,
         ctx.clock.shared(),
+        crate::runtimes::registry(),
     );
     let project = work.project_at(root)?;
     Ok((work, project))

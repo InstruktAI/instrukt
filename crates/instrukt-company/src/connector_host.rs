@@ -18,9 +18,7 @@ use tokio::task::{JoinHandle, block_in_place};
 use instrukt_connector::{
     Clock, Connector, ConnectorError, Declared, Inbox, Incoming, Kind, SecretResolver,
 };
-use instrukt_core::config::{
-    Admitted, AdmittedSecrets, ConnectorAdmit, Current, ReplyMode, SessionScope,
-};
+use instrukt_core::config::{Admitted, AdmittedSecrets, ConnectorAdmit, Current, SessionScope};
 use instrukt_core::home::Home;
 use instrukt_core::ids::{ProjectSlug, RoleName};
 use instrukt_outside::Wait;
@@ -507,7 +505,7 @@ fn connector_policy(
     admitted: &Admitted,
     company: &ProjectSlug,
     key: &str,
-) -> Result<(RoleName, ConnectorAdmit, SessionScope, ReplyMode), ConnectorError> {
+) -> Result<(RoleName, ConnectorAdmit, SessionScope), ConnectorError> {
     admitted
         .company(company)
         .and_then(|company| company.connectors.iter().find(|c| c.key == key))
@@ -516,7 +514,6 @@ fn connector_policy(
                 declared.role.clone(),
                 declared.admit,
                 declared.session_scope,
-                declared.reply_mode,
             )
         })
         .ok_or_else(|| {
@@ -555,7 +552,7 @@ impl Inbox for HostInbox {
             connectors,
             ..
         } = self.connection.as_ref();
-        let (role, _, session_scope, reply_mode) = connector_policy(&current.get(), company, key)?;
+        let (role, _, session_scope) = connector_policy(&current.get(), company, key)?;
         block_in_place(|| {
             conversations::retain_with_policy(
                 home,
@@ -563,7 +560,6 @@ impl Inbox for HostInbox {
                 &incoming,
                 &role,
                 session_scope,
-                reply_mode,
                 connectors.now(),
             )
         })

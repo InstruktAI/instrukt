@@ -750,13 +750,20 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         binding.session_scope,
         instrukt_core::config::SessionScope::Conversation
     );
-    assert_eq!(
-        binding.reply_mode,
-        instrukt_core::config::ReplyMode::TurnOutput
-    );
 
     // Existing refusals survive verbatim and `not_admin` is now accepted.
     let raw = Connection::open(&file).unwrap();
+    let needs_rollover: i64 = raw
+        .query_row(
+            "SELECT needs_explicit_rollover FROM connected_conversations WHERE session='t3:legacy-conv'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        needs_rollover, 1,
+        "legacy v33 turn_output live binding must be flagged for explicit-frontstage rollover"
+    );
     let version: u32 = raw
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
@@ -775,6 +782,111 @@ fn golden_v33_database_upgrades_cleanly_to_v34_preserving_conversations_and_refu
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(reasons, vec!["not_admin", "not_own", "unavailable"]);
+}
+
+#[test]
+fn golden_v43_database_upgrades_cleanly_to_v44_with_rollover_and_turn_correlation() {
+    let env = common::TestEnv::new();
+    let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf()).for_writing();
+    let state = env.instrukt_home().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let file = state.join("instrukt.db");
+
+    // Start from the shipped v37 golden schema, bring its tables to exact v43 shape,
+    // then seed all 6 Lead 2 fixture cases from `tests/fixtures/state-v43.sql`.
+    {
+        let db = Connection::open(&file).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v37.sql"))
+            .unwrap();
+        db.execute_batch(
+            "CREATE TABLE IF NOT EXISTS review_asks (
+                 project TEXT NOT NULL, commit_sha TEXT NOT NULL, session TEXT NOT NULL,
+                 candidate TEXT NOT NULL, attempt INTEGER NOT NULL, input_id TEXT NOT NULL,
+                 state TEXT NOT NULL, cause TEXT, queued_at TEXT NOT NULL,
+                 PRIMARY KEY (project, commit_sha, session, attempt)
+             );
+             DROP TABLE IF EXISTS listing_copies;
+             DROP TABLE IF EXISTS runner_workers;
+             DROP TABLE IF EXISTS redis_reachability;
+             DROP TABLE IF EXISTS runner_skipped_wake;
+             DROP TABLE IF EXISTS runner_admission;",
+        )
+        .unwrap();
+        db.pragma_update(None, "user_version", 43).unwrap();
+        db.execute_batch(include_str!("../fixtures/state-v43.sql"))
+            .unwrap();
+    }
+
+    let db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+    drop(db);
+
+    let raw = Connection::open(&file).unwrap();
+    let version: u32 = raw
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, instrukt_core::state_db::schema_version());
+
+    // Retired columns dropped, new columns added.
+    let has_col = |table: &str, col: &str| -> bool {
+        raw.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"),
+            [col],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    for (table, col) in [
+        ("connected_conversations", "reply_mode"),
+        ("connected_conversations", "source_identity"),
+        ("connected_conversations", "position_json"),
+        ("conversation_messages", "turn_update"),
+    ] {
+        assert!(
+            !has_col(table, col),
+            "{table}.{col} should be dropped in v44"
+        );
+    }
+    for (table, col) in [
+        ("connected_conversations", "needs_explicit_rollover"),
+        ("conversation_messages", "observed_run_id"),
+        ("conversation_messages", "turn_started_at"),
+        ("conversation_messages", "terminal_error_queued_at"),
+        ("conversation_answers", "source_message"),
+    ] {
+        assert!(has_col(table, col), "{table}.{col} should exist in v44");
+    }
+
+    // Verify rollover flags & unstarted cache clearing across all 6 cases.
+    let conv_state = |key: &str| -> (i64, Option<String>, Option<String>) {
+        raw.query_row(
+            "SELECT needs_explicit_rollover, request, opening FROM connected_conversations WHERE semantic_key=?1",
+            [key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap()
+    };
+    assert_eq!(conv_state("k:live").0, 1);
+    assert_eq!(conv_state("k:crash").0, 1);
+    assert_eq!(conv_state("k:unstarted"), (0, None, None));
+    assert_eq!(conv_state("k:explicit").0, 0);
+    assert_eq!(conv_state("k:company").0, 1);
+    assert_eq!(conv_state("k:prev29").0, 1);
+
+    // Verify Turn 1 dispatch_command_id backfill (including multi-runtime PK disambiguation,
+    // company scope opening_conversation, pre-v34 opening_conversation IS NULL, pre-v29 NULL).
+    let cmd_id = |msg: &str| -> Option<String> {
+        raw.query_row(
+            "SELECT dispatch_command_id FROM conversation_messages WHERE message=?1",
+            [msg],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(cmd_id("m-live").as_deref(), Some("cmd-live-start"));
+    assert_eq!(cmd_id("m-followup").as_deref(), Some("cmd-followup"));
+    assert_eq!(cmd_id("m-exp").as_deref(), Some("cmd-exp-start"));
+    assert_eq!(cmd_id("m-co").as_deref(), Some("cmd-co-start"));
+    assert_eq!(cmd_id("m-prev29"), None);
 }
 
 /// The work tables' rows of `db`, each row as its columns' text, in key

@@ -13,7 +13,7 @@ use super::_layer::{Layer, read_usable};
 use super::_merge::overlay;
 use super::_module::Module;
 use super::_regenerable::{REGENERABLE_KEY, RegenerablePath};
-use super::_runtime::{Env, Runtime};
+use super::_runtime::{Env, RuntimeDeclaration, resolve_runtime, runtime_declarations};
 use super::_schema::{self, DEFAULT_GITHUB_API_URL, LayerKind};
 use crate::home::Home;
 use crate::ids::{DomainName, ProjectSlug};
@@ -501,14 +501,10 @@ impl Configuration {
         Interpolator::new(&self.value, Mode::Expand(env)).expand_text(template, None)
     }
 
-    /// The runtime `runner.runtime` names; the one compiled runtime when it
+    /// The runtime `runner.runtime` names; the sole compiled runtime when it
     /// is unset. Installed tools and caller context never select one.
-    pub fn runner_runtime(&self) -> Result<Runtime, ConfigError> {
-        match self.str_at(&["runner", "runtime"])? {
-            Some(name) => Runtime::named(name)
-                .ok_or_else(|| invalid("runner.runtime", "unknown compiled runtime adapter")),
-            None => Ok(Runtime::COMPILED),
-        }
+    pub fn runner_runtime(&self) -> Result<&'static RuntimeDeclaration, ConfigError> {
+        resolve_runtime(self.str_at(&["runner", "runtime"])?)
     }
 
     pub fn caller(&self, env: &Env) -> Result<Option<crate::ids::SessionRef>, ConfigError> {
@@ -853,14 +849,19 @@ pub(crate) fn effective_value(
     project: Option<&Value>,
 ) -> Result<Value, ConfigError> {
     let mut value = _schema::defaults(LayerKind::Global);
-    let shipped: Value =
-        serde_yaml_ng::from_str(include_str!("shipped/t3.yaml")).map_err(|source| {
-            ConfigError::Parse {
-                path: "shipped/t3.yaml".into(),
-                source,
-            }
-        })?;
-    overlay(&mut value, &shipped);
+    for declaration in runtime_declarations() {
+        if declaration.shipped_yaml.trim().is_empty() {
+            continue;
+        }
+        let shipped: Value =
+            serde_yaml_ng::from_str(declaration.shipped_yaml).map_err(|source| {
+                ConfigError::Parse {
+                    path: format!("shipped/{}.yaml", declaration.name).into(),
+                    source,
+                }
+            })?;
+        overlay(&mut value, &shipped);
+    }
     if let Some(global) = global {
         overlay(&mut value, &_schema::permitted(global, LayerKind::Global));
     }
@@ -880,6 +881,7 @@ mod tests {
     }
 
     fn config(global: &str, project: Option<&str>) -> Configuration {
+        crate::config::_runtime::install_fixture();
         let project = project.map(yaml);
         Configuration::from_value(
             effective_value(Some(&yaml(global)), project.as_ref()).unwrap(),
@@ -963,7 +965,7 @@ mod tests {
             cfg.get(Some("board"), &Env::default()),
             Err(ConfigError::MissingKey { .. })
         ));
-        assert_eq!(cfg.runner_runtime().unwrap(), Runtime::COMPILED);
+        assert_eq!(cfg.runner_runtime().unwrap().name(), "t3");
     }
 
     #[test]

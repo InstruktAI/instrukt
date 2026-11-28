@@ -120,6 +120,8 @@ fn failed(error: impl std::fmt::Display) -> AskError {
 pub struct AskContext<'a> {
     pub home: &'a Home,
     pub config: &'a Configuration,
+    pub env: &'a instrukt_core::config::Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
     /// The project the caller stands in, at the caller's worktree root.
     pub project: &'a ProjectRef,
     pub verdicts: &'a dyn HeadVerdicts,
@@ -201,7 +203,15 @@ fn ask_inner(context: &AskContext<'_>, coordinates: &Coordinates) -> Result<Repl
     } else {
         false
     };
-    let adapter = crate::runtime::adapter(runtime);
+    let adapter = context
+        .runtimes
+        .adapter(runtime.name(), context.env)
+        .map_err(|error| {
+            refused(
+                Check::Runtime,
+                format!("the runner's runtime cannot start the requested reviewer: {error}"),
+            )
+        })?;
     let checkout = registered_checkout(context.home, slug)?;
     _admission::placement(&checkout, coordinates)?;
     _admission::cleanliness(&coordinates.worktree)?;

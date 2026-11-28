@@ -2,6 +2,45 @@
 
 ## 0.1.0
 
+### Thin live runtime boundary and universal explicit company frontstage
+
+Live runtime operations now run exclusively over the runtime adapter's live
+control/read surface (authenticated `orchestration.getThreadProjection` on T3)
+with zero live operational reads of T3's internal `statev2.sqlite`. Only
+offline cold history extraction (`instrukt history`) and thread archival
+retention (`thread-retention`) remain on T3's internal database.
+
+- **Automatic forward migrations:**
+  - `company.yaml` migrates automatically from `schema_version: 6` to `7`,
+    retiring `connectors.<name>.reply_mode` (both `turn_output` and `explicit`
+    entries are stripped cleanly; new declarations setting `reply_mode` are
+    refused as an unknown key).
+  - `state/instrukt.db` migrates automatically from schema `v43` to `v44`,
+    dropping legacy `connected_conversations.{source_identity, position_json, reply_mode}`
+    and `conversation_messages.turn_update`, adding live turn-correlation
+    columns (`observed_run_id`, `turn_started_at`, `terminal_error_queued_at`),
+    `conversation_answers.source_message`, and marking pre-upgrade
+    `turn_output` bindings with `connected_conversations.needs_explicit_rollover = 1`.
+- **Universal explicit frontstage and curated status:**
+  - Every company connector and role now replies exclusively via
+    `instrukt company reply [--conversation <id>] --text <text>` (persisted in
+    write-isolated `state/company-replies.db` under `state/company-replies.lock`,
+    never waiting on `state/writer.lock`).
+  - Agents working on an active addressed company turn may optionally publish
+    short single-line progress updates (`<= 256` UTF-8 bytes) via
+    `instrukt company status [--conversation <id>] --text <text>` (persisted in
+    single-writer `state/company-turn-status/<digest>.json`).
+  - Unrecovered failed turns after bounded retries (`FAILED_RETRY_MAX_ATTEMPTS = 3`)
+    and confirmed addressed turns that finish idle without queuing an explicit
+    reply settle atomically with a standard sanitized member-facing error reply
+    and an operator status/anomaly record.
+- **Automatic demand-driven rollover for pre-upgrade `turn_output` sessions:**
+  - Pre-upgrade bindings flagged with `needs_explicit_rollover = 1` continue
+    draining any in-flight turn and roll over automatically on demand when
+    unanswered or newly arrived messages are ready, retiring the old generation
+    into `runtime_generations` and opening a successor session with fresh
+    explicit-frontstage instructions. No manual session reset is required.
+
 ### Ephemeral project working directories move under `.instrukt/`
 
 All instrukt-owned ephemeral project working directories now live under the

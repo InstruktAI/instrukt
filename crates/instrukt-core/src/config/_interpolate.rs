@@ -1,7 +1,7 @@
 use serde_yaml_ng::Value;
 
 use super::_error::ConfigError;
-use super::_runtime::{Env, Runtime};
+use super::_runtime::{Env, resolve_runtime};
 
 /// What the interpolator resolves `${VAR}` and `runtime.*` against.
 #[derive(Debug, Clone, Copy)]
@@ -190,13 +190,8 @@ impl<'a> Interpolator<'a> {
                 .and_then(|r| r.get("runtime"))
                 .and_then(Value::as_str)
                 .ok_or(ConfigError::NoActiveRuntime)?;
-            if Runtime::named(runtime).is_none() {
-                return Err(ConfigError::InvalidValue {
-                    key: "runner.runtime".into(),
-                    message: format!("unknown compiled runtime adapter `{runtime}`"),
-                });
-            }
-            return self.walk(&["runtimes", runtime, fields[0]], path);
+            let runtime = resolve_runtime(Some(runtime))?;
+            return self.walk(&["runtimes", runtime.name(), fields[0]], path);
         }
         if let Mode::Check = self.mode {
             return Ok(Located::Derived(String::new()));
@@ -209,7 +204,7 @@ impl<'a> Interpolator<'a> {
             .get("runner")
             .and_then(|r| r.get("runtime"))
             .and_then(Value::as_str)
-            .and_then(Runtime::named);
+            .and_then(|name| resolve_runtime(Some(name)).ok());
         let session = selected
             .and_then(|r| r.caller(env))
             .ok_or(ConfigError::NoActiveRuntime)?;
@@ -383,6 +378,7 @@ mod tests {
     }
     #[test]
     fn caller_context_never_selects_a_runtime() {
+        crate::config::_runtime::install_fixture();
         let env = Env::from_pairs([("TEST_SESSION", "thread:1")]).with_caller(&NativeCaller);
         let root: Value = serde_yaml_ng::from_str("runner: {runtime: t3}").unwrap();
         assert_eq!(

@@ -44,7 +44,12 @@ pub fn run(command: FlowCommand, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let env = crate::wiring::environment(ctx)?;
     let workflow = Workflow::new(ctx.home.clone(), evidence, env.clone());
     let config = instrukt_core::config::Configuration::load_at(&ctx.home, &ctx.cwd)?;
-    let work = instrukt_todos::work::Work::new(ctx.home.clone(), env.clone(), ctx.clock.shared());
+    let work = instrukt_todos::work::Work::new(
+        ctx.home.clone(),
+        env.clone(),
+        ctx.clock.shared(),
+        crate::runtimes::registry(),
+    );
     let project = work.project_at(&ctx.cwd)?;
     let domain = config.workflow_domain()?;
     let flavor = instrukt_todos::workflow::Flavor::load(

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/mcp-access.rs
+assertion_line: 317
 expression: refused
 ---
-instrukt: the call is refused: the speaker of this session's current turn cannot be established: runtime `t3` turn observation failed: conversation source SQLite: unable to open database file: file://[home]/.t3/userdata/statev2.sqlite?mode=ro
+instrukt: the call is refused: the speaker of this session's current turn cannot be established: live runtime observation failed: runtime `t3` thread projection failed: native show unavailable

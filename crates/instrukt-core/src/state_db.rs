@@ -1241,23 +1241,14 @@ mod tests {
             .collect::<Result<_, _>>()
             .unwrap();
         assert_eq!(positions, [(1, 1), (2, 2)]);
-        let intervals: Vec<(Option<String>, Option<String>)> = conn
-            .prepare("SELECT unavailable_since,turn_update FROM conversation_messages ORDER BY written_us")
+        let intervals: Vec<Option<String>> = conn
+            .prepare("SELECT unavailable_since FROM conversation_messages ORDER BY written_us")
             .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_map([], |row| row.get(0))
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(
-            intervals,
-            [
-                (
-                    Some("2026-11-18T10:00:00Z".to_owned()),
-                    Some("Working".to_owned())
-                ),
-                (None, None)
-            ]
-        );
+        assert_eq!(intervals, [Some("2026-11-18T10:00:00Z".to_owned()), None]);
         type Row = (
             String,
             String,
@@ -1359,11 +1350,21 @@ mod tests {
             )
             .unwrap();
         assert_eq!(uncertain, 0);
-        let binding: (Option<String>, String, String, String) = conn.query_row(
-            "SELECT c.source_identity,c.session,c.position_json,m.failure FROM connected_conversations c JOIN conversation_messages m USING(company,connector,conversation) WHERE m.message='sent'",
-            [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-        ).unwrap();
-        assert_eq!(binding, (None, "t3:bound".into(), "{}".into(), "retained finding; native input unmatched after an earlier source move; original source identity unavailable".into()));
+        let binding: (String, i64, String) = conn
+            .query_row(
+                "SELECT c.session,c.needs_explicit_rollover,m.failure FROM connected_conversations c JOIN conversation_messages m USING(company,connector,conversation) WHERE m.message='sent'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            binding,
+            (
+                "t3:bound".into(),
+                1,
+                "retained finding; native input unmatched after an earlier source move; original source identity unavailable".into()
+            )
+        );
         let retained = conn
             .prepare(
                 "SELECT state,boundary,admission_position,unavailable_since,superseded_at,attempted_at,retry_at,failed_turns
@@ -1439,21 +1440,15 @@ mod tests {
         migrate(&mut conn, Path::new(":memory:")).unwrap();
         // A stored message keeps its stage, with no admission time, no open
         // interval, no update and no turn end.
-        type Row = (
-            String,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        );
+        type Row = (String, Option<String>, Option<String>, Option<String>);
         let message: Row = conn
             .query_row(
-                "SELECT state,admitted_at,unavailable_since,turn_update,turn_ended_at FROM conversation_messages",
+                "SELECT state,admitted_at,unavailable_since,turn_ended_at FROM conversation_messages",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap();
-        assert_eq!(message, ("sent".to_owned(), None, None, None, None));
+        assert_eq!(message, ("sent".to_owned(), None, None, None));
     }
 
     #[test]
@@ -1593,9 +1588,9 @@ mod tests {
             .unwrap();
         assert_eq!(version, schema_version());
 
-        let conv: (String, String, String, Option<String>, Option<String>) = conn
+        let conv: (String, String, i64, Option<String>, Option<String>) = conn
             .query_row(
-                "SELECT role, session_scope, reply_mode, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
+                "SELECT role, session_scope, needs_explicit_rollover, opening_conversation, display_title FROM connected_conversations WHERE conversation='C1/1.1'",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
@@ -1605,7 +1600,7 @@ mod tests {
             (
                 "company-agent".to_owned(),
                 "conversation".to_owned(),
-                "turn_output".to_owned(),
+                1,
                 None,
                 Some("acme — #general".to_owned()),
             )
@@ -1940,6 +1935,189 @@ mod tests {
             )
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn version_44_migrates_v43_conversations_rollover_flags_and_turn1_dispatch_keys() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        for migration in _schema::MIGRATIONS.iter().take(43) {
+            let tx = conn.transaction().unwrap();
+            match migration {
+                _schema::Migration::Sql(script) => tx.execute_batch(script),
+                _schema::Migration::Step(step) => step(&tx),
+            }
+            .unwrap();
+            tx.commit().unwrap();
+        }
+        conn.pragma_update(None, "user_version", 43).unwrap();
+        // Seed all Lead 2 row shapes in a v43 database:
+        // 1. Live `turn_output` (pre-v34 opening_conversation IS NULL) + matching runtime_bindings.start_key
+        // 2. Crash-window `turn_output` (session IS NULL, matching runtime_bindings row exists)
+        // 3. Unstarted cached `turn_output` (session IS NULL, no runtime_bindings row, request IS NOT NULL)
+        // 4. Live `explicit` (needs_explicit_rollover stays 0)
+        // 5. Company-scoped `turn_output` (`session_scope = 'company'`, `conversation = ''`, `opening_conversation = 'C5/1'`)
+        // 6. Pre-v29 binding with `start_key IS NULL` (leaves dispatch_command_id NULL)
+        // 7. Multi-runtime PK on runtime_bindings (stale runtime row must not cross-match c.session)
+        conn.execute_batch(
+            "INSERT INTO runtime_bindings(runtime,semantic_key,kind,project,subject,session,checkout,accepted,request,generation,start_key)
+             VALUES ('t3','k:live','conversation','acme','k:live','t3:sess-live','/acme',1,'{}',1,'cmd-live-start'),
+                    ('other','k:live','conversation','acme','k:live','other:sess-old','/acme',1,'{}',1,'cmd-wrong-runtime'),
+                    ('t3','k:crash','conversation','acme','k:crash','t3:sess-crash','/acme',0,'{}',1,'cmd-crash-start'),
+                    ('t3','k:explicit','conversation','acme','k:explicit','t3:sess-exp','/acme',1,'{}',1,'cmd-exp-start'),
+                    ('t3','k:company','conversation','acme','k:company','t3:sess-co','/acme',1,'{}',1,'cmd-co-start'),
+                    ('t3','k:prev29','conversation','acme','k:prev29','t3:sess-prev29','/acme',1,'{}',1,NULL);
+             INSERT INTO connected_conversations(company,connector,conversation,semantic_key,opening,opening_conversation,request,session,source_identity,position_json,reply_mode,session_scope)
+             VALUES ('acme','slack','C1/1','k:live','m-live',NULL,'{\"brief\":\"old\"}','t3:sess-live','src-1','{}','turn_output','conversation'),
+                    ('acme','slack','C2/1','k:crash','m-crash','C2/1','{\"brief\":\"crash\"}',NULL,'src-2','{}','turn_output','conversation'),
+                    ('acme','slack','C3/1','k:unstarted','m-unstarted','C3/1','{\"brief\":\"stale\"}',NULL,NULL,NULL,'turn_output','conversation'),
+                    ('acme','coder','C4/1','k:explicit','m-exp','C4/1','{\"brief\":\"exp\"}','t3:sess-exp','src-4','{}','explicit','conversation'),
+                    ('acme','co','','k:company','m-co','C5/1','{\"brief\":\"co\"}','t3:sess-co','src-5','{}','turn_output','company'),
+                    ('acme','slack','C6/1','k:prev29','m-prev29',NULL,'{\"brief\":\"old\"}','t3:sess-prev29','src-6','{}','turn_output','conversation');
+             INSERT INTO conversation_messages(company,connector,conversation,message,written_us,written_at,arrived_at,state,text,turn_update,dispatch_command_id)
+             VALUES ('acme','slack','C1/1','m-live',1,'2026-11-27T10:00:00Z','2026-11-27T10:00:00Z','sent','Hi','working',NULL),
+                    ('acme','slack','C1/1','m-followup',2,'2026-11-27T10:01:00Z','2026-11-27T10:01:00Z','sent','More',NULL,'cmd-followup'),
+                    ('acme','coder','C4/1','m-exp',3,'2026-11-27T10:02:00Z','2026-11-27T10:02:00Z','sent','Exp',NULL,NULL),
+                    ('acme','co','C5/1','m-co',4,'2026-11-27T10:03:00Z','2026-11-27T10:03:00Z','sent','Co',NULL,NULL),
+                    ('acme','slack','C6/1','m-prev29',5,'2026-11-27T10:04:00Z','2026-11-27T10:04:00Z','sent','Old',NULL,NULL);
+             INSERT INTO conversation_answers(company,connector,conversation,turn,piece,text,posted_at)
+             VALUES ('acme','coder','C4/1','reply:abc',0,'Done','2026-11-27T10:05:00Z');",
+        )
+        .unwrap();
+
+        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let version: u32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, schema_version());
+
+        // Retired columns are gone.
+        for (table, col) in [
+            ("connected_conversations", "reply_mode"),
+            ("connected_conversations", "source_identity"),
+            ("connected_conversations", "position_json"),
+            ("conversation_messages", "turn_update"),
+        ] {
+            let exists: i64 = conn
+                .query_row(
+                    &format!("SELECT count(*) FROM pragma_table_info('{table}') WHERE name=?1"),
+                    [col],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(exists, 0, "{table}.{col} must be dropped");
+        }
+
+        // Rollover flags and unstarted cache clearing.
+        type ConvRow = (String, i64, Option<String>, Option<String>, Option<String>);
+        let convs: Vec<ConvRow> = conn
+            .prepare("SELECT semantic_key, needs_explicit_rollover, opening, opening_conversation, request FROM connected_conversations ORDER BY semantic_key")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            convs,
+            vec![
+                (
+                    "k:company".into(),
+                    1,
+                    Some("m-co".into()),
+                    Some("C5/1".into()),
+                    Some("{\"brief\":\"co\"}".into())
+                ),
+                (
+                    "k:crash".into(),
+                    1,
+                    Some("m-crash".into()),
+                    Some("C2/1".into()),
+                    Some("{\"brief\":\"crash\"}".into())
+                ),
+                (
+                    "k:explicit".into(),
+                    0,
+                    Some("m-exp".into()),
+                    Some("C4/1".into()),
+                    Some("{\"brief\":\"exp\"}".into())
+                ),
+                (
+                    "k:live".into(),
+                    1,
+                    Some("m-live".into()),
+                    None,
+                    Some("{\"brief\":\"old\"}".into())
+                ),
+                (
+                    "k:prev29".into(),
+                    1,
+                    Some("m-prev29".into()),
+                    None,
+                    Some("{\"brief\":\"old\"}".into())
+                ),
+                ("k:unstarted".into(), 0, None, None, None),
+            ]
+        );
+
+        // Turn 1 dispatch_command_id backfill & new columns.
+        type MsgRow = (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        );
+        let msgs: Vec<MsgRow> = conn
+            .prepare("SELECT message, dispatch_command_id, observed_run_id, turn_started_at, terminal_error_queued_at FROM conversation_messages ORDER BY written_us")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            msgs,
+            vec![
+                (
+                    "m-live".into(),
+                    Some("cmd-live-start".into()),
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "m-followup".into(),
+                    Some("cmd-followup".into()),
+                    None,
+                    None,
+                    None
+                ),
+                (
+                    "m-exp".into(),
+                    Some("cmd-exp-start".into()),
+                    None,
+                    None,
+                    None
+                ),
+                ("m-co".into(), Some("cmd-co-start".into()), None, None, None),
+                ("m-prev29".into(), None, None, None, None),
+            ]
+        );
+
+        // conversation_answers.source_message exists and defaults to NULL.
+        let source_msg: Option<String> = conn
+            .query_row(
+                "SELECT source_message FROM conversation_answers WHERE turn='reply:abc'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(source_msg, None);
+
+        // Re-running v44 is idempotent.
+        let tx = conn.transaction().unwrap();
+        if let Some(_schema::Migration::Step(step)) = _schema::MIGRATIONS.get(43) {
+            step(&tx).unwrap();
+        }
+        tx.commit().unwrap();
     }
 
     #[test]

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/conversations.rs
+assertion_line: 132
 expression: c.opening(&session)
 ---
 [Instrukt Assignment]
@@ -10,6 +11,7 @@ Resolved role capabilities: role: company-agent; class: standing; grants: docs-r
 Company: acme
 Connector: slack
 Conversation: C1/1700000001.000100
+Reply mode: explicit (raw turn output is not posted; send replies with `instrukt company reply --text <text>`, and optionally publish short active-turn progress with `instrukt company status --text <text>`)
 Load `instrukt docs get assistance/procedure/company-assistance --closure` before handling the member's message.
 [/Instrukt Assignment]
 [Instrukt Conversation Context ([BOUNDARY])]

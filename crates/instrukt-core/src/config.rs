@@ -44,7 +44,7 @@ mod _webhooks;
 use std::path::Path;
 
 pub use _agents::{
-    AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile,
+    AgentPreference, AgentSelection, Agents, COMPANY_AGENT_ROLE, Effort, HarnessKind, Profile,
     RETIRED_ORCHESTRATOR_ROLES, RoleSelection, SHIPPED_AGENTS, TODO_ORCHESTRATOR_ROLE,
     current_role,
 };
@@ -61,7 +61,7 @@ pub use _backup::{
 pub use _company::{Member, Members};
 pub use _company_document::{COMPANY_DOCUMENT, convert_company_document, write_company_settings};
 pub use _connectors::{
-    ConnectorAdmit, DeclaredConnector, ReplyMode, SessionScope, connector_declaration,
+    ConnectorAdmit, DeclaredConnector, SessionScope, connector_declaration,
     install_connector_declarations,
 };
 pub use _effective::{ApprovalGate, Approver, BoardRef, Configuration, Notify, Tier, WatchedRef};
@@ -92,8 +92,12 @@ pub use _regenerable::{EntryRefusal, REGENERABLE_KEY, RegenerablePath, withholds
 pub use _render::render_yaml;
 pub use _review::{REVIEW_AUTOMATIC_KEY, REVIEW_NEEDED_EVENT, REVIEW_PROCEDURE, REVIEW_ROLE};
 pub use _root::{RootDocument, classify_root};
-pub use _runtime::WorkflowCapability;
-pub use _runtime::{Env, NativeCapabilities, Runtime};
+#[cfg(test)]
+pub(crate) use _runtime::install_fixture as install_runtime_fixture;
+pub use _runtime::{
+    Env, LegacyHistoryNormalizer, NativeCapabilities, RuntimeDeclaration, WorkflowCapability,
+    install_runtime_declarations, resolve_runtime, runtime_declaration, runtime_declarations,
+};
 pub use _schema::{
     COMPANY_SCHEMA_VERSION, GLOBAL_SCHEMA_VERSION, LayerKind, PROJECT_SCHEMA_VERSION,
     SHIPPED_BLUEPRINT_ENGINES, describe_schema, editor_schema, layer_json_schema,

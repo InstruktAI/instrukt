@@ -44,7 +44,7 @@ pub enum HistoryError {
     #[error(transparent)]
     Config(#[from] instrukt_core::config::ConfigError),
     #[error(transparent)]
-    ConversationSource(#[from] crate::runtime::conversations::SourceError),
+    ConversationSource(#[from] crate::runtime::cold_text::SourceError),
     #[error(transparent)]
     Runtime(#[from] crate::sessions::SessionsError),
     /// What the computer fleet's query observed instead of an answer.
@@ -78,7 +78,7 @@ impl HistoryError {
             Self::Runtime(crate::sessions::SessionsError::NoActiveRuntime) => {
                 "choose a runtime before extracting conversation history".into()
             }
-            Self::ConversationSource(crate::runtime::conversations::SourceError::Watch(_)) => {
+            Self::ConversationSource(crate::runtime::cold_text::SourceError::Watch(_)) => {
                 "history source notifications are unavailable; inspect this computer's history logs".into()
             }
             _ => {
@@ -148,14 +148,18 @@ pub struct Extraction {
 /// Catch up through the runtime's text read into the history store, under
 /// the history lock alone; the state database's writer lock spans no
 /// runtime I/O.
-pub fn extract(home: &Home, env: &Env) -> Result<Extraction, HistoryError> {
-    let source = source(home, env)?;
+pub fn extract(
+    home: &Home,
+    env: &Env,
+    runtimes: &crate::runtime::RuntimeRegistry,
+) -> Result<Extraction, HistoryError> {
+    let source = source(home, env, runtimes)?;
     let mut db = _db::open(home)?;
     let mut position = _projection::position(&db, source.identity())?;
     let mut report = Extraction::default();
     loop {
         let started = std::time::Instant::now();
-        let crate::runtime::conversations::TextChanges {
+        let crate::runtime::cold_text::TextChanges {
             conversations,
             position: next,
             has_more,
@@ -183,7 +187,12 @@ pub struct Search<'a> {
     pub timeout: Duration,
 }
 
-pub fn search(home: &Home, env: &Env, request: &Search<'_>) -> Result<SearchResult, HistoryError> {
+pub fn search(
+    home: &Home,
+    env: &Env,
+    runtimes: &crate::runtime::RuntimeRegistry,
+    request: &Search<'_>,
+) -> Result<SearchResult, HistoryError> {
     let Search {
         query,
         limit,
@@ -195,7 +204,7 @@ pub fn search(home: &Home, env: &Env, request: &Search<'_>) -> Result<SearchResu
             "a nonempty FTS5 query and limit between 1 and 1000 are required".into(),
         ));
     }
-    let mut result = local_search(home, env, query, limit)?;
+    let mut result = local_search(home, env, runtimes, query, limit)?;
     if !computers.is_empty() {
         match _fleet::merge(home, env, request) {
             Ok(mut remote) => {
@@ -232,11 +241,12 @@ pub fn search(home: &Home, env: &Env, request: &Search<'_>) -> Result<SearchResu
 pub(super) fn local_search(
     home: &Home,
     env: &Env,
+    runtimes: &crate::runtime::RuntimeRegistry,
     query: &str,
     limit: usize,
 ) -> Result<SearchResult, HistoryError> {
     let computer = instrukt_core::machine::machine_id(home)?.to_string();
-    let caught_up = extract(home, env);
+    let caught_up = extract(home, env, runtimes);
     let mut matches = _store::search(home, query, limit)?;
     for found in &mut matches {
         found.store_computer = computer.clone();
@@ -257,31 +267,25 @@ pub fn show(home: &Home, source: &str, conversation: &str) -> Result<Value, Hist
 }
 
 /// One retained message that carries its author's role.
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RetainedMessage {
-    pub role: crate::runtime::conversations::Role,
+    pub role: crate::runtime::cold_text::Role,
     pub text: String,
-}
-
-/// The messages with a role the history store retained of conversation
-/// `thread` from `source`, in order, read without the history lock from a
-/// read-only snapshot that changes nothing on disk; a store at an earlier
-/// schema version is brought forward in that snapshot only. `None` when the
-/// store does not exist or has not retained the conversation.
-pub(crate) fn retained_messages(
-    home: &Home,
-    source: &str,
-    thread: &str,
-) -> Result<Option<Vec<RetainedMessage>>, HistoryError> {
-    _db::retained_messages(home, source, thread)
 }
 
 pub(super) fn source(
     home: &Home,
     env: &Env,
-) -> Result<Box<dyn crate::runtime::conversations::ConversationSource>, HistoryError> {
+    runtimes: &crate::runtime::RuntimeRegistry,
+) -> Result<Box<dyn crate::runtime::cold_text::ColdTextSource>, HistoryError> {
     let runtime = instrukt_core::config::Configuration::load_global(home)?.runner_runtime()?;
-    Ok(crate::runtime::adapter(runtime).conversation_source(home, env)?)
+    let adapter = runtimes
+        .adapter(runtime.name(), env)
+        .map_err(crate::sessions::SessionsError::from)?;
+    Ok(adapter
+        .cold_text_source(home, env)
+        .map_err(crate::sessions::SessionsError::from)?)
 }
 
 /// Whether history extraction is on: the machine's switch while no project
@@ -304,7 +308,13 @@ impl Readers {
     /// Starts what the current generation switches on and stops what it
     /// switches off. A worker whose thread ended is started again; each
     /// worker retries what it depends on inside its own thread.
-    pub(crate) fn refresh(&mut self, home: &Home, env: &Env, current: &Current) {
+    pub(crate) fn refresh(
+        &mut self,
+        home: &Home,
+        env: &Env,
+        current: &Current,
+        runtimes: &crate::runtime::RuntimeRegistry,
+    ) {
         let admitted = current.get();
         match admitted.history_enabled() {
             Ok(true) => {}
@@ -352,11 +362,13 @@ impl Readers {
             self.search = None;
         }
         let supported = admitted.global().runner_runtime().is_ok_and(|runtime| {
-            crate::runtime::adapter(runtime)
-                .supports(crate::runtime::Capability::ConversationSource)
+            runtime.cold_text_source
+                && runtimes.adapter(runtime.name(), env).is_ok_and(|adapter| {
+                    adapter.supports(crate::runtime::Capability::ColdTextSource)
+                })
         });
         if self.extraction.is_none() && supported {
-            match _watch::Worker::start(home, env, current.clone()) {
+            match _watch::Worker::start(home, env, current.clone(), runtimes.clone()) {
                 Ok(worker) => self.extraction = Some(worker),
                 Err(error) => {
                     tracing::error!(event = "history_worker_unstarted", worker = "history-extraction", %error)
@@ -369,7 +381,13 @@ impl Readers {
                 &crate::state::RunnerState::new(home),
             ) {
                 Ok(transport) => {
-                    match _fleet::search_worker(home, env, current.clone(), &transport) {
+                    match _fleet::search_worker(
+                        home,
+                        env,
+                        current.clone(),
+                        runtimes.clone(),
+                        &transport,
+                    ) {
                         Ok(worker) => {
                             self.search = Some(worker);
                             self.search_transport = transport_settings;

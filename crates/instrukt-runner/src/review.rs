@@ -5,7 +5,6 @@
 //! read without a lock.
 
 mod _asks;
-mod _conversation;
 mod _eligibility;
 mod _held;
 mod _observation;
@@ -24,7 +23,6 @@ use crate::events::Event;
 use crate::interfaces::{AutomaticReview, ProjectRef};
 use crate::state::RunnerState;
 
-pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
 pub use _held::{HeldCandidate, HeldCommit, PresenceAnswer, SessionPresence};
 pub use _proposals::ProposalReports;
 pub(crate) use _requests::live;
@@ -65,10 +63,10 @@ pub(crate) struct ReviewPass<'a> {
     pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
     /// What this process already raised of knowledge proposals.
     pub reports: &'a ProposalReports,
-    /// The project's configuration and the environment anomalies are raised
-    /// through.
+    /// The project's configuration, runtime registry, and environment.
     pub config: &'a instrukt_core::config::Configuration,
     pub env: &'a instrukt_core::config::Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
 }
 
 /// The remote the project's checkout is fetched from.
@@ -115,6 +113,7 @@ pub(crate) fn pass(
         reports: cx.reports,
         config: &considered.config,
         env: cx.env,
+        runtimes: &cx.wiring.runtimes,
     };
     if let Err(error) = observe(&pass) {
         tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
@@ -276,8 +275,15 @@ fn derive_candidate(
         .filter(|(_, head)| head == candidate)
         .map(|(number, _)| *number)
         .collect();
-    let presence =
-        _presence::RuntimePresence::new(pass.home, pass.state, pass.work, project, pass.now);
+    let presence = _presence::RuntimePresence::new(
+        pass.home,
+        pass.env,
+        pass.runtimes,
+        pass.state,
+        pass.work,
+        project,
+        pass.now,
+    );
     let query = crate::interfaces::CandidateQuery {
         project: pass.project,
         repository: pass.repository,

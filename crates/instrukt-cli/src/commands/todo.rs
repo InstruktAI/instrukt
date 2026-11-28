@@ -494,10 +494,13 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let Some(root) = root else {
         bail!("the work record belongs to a project; run this inside its git repository");
     };
+    let env = crate::wiring::environment(ctx)?;
+    let runtimes = crate::runtimes::registry();
     let work = Work::new(
         ctx.home.clone(),
-        crate::wiring::environment(ctx)?,
+        env.clone(),
         ctx.clock.shared(),
+        runtimes.clone(),
     );
     let project = work.project_at(&root)?;
     let session = Session {
@@ -510,8 +513,13 @@ pub fn run(args: TodoArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     let writes = command.can_change_the_record();
     let result = session.dispatch(command, ctx);
     if writes
-        && let Err(error) =
-            instrukt_runner::deliver_approval_attention(&ctx.home, Some(&work), ctx.clock.now())
+        && let Err(error) = instrukt_runner::deliver_approval_attention(
+            &ctx.home,
+            &env,
+            &runtimes,
+            Some(&work),
+            ctx.clock.now(),
+        )
     {
         tracing::warn!(event="approval_attention_pending",error=%error);
     }

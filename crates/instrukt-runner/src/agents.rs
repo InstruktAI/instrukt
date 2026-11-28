@@ -1,14 +1,9 @@
 //! Ordered role/profile selection and expiring local capacity marks.
 use crate::interfaces::{AgentPreference, Tier};
+pub use instrukt_core::config::AgentPreference as AgentChoice;
 use instrukt_core::config::Configuration;
 use instrukt_core::ids::ProfileName;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AgentChoice {
-    pub agent: ProfileName,
-    pub tier: Option<Tier>,
-}
 
 pub fn role_order(
     config: &Configuration,

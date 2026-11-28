@@ -141,6 +141,7 @@ pub(super) fn evaluation(
         ctx.home.clone(),
         super::environment(ctx)?,
         ctx.clock.shared(),
+        crate::runtimes::registry(),
     )))
 }
 
@@ -157,6 +158,7 @@ pub(crate) fn work(ctx: &Ctx) -> anyhow::Result<Work> {
         ctx.home.clone(),
         super::environment(ctx)?,
         ctx.clock.shared(),
+        crate::runtimes::registry(),
     )
     .with_github(ctx.github.clone()))
 }

@@ -1,12 +1,12 @@
 //! Safe native failure evidence: typed causes and opaque references, never native payloads.
-use crate::{
-    process::ProcessError,
-    sessions::{ExecutionRootCause, SessionsError},
-};
-use instrukt_core::ids::SessionRef;
-use sha2::{Digest, Sha256};
 use std::fmt;
 use std::path::PathBuf;
+
+use instrukt_core::ids::SessionRef;
+use instrukt_core::process::ProcessError;
+use sha2::{Digest, Sha256};
+
+use crate::{ExecutionRootCause, RuntimeError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeCause {
@@ -34,12 +34,10 @@ pub enum NativeCause {
     IncompatibleResponse,
     Unsupported,
     InvalidConfiguration,
-    /// instrukt's own outcome: the checkout's runtime project cannot be had.
     ExecutionRootUnavailable {
         checkout: PathBuf,
         cause: ExecutionRootCause,
     },
-    /// instrukt's own outcome: a bound thread runs in another project.
     ThreadMisplaced {
         session: SessionRef,
         checkout: PathBuf,
@@ -47,6 +45,7 @@ pub enum NativeCause {
     },
     Unrecognized,
 }
+
 impl fmt::Display for NativeCause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -104,6 +103,7 @@ impl fmt::Display for NativeCause {
         }
     }
 }
+
 #[derive(Debug, Clone)]
 pub struct NativeDiagnostic {
     pub runtime: String,
@@ -111,6 +111,7 @@ pub struct NativeDiagnostic {
     pub cause: NativeCause,
     pub reference: String,
 }
+
 impl fmt::Display for NativeDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -120,31 +121,33 @@ impl fmt::Display for NativeDiagnostic {
         )
     }
 }
-pub(super) fn reference(bytes: &[u8]) -> String {
+
+pub fn reference(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
-pub(super) fn diagnose(
+
+pub fn diagnose(
     runtime: &str,
     operation: &str,
-    error: &SessionsError,
+    error: &RuntimeError,
     native: Option<NativeCause>,
 ) -> NativeDiagnostic {
     let cause = native.unwrap_or_else(|| match error {
-        SessionsError::Gone(_) => NativeCause::TargetGone,
-        SessionsError::Process(ProcessError::Timeout { timeout, .. }) => NativeCause::Timeout {
+        RuntimeError::ThreadNotFound { .. } => NativeCause::TargetGone,
+        RuntimeError::Process(ProcessError::Timeout { timeout, .. }) => NativeCause::Timeout {
             seconds: timeout.as_secs(),
         },
-        SessionsError::Process(ProcessError::Spawn { source, .. }) => NativeCause::Io {
+        RuntimeError::Process(ProcessError::Spawn { source, .. }) => NativeCause::Io {
             phase: "process start",
             kind: source.kind(),
             os_code: source.raw_os_error(),
         },
-        SessionsError::Process(ProcessError::Io { source, .. }) => NativeCause::Io {
+        RuntimeError::Process(ProcessError::Io { source, .. }) => NativeCause::Io {
             phase: "process I/O",
             kind: source.kind(),
             os_code: source.raw_os_error(),
         },
-        SessionsError::InvalidResponse {
+        RuntimeError::InvalidResponse {
             category,
             line,
             column,
@@ -154,15 +157,16 @@ pub(super) fn diagnose(
             line: *line,
             column: *column,
         },
-        SessionsError::MissingCapability { .. } => NativeCause::Unsupported,
-        SessionsError::Config(_) => NativeCause::InvalidConfiguration,
-        SessionsError::ExecutionRootUnavailable { checkout, cause } => {
+        RuntimeError::MissingCapability { .. } | RuntimeError::Unsupported(_) => {
+            NativeCause::Unsupported
+        }
+        RuntimeError::ExecutionRootUnavailable { checkout, cause } => {
             NativeCause::ExecutionRootUnavailable {
                 checkout: checkout.clone(),
                 cause: *cause,
             }
         }
-        SessionsError::ThreadMisplaced {
+        RuntimeError::ThreadMisplaced {
             session,
             checkout,
             idle,
@@ -175,8 +179,8 @@ pub(super) fn diagnose(
         _ => NativeCause::Unrecognized,
     });
     let operation = match error {
-        SessionsError::Failed { operation, .. }
-        | SessionsError::InvalidResponse { operation, .. } => operation.as_str(),
+        RuntimeError::Failed { operation, .. }
+        | RuntimeError::InvalidResponse { operation, .. } => operation.as_str(),
         _ => operation,
     };
     NativeDiagnostic {
@@ -197,7 +201,7 @@ mod tests {
 
     #[test]
     fn an_unavailable_execution_root_keeps_its_checkout_and_cause() {
-        let error = SessionsError::ExecutionRootUnavailable {
+        let error = RuntimeError::ExecutionRootUnavailable {
             checkout: PathBuf::from("/home/.instrukt/companies/acme"),
             cause: ExecutionRootCause::AdditionRefused,
         };
@@ -213,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_misplaced_thread_keeps_its_thread_checkout_and_idleness() {
-        let error = SessionsError::ThreadMisplaced {
+        let error = RuntimeError::ThreadMisplaced {
             key: Some("instrukt:conversation:acme".into()),
             session: session(),
             checkout: PathBuf::from("/home/.instrukt/companies/acme"),
@@ -232,7 +236,7 @@ mod tests {
 
     #[test]
     fn an_opaque_native_failure_stays_unrecognized() {
-        let error = SessionsError::Failed {
+        let error = RuntimeError::Failed {
             runtime: "t3".into(),
             operation: "send".into(),
             detail: "Authorization: Bearer secret".into(),

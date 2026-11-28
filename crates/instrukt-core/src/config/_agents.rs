@@ -12,6 +12,16 @@ use std::collections::BTreeMap;
 pub const SHIPPED_AGENTS: &str = include_str!("shipped/agents.yaml");
 pub(super) const VERSION: u64 = 4;
 
+/// Neutral agent/tier preference serialized inside persisted runtime-start
+/// requests and manual standing reservations (`agent` + optional `tier`).
+/// Omits `deny_unknown_fields` to remain wire-compatible with persisted rows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentPreference {
+    pub agent: ProfileName,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<Tier>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSelection {
     pub profile: ProfileName,
@@ -341,6 +351,14 @@ impl Agents {
         }
         super::_layer::migrate_if_needed(home, &super::Layer::Global)?;
         Self::converge_file(home)?;
+        let existing = read_existing(&home.agents_file())?;
+        Self::from_documents(existing, None)
+    }
+
+    /// Read `agents.yaml` merged over the shipped defaults without consulting
+    /// `instrukt.yaml` (used when an active company session continues under the
+    /// runner's admitted generation while `instrukt.yaml` is temporarily broken).
+    pub fn load_agents_only(home: &Home) -> Result<Self, ConfigError> {
         let existing = read_existing(&home.agents_file())?;
         Self::from_documents(existing, None)
     }

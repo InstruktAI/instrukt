@@ -318,6 +318,7 @@ const EXCLUDED_STATE_DIRS: &[&str] = &[
     "hook-runs",
     "redis",
     "consumer-locks",
+    "company-turn-status",
 ];
 
 const EXCLUDED_STATE_FILES: &[&str] = &[

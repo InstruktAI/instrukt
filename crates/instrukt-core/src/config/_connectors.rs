@@ -91,36 +91,10 @@ impl SessionScope {
     }
 }
 
-/// How replies are posted back to a company connector.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReplyMode {
-    #[default]
-    TurnOutput,
-    Explicit,
-}
-
-impl ReplyMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::TurnOutput => "turn_output",
-            Self::Explicit => "explicit",
-        }
-    }
-
-    pub fn parse(text: &str) -> Option<Self> {
-        match text {
-            "turn_output" => Some(Self::TurnOutput),
-            "explicit" => Some(Self::Explicit),
-            _ => None,
-        }
-    }
-}
-
 /// One named connector a company home declares: its declared name (`key`),
 /// registered kind (`kind`), generic conversation settings (`role`, `admit`,
-/// `session_scope`, `reply_mode`), and its entry as the document declares it,
-/// references unresolved.
+/// `session_scope`), and its entry as the document declares it, references
+/// unresolved.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DeclaredConnector {
     pub key: String,
@@ -128,7 +102,6 @@ pub struct DeclaredConnector {
     pub role: RoleName,
     pub admit: ConnectorAdmit,
     pub session_scope: SessionScope,
-    pub reply_mode: ReplyMode,
     pub entry: Value,
 }
 

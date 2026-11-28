@@ -5,7 +5,7 @@
     "clippy::expect_used": 24,
     "clippy::panic": 10,
     "clippy::result_large_err": 2,
-    "clippy::too_many_arguments": 18,
+    "clippy::too_many_arguments": 15,
     "clippy::unwrap_used": 94,
     "clippy::zombie_processes": 2,
     "dead_code": 39,

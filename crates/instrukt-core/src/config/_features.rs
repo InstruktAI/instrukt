@@ -1,5 +1,5 @@
 //! Runtime capability requirements at module admission.
-use super::Runtime;
+use super::RuntimeDeclaration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Feature {
@@ -66,7 +66,7 @@ impl Unavailable {
         }
     }
 }
-pub fn availability(runtime: Runtime, features: &[Feature]) -> Option<Unavailable> {
+pub fn availability(runtime: &RuntimeDeclaration, features: &[Feature]) -> Option<Unavailable> {
     if features.is_empty() {
         return None;
     }
@@ -74,8 +74,9 @@ pub fn availability(runtime: Runtime, features: &[Feature]) -> Option<Unavailabl
     for feature in features {
         let missing = match feature {
             Feature::StandingAgents => None,
-            Feature::AnomalyNotification => Some("notification"),
-            Feature::LinkedSessionInput => Some("link"),
+            Feature::HistoryExtraction if !runtime.cold_text_source => Some("cold text source"),
+            Feature::AnomalyNotification if !runtime.notify => Some("notification"),
+            Feature::LinkedSessionInput if !runtime.link => Some("link"),
             Feature::WorktreeAttachment
                 if !super::WorkflowCapability::WorktreeAttach.supported_by(runtime) =>
             {

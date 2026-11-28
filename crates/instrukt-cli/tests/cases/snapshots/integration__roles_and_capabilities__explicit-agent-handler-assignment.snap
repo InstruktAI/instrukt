@@ -13,7 +13,7 @@ Commands:
   agents     Configured profiles and expiring profile/model availability
   mcp        Reach the MCP servers declared for this caller: list them, list one's tools, call a
              tool
-  company    Queue explicit replies to company conversations
+  company    Queue explicit replies and active-turn progress updates for company conversations
   secrets    Store or generate protected machine-local secrets
   config     Read, edit, initialize and validate `instrukt.yaml`
   docs       Validate, list and read documentation snippets

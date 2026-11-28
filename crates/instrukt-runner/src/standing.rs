@@ -233,6 +233,8 @@ fn log_entry(item: &Pending) -> Result<inputs::LogEntry, SessionsError> {
 
 pub(crate) fn deliver_pending(
     invocation: &RuntimeInvocation,
+    env: &instrukt_core::config::Env,
+    runtimes: &crate::runtime::RuntimeRegistry,
     now: Timestamp,
 ) -> Result<(), SessionsError> {
     let state = RunnerState::new(invocation.home());
@@ -248,39 +250,56 @@ pub(crate) fn deliver_pending(
             .push(item);
     }
     for (responsibility, (subject, group)) in groups {
-        let result = deliver_group(
+        let result = deliver_group(&GroupDelivery {
             invocation,
-            &state,
-            &responsibility,
-            subject.as_deref(),
-            &group,
+            env,
+            runtimes,
+            state: &state,
+            responsibility: &responsibility,
+            subject: subject.as_deref(),
+            items: &group,
             now,
-        );
+        });
         // Standing owns the finding, including failures returned by its keyed start.
         keyed::note(
             &state,
-            selected,
+            selected.name(),
             &responsibility,
             now,
             result.as_ref().map(|_| ()),
         );
         if let Err(error) = result {
             state.write::<_,StateError>(|tx|{for p in &group{tx.execute("UPDATE procedure_activations SET failure=?4,state='pending' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3 AND state IN ('accepted','pending')",params![p.event,p.procedure,p.home,error.to_string()]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
-            if keyed::report_start_finding(&state, selected, &error) {
+            if keyed::report_start_finding(&state, selected.name(), &error) {
                 tracing::warn!(event="standing_delivery_failed",key=%responsibility,error=%error);
             }
         }
     }
     Ok(())
 }
-fn deliver_group(
-    invocation: &RuntimeInvocation,
-    state: &RunnerState,
-    responsibility: &str,
-    subject: Option<&str>,
-    items: &[Pending],
+
+struct GroupDelivery<'a> {
+    invocation: &'a RuntimeInvocation,
+    env: &'a instrukt_core::config::Env,
+    runtimes: &'a crate::runtime::RuntimeRegistry,
+    state: &'a RunnerState,
+    responsibility: &'a str,
+    subject: Option<&'a str>,
+    items: &'a [Pending],
     now: Timestamp,
-) -> Result<(), SessionsError> {
+}
+
+fn deliver_group(delivery: &GroupDelivery<'_>) -> Result<(), SessionsError> {
+    let GroupDelivery {
+        invocation,
+        env,
+        runtimes,
+        state,
+        responsibility,
+        subject,
+        items,
+        now,
+    } = *delivery;
     let first = &items[0];
     let (root, project) = checkout(state, &first.home)?;
     let config = execution_config(state.home(), &first.home, &root)?;
@@ -288,7 +307,7 @@ fn deliver_group(
         return Ok(());
     }
     let selected_runtime = config.runner_runtime()?;
-    let adapter = crate::runtime::adapter(selected_runtime);
+    let adapter = runtimes.adapter(selected_runtime.name(), env)?;
     let object_key = state
         .read(|conn, path| {
             conn.query_row(
@@ -365,7 +384,7 @@ fn deliver_group(
             existing_worktree: None,
             now,
         };
-        if keyed::recorded_session(state, adapter.runtime().name(), &original.key)?.is_none() {
+        if keyed::recorded_session(state, adapter.runtime_name(), &original.key)?.is_none() {
             let thread = adapter.read_state(target)?;
             if thread.presence != Presence::Present {
                 replace_deleted(
@@ -550,7 +569,7 @@ fn start_and_bind(
     state.write::<_,StateError>(|tx|{tx.execute("UPDATE procedure_responsibilities SET session=?2 WHERE responsibility=?1",params![responsibility,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;for p in selected{tx.execute("UPDATE standing_deliveries SET target=?4,state='delivered' WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home,thread.session.to_string()]).map_err(state::sql(&state::db_path(tx)))?;tx.execute("UPDATE procedure_activations SET state='delivered',failure=NULL WHERE event_id=?1 AND procedure=?2 AND exact_home=?3",params![p.event,p.procedure,p.home]).map_err(state::sql(&state::db_path(tx)))?;}Ok(())})?;
     keyed::note(
         state,
-        adapter.runtime(),
+        adapter.runtime_name(),
         &assignment.request.key,
         assignment.now,
         Ok(()),
@@ -682,7 +701,7 @@ pub fn binding_home(
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ManualReservation {
     #[serde(default)]
-    pub preferences: Vec<crate::agents::AgentChoice>,
+    pub preferences: Vec<instrukt_core::config::AgentPreference>,
     #[serde(default)]
     pub selection: Option<instrukt_core::config::AgentSelection>,
     pub title: String,
@@ -703,6 +722,7 @@ pub struct ManualEntry<'a> {
     pub now: Timestamp,
     pub config: &'a Configuration,
     pub env: &'a instrukt_core::config::Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
     pub entry: &'a IndexEntry,
     /// The company home a company-home procedure is entered in.
     pub company: Option<&'a ProjectSlug>,
@@ -717,6 +737,7 @@ pub fn reserve_manual(
         now,
         config,
         env,
+        runtimes,
         entry,
         company,
         args,
@@ -747,7 +768,7 @@ pub fn reserve_manual(
             .message
     );
     let key = key(entry.id.as_str(), &home, None);
-    let adapter = crate::runtime::adapter(runtime);
+    let adapter = runtimes.adapter(runtime.name(), env)?;
     let _guard = keyed::KeyGuard::claim(invocation, adapter.as_ref(), &key, None, now)?;
     let state = RunnerState::new(invocation.home());
     let existing = state
@@ -784,7 +805,7 @@ pub fn reserve_manual(
         request.selection = request
             .selection
             .as_ref()
-            .map(|selection| crate::runtime::adapter(runtime).native_selection(selection));
+            .map(|selection| adapter.native_selection(selection));
         request.start_allowed = retry;
         if retry {
             state.write::<_,StateError>(|tx|{tx.execute("UPDATE manual_standing_reservations SET retry_allowed=0 WHERE responsibility=?1",[&key]).map_err(state::sql(&state::db_path(tx)))?;Ok(())})?;
@@ -800,7 +821,7 @@ pub fn reserve_manual(
         selection: crate::agents::selections(config, invocation.home(), &order, now)?
             .into_iter()
             .next()
-            .map(|selection| crate::runtime::adapter(runtime).native_selection(&selection)),
+            .map(|selection| adapter.native_selection(&selection)),
         title: standing_title(entry.id.as_str(), entry.role.as_deref(), None, &key),
         reservation: keyed::request_id()?,
         key: key.clone(),
@@ -838,6 +859,7 @@ fn manual_start(request: &ManualReservation, adapter: &dyn RuntimeAdapter) -> Ru
 pub struct ManualBinding<'a> {
     pub config: &'a Configuration,
     pub env: &'a instrukt_core::config::Env,
+    pub runtimes: &'a crate::runtime::RuntimeRegistry,
     pub procedure: &'a str,
     pub token: &'a str,
     pub evidence: Option<&'a ManualEvidence>,
@@ -852,6 +874,7 @@ pub fn bind_manual(
     let ManualBinding {
         config,
         env,
+        runtimes,
         procedure,
         token,
         evidence,
@@ -862,7 +885,7 @@ pub fn bind_manual(
     let runtime = config.runner_runtime()?;
     let caller = config.caller(env)?.ok_or(SessionsError::NoActiveRuntime)?;
     let state = RunnerState::new(invocation.home());
-    let adapter = crate::runtime::adapter(runtime);
+    let adapter = runtimes.adapter(runtime.name(), env)?;
     let (reserved, home, bound, seen, declaration) = state
         .read(|conn, path| {
             conn.query_row(
@@ -1021,7 +1044,7 @@ pub fn bind_manual(
         let listed = match adapter.list(&reserved.checkout) {
             Ok(listed) => listed,
             Err(_) if stopped.is_some() => Vec::new(),
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.into()),
         };
         // A listed thread confirmed to run in another project is not this
         // reservation's thread; any comparison that cannot be made stops the
@@ -1032,8 +1055,8 @@ pub fn bind_manual(
         }) {
             match adapter.verify_thread_project(&reserved.checkout, entry, Some(&reserved.key)) {
                 Ok(()) => candidates.push(entry),
-                Err(SessionsError::ThreadMisplaced { .. }) => {}
-                Err(error) => return Err(error),
+                Err(crate::runtime::RuntimeError::ThreadMisplaced { .. }) => {}
+                Err(error) => return Err(error.into()),
             }
         }
         if let Some(thread) = candidates.first().copied() {
@@ -1067,7 +1090,7 @@ pub fn bind_manual(
             let assignment = serde_json::to_string(&native).map_err(|e|state::invalid(&db,e))?;
             let session = &thread.session;
             let input = format!("assignment:{}", reserved.key);
-            keyed::remember_manual(tx, runtime, &native, thread, None)?;
+            keyed::remember_manual(tx, runtime.name(), &native, thread, None)?;
             tx.execute("INSERT INTO procedure_responsibilities(responsibility,procedure,exact_home,generation,semantic_key,checkout,declaration,request,session) VALUES (?1,?2,?3,1,?1,?4,?5,?6,?7) ON CONFLICT(responsibility) DO NOTHING",
                 params![reserved.key,procedure,home,reserved.checkout.to_string_lossy(),declaration,assignment,session.to_string()]).map_err(state::sql(&db))?;
             tx.execute("UPDATE manual_standing_reservations SET session=?2,request=json_remove(request,'$.observed_session') WHERE token=?1",
@@ -1126,7 +1149,7 @@ pub(crate) fn replace_deleted(
     now: Timestamp,
 ) -> Result<Thread, SessionsError> {
     let state = RunnerState::new(invocation.home());
-    let resuming = keyed::replacement_started(&state, adapter.runtime().name(), key, stopped)?;
+    let resuming = keyed::replacement_started(&state, adapter.runtime_name(), key, stopped)?;
     let found = state
         .read(|conn, path| {
             conn.query_row(
@@ -1135,7 +1158,7 @@ pub(crate) fn replace_deleted(
              LEFT JOIN runtime_bindings b ON p.session IS NULL AND b.semantic_key=p.semantic_key
                  AND b.runtime=?3 AND b.kind='standing'
              WHERE p.semantic_key=?1 AND (coalesce(p.session,b.session)=?2 OR (?4 AND p.session IS NULL))",
-                params![key, stopped.to_string(), adapter.runtime().name(), resuming],
+                params![key, stopped.to_string(), adapter.runtime_name(), resuming],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -1191,7 +1214,7 @@ pub(crate) fn replace_deleted(
         keyed::confirm_succession(adapter, &root, stopped, key)?;
     }
     let config = execution_config(state.home(), &home, &root)?;
-    if config.runner_runtime()? != adapter.runtime()
+    if config.runner_runtime()?.name() != adapter.runtime_name()
         || !config.module_enabled(instrukt_core::config::Module::Events)?
     {
         return Err(SessionsError::Refused(
@@ -1221,6 +1244,7 @@ pub(crate) fn replace_deleted(
             })?;
         prepare_successor(
             &state,
+            adapter,
             Successor {
                 responsibility: &responsibility,
                 home: &home,
@@ -1250,7 +1274,7 @@ pub(crate) fn replace_deleted(
     );
     keyed::note(
         &state,
-        adapter.runtime(),
+        adapter.runtime_name(),
         key,
         now,
         result.as_ref().map(|_| ()),
@@ -1271,6 +1295,7 @@ struct Successor<'a> {
 /// Retire an established closed assignment and account for undelivered input atomically.
 fn prepare_successor(
     state: &RunnerState,
+    adapter: &dyn RuntimeAdapter,
     cx: Successor<'_>,
 ) -> Result<(RuntimeStart, Vec<Pending>), SessionsError> {
     let prefix = loader(state.home(), cx.current, cx.home, cx.subject)?;
@@ -1285,9 +1310,8 @@ fn prepare_successor(
     let selection = crate::agents::selections(&config, state.home(), &order, cx.now)?
         .into_iter()
         .next();
-    let runtime = config.runner_runtime()?;
-    let realization = crate::runtime::adapter(runtime)
-        .selection_realization(crate::runtime::SelectionOperation::ThreadStart);
+    let realization =
+        adapter.selection_realization(crate::runtime::SelectionOperation::ThreadStart);
     state.write::<_,SessionsError>(|tx|{
         let path=state::db_path(tx);
         if let Some(assignment) = cx.manual_assignment {
