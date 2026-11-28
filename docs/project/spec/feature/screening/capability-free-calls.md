@@ -19,22 +19,19 @@ any capability.
 The call is an internal capability, not a standalone prompt-forwarding CLI
 command. Untrusted-text screening
 (`project/instrukt/spec/feature/screening/untrusted-text-screening`) is built
-on it, and other internal callers — such as outside pull-request assessment or
-future internal features — use it the same way.
+on it, and other internal callers use it the same way.
 
-The endpoint is the operator's choice, configured explicitly per purpose in
-global configuration under the `llm` map — starting with `llm.screening` — so
-an operator can pick a local server such as LM Studio or a cloud provider's
-endpoint for each purpose, and share provider credentials across entries
-through the same secret reference. The capability-free guarantee holds for a
-plain model, one with no built-in search or browsing that runs nothing beyond
-what the request asks. instrukt does not check which model is configured: the
-configuration's description and the setup documentation say what to bring, and
-a model that searches on its own is outside the guarantee. An endpoint's API
-key, when it needs one, is a protected instrukt secret referenced from
-configuration (`project/instrukt/spec/feature/configuration/owned-files`),
-never a value in a configuration document. Where agent runtimes keep their
-model-provider keys belongs to
+The endpoint is chosen per purpose under global `llm` — such as
+`llm.screening` — in
+`project/instrukt/spec/feature/configuration/layered-configuration`, local or
+cloud. The capability-free guarantee holds for a plain model, one with no
+built-in search or browsing that runs nothing beyond what the request asks.
+instrukt does not check which model is configured: the configuration's
+description and the setup documentation say what to bring, and a model that
+searches on its own is outside the guarantee. An endpoint that needs an API key
+references a protected machine-local secret
+(`project/instrukt/spec/feature/configuration/owned-files`); where agent
+runtimes keep their model-provider keys belongs to
 `project/instrukt/spec/feature/configuration/agent-selection`.
 
 The call carries no knowledge of where its prompt came from or what its answer
@@ -46,25 +43,24 @@ is for.
 
 | Field | Meaning |
 | --- | --- |
-| Prompt | The complete text the model receives. It is the call's only input. |
+| Prompt | The complete nonempty text the model receives. It is the call's only input. |
 | Answer | One bounded text answer returned by the model. |
-| Outcome | `answered` with the bounded text answer, or `refused` with its reason. While the endpoint is unavailable the call is `waiting` and returns no outcome yet. |
+| Outcome | `answered` with the bounded text answer, `refused` with its reason, or `waiting` while the endpoint is unavailable (returning the outside gate's wait when a caller's wait bound expires). |
 
 The request omits `tools`, carries no earlier conversation and no data beyond
 the prompt, and bounds the answer's size.
 
-Before a call takes its prompt, any missing or unresolvable endpoint
-prerequisite — an unconfigured or incomplete endpoint entry, or missing, blank,
-unreadable or insufficiently protected referenced API key secret material
-(`project/instrukt/spec/feature/configuration/owned-files`) — is `refused` at
-entry, naming what is missing and the door to supply it
-(`project/instrukt/policy/checks-and-guards`). A call is also `refused`, and
-returns no answer, when the model stopped before finishing its answer because
-the size bound ran out, or when the endpoint rejects the request as one it
-cannot serve, such as one too large for the model. An answer is never repaired,
-truncated or partly returned. A failure that is neither an entry refusal, an
-unavailable endpoint nor one of these post-call refusals, such as a malformed
-request or a client or protocol failure, is a defect
+Before a call sends a request, an empty or whitespace-only prompt, an
+unconfigured or incomplete endpoint entry, or a referenced API key secret that
+cannot be resolved under `project/instrukt/spec/feature/configuration/owned-files`
+is `refused` at entry (`project/instrukt/policy/checks-and-guards`), naming the
+refusal and its door without disclosing secret material. A call is also
+`refused`, and returns no answer, when the model stopped before finishing its
+answer because the size bound ran out, or when the endpoint rejects the request
+as one it cannot serve, such as one too large for the model. An answer is never
+repaired, truncated or partly returned. A failure that is neither an entry
+refusal, an unavailable endpoint nor one of these post-call refusals — such as
+a malformed request or a client or protocol failure — is a defect
 (`project/instrukt/policy/checks-and-guards`): the call fails without retrying
 and returns no answer.
 
@@ -72,32 +68,20 @@ and returns no answer.
 
 | Setting | Meaning |
 | --- | --- |
-| Endpoint | The base address of an OpenAI-compatible chat-completions service, local or cloud, configured per purpose under global `llm` (starting with `llm.screening`). |
+| Endpoint | The base address of an OpenAI-compatible chat-completions service, local or cloud, configured per purpose under global `llm`, such as `llm.screening` (`project/instrukt/spec/feature/configuration/layered-configuration`). Non-loopback endpoints carrying an API key require `https`, and endpoint addresses never embed credentials. |
 | Model | The model the endpoint serves the call with. |
-| API key | Optional `${NAME}` reference to a protected instrukt secret; absent for an endpoint that needs none, and shareable across `llm.*` entries. |
+| API key | Optional secret reference resolved from the machine's secrets (`project/instrukt/spec/feature/configuration/owned-files`); absent for an endpoint that needs none. |
 | Timeout | Optional per-request time bound for one try against the endpoint. |
 
-An endpoint that reports or shows that it cannot serve the request now is
-unavailable, not a refusal: it cannot be reached, does not answer in time,
-limits the rate, has exhausted its quota or spend limit, is overloaded, answers
-with a server error, rejects the configured key or does not know the configured
-model. The call is `waiting`, a state in which it returns no outcome yet:
-instrukt, not the caller, tries it again through the outside gate
-(`project/instrukt/design/architecture/outside-gate`), and the operator can see
-that it waits and why (`project/instrukt/policy/checks-and-guards`). The caller
-receives the eventual outcome without asking again.
+Every try to the endpoint runs through the outside gate
+(`project/instrukt/design/architecture/outside-gate`), which judges temporary
+unavailability, paces retries and reports waits. While the endpoint is
+unavailable, the call is `waiting`: an unbounded caller waits until the
+endpoint answers, while a caller with a bounded wait retries within that bound
+and receives the wait, a bound of nothing being a single try
+(`project/instrukt/policy/checks-and-guards`), with no `answered` outcome.
 
 ## Use cases
-
-### UC-CF1: An internal capability acting for the operator gets a bounded model answer without lending outside text any capability
-
-```gherkin
-Given an operator has configured an OpenAI-compatible endpoint and model for capability-free calls
-And text written outside the project instructs the model to run a command, read the operator's files and send them to a web address
-When an internal capability acting for the operator sends a prompt carrying that text through a capability-free call
-Then it receives one bounded text answer
-And the model was offered no tool, file, shell or earlier conversation
-```
 
 ### UC-CF2: An operator serves capability-free calls from their local model
 
@@ -106,7 +90,7 @@ Given an operator runs an OpenAI-compatible model server on their own computer
 When they configure its address and model for capability-free calls
 Then later capability-free calls are answered by that model
 And no API key is needed for it
-But a call while the server is down waits, and the operator sees that it waits
+But a call while the server is down waits
 ```
 
 ## Known caveats

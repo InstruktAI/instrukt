@@ -113,12 +113,11 @@ next recorded hook run persists the versioned shape
 is no gate). Inspection never rewrites these records. A record belongs to
 the repository, keyed by a digest of its git common directory and naming the
 repository's path, so it is found without reading the repository's
-configuration (`sdlc/principle/design-fundamentals`: an outcome is never lost
-to a file that cannot be read). Records kept under the project-keyed folder
+configuration. Records kept under the project-keyed folder
 `state/hooks/` are not converted: the first hook run that finds that folder
 removes it, and the next run of each hook writes its outcome under the
-repository's key (`sdlc/policy/state-storage`: an entry retires with its
-scope).
+repository's key (`sdlc/policy/state-storage`: a growing store defines its
+retirement).
 
 Publication keeps no record of the files a sync wrote outside the home. The
 record an earlier release kept under `state/publication/outputs/` is not
