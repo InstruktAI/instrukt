@@ -66,7 +66,22 @@ pub(super) fn outcome(
     if projection.thread.id != session.id.as_str() {
         return Err(invalid());
     }
-    let Some(run) = projection.runs.into_iter().max_by_key(|run| run.ordinal) else {
+    let Some(run) = projection
+        .runs
+        .into_iter()
+        .filter(|run| {
+            run.status != "queued" && !(run.status == "cancelled" && run.started_at.is_none())
+        })
+        .max_by(|left, right| {
+            match (left.completed_at, right.completed_at) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+            .then_with(|| left.ordinal.cmp(&right.ordinal))
+        })
+    else {
         return Ok(None);
     };
     if run.id.is_empty()
@@ -176,6 +191,7 @@ mod tests {
         succeeded["ordinal"] = json!(2);
         succeeded["status"] = json!("completed");
         succeeded["startedAt"] = json!("2026-11-28T14:02:00Z");
+        succeeded["completedAt"] = json!("2026-11-28T14:03:00Z");
         value["runs"].as_array_mut().unwrap().push(succeeded);
         let observed = outcome(value, &session).unwrap().unwrap();
         assert_eq!(observed.result, CapacityResult::Succeeded);
@@ -197,5 +213,44 @@ mod tests {
             outcome(value, &session).unwrap().unwrap().result,
             CapacityResult::QuotaExhausted { resets_at: None }
         );
+    }
+
+    #[test]
+    fn queued_or_never_started_cancelled_requests_do_not_hide_executed_quota_failures() {
+        let session = SessionRef::parse("t3:capacity-thread").unwrap();
+        for status in ["queued", "cancelled"] {
+            let mut value = projection("failed", "usage_limit");
+            let mut request = value["runs"][0].clone();
+            request["id"] = json!("later-request");
+            request["ordinal"] = json!(2);
+            request["status"] = json!(status);
+            request["startedAt"] = json!(null);
+            request["completedAt"] = if status == "queued" {
+                json!(null)
+            } else {
+                json!("2026-11-28T14:02:00Z")
+            };
+            value["runs"].as_array_mut().unwrap().push(request);
+            let observed = outcome(value, &session).unwrap().unwrap();
+            assert_eq!(observed.run, "quota-run");
+            assert!(matches!(
+                observed.result,
+                CapacityResult::QuotaExhausted { .. }
+            ));
+        }
+    }
+
+    #[test]
+    fn execution_completion_order_takes_precedence_over_request_ordinal() {
+        let session = SessionRef::parse("t3:capacity-thread").unwrap();
+        let mut value = projection("failed", "usage_limit");
+        let mut completed = value["runs"][0].clone();
+        completed["id"] = json!("earlier-execution");
+        completed["ordinal"] = json!(2);
+        completed["status"] = json!("completed");
+        completed["startedAt"] = json!("2026-11-28T13:58:00Z");
+        completed["completedAt"] = json!("2026-11-28T13:59:00Z");
+        value["runs"].as_array_mut().unwrap().push(completed);
+        assert_eq!(outcome(value, &session).unwrap().unwrap().run, "quota-run");
     }
 }
