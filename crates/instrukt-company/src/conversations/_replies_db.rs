@@ -125,29 +125,24 @@ pub fn queue_explicit_reply(
         ));
     }
     let target = validate_target_conversation(home, &binding, requested_conversation)?;
-    let message_chars = match Configuration::load_company(&home.for_inspection(), &binding.company)
-    {
-        Ok(cfg) => {
-            let declared = cfg
-                .connectors()?
-                .into_iter()
-                .find(|declared| declared.key == binding.connector)
-                .ok_or_else(|| {
-                    ConversationError::Refused(format!(
-                        "connector `{}` is no longer declared for company `{}`",
-                        binding.connector, binding.company
-                    ))
-                })?;
-            let declaration = connector_declaration(&declared.kind).ok_or_else(|| {
-                ConversationError::Refused(format!(
-                    "connector kind `{}` is not registered in this build",
-                    declared.kind
-                ))
-            })?;
-            declaration.message_chars
-        }
-        Err(_) => 4000,
-    };
+    let cfg = Configuration::load_company(&home.for_inspection(), &binding.company)?;
+    let declared = cfg
+        .connectors()?
+        .into_iter()
+        .find(|declared| declared.key == binding.connector)
+        .ok_or_else(|| {
+            ConversationError::Refused(format!(
+                "connector `{}` is no longer declared for company `{}`",
+                binding.connector, binding.company
+            ))
+        })?;
+    let declaration = connector_declaration(&declared.kind).ok_or_else(|| {
+        ConversationError::Refused(format!(
+            "connector kind `{}` is not registered in this build",
+            declared.kind
+        ))
+    })?;
+    let message_chars = declaration.message_chars;
     let parts = split(text, message_chars);
     if parts.is_empty() {
         return Err(ConversationError::Refused(
