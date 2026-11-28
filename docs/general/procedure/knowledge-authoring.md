@@ -1,7 +1,5 @@
 ---
-description: Capture and organize knowledge a human expresses into a doc snippet batch,
-  conversationally, authoring only after every active participant agrees and the human
-  releases it.
+description: 'Capture human knowledge into doc snippets conversationally; author only after every active participant agrees and human releases it.'
 role: knowledge-author
 parameters:
   - name: topic

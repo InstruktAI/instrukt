@@ -89,7 +89,7 @@ module's steps. Select one candidate — the agent's decision, recorded with its
 reason. Selection crosses the human's lane only when the candidate changes
 what a human experiences, widens the scope the human asked for, or touches a
 safety-gated action; then it is surfaced under `general/policy/human-contract`
-before anything proceeds.
+and `general/policy/leadership` before anything proceeds.
 
 Produce the durable candidate report for agent and peer use, rendered per
 `general/procedure/visualizing-for-humans` when it is surfaced. Surface it to

@@ -20,6 +20,7 @@ thread, where the runtime shows that input is needed.
 | A failed task waits in no thread | An anomaly eligible for runner notification. |
 | The dispatch agent order is exhausted | An anomaly eligible for runner notification. |
 | Main is red and the integrator cannot repair it, with no waiting thread | An anomaly eligible for runner notification. |
+| A home backup fails or becomes stale | An anomaly eligible for runner notification (failure notified directly by backup run; staleness notified on runner wakes and surfaced on local inspection). |
 
 Notification is for anomalies only. It does not duplicate ordinary questions
 from a waiting thread or supply a separate approval channel.
@@ -50,9 +51,8 @@ bound, a message no turn has taken past that bound, and a message whose turn kee
 failing (`project/instrukt/spec/feature/runner/session-continuity`,
 `project/instrukt/spec/feature/company/conversations`). Each is also listed in
 `instrukt events status` with its door, whether or not a notification command is
-configured, so the operator sees it when the runtime offers no notification
-(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
-the operator).
+configured, so the operator sees what automation cannot resolve even when the
+runtime offers no notification.
 
 For a stopped execution, `instrukt events status` lists its work item,
 session, workflow state and whether a notification command is configured.
@@ -60,6 +60,21 @@ A recovery input that ends unconfirmed raises the stopped-execution anomaly,
 except while its todo waits on a person
 (`project/instrukt/spec/feature/runner/session-continuity`).
 The finding persists until the workflow advances or the execution is released.
+
+When a home backup run fails (`project/instrukt/spec/feature/runner/home-backup`),
+`instrukt backup run` invokes `runner.notify` directly on every host (including
+backup-only hosts with neither `instrukt tick` nor `instrukt run`). When home
+backup is stale past runner's staleness threshold, active runner invocations
+(`instrukt tick` or `instrukt run`) invoke `runner.notify` once per staleness
+episode until a subsequent backup succeeds; on a backup-only host with neither
+`tick` nor `run`, staleness surfaces on local inspection (`instrukt status` and
+`instrukt events status`) rather than via push notification. For a failed or
+stale home backup, `runner.notify` receives a non-session home-backup anomaly
+reference identifying this computer's condition and never secrets or sensitive
+payload (`sdlc/policy/security-awareness`). Every active backup failure or
+staleness condition is listed in `instrukt events status` with its repair door,
+whether or not a notification command is configured, until a subsequent backup
+succeeds.
 
 ## Use cases
 
@@ -81,6 +96,11 @@ The finding persists until the workflow advances or the execution is released.
 - When no session could start (the dispatch order is exhausted), the runner
   releases its own claim and sets no hold; the notification references the
   work item instead of a session.
+
+- For a failed or stale home backup, no agent session or work item exists; the
+  notification passes the non-session home-backup anomaly reference instead of
+  a session reference, once per failed run and once per staleness episode until
+  a subsequent backup succeeds.
 
 ## See Also
 

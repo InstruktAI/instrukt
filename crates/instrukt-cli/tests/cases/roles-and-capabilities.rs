@@ -659,6 +659,45 @@ fn a_company_agent_may_report_defects_and_change_no_other_work() {
     // defect into any project, and no other work-record write.
     insta::assert_snapshot!("company-agent-help", help(&["--help"]));
 
+    // A company-assigned conversation session is unconditionally refused every
+    // `instrukt backup` subcommand regardless of its role grants (even `list`).
+    {
+        let home = instrukt_core::home::Home::at_user_home(env.home().to_path_buf());
+        let mut db = instrukt_core::state_db::StateDb::open(&home).unwrap();
+        db.write::<_, instrukt_core::state_db::StateDbError>(|tx| {
+            tx.execute(
+                "INSERT INTO connected_conversations(company,connector,conversation,semantic_key,session,role) VALUES ('acme','slack','C1','conv-acme','t3:company-conv','company-agent')",
+                [],
+            )
+            .unwrap();
+            Ok(())
+        })
+        .unwrap();
+    }
+    let mut backup_refusals = Vec::new();
+    for args in [
+        &["backup", "list"][..],
+        &["backup", "run"][..],
+        &["backup", "restore", "--yes"][..],
+    ] {
+        let refused = env
+            .instrukt(env.home())
+            .env("T3CODE_THREAD_ID", "company-conv")
+            .args(args)
+            .assert()
+            .failure();
+        let err = String::from_utf8_lossy(&refused.get_output().stderr);
+        backup_refusals.push(err.trim().to_owned());
+    }
+    insta::assert_snapshot!(
+        backup_refusals.join("\n"),
+        @"
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup list` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup run` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    instrukt: home backup is the operator's: this session's recorded assignment is company `acme`'s, so `instrukt backup restore` is refused whatever its role, and nothing was changed; ask the operator to run home backup
+    "
+    );
+
     // An agents.yaml edited before `report` existed keeps working: its
     // company agent holds what that file gives it, and no `bug-report`.
     let file = env.instrukt_home().join("agents.yaml");
@@ -739,18 +778,24 @@ fn a_focused_authors_hook_runs_are_admitted_in_its_own_workspace() {
     )
     .unwrap();
     let env = &crew.project.env;
+    env.git(
+        workspace,
+        [
+            "add",
+            "docs/project/policy/house.md",
+            "docs/project/index.yaml",
+        ],
+    );
     env.instrukt(workspace)
         .env("T3CODE_THREAD_ID", session)
         .args([
             "repo",
             "commit",
+            "--review",
             "--todo",
             "guidance",
             "--message",
             "Select the house policy\n\nThe project's agents follow it.",
-            "--only",
-            "docs/project/policy/house.md",
-            "docs/project/index.yaml",
         ])
         .assert()
         .success();

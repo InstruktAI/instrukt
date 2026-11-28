@@ -21,6 +21,9 @@ use std::sync::mpsc::{self, Receiver};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+use rustix::io::Errno;
+use rustix::process::{Signal, kill_process_group, test_kill_process_group};
+
 /// How a command ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finished {
@@ -53,6 +56,10 @@ pub enum ProcessError {
 
 /// The longest pause between two looks at a running command.
 const LONGEST_PAUSE: Duration = Duration::from_millis(50);
+
+/// How long an interrupted process waits for owned child groups to clean up
+/// after forwarding `SIGINT` or `SIGTERM`, before force-stopping leftovers.
+const STOP_GRACE: Duration = Duration::from_secs(5);
 
 /// A program's limit, measured from its start in monotonic real time.
 #[derive(Clone, Copy)]
@@ -421,33 +428,100 @@ fn groups() -> std::sync::MutexGuard<'static, Vec<Arc<ProcessGroup>>> {
         Err(poisoned) => poisoned.into_inner(),
     }
 }
-fn install_signals() -> std::io::Result<()> {
-    SIGNALS.get_or_init(|| {
-        let mut signals=signal_hook::iterator::Signals::new([signal_hook::consts::SIGINT,signal_hook::consts::SIGTERM]).map_err(|e|e.to_string())?;
-        std::thread::Builder::new().name("instrukt-child-signals".into()).spawn(move|| {
-            for signal in signals.forever() {
-                for group in groups().iter() {
-                    if let Err(error)=group.stop() {tracing::error!(event="interrupted_group_cleanup_failed",pid=group.pid.as_raw_nonzero().get(),error=%error);}
-                }
-                let hooks = match STOP_HOOKS.lock() {
-                    Ok(mut hooks) => std::mem::take(&mut *hooks),
-                    Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
-                };
-                run_stop_hooks(hooks);
-                // Preserve the signal's normal exit semantics after cleanup,
-                // including when it arrives between child commands.
-                if let Err(error)=signal_hook::low_level::emulate_default_handler(signal) {
-                    tracing::error!(event="signal_exit_failed",error=%error);
-                    std::process::exit(1);
-                }
+/// Handles `SIGINT` or `SIGTERM` by forwarding it to every owned child group,
+/// waiting up to [`STOP_GRACE`] for groups to finish their cleanup, force-stopping
+/// any group that outlives the grace, running registered stop hooks, and ending
+/// with the signal.
+fn stop_for(signal: i32) {
+    let registry = groups();
+    let forwarded = match signal {
+        signal_hook::consts::SIGINT => Signal::INT,
+        signal_hook::consts::SIGTERM => Signal::TERM,
+        _ => Signal::TERM,
+    };
+    for group in registry.iter() {
+        if let Err(error) = group.forward(forwarded) {
+            tracing::error!(
+                event = "interrupted_group_signal_failed",
+                pid = group.pid.as_raw_nonzero().get(),
+                error = %error,
+            );
+        }
+    }
+    let deadline = Instant::now() + STOP_GRACE;
+    let mut pause = Duration::from_millis(2);
+    while registry.iter().any(|group| group.is_alive()) {
+        let now = Instant::now();
+        if now >= deadline {
+            break;
+        }
+        std::thread::sleep(pause.min(deadline - now));
+        pause = (pause * 2).min(LONGEST_PAUSE);
+    }
+    for group in registry.iter() {
+        if group.is_alive() {
+            tracing::warn!(
+                event = "interrupted_group_outlived_grace",
+                pgid = group.pid.as_raw_nonzero().get(),
+            );
+            if let Err(error) = group.stop() {
+                tracing::error!(
+                    event = "interrupted_group_cleanup_failed",
+                    pid = group.pid.as_raw_nonzero().get(),
+                    error = %error,
+                );
             }
-        }).map_err(|e|e.to_string())?;
-        Ok(())
-    }).as_ref().map(|_|()).map_err(|e|std::io::Error::other(e.clone()))
+        }
+    }
+    let hooks = match STOP_HOOKS.lock() {
+        Ok(mut hooks) => std::mem::take(&mut *hooks),
+        Err(poisoned) => std::mem::take(&mut *poisoned.into_inner()),
+    };
+    // Keep `GROUPS` held across signal re-raise when no stop hooks run, so a
+    // main thread waking from `child.wait()` blocks in `OwnedProcessGroup::stop`
+    // instead of exiting with code 1 before the signal terminates the process.
+    // When stop hooks are registered, release `GROUPS` so they can spawn
+    // bounded cleanup commands without deadlocking.
+    let _held = if hooks.is_empty() {
+        Some(registry)
+    } else {
+        drop(registry);
+        run_stop_hooks(hooks);
+        None
+    };
+    // Preserve the signal's normal exit semantics after cleanup,
+    // including when it arrives between child commands.
+    if let Err(error) = signal_hook::low_level::emulate_default_handler(signal) {
+        tracing::error!(event = "signal_exit_failed", error = %error);
+        std::process::exit(1);
+    }
 }
-/// Ends this process with `code` after stopping every command group it
-/// owns, as an interruption does: a refusal that ends the whole process
-/// leaves none of its commands running, whichever thread started them.
+
+fn install_signals() -> std::io::Result<()> {
+    SIGNALS
+        .get_or_init(|| {
+            let mut signals = signal_hook::iterator::Signals::new([
+                signal_hook::consts::SIGINT,
+                signal_hook::consts::SIGTERM,
+            ])
+            .map_err(|e| e.to_string())?;
+            std::thread::Builder::new()
+                .name("instrukt-child-signals".into())
+                .spawn(move || {
+                    for signal in signals.forever() {
+                        stop_for(signal);
+                    }
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })
+        .as_ref()
+        .map(|_| ())
+        .map_err(|e| std::io::Error::other(e.clone()))
+}
+/// Ends this process with `code` after force-stopping (`SIGKILL`) every command
+/// group it owns: a refusal that ends the whole process leaves none of its
+/// commands running, whichever thread started them.
 pub fn exit_stopping_owned(code: i32) -> ! {
     // Held to the end: no command starts after the groups were stopped.
     let registry = groups();
@@ -466,35 +540,59 @@ struct ProcessGroup {
 }
 
 impl ProcessGroup {
+    /// Force-stops every member of this process group with `SIGKILL`.
     fn stop(&self) -> std::io::Result<()> {
-        use rustix::process::{Signal, kill_process_group};
-
         self.stop_with(|pid| kill_process_group(pid, Signal::KILL))
+    }
+
+    /// Forwards `signal` to every member of this process group.
+    fn forward(&self, signal: Signal) -> std::io::Result<()> {
+        self.stop_with(|pid| kill_process_group(pid, signal))
+    }
+
+    /// Whether any process in this group is still alive (or cannot be confirmed
+    /// gone, so post-grace forced cleanup still runs and logs any error).
+    fn is_alive(&self) -> bool {
+        match self.signal_raw(test_kill_process_group) {
+            (Err(Errno::SRCH), _) => false,
+            // Darwin's POSIX group probe found no member we can signal after reap.
+            #[cfg(target_os = "macos")]
+            (Err(Errno::PERM), true) => false,
+            (Ok(()), _) | (Err(_), _) => true,
+        }
+    }
+
+    fn signal_raw(
+        &self,
+        mut op: impl FnMut(rustix::process::Pid) -> rustix::io::Result<()>,
+    ) -> (rustix::io::Result<()>, bool) {
+        #[cfg(target_os = "macos")]
+        {
+            // Classify the signal using the reap evidence available when it starts.
+            let reaped = self.reaped.load(Ordering::Acquire);
+            let result = op(self.pid);
+            // The new snapshot is already true, so the retry cannot need another.
+            if result == Err(Errno::PERM) && !reaped && self.reaped.load(Ordering::Acquire) {
+                (op(self.pid), true)
+            } else {
+                (result, reaped)
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            (op(self.pid), false)
+        }
     }
 
     fn stop_with(
         &self,
-        mut signal: impl FnMut(rustix::process::Pid) -> rustix::io::Result<()>,
+        signal: impl FnMut(rustix::process::Pid) -> rustix::io::Result<()>,
     ) -> std::io::Result<()> {
-        use rustix::io::Errno;
-
-        // Classify the signal using the reap evidence available when it starts.
-        #[cfg(target_os = "macos")]
-        let reaped = self.reaped.load(Ordering::Acquire);
-        let result = signal(self.pid);
-        // The new snapshot is already true, so the retry cannot need another.
-        #[cfg(target_os = "macos")]
-        let (result, reaped) =
-            if result == Err(Errno::PERM) && !reaped && self.reaped.load(Ordering::Acquire) {
-                (signal(self.pid), true)
-            } else {
-                (result, reaped)
-            };
-        match result {
-            Ok(()) | Err(Errno::SRCH) => Ok(()),
+        match self.signal_raw(signal) {
+            (Ok(()) | Err(Errno::SRCH), _) => Ok(()),
             // Darwin's POSIX group signal found no member we can signal.
             #[cfg(target_os = "macos")]
-            Err(Errno::PERM) if reaped => {
+            (Err(Errno::PERM), true) => {
                 tracing::warn!(
                     event = "reaped_group_cannot_be_signalled",
                     pgid = self.pid.as_raw_nonzero().get(),
@@ -502,7 +600,7 @@ impl ProcessGroup {
                 );
                 Ok(())
             }
-            Err(error) => Err(error.into()),
+            (Err(error), _) => Err(error.into()),
         }
     }
 }

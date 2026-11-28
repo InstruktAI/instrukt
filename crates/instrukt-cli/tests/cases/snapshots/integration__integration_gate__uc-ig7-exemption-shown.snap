@@ -1,0 +1,5 @@
+---
+source: crates/instrukt-cli/tests/cases/integration-gate.rs
+expression: "work ::\nredact(& String::from_utf8(shown.get_output().stdout.clone()).unwrap())"
+---
+exemption: fixes a typo in the readme; no behaviour changes (declared by t3:oneoff-author, recorded <time> on <id 1>)

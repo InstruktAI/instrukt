@@ -1,8 +1,9 @@
-use super::{
-    Agents, COMPANY_AGENT_ROLE, ConnectionState, ConversationError, RoleName, Stage,
-    effective_since, opening_procedure, opening_procedure_for_role, split,
-};
+use super::_delivery::{opening_procedure, opening_procedure_for_role};
+use super::_store::Stage;
+use super::{ConnectionState, ConversationError, effective_since, split};
 use instrukt_core::config::SHIPPED_AGENTS;
+use instrukt_core::config::{Agents, COMPANY_AGENT_ROLE};
+use instrukt_core::ids::RoleName;
 
 #[test]
 fn a_messages_interval_is_its_own_or_the_relays_failure_from_its_admission() {

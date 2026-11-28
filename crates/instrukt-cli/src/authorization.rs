@@ -41,7 +41,7 @@ pub fn caller_identity(ctx: &Ctx) -> anyhow::Result<(Option<SessionRef>, Option<
     )?;
     let recorded = assignment
         .map(|assignment| {
-            let grants = Agents::load(&ctx.home)?.capabilities(assignment.role.as_str())?;
+            let grants = Agents::load(&inspection)?.capabilities(assignment.role.as_str())?;
             Ok::<_, anyhow::Error>((assignment, grants))
         })
         .transpose()?;
@@ -68,7 +68,6 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "todo",
             "create" | "update" | "freeze" | "unfreeze" | "remove" | "reactivate",
         ] => TodoWrite,
-        ["discuss", "open" | "close"] => ConversationLink,
         ["company", "reply"] => CompanyReply,
         ["sessions", "list"] => SessionObserve,
         ["history", "search" | "show"] => HistoryRead,
@@ -100,8 +99,8 @@ pub fn action(path: &[&str]) -> Option<Action> {
             "list" | "list-tools" | "call" | "clients" | "discover" | "check-ingress" | "sign-out",
         ]
         | ["mcp", "issuer", "init" | "publish" | "show"] => McpAccess,
-        ["ticks", "status"] => InstallationRead,
-        ["install"] => InstallationWrite,
+        ["ticks", "status"] | ["backup", "list"] => InstallationRead,
+        ["install"] | ["backup", "run" | "restore"] => InstallationWrite,
         ["run"] | ["tick"] | ["hooks", "worker"] | ["blueprint", "worker"] | ["webhooks", ..] => {
             RunnerExecute
         }
@@ -128,7 +127,7 @@ pub fn company_init(matches: &ArgMatches) -> bool {
 }
 
 /// The commands that work on the repository the caller stands in and need
-/// nothing else of the computer: `docs render [--check]`, `docs plugin
+/// nothing else of the computer: `docs render [--plugin] [--check]`, `docs plugin
 /// [--check | --validate]`, `docs units`, `hooks run`, the
 /// detached `hooks worker` a run starts, and `hooks status`. They load no
 /// project layer and skip the layer notices, so a root document that cannot
@@ -149,7 +148,7 @@ pub fn state_inspection(matches: &ArgMatches) -> bool {
     action(&command_path(matches).0) == Some(Action::DocsRead)
 }
 
-/// The commands that write no log: `docs render [--check]`, `docs plugin
+/// The commands that write no log: `docs render [--plugin] [--check]`, `docs plugin
 /// [--check | --validate]` and `docs units`, so a check writes nothing
 /// anywhere and errors go to stderr alone.
 pub fn untraced(matches: &ArgMatches) -> bool {
@@ -232,6 +231,7 @@ pub fn read_only(matches: &ArgMatches) -> bool {
             | ["agents", "list" | "availability"]
             | ["hooks", "status"]
             | ["ticks", "status"]
+            | ["backup", "list"]
             | ["sessions", "list"]
             | ["history", "search" | "show"]
             | ["todo", "list" | "show"]
@@ -282,6 +282,22 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         if grants.class == RoleClass::Focused && !grants.admits(action, false) {
             return Err(PermissionRefused(grants.refusal(action, "init --company")).into());
+        }
+        return Ok(());
+    }
+    if path.first() == Some(&"backup") {
+        // Home backup is machine-wide and operator-owned: a session bound to a
+        // company is refused every `instrukt backup` subcommand regardless of
+        // its role class (`roles-and-capabilities`).
+        if let Some(company) = &assignment.company {
+            return Err(PermissionRefused(format!(
+                "home backup is the operator's: this session's recorded assignment is company `{company}`'s, so `instrukt {}` is refused whatever its role, and nothing was changed; ask the operator to run home backup",
+                path.join(" ")
+            ))
+            .into());
+        }
+        if grants.class == RoleClass::Focused && !grants.admits(action, false) {
+            return Err(PermissionRefused(grants.refusal(action, &path.join(" "))).into());
         }
         return Ok(());
     }
@@ -364,7 +380,7 @@ pub fn check(ctx: &Ctx, matches: &ArgMatches) -> anyhow::Result<()> {
         }
         CodeCommit | DocsWrite | RepositoryWrite => workspace,
         Publication => in_project,
-        SessionObserve | ConversationLink => true,
+        SessionObserve => true,
         CompanyReply => assignment.company.is_some(),
         // A raise belongs to the project the assignment works in; the
         // command itself refuses every other project.
@@ -456,11 +472,7 @@ pub fn help(mut command: Command, path: &mut Vec<String>, caps: &Capabilities) -
     }
     if let Some(action) = action(&path.iter().map(String::as_str).collect::<Vec<_>>()) {
         let scope = caps.scope(action);
-        if caps.class == RoleClass::Focused
-            && (scope.is_none()
-                || (action == Action::ConversationLink
-                    && path.last().is_some_and(|name| name == "open")))
-        {
+        if caps.class == RoleClass::Focused && scope.is_none() {
             command = command
                 .hide(true)
                 .override_help(caps.refusal(action, &path.join(" ")));

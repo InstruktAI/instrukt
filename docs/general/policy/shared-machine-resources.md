@@ -1,5 +1,5 @@
 ---
-description: Disk space, CPU and memory are shared by every process on the machine; whoever creates a checkout, build output or ephemeral process keeps it bounded, removes or reaps it when its work ends, and keeps a floor of headroom before starting a build.
+description: 'Shared disk/CPU/RAM: bound checkouts, build outputs, and ephemeral processes; clean/reap when work ends; keep disk headroom floor before builds.'
 visibility: 'public'
 ---
 

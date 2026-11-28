@@ -38,7 +38,11 @@ and readable at the level of behavior rather than implementation.
    stakeholder of the product achieves, stated in the stakeholder's own terms,
    that the product owner can accept or reject a release on. Subfunctions and
    internal mechanics are written as the spec's prose contract (rules,
-   invariants, refusal conditions, tables) and get no use case. A refusal, an
+   invariants, refusal conditions, tables) and get no use case. Both the prose
+   contract and the use cases contract software state and observable tool
+   behavior only (`general/principle/intelligence-boundaries`): agent-to-agent
+   coordination, role handoffs, and workflow choreography belong in
+   `docs/domain/sdlc/procedure/` procedures and briefs, never in a feature spec. A refusal, an
    ordinary outage, or a failure with a recorded occurrence or dangerous path
    (`sdlc/concept/defect-evidence`) that threatens a goal is an extension of that
    goal's use case. Crash and interleaving matrices are mechanism, never extensions;

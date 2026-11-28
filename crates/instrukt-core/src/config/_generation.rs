@@ -10,10 +10,10 @@ use serde_yaml_ng::{Mapping, Value};
 
 use super::_error::ConfigError;
 use super::_github_org::GITHUB_ORG_KEY;
+use super::_identity::{COMPANY_NAME_KEY, CompanyName};
 use super::_schema::PROJECT_SCHEMA_VERSION;
 use crate::ids::{GitHubLogin, GitHubOrganisation, ProjectSlug};
 use crate::interfaces::AccountKind;
-use crate::publication::CompanyName;
 
 /// What adding a company does, as configuration decides it from the facts
 /// gathered for it.
@@ -190,9 +190,10 @@ pub fn decide<F: GenerationFacts>(
 }
 
 /// The company skeleton's project layer: the project [`company_repository`]
-/// names, declared a company's repository, with the module and review
-/// switches every company's repository starts with.
-pub fn skeleton_layer(key: &ProjectSlug) -> Result<Value, ConfigError> {
+/// names, declared a company's repository with the company identity of
+/// `key` and `name`, and the module and review switches every company's
+/// repository starts with.
+pub fn skeleton_layer(key: &ProjectSlug, name: &CompanyName) -> Result<Value, ConfigError> {
     let mut layer = Mapping::new();
     let mut set = |key: &str, value: Value| {
         layer.insert(Value::String(key.to_owned()), value);
@@ -207,6 +208,7 @@ pub fn skeleton_layer(key: &ProjectSlug) -> Result<Value, ConfigError> {
     })?;
     set("project", Value::String(project.to_string()));
     set("company_repository", Value::Bool(true));
+    set(COMPANY_NAME_KEY, Value::String(name.as_str().to_owned()));
     let mut modules = Mapping::new();
     modules.insert(Value::String("todos".to_owned()), Value::Bool(false));
     set("modules", Value::Mapping(modules));
@@ -220,12 +222,16 @@ pub fn skeleton_layer(key: &ProjectSlug) -> Result<Value, ConfigError> {
 /// working tree at `root`: `instrukt.yaml` as [`skeleton_layer`], through
 /// the project layer's own writer, and the company's ignore lines in
 /// `.gitignore`.
-pub fn write_skeleton(root: &Path, key: &ProjectSlug) -> Result<(), ConfigError> {
+pub fn write_skeleton(
+    root: &Path,
+    key: &ProjectSlug,
+    name: &CompanyName,
+) -> Result<(), ConfigError> {
     super::_company_document::ignore_local_material(root)?;
     super::_layer::write(
         &root.join(super::CONFIG_FILE_NAME),
         &[],
-        &skeleton_layer(key)?,
+        &skeleton_layer(key, name)?,
     )?;
     Ok(())
 }
@@ -416,13 +422,19 @@ mod tests {
 
     #[test]
     fn the_skeletons_layer_is_a_company_repository_with_todos_off_and_review_on() {
-        let layer = skeleton_layer(&acme()).unwrap();
+        let name = CompanyName::parse("Acme Inc").unwrap();
+        let layer = skeleton_layer(&acme(), &name).unwrap();
+        let bytes = serde_yaml_ng::to_string(&layer).unwrap();
         assert!(matches!(
-            super::super::classify_root(Some(serde_yaml_ng::to_string(&layer).unwrap().as_bytes())),
+            super::super::classify_root(Some(bytes.as_bytes())),
             super::super::RootDocument::ProjectLayer {
                 company_repository: true,
                 ..
             }
         ));
+        assert_eq!(
+            super::super::company_identity(Some(bytes.as_bytes())),
+            Ok(super::super::CompanyIdentity { key: acme(), name })
+        );
     }
 }

@@ -7,16 +7,14 @@
 //! means the module is off, and the core context behaves as the spec says
 //! for that case.
 //!
-//! Implementors: [`TodoExistence`] — work (`instrukt_todos::work`);
+//! Implementors: [`TodoExistence`] and [`CommitExemption`] — work
+//! (`instrukt_todos::work`);
 //! [`FlavorRoles`] — workflow (`instrukt_todos::workflow`); [`FlavorSchema`]
 //! — workflow's `WorkflowSchema`, always wired; [`GraphGeneration`] —
 //! blueprint (`instrukt_blueprint`); [`ConfiguredAgentRuntimes`] — the
-//! selected runtime's adapter (`instrukt_runner::runtime`);
-//! [`CoreWiring::cli_subcommands`] — top-level CLI subcommand names and
-//! aliases derived from Clap at the CLI composition root. The CLI fills
+//! selected runtime's adapter (`instrukt_runner::runtime`). The CLI fills
 //! each slot from its module's wiring file (`crates/instrukt-cli/src/wiring/`).
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -53,6 +51,21 @@ pub struct InterfaceError {
 /// for `Todo:` / `Planned-Todo:` trailers.
 pub trait TodoExistence: Send + Sync {
     fn todo_exists(&self, project: &ProjectSlug, slug: &TodoSlug) -> Result<bool, InterfaceError>;
+}
+
+/// Records a commit's exemption from independent review through work's
+/// admission of review evidence (`project/instrukt/spec/feature/work/github-apps`,
+/// Admission of review evidence), for the project the caller stands in. Used
+/// by repository for an author's no-review routing choice once the commit
+/// exists (`project/instrukt/spec/feature/repository/attributed-commit`,
+/// Review routing).
+pub trait CommitExemption: Send + Sync {
+    fn exempt(
+        &self,
+        commit: &CommitSha,
+        basis: &str,
+        caller: Option<&crate::ids::SessionRef>,
+    ) -> Result<(), InterfaceError>;
 }
 
 /// The roles of the selected workflow flavor (workflow, through the `todos`
@@ -133,6 +146,22 @@ pub struct GenerationRequest {
 /// revision and returns without waiting for the graph.
 pub trait GraphGeneration: Send + Sync {
     fn start_generation(&self, request: &GenerationRequest) -> Result<(), InterfaceError>;
+}
+
+/// The company's recording of a commit just made as a knowledge proposal
+/// (`project/instrukt/spec/domain/company`, Knowledge proposal). The
+/// `post-commit` hook run invokes it synchronously with the commit's
+/// repository root and the hook's environment, which is the committing
+/// session's; it decides everything, reports on `stderr`, the commit's
+/// standard error, and never fails the commit.
+pub trait ProposalRecording: Send + Sync {
+    fn record(
+        &self,
+        home: &crate::home::Home,
+        root: &Path,
+        env: &crate::config::Env,
+        stderr: &mut dyn std::io::Write,
+    );
 }
 
 /// How the adapter selected an instruction target home.
@@ -222,15 +251,12 @@ pub struct CoreWiring {
     pub github_actors: Option<Arc<dyn GitHubActors>>,
     pub session_role: Option<Arc<dyn SessionRoleLookup>>,
     pub todo_existence: Option<Arc<dyn TodoExistence>>,
+    pub commit_exemption: Option<Arc<dyn CommitExemption>>,
     pub flavor_roles: Option<Arc<dyn FlavorRoles>>,
     pub flavor_schema: Option<Arc<dyn FlavorSchema>>,
     pub graph_generation: Option<Arc<dyn GraphGeneration>>,
     pub configured_runtimes: Option<Arc<dyn ConfiguredAgentRuntimes>>,
-    /// Top-level `instrukt` CLI subcommand names and aliases supplied by the
-    /// CLI composition root from its Clap definition, used by docs validation
-    /// to detect `instrukt <subcommand>` invocations in shared doctrine
-    /// without duplicating the command list.
-    pub cli_subcommands: BTreeSet<String>,
+    pub proposal_recording: Option<Arc<dyn ProposalRecording>>,
 }
 
 impl std::fmt::Debug for CoreWiring {
@@ -240,11 +266,12 @@ impl std::fmt::Debug for CoreWiring {
             .field("github_actors", &self.github_actors.is_some())
             .field("session_role", &self.session_role.is_some())
             .field("todo_existence", &self.todo_existence.is_some())
+            .field("commit_exemption", &self.commit_exemption.is_some())
             .field("flavor_roles", &self.flavor_roles.is_some())
             .field("flavor_schema", &self.flavor_schema.is_some())
             .field("graph_generation", &self.graph_generation.is_some())
             .field("configured_runtimes", &self.configured_runtimes.is_some())
-            .field("cli_subcommands", &self.cli_subcommands.len())
+            .field("proposal_recording", &self.proposal_recording.is_some())
             .finish()
     }
 }
@@ -268,6 +295,14 @@ pub enum ReviewReadiness {
 /// credentials and writes no state.
 pub trait AutomaticReviewReadiness: Send + Sync {
     fn review_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
+}
+
+/// Work's readiness answer for the proposal pull-request credential: the
+/// identity the `company-agent` role selects, with write access to pull
+/// requests and read access to contents. It requests that one credential
+/// and writes no state; a met answer carries it.
+pub trait ProposalReadiness: Send + Sync {
+    fn proposal_readiness(&self, repository: &str, now: jiff::Timestamp) -> ReviewReadiness;
 }
 
 /// What kind of account a GitHub login names.
@@ -358,4 +393,126 @@ pub trait CompanyRepositories: Send + Sync {
 /// or installation authorization is implied by this capability.
 pub trait GitHubActors: Send + Sync {
     fn actor(&self, role: &str) -> Result<crate::github::Bot, crate::github::AppError>;
+}
+
+/// The most recent validated home backup generation recorded locally.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackupSuccess {
+    pub at: jiff::Timestamp,
+    pub generation: String,
+}
+
+/// Runner's local-only home backup standing judgment
+/// (`project/instrukt/spec/feature/runner/home-backup`).
+///
+/// Discriminated so contradictory states (such as `ok` without a validated
+/// generation, or `failed` without an error message) cannot be represented.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BackupStanding {
+    Unconfigured,
+    NeverRun {
+        admitted: bool,
+    },
+    Ok {
+        admitted: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: BackupSuccess,
+    },
+    Stale {
+        admitted: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: BackupSuccess,
+    },
+    Failed {
+        admitted: bool,
+        stale: bool,
+        last_attempt_at: jiff::Timestamp,
+        last_success: Option<BackupSuccess>,
+        last_error: String,
+    },
+}
+
+impl BackupStanding {
+    /// Flat JSON projection for `instrukt status` and `instrukt events status`.
+    pub fn to_json(&self) -> serde_json::Value {
+        match self {
+            Self::Unconfigured => serde_json::json!({
+                "standing": "unconfigured",
+                "admitted": false,
+                "stale": false,
+                "last_attempt_at": null,
+                "last_success_at": null,
+                "last_generation": null,
+                "last_error": null,
+            }),
+            Self::NeverRun { admitted } => serde_json::json!({
+                "standing": "never_run",
+                "admitted": admitted,
+                "stale": false,
+                "last_attempt_at": null,
+                "last_success_at": null,
+                "last_generation": null,
+                "last_error": null,
+            }),
+            Self::Ok {
+                admitted,
+                last_attempt_at,
+                last_success,
+            } => serde_json::json!({
+                "standing": "ok",
+                "admitted": admitted,
+                "stale": false,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.at.to_string(),
+                "last_generation": last_success.generation,
+                "last_error": null,
+            }),
+            Self::Stale {
+                admitted,
+                last_attempt_at,
+                last_success,
+            } => serde_json::json!({
+                "standing": "stale",
+                "admitted": admitted,
+                "stale": true,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.at.to_string(),
+                "last_generation": last_success.generation,
+                "last_error": null,
+            }),
+            Self::Failed {
+                admitted,
+                stale,
+                last_attempt_at,
+                last_success,
+                last_error,
+            } => serde_json::json!({
+                "standing": "failed",
+                "admitted": admitted,
+                "stale": stale,
+                "last_attempt_at": last_attempt_at.to_string(),
+                "last_success_at": last_success.as_ref().map(|s| s.at.to_string()),
+                "last_generation": last_success.as_ref().map(|s| s.generation.as_str()),
+                "last_error": last_error,
+            }),
+        }
+    }
+}
+
+/// Local backup standing could not be read (unreadable, malformed, or newer-schema bookkeeping).
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{}: {reason}", path.display())]
+pub struct BackupStandingError {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+/// Runner-owned local-only, lock-free home backup standing query consumed by
+/// `publication::status` (`runner -> publication` inversion seam).
+pub trait HomeBackupStanding: Send + Sync {
+    fn standing(
+        &self,
+        home: &crate::home::Home,
+        now: jiff::Timestamp,
+    ) -> Result<BackupStanding, BackupStandingError>;
 }

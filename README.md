@@ -19,7 +19,7 @@ Or tell any coding agent **"install instrukt"**. It runs those two commands, the
 - Prebuilt for `aarch64-apple-darwin`, `x86_64-unknown-linux-gnu` and `aarch64-unknown-linux-gnu`.
 - `instrukt -h` lists every command. `instrukt status` shows what instrukt sees on this machine and in this repository.
 
-[![Rust 2024 · MSRV 1.89](https://img.shields.io/badge/rust-2024%20%7C%20MSRV%201.89-orange.svg)](Cargo.toml)
+[![Rust 2024 · MSRV 1.94.1](https://img.shields.io/badge/rust-2024%20%7C%20MSRV%201.94.1-orange.svg)](Cargo.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](Cargo.toml)
 [![unsafe forbidden](https://img.shields.io/badge/unsafe__code-forbid-brightgreen.svg)](Cargo.toml)
 
@@ -277,7 +277,7 @@ Everything above keeps working when the infrastructure around it changes, becaus
 - **Agent runtimes:** [T3](https://github.com/pingdotgg/t3code) is the first runtime adapter (`runner.runtime`), connected through a single adapter trait and configurable instruction templates. **Next:** additional session hosts such as **Herdr** drop in behind the same interface while your docs, todos, events and procedures stay untouched.
 - **Chat connectors and webhook providers:** Slack over outbound Socket Mode is the first chat connector on the shared company connector interface, and raw-body HMAC-SHA256 / GitHub webhooks are the first inbound event schemes. **Next:** **Microsoft Teams** for organizations living in Microsoft 365, **Mattermost** for self-hosted, privacy-first teams, and additional provider adapters such as **WhatsApp** or timestamp-signed webhooks — sharing the exact same company folder, members, procedures and MCP tools.
 - **Models:** Roles map cleanly to model profiles in `agents.yaml` while the runtime supplies the providers. **Next:** first-class routing for **local and self-hosted models** alongside cloud frontier models, so roles touching sensitive business or financial data can stay on your own hardware while other roles optimize for capability or cost.
-- **Company isolation:** Today each company has strict separation of files, git history, secrets, members, logins, connectors, webhooks and MCP servers. **Next:** **per-company Linux containers** ([spec](docs/project/spec/feature/runner/company-containers.md)), allowing many companies to share one host with full OS-level isolation.
+- **Company isolation:** Today each company has strict separation of files, git history, secrets, members, logins, connectors, webhooks and MCP servers. **Next:** **per-company Linux containers** ([spec](docs/project/spec/feature/company/company-containers.md)), allowing many companies to share one host with full OS-level isolation.
 - **Doctrine and code graphs:** Both are pluggable from day one — `general` and `sdlc` are ordinary git docs you can fork or replace, and `blueprint`'s graph engine sits behind its own adapter.
 
 ---
@@ -297,7 +297,7 @@ This repository is documentation-first, written using the exact system it publis
 
 ## Development
 
-One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.89, `unsafe` code forbidden, one binary.
+One Cargo workspace ([`Cargo.toml`](Cargo.toml)), Rust 2024, MSRV 1.94.1, `unsafe` code forbidden, one binary.
 
 ```sh
 make hooks          # once per clone: pre-commit runs the checks the staged files need

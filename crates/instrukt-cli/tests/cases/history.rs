@@ -292,6 +292,27 @@ fn history_follows_a_t3_database_that_appears_while_the_runner_is_running() {
         || messages_of("repaired") == 1,
     );
     assert_eq!(runner.running(), pid, "the same runner process");
+    // Background worker failure recording and clearing never wait on the state
+    // database's writer lock.
+    {
+        let _writer = instrukt_core::fsx::LockGuard::acquire(
+            &env.instrukt_home().join("state/writer.lock"),
+            Duration::from_secs(1),
+        )
+        .unwrap();
+        recreated.break_shape();
+        crate::common::wait_until(
+            "the extraction failure in status while writer.lock is held",
+            Duration::from_secs(20),
+            extraction,
+        );
+        recreated.restore_shape();
+        crate::common::wait_until(
+            "the extraction failure to clear while writer.lock is held",
+            Duration::from_secs(20),
+            || !extraction(),
+        );
+    }
     // A failure one runner process recorded is cleared by the next one's
     // worker once it extracts.
     recreated.break_shape();
@@ -322,6 +343,26 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
     fixture::configure_cluster(&remote, &redis.url);
     fixture::computer(&remote, "bbbbbbbbbbbbbbbb");
     let worker = fixture::runner(&remote);
+    // Ensure local's state database already exists at current schema (just as
+    // remote's does after runner startup) so history's one-time state-db
+    // creation is not what runs here; merged search and Redis reachability
+    // recording must then succeed on both computers with the writer lock held.
+    drop(
+        instrukt_core::state_db::StateDb::open(&instrukt_core::home::Home::at_user_home(
+            local.home().to_path_buf(),
+        ))
+        .unwrap(),
+    );
+    let local_writer = instrukt_core::fsx::LockGuard::acquire(
+        &local.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
+    let remote_writer = instrukt_core::fsx::LockGuard::acquire(
+        &remote.instrukt_home().join("state/writer.lock"),
+        Duration::from_secs(1),
+    )
+    .unwrap();
     let out = local
         .run(
             local.home(),
@@ -337,6 +378,8 @@ fn merged_search_identifies_each_computer_and_reports_an_unreachable_one() {
             ],
         )
         .failure();
+    drop(local_writer);
+    drop(remote_writer);
     let found: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(found["matches"].as_array().unwrap().len(), 4);
     assert_eq!(found["failures"].as_array().unwrap().len(), 1);

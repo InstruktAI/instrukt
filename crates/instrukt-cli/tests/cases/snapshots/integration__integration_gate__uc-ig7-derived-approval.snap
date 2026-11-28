@@ -1,0 +1,32 @@
+---
+source: crates/instrukt-cli/tests/cases/integration-gate.rs
+expression: "work ::\nredact(&\nString::from_utf8(shown.get_output().stdout.clone()).unwrap().replace(&oneoff,\n\"<one-off commit>\"))"
+---
+derived approval: <digest 1> moment <time>, against canonical head <commit 1>, recorded by this computer's tick <time>
+    | {
+    |   "candidate": "<commit 2>",
+    |   "canonical": "<commit 1>",
+    |   "covering": [
+    |     {
+    |       "commit": "<commit 2>",
+    |       "kind": "reproduced_merge",
+    |       "evidence": "reproduced from <commit 3> and <one-off commit>"
+    |     },
+    |     {
+    |       "commit": "<one-off commit>",
+    |       "kind": "exempted",
+    |       "evidence": "exemption of <one-off commit>: fixes a typo in the readme; no behaviour changes (declared by t3:oneoff-author)"
+    |     },
+    |     {
+    |       "commit": "<commit 3>",
+    |       "kind": "reproduced_merge",
+    |       "evidence": "reproduced from <commit 1> and <commit 4>"
+    |     },
+    |     {
+    |       "commit": "<commit 4>",
+    |       "kind": "approved_head",
+    |       "evidence": "head verdict <digest 2> of <commit 4> by t3:feature-reviewer"
+    |     }
+    |   ]
+    | }
+publication: review status of <digest 1> <time>: shown

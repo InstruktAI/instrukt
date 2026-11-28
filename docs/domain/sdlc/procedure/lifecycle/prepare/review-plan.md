@@ -42,12 +42,6 @@ it without guessing and a reviewer finds no surprises.
 
 ## Steps
 
-### Configured runtime operations
-
-Apply these configured action values to the identified assignment and session.
-
-<!-- @config: runtime.read_thread -->
-
 Use `instrukt <command> -h` for individual commands.
 
 First read the sdlc principles that apply to this work, as `instrukt docs get --domain sdlc` lists them, with `instrukt docs get`.
@@ -204,21 +198,12 @@ artifact quality policy. Do not add an intent-formation lane to the delivery
 review catalogue; build and commit review validate delivery against already
 approved intent and must not re-litigate it.
 
-`input` is the basis this comparison rests on. Inspect its current version
-and intent-checked stamp. A current check is taken as given, regardless of
-which role performed it; rewriting the plan does not invalidate that check.
-If you are the first recipient other than the current input's author and no
-current check exists, read its originating conversation through
-the configured runtime conversation read instruction before weighing the plan against
-it. Confirm fidelity and record `instrukt todo stamp {slug} --intent-checked`
-against the checked input version and conversation. If expression needs
-clarifying, return it to its author for a new input version; reviewer
-separation still applies. A mistaken interpretation returns to the human in the
-responsible session's thread as one intent question. A conversation required
-for this check is read where it is available; its absence supplies no check.
-If the originating conversation is permanently unavailable, return the intent to the
-human in the responsible thread; a new `input` version from that conversation becomes
-the checkable basis.
+`input` is the basis for this comparison (`sdlc/policy/todo-creation-discipline`).
+If a concrete discrepancy in `input` or an unresolved human-owned choice
+surfaces, record a publishable summary in findings (keeping conversation
+content in the runtime per `sdlc/policy/todo-creation-discipline`) so
+`todo-orchestrator` pauses only the affected work and returns it to the
+originating conversation (`general/policy/human-contract`).
 Additional corroborative conversation gaps follow the shared review contract.
 
 ### 4. Plan-specific quality
@@ -251,11 +236,17 @@ policy:
 
 ### 5. Grounding
 
-Apply the grounding rule from the preparation artifact quality policy. Verify
+Apply the grounding rule from the preparation artifact quality policy and
+outward solution anchoring (`sdlc/policy/substrate-anchoring`). Verify
 plan tasks against the domain specs loaded in step 1. Plans that reference
 non-existent APIs, wrong schema fields, or incorrect directory structures are
 defective — the builder will discover the error at build time, wasting a
-session.
+session. Where the plan introduces or modifies an external protocol, API
+client, auth/OAuth flow, or retry/backoff mechanism — including on a `change`
+or `bug` plan where `architecture` was skipped — verify the outward assessment
+of established SDKs/libraries and any grounded ADR declining one; hand-rolling
+or wrapping hand-rolled protocol code without that grounding is **Critical**
+(`sdlc/policy/substrate-anchoring`).
 
 Independently re-derive ownership from domain meaning and reason to change.
 Do not accept the plan's chosen module, caller, adapter, runner, scheduler,
@@ -499,10 +490,8 @@ Classify each violation by the severity tiers in
 
 Plan reviewers evaluate; they do not author. A plan reviewer must not edit the
 `implementation-plan`, upstream prepare artifacts, documentation snippets, source
-files, tests, config, or generated files. The only writes a plan reviewer owns
-are the complete `plan-review-findings` artifact for every pass, the
-`plan_review` verdict stamp, and the position-based intent-check stamp when
-this reviewer is its first non-author recipient.
+files, tests, config, or generated files. The only writes a plan reviewer owns are the complete `plan-review-findings`
+artifact for every pass and the `plan_review` verdict stamp.
 
 When the plan has a localized defect, record it as a finding and stamp
 `needs_work`. The plan drafter owns the corrective edit, and `todo-orchestrator`

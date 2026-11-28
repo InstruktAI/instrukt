@@ -1,5 +1,5 @@
 ---
-description: Reach MCP servers through `instrukt mcp` — list the declared servers, read one server's tools only when the task needs them, call a tool and use its result as evidence.
+description: 'List/call declared MCP servers via `instrukt mcp`, reading tools on demand as evidence.'
 visibility: public
 ---
 

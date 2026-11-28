@@ -1,6 +1,7 @@
 ---
 source: crates/instrukt-cli/tests/cases/roles-and-capabilities.rs
-expression: "String::from_utf8_lossy(&output.get_output().stdout)"
+assertion_line: 67
+expression: help
 ---
 Context engineering for coding agents
 
@@ -20,6 +21,7 @@ Commands:
   review     Independent review evidence of exact commits, and moving it between computers
   events     Discover producer-declared event types and their schemas
   ticks      Scheduled tick status
+  backup     Encrypted offsite backup, generation listing and guarded restore of this instrukt home
   help       Print this message or the help of the given subcommand(s)
 
 Options:

@@ -814,23 +814,32 @@ a recommended resolution, never what a person said in another conversation
 ##### NC-48 — A settlement returned
 
 - **Evidence available:** the outcome recorded in the `log` of any todo the
-  return concerns, that version's recorded writer and the todo's creation
-  record — or, where the operator is the origin, the operator's answer in the
-  coordinator's thread — the open return it answers, the holds placed for it,
-  and the todos concerned. A message from an origin only points at the record.
-- **Ownership:** the people decided; the origin records the outcome, and the
-  adopted intent in a todo whose intent changes; the Coordinator applies the
-  rest within `sdlc/policy/todo-creation-discipline`.
+  return concerns by its actual originating session (or confirmed directly in
+  that originating conversation as verified through `runtime.read_thread` when
+  the origin cannot mutate the todo directly), or — where the platform operator
+  is the origin — the operator's answer in the coordinator's thread, together
+  with the open return it answers, the holds waiting on it, and the todos
+  concerned (`sdlc/policy/todo-creation-discipline`). A peer message alone only
+  points where to look.
+- **Ownership:** the people decided; the origin records or confirms the
+  outcome, and any changed intent lands in `input` in clean, publishable form
+  (written directly or recorded by the retained claimant after verifying the
+  originating or coordinator thread under
+  `sdlc/policy/todo-creation-discipline`); the Coordinator applies the rest
+  within that policy.
 - **Coordinator:** apply it to every todo it names, one or several: release the
-  pause of a todo that resumes, resume a changed todo once its `input` carries
-  the adopted outcome, fold a superseded todo into its survivor and withdraw it,
-  withdraw a todo retired outright, record a boundary or dependency the outcome
-  sets, release the holds placed for it and send the closure notices
-  (`sdlc/procedure/lifecycle/coordinate`), including the withdrawal of another
-  origin's todo, whose origin receives the closure notice. An outcome neither a
-  recorded origin nor the operator-origin gave is no settlement.
-- **Stop and settlement:** settle when no todo the outcome retires, hold placed
-  for it or open return remains and every other affected origin has its
+  pause of a todo that resumes (recording the publishable confirmation in `log`
+  when the operator settled it), resume a changed todo once its `input` carries
+  the adopted outcome (and the publishable `log` note when the operator settled
+  it), fold a superseded todo into its survivor and withdraw it, withdraw a
+  todo retired outright, record a boundary or dependency the outcome sets,
+  release the holds waiting on it once prerequisite record updates are in place
+  and send the closure notices (`sdlc/procedure/lifecycle/coordinate`),
+  including the withdrawal of another origin's todo, whose origin receives the
+  closure notice. An outcome neither an actual originating session nor the
+  operator-origin gave is no settlement.
+- **Stop and settlement:** settle when no todo the outcome retires, hold
+  waiting on it or open return remains and every other affected origin has its
   notice.
 
 ##### NC-49 — A technical coordinator's live-overlap consult

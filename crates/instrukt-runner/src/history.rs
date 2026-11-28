@@ -16,8 +16,6 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::time::Duration;
 
-pub(crate) use _fleet::SearchWorker;
-
 #[derive(Debug, thiserror::Error)]
 pub enum HistoryError {
     #[error(
@@ -49,6 +47,9 @@ pub enum HistoryError {
     ConversationSource(#[from] crate::runtime::conversations::SourceError),
     #[error(transparent)]
     Runtime(#[from] crate::sessions::SessionsError),
+    /// What the computer fleet's query observed instead of an answer.
+    #[error("computer fleet query: {0}")]
+    Fleet(&'static str),
 }
 
 impl HistoryError {
@@ -295,7 +296,7 @@ pub fn enabled(home: &Home) -> Result<bool, HistoryError> {
 #[derive(Default)]
 pub(crate) struct Readers {
     extraction: Option<_watch::Worker>,
-    search: Option<SearchWorker>,
+    search: Option<crate::computer_fleet::Responder>,
     /// The cluster transport settings the search worker was started on.
     search_transport: Option<serde_yaml_ng::Value>,
 }
@@ -339,7 +340,11 @@ impl Readers {
             );
             self.search = None;
         }
-        if self.search.as_ref().is_some_and(SearchWorker::ended) {
+        if self
+            .search
+            .as_ref()
+            .is_some_and(crate::computer_fleet::Responder::ended)
+        {
             tracing::warn!(
                 event = "history_worker_restarted",
                 worker = "history-search"
@@ -364,7 +369,7 @@ impl Readers {
                 &crate::state::RunnerState::new(home),
             ) {
                 Ok(transport) => {
-                    match SearchWorker::start(home, env, current.clone(), &transport) {
+                    match _fleet::search_worker(home, env, current.clone(), &transport) {
                         Ok(worker) => {
                             self.search = Some(worker);
                             self.search_transport = transport_settings;

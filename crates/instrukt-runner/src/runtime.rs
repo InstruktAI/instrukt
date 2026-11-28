@@ -260,6 +260,9 @@ pub struct RuntimeAssignment<'a> {
     pub invocation: &'a crate::keyed::RuntimeInvocation,
     pub project: Option<&'a str>,
     pub request: &'a RuntimeStart,
+    /// An existing linked worktree of `request.checkout` to attach on initial
+    /// launch; persisted on [`NativeLaunch::existing_worktree`].
+    pub existing_worktree: Option<&'a Path>,
     pub now: jiff::Timestamp,
 }
 

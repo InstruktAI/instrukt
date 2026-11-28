@@ -1,8 +1,6 @@
 ---
 eval: true
-description: 'The enforceable rules of doc-driven development: functionality authors
-  its contract first, behavioral deltas stay reflected, and current versus pending
-  truth remains explicit.'
+description: 'Doc-driven dev: contract first, deltas reflected, current vs pending explicit; directives anywhere are contract (owner + review).'
 visibility: public
 ---
 
@@ -118,14 +116,14 @@ restart, then check the logs` is directive. One string reaching a human and an
   outside the snippet system and company knowledge, such as a README, is not
   governed content; directive text is, wherever it lives.
 
-- **Cross-project doc work preserves the authoring session.** The session holding
-  the design context writes the complete content to caller-owned temporary files
-  and relays only their absolute paths and target repository paths to a session
-  rooted in the owning project. That agent applies them exactly — no rewriting,
-  summarizing, or improving — then runs its project's validation, sync, commit,
-  and review routing. If it cannot apply them exactly, it reports the blocker and
-  leaves the content unchanged. The caller removes the files once success or
-  cancellation is confirmed.
+- **Cross-project doc work preserves the authoring session.** When a session
+  holding the design context authors a documentation change for another project
+  and hands its mechanical write to a session rooted in the owning project, it
+  passes the authored content verbatim (or writes it directly into a one-off
+  worktree of the owning repository). The receiving session applies the
+  authored content without rewriting, summarizing, or improving it, then runs
+  the owning project's validation, commit, and review routing — or reports a
+  blocker leaving the content unchanged.
 
 ## Rationale
 
@@ -166,8 +164,7 @@ direct commits publish stale history and unverified instructions straight to
 every reader.
 
 Moving a mechanical write to another project must not move authorship with it:
-the files carry the already-authored document, and the receiving session owns
-only application and its project's gates.
+the receiving session owns only verbatim application and its project's gates.
 
 ## Scope
 

@@ -1,5 +1,5 @@
 ---
-description: 'Agent identity persists through evidence, not sensation. Read the proof of who you are.'
+description: 'Agent identity persists through forensic evidence, not sensation; read the proof of who you are.'
 visibility: 'public'
 ---
 

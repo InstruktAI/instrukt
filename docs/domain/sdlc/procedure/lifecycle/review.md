@@ -69,9 +69,7 @@ preferred classification or design alone does not reopen a decision.
 Where a procedure has you read the conversation that produced the work — a
 session transcript named by an artifact's writers or a commit's `Session:`
 trailer — that reading serves the comparison the invoking procedure assigns.
-Where the invoking procedure makes an unreadable conversation a blocker, as the
-intent check on a todo's `input` does (`sdlc/policy/todo-creation-discipline`),
-its rule applies. Otherwise read it when it can be read. When it cannot — the writer has no recorded
+Read it when it can be read. When it cannot — the writer has no recorded
 session, or the conversation is unavailable through
 the configured runtime conversation read instruction — record what you tried and why
 it failed, and proceed on the artifact or commit as the authorized basis, with its governing
@@ -424,5 +422,5 @@ Verdict: APPROVE | REQUEST CHANGES
 
 If the target, applicable contract, or required evidence cannot be resolved,
 report the blocker to the invoking procedure and stop. Do not narrow the review
-to what happens to be available. Step 0 decides whether a producing
-conversation that cannot be read is such a blocker.
+to what happens to be available. An unreadable producing conversation follows
+Step 0.

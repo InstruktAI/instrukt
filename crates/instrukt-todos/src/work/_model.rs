@@ -203,11 +203,14 @@ impl TodoRecord {
         self.artifacts.iter().find(|a| a.name.as_str() == name)
     }
 
+    /// The current version of the artifact `name`.
+    pub fn current_version(&self, name: &str) -> Option<&Version> {
+        self.artifact(name).and_then(|a| a.versions.last())
+    }
+
     /// The current version's digest of the artifact `name`.
     pub fn current_digest(&self, name: &str) -> Option<&ContentDigest> {
-        self.artifact(name)
-            .and_then(|a| a.versions.last())
-            .map(|v| &v.digest)
+        self.current_version(name).map(|v| &v.digest)
     }
 
     /// Whether the todo is addressable by its slug: active, iceboxed or a
@@ -219,8 +222,7 @@ impl TodoRecord {
         )
     }
 
-    /// Whether implementation has started (a build/review/verification/
-    /// finalize stamp or builder/finalizer binding exists).
+    /// Whether the record contains implementation evidence.
     pub fn implementation_started(&self) -> bool {
         self.stamps.iter().any(|s| {
             matches!(
@@ -231,10 +233,7 @@ impl TodoRecord {
                     | StampFact::VerificationDisposition { .. }
                     | StampFact::FinalizeReady { .. }
             )
-        }) || self
-            .bindings
-            .iter()
-            .any(|b| matches!(b.role.as_str(), "builder" | "finalizer"))
+        })
     }
 
     /// The next record-order number, for an artifact version or stamp
@@ -372,6 +371,30 @@ pub struct Version {
     pub content: Option<String>,
 }
 
+impl Version {
+    /// Whether `other` changes nothing about this version: the same content,
+    /// provenance and writer, whenever it was written.
+    pub fn repeats(&self, other: &Version) -> bool {
+        let Self {
+            digest,
+            writer,
+            derived_from,
+            grounding,
+            created: _,
+            sequence: _,
+            remote: _,
+            content: _,
+        } = self;
+        (digest, derived_from, grounding, writer)
+            == (
+                &other.digest,
+                &other.derived_from,
+                &other.grounding,
+                &other.writer,
+            )
+    }
+}
+
 /// The item-level execution claim: held by a computer, through a session
 /// when one claimed it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -468,6 +491,49 @@ pub(crate) fn valid_artifact_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_version_repeats_another_only_with_the_same_content_provenance_and_writer() {
+        let version = |content: &str, writer: &str| Version {
+            digest: digest_of(content),
+            writer: Actor::Person {
+                name: writer.into(),
+            },
+            created: Timestamp::from_second(1).unwrap(),
+            derived_from: Vec::new(),
+            sequence: 1,
+            grounding: Grounding::default(),
+            remote: None,
+            content: Some(content.into()),
+        };
+        let current = version("x", "dev");
+        let later = Version {
+            created: Timestamp::from_second(9).unwrap(),
+            sequence: 4,
+            remote: Some(2),
+            content: None,
+            ..version("x", "dev")
+        };
+        assert!(current.repeats(&later));
+        assert!(!current.repeats(&version("y", "dev")));
+        assert!(!current.repeats(&version("x", "other")));
+        let rederived = Version {
+            derived_from: vec![Upstream {
+                artifact: ArtifactName::new("prd"),
+                digest: Some(digest_of("prd-v1")),
+            }],
+            ..version("x", "dev")
+        };
+        assert!(!current.repeats(&rederived));
+        let regrounded = Version {
+            grounding: Grounding {
+                referenced_paths: vec!["src".into()],
+                ..Grounding::default()
+            },
+            ..version("x", "dev")
+        };
+        assert!(!current.repeats(&regrounded));
+    }
 
     #[test]
     fn records_written_before_sequencing_are_numbered_in_time_then_stored_order() {

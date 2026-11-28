@@ -1,5 +1,5 @@
 ---
-description: 'Where snippets live and how they are named: the three positions, ids, domains, index.yaml and schema.yaml, frontmatter including event subscription home, identity and attendance, and the reference forms. Section shape comes from instrukt docs schema.'
+description: 'Snippet positions, ids, domains, `index.yaml`/`schema.yaml`, frontmatter (events, identity, attendance), refs, `_compressed/`; shapes via `instrukt docs schema`.'
 visibility: 'public'
 ---
 

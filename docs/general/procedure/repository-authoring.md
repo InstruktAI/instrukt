@@ -1,6 +1,6 @@
 ---
-description: 'Author and commit in a git repository when no brief or assignment names the workspace: place the work under the commit policy, commit through instrukt, route review and hand the head to the integrator.'
-activation_trigger: 'Use before the first write to a git repository — an edit, branch, worktree or commit — when no brief or assignment names the workspace to write in.'
+description: 'Place, commit via instrukt, review, and hand repository work to the integrator.'
+activation_trigger: 'Before first write (edit, branch, worktree, commit) in a git repo when no brief or assignment names the workspace.'
 visibility: public
 ---
 

@@ -1,5 +1,6 @@
 ---
 source: crates/instrukt-cli/tests/cases/todos.rs
+assertion_line: 44
 expression: "redact(&format!(\"{reused}---\\n{}---\\n{earlier}\",\nString::from_utf8_lossy(&refused.get_output().stderr))).replace(&lexer[..8],\n\"<prefix>\")"
 ---
 parser-depth · change · active
@@ -9,8 +10,7 @@ created: <time> by Test Developer
 revision: 1
 intent:
   Track table depth in the parser.
-reflection: reflected to GitHub
-issue: #2
+reflection: pending: not yet reflected
 claim: not held
 hold: none
 artifacts:
@@ -28,8 +28,7 @@ created: <time> by Test Developer
 revision: 2
 intent:
   Count depth in the lexer.
-reflection: reflected to GitHub
-issue: #3
+reflection: pending: not yet reflected
 claim: not held
 hold: none
 delivered: <commit 1> at <time> by Test Developer

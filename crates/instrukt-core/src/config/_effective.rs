@@ -248,12 +248,14 @@ impl Configuration {
     }
 
     /// The value at dotted `path` (the whole configuration when `None`),
-    /// interpolated in `env`. Transport credentials are masked before expansion;
-    /// typed accessors resolve them for I/O. `runtime.session_id` uses the selected adapter.
+    /// interpolated in `env`. Transport, GitHub App, and home backup
+    /// credentials are masked before expansion; typed accessors resolve them
+    /// for I/O. `runtime.session_id` uses the selected adapter.
     pub fn get(&self, path: Option<&str>, env: &Env) -> Result<Value, ConfigError> {
         let mut value = self.value.clone();
         super::_redis::redact(&mut value, "");
         super::_webhooks::redact(&mut value);
+        super::_backup::redact(&mut value);
         if let Some(apps) = value
             .get_mut("github")
             .and_then(|g| g.get_mut("apps"))
@@ -273,6 +275,12 @@ impl Configuration {
     /// Read machine-owned Redis settings, resolving credential references for I/O.
     pub fn redis(&self, _env: &Env) -> Result<super::RedisSettings, ConfigError> {
         super::_redis::settings(self, true)
+    }
+
+    /// Read machine-owned home backup settings, resolving credential references
+    /// from `<selected INSTRUKT_HOME>/secrets.env` solely for I/O.
+    pub fn backup(&self) -> Result<Option<super::BackupConfig>, ConfigError> {
+        super::_backup::from_effective(&self.home, &self.value)
     }
 
     /// Read only the cluster endpoint for modules with no local Redis demand.
@@ -363,12 +371,8 @@ impl Configuration {
                 ),
             });
         };
-        let value = super::_layer::inspected(
-            home,
-            &Layer::Project(checkout.into()),
-            &path,
-            document.value,
-        )?;
+        let value =
+            super::_layer::inspected(&Layer::Project(checkout.into()), &path, document.value)?;
         let global = read_usable(home, &Layer::Global)?;
         let mut config = Self::from_value(
             effective_value(global.as_ref(), Some(&value))?,

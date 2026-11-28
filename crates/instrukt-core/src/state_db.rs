@@ -21,6 +21,7 @@
 //! protection, WAL, migration, refusal and snapshot reading; [`StateDb`] and
 //! [`StateRead`] are the state database's users of it.
 
+mod _backup;
 mod _schema;
 mod _snapshot;
 
@@ -29,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
+pub use _backup::{integrity_check, online_backup, quick_check};
 pub use _schema::Migration;
 pub use rusqlite;
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
@@ -223,6 +225,52 @@ impl Store {
     /// The schema version this build writes for the store.
     pub fn version(&self) -> u32 {
         self.migrations.len() as u32
+    }
+
+    /// The schema version the store's file holds, read without migrating it
+    /// or taking its lock; `None` when no file exists yet. A process that
+    /// has not opened the file through SQLite reads an in-memory image, as
+    /// [`Store::read`] does with `snapshot`; one that has reads it from a
+    /// live connection that permits queries only.
+    pub fn stored_schema(&self) -> Result<Option<u32>, StoreError> {
+        let path = &self.file;
+        refuse_database_links(self.name, path)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let conn = match _snapshot::read(self.name, path)? {
+            Some(conn) => conn,
+            None => {
+                let conn = open_live(self.name, path)?;
+                conn.pragma_update(None, "query_only", true)
+                    .map_err(StoreError::sqlite(self.name, path))?;
+                conn
+            }
+        };
+        stored_version(&conn, self.name, path).map(Some)
+    }
+
+    /// Whether a writer could open and write the store, asked of the file
+    /// system with access(2) alone: no descriptor is opened and nothing is
+    /// written. An existing store needs its file writable and its folder
+    /// writable and searchable, since SQLite keeps its log and shared memory
+    /// beside it; a store not created yet needs the nearest existing folder
+    /// its first writer creates into.
+    pub fn writable(&self) -> bool {
+        use rustix::fs::{Access, access};
+        let folder = Access::WRITE_OK | Access::EXEC_OK;
+        if self.file.exists() {
+            let parent = self.file.parent().unwrap_or(Path::new("."));
+            return access(&self.file, Access::WRITE_OK).is_ok() && access(parent, folder).is_ok();
+        }
+        let mut at = self.file.parent();
+        while let Some(dir) = at {
+            if dir.exists() {
+                return access(dir, folder).is_ok();
+            }
+            at = dir.parent();
+        }
+        false
     }
 
     /// Opens the store for reading without its lock; `None` when no file
@@ -492,6 +540,26 @@ impl StateDb {
         let path = self.path().to_path_buf();
         self.write(|tx| {
             tx.execute_batch(_schema::DROP_HISTORY)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
+    /// Drops `runner_workers` once the runner has moved any active rows into
+    /// its isolated worker failure files (version 41).
+    pub fn remove_runner_workers(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_RUNNER_WORKERS)
+                .map_err(StateDbError::sqlite(&path))
+        })
+    }
+
+    /// Drops `redis_reachability` once the runner has moved any recorded rows
+    /// into its isolated reachability store (version 41).
+    pub fn remove_redis_reachability(&mut self) -> Result<(), StateDbError> {
+        let path = self.path().to_path_buf();
+        self.write(|tx| {
+            tx.execute_batch(_schema::DROP_REDIS_REACHABILITY)
                 .map_err(StateDbError::sqlite(&path))
         })
     }
@@ -1074,7 +1142,7 @@ mod tests {
              VALUES ('acme','slack','C1/1','1.000000','1.000001','2026-11-18T10:00:00Z')",
             [],
         ).unwrap();
-        conn.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
+        conn.execute_batch("CREATE TABLE runtime_starts (runtime TEXT NOT NULL,semantic_key TEXT NOT NULL,project TEXT,kind TEXT NOT NULL,subject TEXT NOT NULL,checkout TEXT NOT NULL,brief TEXT NOT NULL,request TEXT NOT NULL,begun_at TEXT NOT NULL,reported INTEGER NOT NULL,resolved_at TEXT,resolved_by TEXT,resolution TEXT,state TEXT NOT NULL,PRIMARY KEY(runtime,semantic_key)); CREATE TABLE runner_workers (worker TEXT PRIMARY KEY, failure TEXT NOT NULL, since TEXT NOT NULL); ALTER TABLE runtime_bindings DROP COLUMN generation; ALTER TABLE runtime_bindings DROP COLUMN start_key; ALTER TABLE runtime_bindings DROP COLUMN replaced_session; ALTER TABLE runtime_bindings DROP COLUMN legacy_modes; ALTER TABLE connected_conversations DROP COLUMN display_title; DROP TABLE runtime_generations;").unwrap();
         conn.pragma_update(None, "user_version", before).unwrap();
         migrate(&mut conn, path).unwrap();
 
@@ -1392,7 +1460,14 @@ mod tests {
         conn.pragma_update(None, "user_version", 18).unwrap();
         let seeded = "T3 is unreachable";
         conn.execute("INSERT INTO conversation_relay(id,failure,updated_at) VALUES(1,?1,'2026-11-18T10:00:00Z')", [seeded]).unwrap();
-        migrate(&mut conn, Path::new(":memory:")).unwrap();
+        let tx = conn.transaction().unwrap();
+        match &_schema::MIGRATIONS[18] {
+            _schema::Migration::Sql(script) => tx.execute_batch(script),
+            _schema::Migration::Step(step) => step(&tx),
+        }
+        .unwrap();
+        tx.commit().unwrap();
+        conn.pragma_update(None, "user_version", 19).unwrap();
         // The relay's recorded failure is kept as it was stored.
         let kept: i64 = conn
             .query_row(
@@ -1582,6 +1657,140 @@ mod tests {
             })
             .unwrap();
         assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn version_41_drops_empty_legacy_tables_and_preserves_populated_ones_until_removed() {
+        let build_v40 = |conn: &mut Connection| {
+            for migration in _schema::MIGRATIONS.iter().take(40) {
+                let tx = conn.transaction().unwrap();
+                match migration {
+                    _schema::Migration::Sql(script) => tx.execute_batch(script),
+                    _schema::Migration::Step(step) => step(&tx),
+                }
+                .unwrap();
+                tx.commit().unwrap();
+            }
+            conn.pragma_update(None, "user_version", 40).unwrap();
+            conn.execute_batch(
+                "INSERT INTO todos(id,project,slug,kind,status,created_at,created_by,revision,catch_up,sequence)
+                 VALUES ('t-40','demo','keep-me','change','active','2026-11-27T00:00:00Z','session-1',1,'none',1);
+                 INSERT INTO events(seq,id,name,project,payload,envelope,logged_at)
+                 VALUES (1,'ev-40','runner.test','demo','{}','{}','2026-11-27T00:00:00Z');
+                 INSERT INTO conversation_relay(id,failure,updated_at)
+                 VALUES (1,'relay-ok','2026-11-27T00:00:00Z');",
+            )
+            .unwrap();
+        };
+
+        // 1. Empty legacy tables drop immediately at version 41 while work/runner rows stay.
+        let mut empty_conn = Connection::open_in_memory().unwrap();
+        build_v40(&mut empty_conn);
+        migrate(&mut empty_conn, Path::new(":memory:")).unwrap();
+        assert_eq!(
+            empty_conn
+                .pragma_query_value(None, "user_version", |row| row.get::<_, u32>(0))
+                .unwrap(),
+            schema_version()
+        );
+        let retired: u32 = empty_conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retired, 0);
+        let kept: (String, String, String) = (
+            empty_conn
+                .query_row("SELECT slug FROM todos WHERE id = 't-40'", [], |r| r.get(0))
+                .unwrap(),
+            empty_conn
+                .query_row("SELECT name FROM events WHERE id = 'ev-40'", [], |r| {
+                    r.get(0)
+                })
+                .unwrap(),
+            empty_conn
+                .query_row(
+                    "SELECT failure FROM conversation_relay WHERE id = 1",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap(),
+        );
+        assert_eq!(
+            kept,
+            ("keep-me".into(), "runner.test".into(), "relay-ok".into())
+        );
+
+        // 2. Populated legacy tables stay intact across both read-only in-memory
+        // snapshot inspection and on-disk StateDb::open until removed explicitly.
+        let dir = crate::fsx::temp_dir(&tempfile::Builder::new()).unwrap();
+        let home = Home::at_user_home(dir.path().to_path_buf());
+        let file = home.state_db_file();
+        crate::fsx::create_dir_all(file.parent().unwrap()).unwrap();
+        {
+            let mut conn = Connection::open(&file).unwrap();
+            build_v40(&mut conn);
+            conn.execute_batch(
+                "INSERT INTO runner_workers(worker,failure,since)
+                 VALUES ('history-extraction','stale','2026-11-27T00:00:00Z');
+                 INSERT INTO redis_reachability(source,reachable)
+                 VALUES ('src-v40',1);",
+            )
+            .unwrap();
+        }
+        let before_bytes = std::fs::read(&file).unwrap();
+        let snapshot = Store::state(&home).read(true).unwrap().unwrap();
+        let Read::Current(snapshot_conn) = snapshot else {
+            panic!("snapshot read should migrate in memory to current schema");
+        };
+        let worker_count: u32 = snapshot_conn
+            .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
+            .unwrap();
+        let reach_count: u32 = snapshot_conn
+            .query_row("SELECT count(*) FROM redis_reachability", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((worker_count, reach_count), (1, 1));
+        drop(snapshot_conn);
+        assert_eq!(
+            std::fs::read(&file).unwrap(),
+            before_bytes,
+            "read-only snapshot leaves on-disk database untouched"
+        );
+
+        let mut db = StateDb::open(&home).unwrap();
+        let worker_rows: u32 = db
+            .conn()
+            .query_row("SELECT count(*) FROM runner_workers", [], |r| r.get(0))
+            .unwrap();
+        let reach_rows: u32 = db
+            .conn()
+            .query_row("SELECT count(*) FROM redis_reachability", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!((worker_rows, reach_rows), (1, 1));
+
+        db.remove_runner_workers().unwrap();
+        let remaining_after_workers: u32 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_after_workers, 1);
+
+        db.remove_redis_reachability().unwrap();
+        let remaining_after_both: u32 = db
+            .conn()
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name IN ('runner_workers', 'redis_reachability')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remaining_after_both, 0);
     }
 
     #[test]

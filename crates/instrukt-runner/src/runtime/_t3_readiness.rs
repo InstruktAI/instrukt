@@ -1072,21 +1072,41 @@ pub(super) fn fetch_live_projects(
         .map_err(|_| ExecutionRootCause::MalformedMetadata)?;
     origin.set_path("/api/projects");
     origin.set_query(None);
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(TIMEOUT))
-        .build()
-        .into();
-    let text = agent
-        .get(origin.as_str())
-        .header("Authorization", &format!("Bearer {token}"))
-        .call()
-        .map_err(|error| {
-            tracing::warn!(event = "t3_project_snapshot_failed", %error);
-            ExecutionRootCause::Unreachable
-        })?
-        .body_mut()
-        .read_to_string()
-        .map_err(|_| ExecutionRootCause::Unreachable)?;
+    let client = instrukt_outside::http::build_client(&instrukt_outside::http::ClientConfig {
+        request_timeout: TIMEOUT,
+        follow_redirects: false,
+        ..Default::default()
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
+    let url = origin.as_str().to_owned();
+    let bearer = format!("Bearer {token}");
+    let text = instrukt_outside::runtime::block_on(async {
+        let response = client
+            .get(&url)
+            .header(reqwest::header::AUTHORIZATION, bearer.as_str())
+            .send()
+            .await
+            .map_err(|error| error.without_url().to_string())?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+        response
+            .text()
+            .await
+            .map_err(|error| error.without_url().to_string())
+    })
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?
+    .map_err(|error| {
+        tracing::warn!(event = "t3_project_snapshot_failed", %error);
+        ExecutionRootCause::Unreachable
+    })?;
     live_projects(&text)
 }
 

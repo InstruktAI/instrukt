@@ -4,9 +4,13 @@
 //! from delivery's own records, the selected runtime or the history store,
 //! read without a lock.
 
+mod _asks;
 mod _conversation;
 mod _eligibility;
+mod _held;
 mod _observation;
+mod _presence;
+mod _proposals;
 mod _requests;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,11 +25,10 @@ use crate::interfaces::{AutomaticReview, ProjectRef};
 use crate::state::RunnerState;
 
 pub use _conversation::{Conversation, ConversationHolder, Message, conversation};
+pub use _held::{HeldCandidate, HeldCommit, PresenceAnswer, SessionPresence};
+pub use _proposals::ProposalReports;
 pub(crate) use _requests::live;
-pub use _requests::{
-    Disposition, Request, Standing, TurnOpening, observed_red, requests, turn_opening,
-    turn_opening_with,
-};
+pub use _requests::{Disposition, Request, Standing, observed_red, requests};
 
 /// A review answer could not be read.
 #[derive(Debug, thiserror::Error)]
@@ -49,21 +52,96 @@ pub(crate) struct ReviewPass<'a> {
     pub repository: &'a str,
     pub token: &'a str,
     pub port: &'a dyn AutomaticReview,
+    /// Work's session bindings, as input delivery passes them: whose
+    /// threads delivery sends nothing.
+    pub work: Option<&'a dyn crate::interfaces::SessionBindings>,
     /// The moment the wake began.
     pub now: Timestamp,
     /// The operator's clock, read again where publication's credential is
     /// issued: the pass's own requests come first.
     pub clock: &'a dyn Fn() -> Timestamp,
+    /// The company the runner hosts, whose lookups answer a company home's
+    /// knowledge proposals; none carries none.
+    pub company: Option<&'a dyn crate::interfaces::CompanyPorts>,
+    /// What this process already raised of knowledge proposals.
+    pub reports: &'a ProposalReports,
+    /// The project's configuration and the environment anomalies are raised
+    /// through.
+    pub config: &'a instrukt_core::config::Configuration,
+    pub env: &'a instrukt_core::config::Env,
 }
 
 /// The remote the project's checkout is fetched from.
 const REMOTE: &str = "origin";
+
+/// Automatic review's part of the GitHub pass, on a project this pass
+/// admitted: its pull requests are observed with the observation
+/// credential readiness issued, and publication issues its own credential
+/// on `clock`.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one pass over the project's resolved GitHub source"
+)]
+pub(crate) fn pass(
+    cx: &crate::runner::RunnerContext<'_>,
+    state: &RunnerState,
+    log: &DbEventLog,
+    considered: &crate::runner::Considered,
+    candidate: Option<&CommitSha>,
+    token: &str,
+    api_url: &str,
+    repository: &str,
+    clock: &dyn Fn() -> Timestamp,
+    now: Timestamp,
+) {
+    let project = &considered.project;
+    let Some(port) = &cx.wiring.review else {
+        return;
+    };
+    let pass = ReviewPass {
+        home: cx.home,
+        candidate,
+        state,
+        log,
+        project,
+        api_url,
+        repository,
+        token,
+        port: port.as_ref(),
+        work: cx.wiring.work.as_ref().map(|work| work.bindings.as_ref()),
+        now,
+        clock,
+        company: cx.wiring.company.as_deref(),
+        reports: cx.reports,
+        config: &considered.config,
+        env: cx.env,
+    };
+    if let Err(error) = observe(&pass) {
+        tracing::warn!(event = "review_observation_failed", project = %project.slug, error = %error);
+    }
+}
 
 /// Observes the project's open pull requests and asks for the reviews that
 /// are owed (`pull-request-review`, Which heads are reviewed, Review
 /// requests, One review per commit).
 pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
     let project = &pass.project.slug;
+    // A company home's knowledge proposals are opened before the listing,
+    // so a pull request opened in this pass is listed and reviewed in it;
+    // their pruning fetch stands in for the pass's own.
+    let proposals = pass.company.filter(|_| {
+        instrukt_core::publication::is_company_repository(&pass.project.root).unwrap_or_else(
+            |error| {
+                tracing::warn!(event = "proposal_home_unknown", project = %project, error = %error);
+                false
+            },
+        )
+    });
+    let mut fetched = false;
+    if let Some(company) = proposals {
+        _proposals::open(pass, company)?;
+        fetched = true;
+    }
     let mut interval = None;
     let listed = _observation::open_pulls(
         pass.home,
@@ -97,6 +175,11 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         .iter()
         .flat_map(|(head, at)| at.iter().map(move |pull| (pull.number, head.clone())))
         .collect();
+    if let Some(company) = proposals {
+        let pulls: Vec<&_eligibility::Eligible> = heads.values().flatten().collect();
+        _proposals::hand_off(pass, company, &pulls);
+        _proposals::report(pass, company);
+    }
     if let Err(error) = pass.port.publish(
         project,
         pass.repository,
@@ -116,7 +199,6 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         None => None,
     };
     let mut owed = BTreeSet::new();
-    let mut fetched = false;
     for (head, mut at_head) in heads {
         if pass.port.carries_verdict(project, &head)? {
             continue;
@@ -130,10 +212,20 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
         emit(pass, &head, Some(&at_head[0]), requests.len(), &mut fetched)?;
     }
     _requests::end_unowed(pass.state, project, &owed).map_err(|error| error.to_string())?;
-    if let (Some(candidate), Some(crate::interfaces::CandidateFinding::Owed)) =
-        (pass.candidate, &finding)
-    {
-        ask_candidate(pass, candidate, &mut fetched)?;
+    _asks::sync(pass.state, project, pass.now).map_err(|error| error.to_string())?;
+    match (pass.candidate, &finding) {
+        (Some(candidate), Some(crate::interfaces::CandidateFinding::Held(held))) => {
+            _asks::act(pass, candidate, held)?;
+            if held.owes_review() {
+                ask_candidate(pass, candidate, &mut fetched)?;
+            }
+        }
+        // A derivation that finds no held candidate, or no candidate at all.
+        (_, Some(_)) | (None, None) => _asks::presence_status(pass.home, project, None),
+        (Some(_), None) => {}
+    }
+    if let Err(error) = _asks::retire(pass.state, project, &pass.project.root, REMOTE) {
+        tracing::warn!(event = "review_ask_retirement_failed", project = %project, error = %error);
     }
     if let Some(owed) = owed_candidates(pass.candidate, finding.as_ref()) {
         _requests::end_unowed_candidates(pass.state, project, &owed).map_err(|e| e.to_string())?;
@@ -145,8 +237,9 @@ pub(crate) fn observe(pass: &ReviewPass<'_>) -> Result<(), String> {
 /// requests stay; every other queued candidate request ends
 /// (`pull-request-review`, One review per commit: a queued request ends when
 /// its commit stops being owed). Without an active candidate, or with one
-/// whose request is selected or handed over, none is. Nothing is decided
-/// while the repository cannot answer.
+/// whose request is selected or handed over, none is; nor is a held
+/// candidate waiting on an author of ours. Nothing is decided while the
+/// repository or the runtime cannot answer.
 fn owed_candidates(
     candidate: Option<&CommitSha>,
     finding: Option<&crate::interfaces::CandidateFinding>,
@@ -154,9 +247,10 @@ fn owed_candidates(
     use crate::interfaces::CandidateFinding;
     match (candidate, finding) {
         (_, Some(CandidateFinding::CannotAnswer(_))) => None,
-        (Some(candidate), Some(CandidateFinding::Owed)) => {
+        (Some(candidate), Some(CandidateFinding::Held(held))) if held.owes_review() => {
             Some(BTreeSet::from([candidate.clone()]))
         }
+        (_, Some(CandidateFinding::Held(held))) if held.asks.is_empty() => None,
         _ => Some(BTreeSet::new()),
     }
 }
@@ -182,14 +276,16 @@ fn derive_candidate(
         .filter(|(_, head)| head == candidate)
         .map(|(number, _)| *number)
         .collect();
-    let finding = pass.port.candidate(
-        pass.project,
-        pass.repository,
+    let presence =
+        _presence::RuntimePresence::new(pass.home, pass.state, pass.work, project, pass.now);
+    let query = crate::interfaces::CandidateQuery {
+        project: pass.project,
+        repository: pass.repository,
         candidate,
-        &pulls,
-        pass.now,
-        pass.clock,
-    )?;
+        pulls: &pulls,
+        presence: &presence,
+    };
+    let finding = pass.port.candidate(&query, pass.now, pass.clock)?;
     tracing::info!(event = "review_candidate_derived", project = %project, candidate = %candidate, finding = ?finding);
     Ok(Some(finding))
 }
@@ -293,11 +389,42 @@ mod tests {
         );
     }
 
+    fn held(asks: usize, answered: bool) -> CandidateFinding {
+        let session = instrukt_core::ids::SessionRef::parse("t3:author").unwrap();
+        CandidateFinding::Held(HeldCandidate {
+            commits: vec![HeldCommit {
+                commit: sha('b'),
+                sessions: Vec::new(),
+            }],
+            asks: (0..asks).map(|_| (sha('b'), session.clone())).collect(),
+            answered,
+        })
+    }
+
     #[test]
-    fn only_an_uncovered_candidate_is_owed_a_review() {
+    fn a_held_candidate_waiting_on_an_author_is_owed_no_review() {
+        let candidate = sha('a');
+        for answered in [true, false] {
+            assert_eq!(
+                owed_candidates(Some(&candidate), Some(&held(1, answered))),
+                Some(BTreeSet::new())
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_is_decided_while_a_held_candidates_sessions_are_unanswered() {
+        assert_eq!(
+            owed_candidates(Some(&sha('a')), Some(&held(0, false))),
+            None
+        );
+    }
+
+    #[test]
+    fn only_an_uncovered_candidate_no_author_of_ours_can_decide_is_owed_a_review() {
         let candidate = sha('a');
         assert_eq!(
-            owed_candidates(Some(&candidate), Some(&CandidateFinding::Owed)),
+            owed_candidates(Some(&candidate), Some(&held(0, true))),
             Some(BTreeSet::from([candidate.clone()]))
         );
         for covered in [CandidateFinding::Covered, CandidateFinding::Settled] {

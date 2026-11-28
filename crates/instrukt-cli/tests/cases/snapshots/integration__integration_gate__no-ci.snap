@@ -1,6 +1,5 @@
 ---
 source: crates/instrukt-cli/tests/cases/integration-gate.rs
-assertion_line: 289
 expression: "work ::\nredact(& project.rt.sent(INTEGRATOR, 1).replace(&candidate, \"<candidate>\"))"
 ---
 [Instrukt Notification]

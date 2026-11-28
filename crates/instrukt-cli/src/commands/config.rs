@@ -1,6 +1,8 @@
 //! Configuration commands: `instrukt config get|patch|init|validate|schema`,
 //! each addressing the project layer, the global layer (`--global`) or a
-//! company home's document (`--company <name>`).
+//! company home's document (`--company <name>`); `get` and `patch` also
+//! address this instrukt home's agents file (`--agents`), which keeps only
+//! its overrides of the shipped agent selection.
 //!
 //! Inside a company-agent session, caller scope is enforced strictly to
 //! authenticated workspace administrators speaking in a direct message, and
@@ -30,7 +32,8 @@ pub struct ConfigArgs {
 enum ConfigCommand {
     /// Print the value at a dotted path, or the whole configuration,
     /// interpolated. Reads the effective configuration (the global layer
-    /// with the project layer applied) unless --global.
+    /// with the project layer applied) unless --global. With --agents, reads
+    /// the effective agent selection literally.
     Get(GetArgs),
     /// Inspect machine-local configuration.
     Show {
@@ -40,8 +43,9 @@ enum ConfigCommand {
     /// Show what the addressed document can declare, from the types validation
     /// reads.
     Schema(SchemaArgs),
-    /// Apply a merge patch (YAML mapping) to the project layer, or the
-    /// global layer with --global, if it is still at --revision.
+    /// Apply a merge patch (YAML mapping) to the project layer, the global
+    /// layer with --global, or the agents file with --agents, if it is still
+    /// at --revision.
     Patch(PatchArgs),
     /// Create the layer with the current schema version and defaults, or
     /// migrate an existing older one. With --company, also append each
@@ -91,6 +95,10 @@ struct GetArgs {
     /// Read this company home's document alone.
     #[arg(long)]
     company: Option<ProjectSlug>,
+    /// Read the effective agent selection — the shipped defaults with the
+    /// overrides in this instrukt home's agents file — as literal data.
+    #[arg(long, conflicts_with_all = ["global", "company"])]
+    agents: bool,
     /// Render as JSON.
     #[arg(long)]
     json: bool,
@@ -110,6 +118,10 @@ struct PatchArgs {
     /// Patch this company home's document.
     #[arg(long)]
     company: Option<ProjectSlug>,
+    /// Patch this instrukt home's agents file; it keeps only your overrides of
+    /// the shipped agent selection.
+    #[arg(long, conflicts_with_all = ["global", "company"])]
+    agents: bool,
     /// The patch, inline. Without --yaml or --from-file it is read from
     /// standard input.
     #[arg(long, conflicts_with = "from_file", allow_hyphen_values = true)]
@@ -192,11 +204,17 @@ fn check_company_agent_scope(
     }
 
     let require_own_company = |global_flag: bool,
+                               agents_flag: bool,
                                target: Option<&ProjectSlug>|
      -> anyhow::Result<()> {
         if global_flag {
             anyhow::bail!(
                 "config access refused: a company-agent session cannot access `--global`; {DOOR}"
+            );
+        }
+        if agents_flag {
+            anyhow::bail!(
+                "config access refused: a company-agent session cannot access `--agents`; {DOOR}"
             );
         }
         match target {
@@ -215,7 +233,7 @@ fn check_company_agent_scope(
 
     match command {
         ConfigCommand::Schema(args) => {
-            require_own_company(args.global, args.company.as_ref())?;
+            require_own_company(args.global, false, args.company.as_ref())?;
             if !is_mcp_path(args.path.as_deref()) {
                 anyhow::bail!(
                     "config access refused: a company-agent session may only inspect `mcp` schema (`instrukt config schema --company {own_company} mcp`); {DOOR}"
@@ -223,7 +241,7 @@ fn check_company_agent_scope(
             }
         }
         ConfigCommand::Get(args) => {
-            require_own_company(args.global, args.company.as_ref())?;
+            require_own_company(args.global, args.agents, args.company.as_ref())?;
             if !args.revision && !is_mcp_path(args.path.as_deref()) {
                 anyhow::bail!(
                     "config access refused: a company-agent session may only read `mcp` or `--revision` for `--company {own_company}`; {DOOR}"
@@ -231,10 +249,10 @@ fn check_company_agent_scope(
             }
         }
         ConfigCommand::Validate(args) => {
-            require_own_company(args.global, args.company.as_ref())?;
+            require_own_company(args.global, false, args.company.as_ref())?;
         }
         ConfigCommand::Patch(args) => {
-            require_own_company(args.global, args.company.as_ref())?;
+            require_own_company(args.global, args.agents, args.company.as_ref())?;
         }
         ConfigCommand::Init(_) | ConfigCommand::Show { .. } => {
             anyhow::bail!(
@@ -271,19 +289,27 @@ fn schema(args: SchemaArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
 
 fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     if args.revision {
-        let layer = layer(args.global, args.company.as_ref(), ctx)?;
-        let revision = config::revision(&ctx.home, &layer)?;
+        let revision = if args.agents {
+            config::agents_revision(&ctx.home)?
+        } else {
+            let layer = layer(args.global, args.company.as_ref(), ctx)?;
+            config::revision(&ctx.home, &layer)?
+        };
         ctx.out.line(revision.as_str())?;
         return Ok(ExitCode::SUCCESS);
     }
-    let configuration = if let Some(name) = &args.company {
-        Configuration::load_company(&ctx.home, name)?
-    } else if args.global {
-        Configuration::load_global(&ctx.home)?
+    let value = if args.agents {
+        config::agents_value(&ctx.home, args.path.as_deref())?
     } else {
-        Configuration::load_at(&ctx.home, &ctx.cwd)?
+        let configuration = if let Some(name) = &args.company {
+            Configuration::load_company(&ctx.home, name)?
+        } else if args.global {
+            Configuration::load_global(&ctx.home)?
+        } else {
+            Configuration::load_at(&ctx.home, &ctx.cwd)?
+        };
+        configuration.get(args.path.as_deref(), &crate::wiring::environment(ctx)?)?
     };
-    let value = configuration.get(args.path.as_deref(), &crate::wiring::environment(ctx)?)?;
     if args.json {
         ctx.out.json(&value)?;
         return Ok(ExitCode::SUCCESS);
@@ -298,30 +324,39 @@ fn get(args: GetArgs, ctx: &mut Ctx) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn patch_text(args: &PatchArgs) -> anyhow::Result<String> {
+    match (&args.yaml, &args.from_file) {
+        (Some(text), _) => Ok(text.clone()),
+        (None, Some(file)) => std::fs::read_to_string(file)
+            .with_context(|| format!("cannot read the patch from {}", file.display())),
+        (None, None) => {
+            let mut text = String::new();
+            std::io::stdin()
+                .read_to_string(&mut text)
+                .context("cannot read the patch from standard input")?;
+            Ok(text)
+        }
+    }
+}
+
 fn patch(
     args: PatchArgs,
     ctx: &mut Ctx,
     company_scope: Option<&ProjectSlug>,
 ) -> anyhow::Result<ExitCode> {
+    let expected = Revision::from_text(&args.revision);
+    if args.agents {
+        let patch = parse_patch(&patch_text(&args)?)?;
+        config::patch_agents(&ctx.home, &expected, &patch)?;
+        return Ok(ExitCode::SUCCESS);
+    }
     if args.global
         && let Some(root) = instrukt_core::git::worktree_root(&ctx.cwd)?
     {
         config::migrate(&ctx.home, &Layer::Project(root))?;
     }
     let layer = layer(args.global, args.company.as_ref(), ctx)?;
-    let text = match (&args.yaml, &args.from_file) {
-        (Some(text), _) => text.clone(),
-        (None, Some(file)) => std::fs::read_to_string(file)
-            .with_context(|| format!("cannot read the patch from {}", file.display()))?,
-        (None, None) => {
-            let mut text = String::new();
-            std::io::stdin()
-                .read_to_string(&mut text)
-                .context("cannot read the patch from standard input")?;
-            text
-        }
-    };
-    let patch = parse_patch(&text)?;
+    let patch = parse_patch(&patch_text(&args)?)?;
     if let Some(own_company) = company_scope {
         const DOOR: &str = "ask in a direct message as a workspace administrator for non-secret `mcp` settings (`sign_in.client_ref`, dynamic registration, or `sign_in.mode: issuer`), or have the local operator run the command outside any session";
         reject_yaml_tags(&patch, "patch", own_company)?;
@@ -357,7 +392,6 @@ fn patch(
             enforce_admin_dm_mcp_allowlist(mcp_patch, existing_mcp, own_company)?;
         }
     }
-    let expected = Revision::from_text(&args.revision);
     // Readiness needs GitHub, so it is asked before the document's lock is
     // taken; the patch's revision check binds the judged document to the
     // written one.

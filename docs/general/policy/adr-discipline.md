@@ -1,5 +1,5 @@
 ---
-description: 'An ADR is created only for a real, contestable architectural decision; the default is none. Keeps the decision record minimal and high-signal, free of ceremonial noise, so primary artifacts describe the contract and agents spend no cycles on records that carry no fork.'
+description: 'When to create an ADR (only for real, contestable architectural forks; default is none).'
 visibility: 'public'
 ---
 

@@ -1,14 +1,6 @@
 ---
-activation_trigger: >-
-  Use as soon as you consider creating, changing or retiring a taxonomy snippet
-  under `docs/general/`, `docs/domain/<name>/` or `docs/project/`, companions
-  included, or company home knowledge (a company repository's documents under
-  `docs/` and the file that selects them). Ordinary README or website prose never activates it. Changes to
-  directive text for agents elsewhere still require an update to the owning
-  snippet and independent review of the commit under
-  `general/policy/documentation-discipline`.
-description: Establish whether documentation work is ready and authorized, then author
-  snippets according to the taxonomy, schema, and policies.
+activation_trigger: 'First considering creating/changing/retiring a snippet under `docs/general/`, `docs/domain/<name>/`, `docs/project/` (incl. companions), or company home (`docs/` + index); not README/website prose.'
+description: 'Check readiness/authority, then author or retire snippets and company docs.'
 visibility: public
 ---
 

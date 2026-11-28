@@ -26,7 +26,7 @@ non-SDLC work: no build, review, finalize or repository commit.
 - The runner dispatched an eligible occurrence under `runner.autostart`
   (boolean or per-kind map), or work was deliberately dispatched. Due time
   does not replace authorization or pickup policy.
-- The plan passed its configured approval moment against the checked `input`;
+- The plan passed its configured approval moment against the current `input`;
   task creation alone authorizes nothing.
 - `task-plan` exists. `log` may already carry prior firing evidence.
 - The recorded session binding and current firing are available. The runner
@@ -41,7 +41,7 @@ non-SDLC work: no build, review, finalize or repository commit.
    Read the task record and `log` for prior outcomes and continuity. A completed
    occurrence is not repeated. A resumed session or a fresh execution does not
    manufacture another scheduled instant.
-2. **Read the plan.** Read `task-plan` and the checked `input`. The approved
+2. **Read the plan.** Read `task-plan` and the current `input`. The approved
    plan governs what to produce, operations, result handoff, timing and log.
    Approval may be human or peer under the configured preparation gate; it is
    not inferred from an agent's suggestion or from the schedule.
@@ -54,9 +54,9 @@ non-SDLC work: no build, review, finalize or repository commit.
    available capability. If the plan is silent on reporting, send nothing outward.
 
    **Deliver to the workspace.** Filesystem outputs go under
-   `{project_root}/workspace/{slug}/`, reused across firings. Organize within
-   it as the plan requires, including dated subfolders for distinct snapshots.
-   Record the output references on the task.
+   `{project_root}/.instrukt/workspace/{slug}/`, reused across firings. Organize
+   within it as the plan requires, including dated subfolders for distinct
+   snapshots. Record the output references on the task.
 5. **Write the durable record.** Append a concise dated `log` entry: what the
    firing did, output references, recoverable obstacles and the scheduled
    instant satisfied. Preserve platform-written firing entries verbatim,
@@ -83,7 +83,7 @@ non-SDLC work: no build, review, finalize or repository commit.
 ## Outputs
 
 - Updated `log` and filesystem deliverables under
-  `{project_root}/workspace/{slug}/`.
+  `{project_root}/.instrukt/workspace/{slug}/`.
 - A task-record outcome for the firing: success delivers a one-shot or records
   a recurring occurrence; error retains an explicit hold and reason.
 - A waiting session for any human-owned question, or an anomaly reference for

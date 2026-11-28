@@ -75,7 +75,6 @@
 //! under the position's [`heading`] with every snippet's headings demoted
 //! ([`demote_headings`]).
 
-mod _commands;
 mod _company;
 mod _corpus;
 mod _directives;
@@ -121,7 +120,7 @@ pub use _position::{
 };
 pub use _refs::{RefTarget, Reference};
 pub(crate) use _render::render_unit_body;
-pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, render};
+pub use _render::{ConfigRefusal, RenderContext, Rendered, Values, fenced, render};
 pub use _retrieval::{DomainRequest, GetRequest, IndexRequest, Reading, get, get_domain, index};
 pub use _schema::{
     EffectiveSchema, FolderSchema, Imposer, REQUIRED_READS, SEE_ALSO, SchemaSection, schema,

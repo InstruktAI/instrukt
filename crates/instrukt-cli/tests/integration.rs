@@ -28,8 +28,6 @@ mod company_plugin;
 mod compressed_units;
 #[path = "cases/configuration-editing.rs"]
 mod configuration_editing;
-#[path = "cases/conversation-links.rs"]
-mod conversation_links;
 #[path = "cases/conversations.rs"]
 mod conversations;
 #[path = "cases/delivery-cycle.rs"]
@@ -68,6 +66,8 @@ mod graph_navigation;
 mod harness;
 #[path = "cases/history.rs"]
 mod history;
+#[path = "cases/home-backup.rs"]
+mod home_backup;
 #[path = "cases/hook-sections.rs"]
 mod hook_sections;
 #[path = "cases/inbound-webhook-endpoint-framework.rs"]

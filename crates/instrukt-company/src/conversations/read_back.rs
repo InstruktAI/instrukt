@@ -1,5 +1,5 @@
 //! Read-back coverage and findings live outside the live intake writer.
-use super::{ConversationError, micros, retain_in};
+use super::{_intake::retain_in, _store::micros, ConversationError};
 use instrukt_connector::{
     Connector, ConnectorError, Incoming, ReadBackCoverage, ReadBackGap, ReadBackPage,
 };
@@ -325,8 +325,19 @@ fn stored_wait(
         .filter(|at| waited_out.is_none_or(|out| micros(out) != *at))
 }
 
+/// Runs synchronous SQLite/filesystem work off a multi-thread Tokio worker
+/// without panicking if called under a `current_thread` test runtime.
+fn blocking<R>(work: impl FnOnce() -> R) -> R {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(work)
+        }
+        _ => work(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn scan(
+pub(crate) async fn scan(
     home: &Home,
     company: &ProjectSlug,
     key: &str,
@@ -334,60 +345,70 @@ pub(crate) fn scan(
     session_scope: SessionScope,
     reply_mode: ReplyMode,
     connector: &dyn Connector,
-    clock: &dyn Fn() -> Timestamp,
-    quit: &dyn Fn() -> bool,
-    nudge: &dyn Fn(),
+    clock: &(dyn Fn() -> Timestamp + Sync),
+    quit: &(dyn Fn() -> bool + Sync),
+    nudge: &(dyn Fn() + Sync),
     waited_out: Option<Timestamp>,
 ) -> Result<Scanned, ConnectorError> {
     let done = |catch_up| Scanned::Done { catch_up };
-    let Some(mut conn) = open(home, true).map_err(failed)? else {
+    let requested = clock();
+    let owner = company.as_str();
+    let Some((mut conn, path, opened, remains)) = blocking(|| {
+        let Some(mut conn) = open(home, true).map_err(failed)? else {
+            return Ok(None);
+        };
+        observed(&conn, home, company, key, requested).map_err(failed)?;
+        let path = state::db_path(&conn);
+        let sql = |error| failed(state::sql(&path)(error));
+        let configured = configured(home);
+        if let Err(error) = &configured {
+            tracing::warn!(event = "read_back_declarations_unreadable", %error);
+        }
+        let tx = conn.transaction().map_err(sql)?;
+        // Expire and prune all connectors, even when only this one scans.
+        maintain(&tx, requested, configured.as_deref().ok()).map_err(sql)?;
+        let opened = tx
+            .execute(
+                "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
+             WHERE company=?1 AND connector=?2 AND started IS NULL",
+                params![
+                    owner,
+                    key,
+                    micros(requested),
+                    micros(requested - ANSWERING_BOUND)
+                ],
+            )
+            .map_err(sql)?;
+
+        let remains: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM scans WHERE company=?1 AND connector=?2)",
+                [owner, key],
+                |row| row.get(0),
+            )
+            .map_err(sql)?;
+        tx.commit().map_err(sql)?;
+        Ok::<_, ConnectorError>(Some((conn, path, opened, remains)))
+    })?
+    else {
         return Ok(done(false));
     };
-    let requested = clock();
-    observed(&conn, home, company, key, requested).map_err(failed)?;
-    let path = state::db_path(&conn);
     let sql = |error| failed(state::sql(&path)(error));
-    let owner = company.as_str();
-    let configured = configured(home);
-    if let Err(error) = &configured {
-        tracing::warn!(event = "read_back_declarations_unreadable", %error);
-    }
-    let tx = conn.transaction().map_err(sql)?;
-    // Expire and prune all connectors, even when only this one scans.
-    maintain(&tx, requested, configured.as_deref().ok()).map_err(sql)?;
-    let opened = tx
-        .execute(
-            "UPDATE scans SET started=?3,lower_bound=coalesce(retained_until,min(first_seen,?4))
-         WHERE company=?1 AND connector=?2 AND started IS NULL",
-            params![
-                owner,
-                key,
-                micros(requested),
-                micros(requested - ANSWERING_BOUND)
-            ],
-        )
-        .map_err(sql)?;
-
-    let remains: bool = tx
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM scans WHERE company=?1 AND connector=?2)",
-            [owner, key],
-            |row| row.get(0),
-        )
-        .map_err(sql)?;
-    tx.commit().map_err(sql)?;
     if opened == 0 && !remains {
         return Ok(done(false));
     }
 
     while !quit() {
-        let progress = conn.query_row(
-            "SELECT started,lower_bound,position,page,retry_at FROM scans WHERE company=?1 AND connector=?2",
-            [owner, key],
-            |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
-                page: row.get(3)?, retry_at: row.get(4)? }),
-        ).map_err(sql)?;
-        if let Some(at) = stored_wait(progress.retry_at, clock(), waited_out) {
+        let progress = blocking(|| {
+            conn.query_row(
+                "SELECT started,lower_bound,position,page,retry_at FROM scans WHERE company=?1 AND connector=?2",
+                [owner, key],
+                |row| Ok(Progress { started: row.get(0)?, lower: row.get(1)?, position: row.get(2)?,
+                    page: row.get(3)?, retry_at: row.get(4)? }),
+            )
+            .map_err(sql)
+        })?;
+        if let Some(at) = stored_wait(progress.retry_at, requested, waited_out) {
             return Ok(Scanned::Waiting {
                 until: Timestamp::from_microsecond(at).map_err(failed)?,
                 pause: None,
@@ -401,26 +422,35 @@ pub(crate) fn scan(
             Some(page) => serde_json::from_str(&page).map_err(failed)?,
             None => {
                 let gaps = if progress.position.is_none() {
-                    retry_channels(&conn, owner, key)?
+                    blocking(|| retry_channels(&conn, owner, key))?
                 } else {
                     Vec::new()
                 };
-                match connector.read_back_page(window.from, progress.position, &gaps) {
+                let page_result = connector
+                    .read_back_page(window.from, progress.position, &gaps)
+                    .await;
+                match page_result {
                     Ok(page) => {
                         let encoded = serde_json::to_string(&page).map_err(failed)?;
-                        conn.execute(
-                            "UPDATE scans SET page=?3 WHERE company=?1 AND connector=?2",
-                            params![owner, key, encoded],
-                        )
-                        .map_err(sql)?;
+                        blocking(|| {
+                            conn.execute(
+                                "UPDATE scans SET page=?3 WHERE company=?1 AND connector=?2",
+                                params![owner, key, encoded],
+                            )
+                            .map_err(sql)
+                        })?;
                         page
                     }
                     Err(error) => {
                         let retry = error.wait.as_ref().map(|wait| micros(wait.at()));
-                        conn.execute(
-                            "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
-                            params![owner, key, retry, error.to_string()],
-                        ).map_err(sql)?;
+                        let message = error.to_string();
+                        blocking(|| {
+                            conn.execute(
+                                "UPDATE scans SET retry_at=?3,failure=?4 WHERE company=?1 AND connector=?2",
+                                params![owner, key, retry, message],
+                            )
+                            .map_err(sql)
+                        })?;
                         return match error.wait {
                             Some(wait) => Ok(Scanned::Waiting {
                                 until: wait.at(),
@@ -435,26 +465,31 @@ pub(crate) fn scan(
         if quit() {
             break;
         }
-        match retain_page(
-            &mut conn,
-            home,
-            company,
-            key,
-            role,
-            session_scope,
-            reply_mode,
-            &page,
-            &window,
-            clock,
-        ) {
+        match blocking(|| {
+            retain_page(
+                &mut conn,
+                home,
+                company,
+                key,
+                role,
+                session_scope,
+                reply_mode,
+                &page,
+                &window,
+                clock,
+            )
+        }) {
             Ok(true) => nudge(),
             Ok(false) => {}
             Err(error) => {
-                conn.execute(
-                    "UPDATE scans SET failure=?3 WHERE company=?1 AND connector=?2",
-                    params![owner, key, error.to_string()],
-                )
-                .map_err(sql)?;
+                let message = error.to_string();
+                blocking(|| {
+                    conn.execute(
+                        "UPDATE scans SET failure=?3 WHERE company=?1 AND connector=?2",
+                        params![owner, key, message],
+                    )
+                    .map_err(sql)
+                })?;
                 return Err(error);
             }
         }

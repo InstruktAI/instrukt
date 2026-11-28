@@ -105,7 +105,7 @@ path is the same for every connector, whichever channel it speaks to
   own publishes `company-agent`'s as `general/procedure/company-assistance`. The
   procedure is instrukt's and the knowledge is the company's; neither repeats
   the other.
-- The session's opening input is the runner-authored assignment envelope,
+- The session's opening input is the runner-authored assignment prompt,
   followed by the first addressed message's input. The assignment is the
   loader of `project/instrukt/spec/feature/runner/procedure-event-delivery`:
   it names the procedure, the connector's role with its resolved grants, the
@@ -121,7 +121,7 @@ path is the same for every connector, whichever channel it speaks to
   `instrukt:conversation:<company>:<connector>` serves all admitted direct
   messages and channel threads of that `(company, connector)` serially. Every
   incoming turn delivered to a company-scoped session is preceded by a sanitized
-  control notification header naming the connector, opaque conversation ID,
+  turn-context header naming the connector, opaque conversation ID,
   direct-message flag, connector-supplied thread identifier (when threaded) and
   display label (when available), and authoritative speaker metadata (provider
   ID, email, administrator flag, and sanitized display name on separate fields),
@@ -155,6 +155,17 @@ path is the same for every connector, whichever channel it speaks to
   which includes filing and coordinating project todos) while keeping the
   connector's admission, company, speaker-envelope and administrator-DM
   boundaries intact.
+- A commit the agent makes in the company's repository, in a turn whose
+  speaker the connector recorded as an administrator of the company, in a
+  direct message or a channel alike, is recorded as a knowledge proposal. A
+  head the company context admits as a proposal
+  (`project/instrukt/spec/domain/company`, Knowledge proposal) is carried to
+  review and integration with no person moving it
+  (`project/instrukt/spec/feature/runner/pull-request-review`, Knowledge
+  proposals in a company home); every other change the agent commits waits
+  for a person, as the company's knowledge is changed only by its
+  administrators (`general/principle/trust-and-guardrails`: the gate reads
+  the object, the commit's recorded speaker, never text the agent writes).
 - Its role is the connector's `role` (default `company-agent`), stored on the
   session's `connected_conversations` binding so caller assignment lookup
   grants that role's class, capabilities, and model selection from `agents.yaml`
@@ -206,12 +217,14 @@ the state-database spec.
   turn. Messages of one conversation are delivered in the order they were
   written, as far as they have arrived; a later one waits until the session's
   current turn has finished.
-- The input is platform-framed with the registered envelopes of
-  `project/instrukt/spec/feature/runner/conversation-links`: a conversation
-  context envelope carrying the accompanying earlier messages as data, each
+- The input is platform-framed with the company conversation envelopes owned by
+  `instrukt-company` (`general/policy/message-identity-headers`): a conversation
+  context envelope (`[Instrukt Conversation Context (boundary)]`) carrying the
+  accompanying earlier messages as data, each
   with its speaker and time and with the agent's own earlier posts marked as
   its own, and saying so when the connector left earlier messages out,
-  followed by a member envelope carrying the addressed message's text as the
+  followed by a member envelope (`[Member (... · boundary)]`) carrying the
+  addressed message's text as the
   connector supplies it, with connector, conversation, member, `admin`,
   `direct`, and time in its opening.
   Both carry the delivery's boundary token, so a line inside them that looks
@@ -253,8 +266,8 @@ gives.
   addressed message finishes, the agent's conversational output of that turn is
   posted to the conversation exactly as the agent wrote it, in parts where the
   connector's message size limit requires, in order. No secret value is
-  searched for or replaced in it. Tool calls, tool results, thinking and
-  control input are not posted. A bare `NOOP` posts nothing.
+  searched for or replaced in it. Tool calls, tool results, and thinking are
+  not posted.
 - Under `reply_mode: explicit`, the runner suppresses automatic posting of raw
   turn output (and suppresses relaying raw turn text to the connector's status
   line, showing only the generic working or unavailable state) so internal
@@ -280,9 +293,9 @@ gives.
   delivers them with full retry and recovery. Its own output is the queued
   reply's summary (company, connector, conversation, turn and piece count),
   never the reply text.
-- The turn relay `instrukt run` already hosts does this: the same durable
-  conversation source, completed-turn evidence and retained positions as
-  conversation links. The relay advances its position in the transaction
+- The connected-conversation relay that `instrukt run` hosts does this, reading
+  durable conversation-source completed-turn evidence with retained positions.
+  The relay advances its position in the transaction
   that retains the answers it reads. Posting settles each retained piece
   separately through the protocol below. Retained answers can post while
   the conversation source is unreadable.
@@ -332,7 +345,7 @@ gives.
   agent, posts no turn output. In such a turn the agent posts only an explicit
   reply queued through `instrukt company reply`, under the admission above.
 - From the admission of an addressed message until it is complete — its
-  answer posted, or its turn completed successfully with a bare `NOOP` or blank
+  answer posted, or its turn completed successfully with blank
   output — the connector shows the message's state where the provider supports
   it. The state shows that the assistant is working on the request from its
   admission, and that the assistant is temporarily unavailable and the message
@@ -360,8 +373,7 @@ gives.
 ### What a person experiences
 
 A person in a conversation hears about their request and their own world, never
-about instrukt's internals (`project/instrukt/policy/checks-and-guards`: a person
-is told only what belongs to their world):
+about instrukt's internals:
 
 | Moment | What the person sees |
 | --- | --- |
@@ -397,7 +409,7 @@ open nothing. It starts, if not already open:
 It ends, for that message only: when the runtime accepts its hand-over (a
 redelivery included); when its own turn is observed running again; when a turn it
 waits behind is observed running; when its answer is posted; or when its turn
-completes successfully with a bare `NOOP` or blank output. An answer to another
+completes successfully with blank output. An answer to another
 person, a read showing an idle, archived or absent session, an empty read and a
 refused attempt end nothing. A person's interval is the earliest among their
 unanswered messages. While the relay cannot acquire the conversation source,
@@ -432,8 +444,7 @@ A connector reads back what was written while it was not connected
 within the answering bound that is addressed and not yet retained is admitted and
 answered like a live one. An older one is not answered and is named to the
 operator in `instrukt events status` for the reporting period, once per message
-(`project/instrukt/policy/checks-and-guards`: what instrukt cannot resolve goes to
-the operator).
+(`project/instrukt/spec/feature/runner/anomaly-notification`).
 
 Read-back runs alongside the connection and intake. A repeated read skips
 messages by provider identity. An admitted offline message uses the same
@@ -673,6 +684,18 @@ Then the command outputs only the queued reply summary without the reply text
 And the connector posts the explicit reply to that conversation through the durable answer outbox exactly as the agent wrote it, without searching for or replacing any secret value
 ```
 
+### UC-CV25: Change the company's knowledge by asking its agent
+
+```gherkin
+Given a workspace administrator asks the company's agent to change the company's knowledge
+When the agent commits the change to the company's documents in the company's repository
+Then the change is admitted to reach review and integration with no person moving it
+But when a member who is not an administrator asks for the change
+Then that change is not admitted and waits for a person
+But when the administrator's change also touches a file outside the company's knowledge
+Then that change is not admitted and waits for a person
+```
+
 ## Known caveats
 
 - An old unmatched-input finding from an automatically adopted source cannot
@@ -708,7 +731,7 @@ And the connector posts the explicit reply to that conversation through the dura
 - A conversation session runs in its company's container and reads what that
   container holds, the home's secrets file among it, and nothing of another
   company or the host
-  (`project/instrukt/spec/feature/runner/company-containers`). A company's
+  (`project/instrukt/spec/feature/company/company-containers`). A company's
   container is not confinement enough for an agent that answers people outside
   the company, and no such agent exists here.
 
@@ -717,7 +740,6 @@ And the connector posts the explicit reply to that conversation through the dura
 - [project/instrukt/spec/domain/company](../../domain/company.md)
 - [project/instrukt/spec/domain/runner](../../domain/runner.md)
 - [project/instrukt/spec/feature/company/slack-connector](slack-connector.md)
-- [project/instrukt/spec/feature/runner/conversation-links](../runner/conversation-links.md)
 - [project/instrukt/spec/feature/runner/session-continuity](../runner/session-continuity.md)
 - [project/instrukt/spec/feature/runner/mcp-access](../runner/mcp-access.md)
 - [project/instrukt/spec/feature/configuration/company-homes](../configuration/company-homes.md)

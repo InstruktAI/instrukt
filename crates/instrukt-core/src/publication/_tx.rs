@@ -503,35 +503,14 @@ fn read_existing(target: &Path) -> Result<Option<Vec<u8>>, PublicationError> {
 /// replaced or removed only as the object it was declared to be, never
 /// through an alias of another file.
 pub(super) fn confined(root: &Path, rel: &Path) -> Result<PathBuf, PublicationError> {
-    let unconfined = |path: PathBuf| PublicationError::Unconfined { path };
-    let base = match root.canonicalize() {
-        Ok(base) => base,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => root.to_path_buf(),
-        Err(source) => {
-            return Err(PublicationError::Io {
-                path: root.to_path_buf(),
-                source,
-            });
-        }
-    };
-    let mut path = base;
-    let mut exists = true;
-    for component in rel.components() {
-        let std::path::Component::Normal(part) = component else {
-            return Err(unconfined(root.join(rel)));
-        };
-        path.push(part);
-        if !exists {
-            continue;
-        }
-        match std::fs::symlink_metadata(&path) {
-            Ok(meta) if meta.file_type().is_symlink() => return Err(unconfined(path)),
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => exists = false,
-            Err(source) => return Err(PublicationError::Io { path, source }),
-        }
-    }
-    Ok(path)
+    crate::fsx::confined(root, rel).map_err(|error| match error {
+        crate::fsx::FsError::Unconfined { path } => PublicationError::Unconfined { path },
+        crate::fsx::FsError::Read { path, source } => PublicationError::Io { path, source },
+        other => PublicationError::Io {
+            path: root.join(rel),
+            source: std::io::Error::other(other),
+        },
+    })
 }
 
 /// The declared output `root/rel` publication writes, replaces or removes,

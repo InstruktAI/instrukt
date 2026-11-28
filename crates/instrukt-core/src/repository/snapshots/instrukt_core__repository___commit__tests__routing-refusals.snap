@@ -1,0 +1,13 @@
+---
+source: crates/instrukt-core/src/repository/_commit.rs
+expression: "refusals.join(\"\\n\\n\")"
+---
+nothing was committed: in an adopted project a commit carries its author's review-routing choice; pass `--review` when it goes to the independent review of a head that contains it, or `--exempt <basis>` when it owes none, stating why (`general/policy/commits`)
+
+nothing was committed: `--review` and `--exempt <basis>` are the two sides of one review-routing choice; pass exactly one (`general/policy/commits`)
+
+nothing was committed: `--exempt <basis>` needs a basis stating why the commit owes no independent review; state it, or pass `--review` instead (`general/policy/commits`)
+
+nothing was committed: review evidence belongs to an adopted project, and this repository is not one, so `--exempt <basis>` has nothing to record; commit with `--review` or without a routing choice (`general/policy/commits`)
+
+nothing was committed: this invocation cannot record an exemption, because work's admission of review evidence is not available; commit with `--review`, or commit and then record the decision with `instrukt review exempt` instead of `--exempt <basis>` (`general/policy/commits`)

@@ -97,9 +97,8 @@ missing `url` or `description`.
 
 ### Whose declarations a call sees
 
-The command takes its caller from the selected runtime's caller identity, as
-`instrukt discuss` does
-(`project/instrukt/spec/feature/runner/conversation-links`), and reads the
+The command takes its caller from the selected runtime's caller identity
+(`project/instrukt/spec/feature/runner/session-continuity`), and reads the
 runner's recorded assignment for that session.
 
 | Caller | Declarations |
@@ -586,7 +585,7 @@ another session's identity is served as that session, and that user can read a
 company home's files, its secrets file among them. A session working for a
 company runs in that company's container, which holds no other company's
 home, logins or sessions
-(`project/instrukt/spec/feature/runner/company-containers`); inside one
+(`project/instrukt/spec/feature/company/company-containers`); inside one
 company's container, every process is trusted alike. The `--company` path
 is the local operator's.
 
@@ -844,7 +843,7 @@ And the ingress serves only public discovery and JWKS metadata while the private
 - Logins lie in the state database, where any process of the same
   operating-system user can read them; a company's container holds no other
   company's logins
-  (`project/instrukt/spec/feature/runner/company-containers`). With a person's own login the agent
+  (`project/instrukt/spec/feature/company/company-containers`). With a person's own login the agent
   holds that person's rights at the server, and in a channel text of other
   people accompanies the speaker's message and can steer what happens under
   the speaker's name.

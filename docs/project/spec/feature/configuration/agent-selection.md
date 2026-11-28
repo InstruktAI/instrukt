@@ -64,9 +64,10 @@ validation: maps (`profiles`, `roles`, `bundles`) by key; within an entry, a
 field the file sets replaces the shipped one and a field it leaves out is
 inherited; lists (an order, a tier chain, `can`) are replaced whole. The merged
 value is validated as one document. A newer instrukt's defaults therefore reach
-every key the file does not name. instrukt never writes the file
-(`project/instrukt/policy/checks-and-guards`: a person's stated choices are
-migrated, never discarded). Owned-shape
+every key the file does not name. Reading, selecting and upgrading change none
+of the user's overrides (a person's stated choices are migrated, never
+discarded); a deliberate edit goes through
+`project/instrukt/spec/feature/configuration/configuration-editing`. Owned-shape
 migrations follow `project/instrukt/spec/feature/configuration/owned-files`.
 
 A file that is a full copy of shipped defaults, recognised as unedited by the

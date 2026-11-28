@@ -18,12 +18,16 @@ runner.attention.input_waiting v1 — The session holding a todo's execution cla
   instrukt events schema runner.attention.input_waiting
 runner.attention.raised v1 — An agent raised a condition about active todos of the project it works in. (subject: todo, delivery: occurrence)
   instrukt events schema runner.attention.raised
+runner.candidate_held v1 — The active integration candidate adds commits no review or exemption covers, and every session they name is answered: whose decisions it waits for. (subject: repository_ref, delivery: occurrence)
+  instrukt events schema runner.candidate_held
 runner.ci_completed v1 — The integrate candidate CI completed, including a no-CI observation. (subject: commit, delivery: state)
   instrukt events schema runner.ci_completed
 runner.dependency_failing v1 — A check run on a current dependency-update head failed. (subject: commit, delivery: occurrence)
   instrukt events schema runner.dependency_failing
 runner.main_failing v1 — Remote canonical main head completed CI red. (subject: repository_ref, delivery: state)
   instrukt events schema runner.main_failing
+runner.proposal_approved v1 — An approved, admitted knowledge proposal of a company home is ready for its standing integrator: an open pull request's current head with a current approving verdict covering the canonical branch. (subject: pull_request, delivery: state)
+  instrukt events schema runner.proposal_approved
 runner.review_needed v1 — A commit is owed an independent review: the current head of an eligible pull request, or an integration candidate. (subject: any reference, delivery: state)
   instrukt events schema runner.review_needed
 runner.upstream_changed v1 — A watched upstream ref changed. (subject: repository_ref, delivery: state)

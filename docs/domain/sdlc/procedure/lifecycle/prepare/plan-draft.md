@@ -48,8 +48,9 @@ one todo is the scope-and-size gate's decision
    `input`, including a change with a seeded `implementation-plan`; the seed
    is a technical hypothesis rather than an alternate intent authority.
    A feature PRD has current independent review and the configured human or
-   peer approval before this phase. The position-based intent check binds the
-   current `input`, not a derived requirements or plan artifact.
+   peer approval before this phase. Preparation-entry comparison against a
+   human originating conversation applies to `input`, not to a derived
+   requirements or plan artifact (`sdlc/policy/todo-creation-discipline`).
 
 2. `architecture` is either reviewer-approved or explicitly skipped.
 3. Slug is active (not icebox, not delivered).
@@ -136,8 +137,9 @@ dispatch-reason header or token selects behavior.
 - **Kickback** — read `todo-orchestrator`'s recorded reason in `input`
   first. It names why the build could not execute the plan and how far back
   re-derivation reaches: a localized replan or the feature-spec scenarios it
-  binds. Re-ground against that reason as well as code. A new input version
-  requires a current position-based intent check.
+  binds. Re-ground against that reason as well as code. A materially revised
+  human-lineage `input` version receives one fresh read-only comparison at
+  preparation entry (`sdlc/policy/todo-creation-discipline`).
 - **Revision answering findings** — read `plan-review-findings` alongside
   the existing plan. Apply the validation, disposition and evidence rules of
   `sdlc/procedure/lifecycle/fix-review-findings`, preserving unaffected tasks
@@ -240,14 +242,24 @@ grounded change surface and record the verdict before drafting. That policy owns
 the splitting criteria.
 
 **If the work fails the scope/size gate, stop here.** Do not draft a plan for
-work that will fail gate validation. Group first:
+work that will fail gate validation.
 
-- read the parent's full authorized scope from its resolved intent artifact and any approved architecture context
-- create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, partitioning the parent's existing scope — adding no functional or business scope absent from the parent
-- act on a child only once its filing outcome reports it created
-- narrow each child to its scope slice, referencing that parent intent and any applicable approved architecture context
-- add dependency ordering between the children with `instrukt todo update <child> --after <dep>`
-- stop treating the parent as directly prepare/work-ready; it is now a structural holder
+Splitting into multiple children multiplies execution fan-out and delivery order.
+Apply the release boundary before filing any child (`general/policy/human-contract`):
+
+- **When a `change` or `bug` (no approved `prd`) needs a split and the human has
+  not released that split in the originating conversation:** stop without
+  creating children. Return the proposed partition — the slices, their
+  dependency order, and why the scope cannot ship coherently as one delivery —
+  through the orchestrator for human release before any child is filed.
+- **When a `feature` has an approved `prd` or the human has already released the
+  split:** group the parent and file the children:
+  - read the parent's full authorized scope from its resolved intent artifact and any approved architecture context
+  - create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, partitioning the parent's existing scope — adding no functional or business scope absent from the parent
+  - copy the human's constraints and originating-conversation pointer verbatim into each child's `input` alongside its narrow scope slice (`general/policy/human-contract`); referencing the parent holder never substitutes for carrying the constraints and origin pointer
+  - act on a child only once its filing outcome reports it created
+  - add dependency ordering between the children with `instrukt todo update <child> --after <dep>`
+  - stop treating the parent as directly prepare/work-ready; it is now a structural holder
 
 If the work passes the scope/size gate, continue to plan drafting.
 
@@ -319,8 +331,8 @@ non-zero = fatal lookup error), using the exact rules in
 `git merge-base HEAD "<canonical-ref>"` before any `git diff`; check `git log`
 exit status before interpreting empty stdout as absent). On any fatal ref or
 history lookup failure, never treat a fill or workflow as absent — leave
-`<slug>/work` clean, record the diagnostic in `log`, and stop without writing
-`implementation-plan` or stamping `--role-complete`.
+`<slug>/work` clean, record the diagnostic in `log`, and release the attempt
+with `--role-complete`. Return without an `implementation-plan`.
 
 Resolve Layer 1 accurately against `<canonical-ref>`, including on a retained
 worktree predating a recently landed bootstrap or substrate extension:
@@ -353,9 +365,9 @@ worktree predating a recently landed bootstrap or substrate extension:
   matrix or draft against a stale fill — leave `<slug>/work` clean (discarding
   any uncommitted scratch edits while preserving legitimate committed
   preparation work), record the published commit versus `<canonical-ref>`'s fill
-  commit in `log`, and stop without writing `implementation-plan` or stamping
-  `--role-complete` so `todo-orchestrator` resolves this stopped attempt
-  (`--failed`) and retries once publication catches up. Once publication is
+  commit in `log`, and release the attempt with `--role-complete` before
+  returning without a plan. The orchestrator retries once publication catches
+  up. Once publication is
   current for that path, read the delivered fill via
   `instrukt docs get project/<project>/spec/verification-substrate` (without
   `--target`); only when unlisted on current published canonical docs and absent
@@ -392,10 +404,10 @@ worktree predating a recently landed bootstrap or substrate extension:
   workflow bootstrap or path migration carries no application change) and do not draft a stale plan against the
   unbootstrapped repository: leave `<slug>/work` clean (discarding any
   uncommitted scratch edits while preserving legitimate committed preparation
-  work), record the missing default-branch workflow in `log`, and stop without
-  writing `implementation-plan` or stamping `--role-complete` so
-  `todo-orchestrator` resolves this stopped attempt cleanly (`--failed`) and
-  orders `{slug}` after the standalone prerequisite bootstrap todo (`--after` +
+  work), record the missing default-branch workflow in `log`, and release the
+  attempt with `--role-complete`. Return without an `implementation-plan`.
+  `todo-orchestrator` orders `{slug}` after the standalone prerequisite
+  bootstrap todo (`--after` +
   `--unclaim`, `sdlc/procedure/lifecycle/overview`).
 - **Existing substrate extension and retained-worktree synchronization:** When
   the default-branch verification workflow already exists on `<canonical-ref>`
@@ -661,12 +673,18 @@ If the todo stays one delivery, write (using the approved intent artifact and th
 Do not write grounding fields directly. The work record captures provenance; the fact provider derives grounding
 and current worktree facts.
 
-If the todo is grouped instead:
+If the todo is grouped under step 2's release boundary (a `feature` with an
+approved `prd`, or a split the human has released):
 
 - Create each child with `instrukt todo create <child> "<child-content>" --kind <k> --approved --group <slug>`, one per independently deliverable slice.
 - Treat the parent as a stateless holder once children group-reference it. Its retained input artifact is frozen source material; do not plan follow-up writes against the holder.
-- Each child's content carries the relevant subset of the parent's intent artifact and reviewer-approved architecture-snippet context.
+- Each child's `input` copies the human's constraints and originating-conversation pointer verbatim (`general/policy/human-contract`) alongside the relevant subset of the parent's intent artifact and reviewer-approved architecture-snippet context.
 - Treat only the children as prepare/work targets. The parent is a holder and must not be prepared or worked as an implementation item.
+
+If a `change` or `bug` (no approved `prd`) requires splitting and the human has
+not released that split, file no children; return the proposed partition,
+dependency order, and scope/size rationale to `todo-orchestrator` for human
+release per step 2.
 
 ### 6. Enforce boundaries
 
@@ -683,24 +701,38 @@ If the todo is grouped instead:
 
 ### 7. Final step — complete and return to `todo-orchestrator`
 
-When the implementation-plan artifact is written (or child grouping has been
-executed via `instrukt todo create ... --approved --group` and each child's filing outcome
-reports it created), stamp role completion (`instrukt todo stamp {slug} --role-complete`)
-and inspect `instrukt todo show {slug}`.
-
-The dispatching `todo-orchestrator` reads the factual ledger (`instrukt todo show {slug} --json`)
-and dispatches an independent `plan-reviewer` session. The review is done when
-the record carries the current `plan-review-findings` artifact and `plan_review`
-verdict stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
-returns here with `plan-review-findings` for fix, evidence-backed rejection,
-or re-derivation under step 1b.
+- **Atomic plan written:** stamp role completion
+  (`instrukt todo stamp {slug} --role-complete`) and inspect
+  `instrukt todo show {slug}`. The dispatching `todo-orchestrator` reads the
+  factual ledger (`instrukt todo show {slug} --json`) and dispatches an
+  independent `plan-reviewer` session. The review is done when the record
+  carries the current `plan-review-findings` artifact and `plan_review` verdict
+  stamp. Approval lets `todo-orchestrator` advance to build; `needs_work`
+  returns here with `plan-review-findings` for fix, evidence-backed rejection,
+  or re-derivation under step 1b.
+- **Released child grouping executed under step 2:** stamp
+  `instrukt todo stamp {slug} --role-complete` from the clean workspace.
+  Report the child slugs and dependency order to `todo-orchestrator`. The
+  structural holder has no plan review.
+- **Unreleased split proposal awaiting human release:** record the proposed
+  partition, dependency order, and scope/size rationale in `log`
+  (`instrukt todo artifacts write {slug} log <content>`). Release the clean
+  workspace attempt with `instrukt todo stamp {slug} --role-complete` and
+  return without filing children. `todo-orchestrator` presents the partition
+  for human release and keeps its claim or places `--hold` while waiting
+  (`sdlc/procedure/lifecycle/overview`).
 
 ## Outputs
 
 1. Atomic case:
    `instrukt todo artifacts read {slug} implementation-plan`.
-2. Grouped case:
-   child todos, dependency links, and a stateless holder row with frozen input only.
+2. Released grouped case:
+   child todos carrying the human's constraints and originating-conversation
+   pointer verbatim, dependency links, and a stateless holder row with frozen
+   input only.
+3. Unreleased split case (`change` or `bug` without human-released split):
+   proposed partition and dependency order returned through `todo-orchestrator`
+   for human release, with no children filed.
 
 ## Recovery
 
@@ -711,8 +743,11 @@ or re-derivation under step 1b.
    `bug`, ambiguity resolves through the `diagnosis`, or is held for the human
    only when it concerns the intended behavior, never by inference (step 3c).
 2. If planning reveals the work is not one coherent delivery under the
-   scope-and-size gate (`sdlc/policy/definition-of-ready`), group it into
-   children.
+   scope-and-size gate (`sdlc/policy/definition-of-ready`), apply step 2's
+   release boundary and grouping rules — returning the proposed partition for
+   human release when a `change` or `bug` split is unreleased, and copying the
+   human's constraints and originating-conversation pointer verbatim into every
+   released child.
 3. If a file referenced in an upstream artifact does not exist, verify whether it should be
    created or whether the upstream artifact is stale.
 
