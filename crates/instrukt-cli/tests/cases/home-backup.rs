@@ -129,21 +129,32 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
         .execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA wal_autocheckpoint=0;
-             CREATE TABLE notes(body TEXT);
-             INSERT INTO notes VALUES ('base-row');
+             CREATE TABLE notes(id INTEGER PRIMARY KEY);
+             INSERT INTO notes VALUES (1);
              PRAGMA wal_checkpoint(TRUNCATE);
-             INSERT INTO notes VALUES ('live-wal-row');",
+             INSERT INTO notes VALUES (2);",
         )
         .unwrap();
     let wal_meta = std::fs::metadata(home.join("state/instrukt.db-wal")).unwrap();
     assert!(wal_meta.len() > 0, "expected uncheckpointed WAL frames");
-    let raw_main_db = std::fs::read(&db_path).unwrap();
-    assert!(
-        !raw_main_db
-            .windows(b"live-wal-row".len())
-            .any(|w| w == b"live-wal-row"),
-        "live-wal-row must live only in the WAL sidecar before online backup"
-    );
+    let raw_main_copy = fx.env.path("raw-main-only.db");
+    std::fs::copy(&db_path, &raw_main_copy).unwrap();
+    {
+        let raw_conn = Connection::open(&raw_main_copy).unwrap();
+        let mut stmt = raw_conn
+            .prepare("SELECT id FROM notes ORDER BY id")
+            .unwrap();
+        let raw_rows: Vec<i64> = stmt
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            raw_rows,
+            vec![1_i64],
+            "row 2 must live only in the WAL sidecar before online backup"
+        );
+    }
     let extra_db = home.join("state/custom.sqlite");
     {
         let conn = Connection::open(&extra_db).unwrap();
@@ -272,15 +283,13 @@ fn home_backup_snapshots_irreplaceable_state_encrypts_verifies_and_handles_failu
     std::fs::write(&decrypted_db, &contents["state/instrukt.db"]).unwrap();
     {
         let conn = Connection::open(&decrypted_db).unwrap();
-        let mut stmt = conn
-            .prepare("SELECT body FROM notes ORDER BY rowid")
-            .unwrap();
-        let rows: Vec<String> = stmt
+        let mut stmt = conn.prepare("SELECT id FROM notes ORDER BY id").unwrap();
+        let rows: Vec<i64> = stmt
             .query_map([], |r| r.get(0))
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert_eq!(rows, vec!["base-row", "live-wal-row"]);
+        assert_eq!(rows, vec![1_i64, 2_i64]);
     }
     let decrypted_company_db = fx.env.path("decrypted-company.db");
     std::fs::write(

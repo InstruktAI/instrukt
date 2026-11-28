@@ -218,8 +218,21 @@ fn check_backup_staleness_notification() {
         .run(project.repo.path(), ["events", "status", "--json"])
         .success();
     let report_ok: serde_json::Value = serde_json::from_slice(&out_ok.get_output().stdout).unwrap();
-    assert_eq!(report_ok["backup"]["standing"], "ok");
-    assert_eq!(report_ok["backup"]["repair_door"], serde_json::Value::Null);
+    insta::assert_snapshot!(
+        serde_json::to_string_pretty(&report_ok["backup"]).unwrap(),
+        @r#"
+    {
+      "standing": "ok",
+      "admitted": true,
+      "stale": false,
+      "last_attempt_at": "2030-01-07T16:00:00Z",
+      "last_success_at": "2030-01-07T16:00:00Z",
+      "last_generation": "g2",
+      "last_error": null,
+      "repair_door": null
+    }
+    "#
+    );
 }
 
 // spec: project/instrukt/spec/feature/runner/session-continuity UC-SS3
