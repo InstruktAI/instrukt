@@ -85,9 +85,6 @@ fn probe_write_lock(
             Ok(Some(_)) => return Ok(LockProbe::ActiveWriter),
             Ok(None) => return Ok(LockProbe::Unlocked),
             Err(Errno::INTR) => continue,
-            Err(err) if err == Errno::OPNOTSUPP || err == Errno::NOTSUP || err == Errno::NOSYS => {
-                return Ok(LockProbe::Unlocked);
-            }
             Err(err) => {
                 return Err(StoreError::invalid(
                     store,
