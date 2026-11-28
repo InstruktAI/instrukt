@@ -350,7 +350,7 @@ pub fn run(
     // From here on every part of this runner uses the generation in force:
     // nothing in its process reads the configuration files on its own.
     instrukt_core::config::serve(cx.home, &current);
-    crate::state::admission_outcome(cx.home, clock(), true);
+    crate::state::admission_outcome(cx.home, clock(), crate::state::AdmissionOutcome::Replaced);
     // Readiness is kept on a thread of its own: refreshed now and on each
     // wake, never by a start.
     let readiness = match current
@@ -465,12 +465,20 @@ pub fn run(
                 if offered == Offer::Kept {
                     tracing::debug!(event = "configuration_kept");
                 }
-                crate::state::admission_outcome(cx.home, clock(), offered == Offer::Replaced);
+                let outcome = match offered {
+                    Offer::Replaced => crate::state::AdmissionOutcome::Replaced,
+                    Offer::Kept => crate::state::AdmissionOutcome::Kept,
+                };
+                crate::state::admission_outcome(cx.home, clock(), outcome);
             }
             Err(error) => {
                 admission.report(&[]);
                 tracing::warn!(event = "configuration_kept", error = %error);
-                crate::state::admission_outcome(cx.home, clock(), false);
+                crate::state::admission_outcome(
+                    cx.home,
+                    clock(),
+                    crate::state::AdmissionOutcome::Kept,
+                );
             }
         }
         if let Some(connections) = &mut connections {
@@ -745,6 +753,9 @@ struct EventPlatform {
 fn reconcile_background_state(home: &Home, admitted: &Admitted) {
     if let Err(error) = crate::state::ensure_workers_migrated(home) {
         tracing::warn!(event = "runner_workers_migration_failed", %error);
+    }
+    if let Err(error) = crate::state::ensure_wake_loop_migrated(home) {
+        tracing::warn!(event = "runner_wake_loop_migration_failed", %error);
     }
     if let Err(error) = crate::transport::ensure_reachability_migrated(home) {
         tracing::warn!(event = "redis_reachability_migration_failed", %error);
