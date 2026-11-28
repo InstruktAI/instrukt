@@ -549,9 +549,11 @@ of a failed native attempt; it adds no polling task or launch-time probe.
 
 The runner retains the newest capacity outcome per runtime, instance and model.
 A quota outcome restricts every configured profile using that instance and
-model until the reported reset. Without a reset it uses the existing one-hour
-retry default, anchored to the failure's event time and labelled as a retry
-cooldown. Expiry permits an attempt; it establishes no provider recovery.
+model until the reported reset. Without a reset it uses the runner's declared
+quota retry interval (`QUOTA_DEFAULT_SECONDS` in
+`crates/instrukt-runner/src/agents.rs`), anchored to the failure's event time and
+labelled as a retry cooldown. Expiry permits an attempt; it establishes no
+provider recovery.
 Re-observing an outcome never renews or reinstates its restriction. An observed
 successful run that started after the restriction's failure clears that
 execution-derived restriction; older successful runs and other failure classes

@@ -36,7 +36,7 @@ fn restriction(
                         .map_err(|_| {
                             SessionsError::Refused("cannot compute quota retry time".into())
                         })?,
-                    "runtime-reported quota exhaustion; one-hour retry cooldown (reset missing)",
+                    "runtime-reported quota exhaustion; local retry cooldown (reset missing)",
                 ),
             };
             Ok((Some(until), Some(reason.into())))
