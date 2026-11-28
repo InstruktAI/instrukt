@@ -1,5 +1,5 @@
 ---
-description: One-off model calls to a configured OpenAI-compatible endpoint whose request defines no tools, so the model can change its answer and nothing else.
+description: Internal one-off model calls to a configured OpenAI-compatible endpoint whose request defines no tools, so the model can change its bounded text answer and nothing else.
 delivered_by:
   - capability-free-model-call
 ---
@@ -7,31 +7,38 @@ delivered_by:
 
 ## What it is
 
-A capability-free call puts one prompt in front of a model and returns one
-answer of a shape the caller declares. instrukt makes it as a single
-chat-completions request to an OpenAI-compatible endpoint, and that request
-defines no tools. The model receives text and returns text: it has no tools,
-no files, no shell and no session that outlives the request. A prompt that
-manipulates the model can change the answer and nothing else, so a caller can
-put text written outside the project in front of a model without giving that
-text any capability.
+A capability-free call is an internal instrukt client that puts one prompt in
+front of a model and returns one bounded text answer. instrukt makes it as a
+single chat-completions request to an OpenAI-compatible endpoint with `tools`
+omitted. The model receives text and returns text: it has no tools, no files,
+no shell and no session that outlives the request. A prompt that manipulates
+the model can change the answer and nothing else, so an internal caller can put
+text written outside the project in front of a model without giving that text
+any capability.
 
-The endpoint is the operator's choice, made in configuration: a local server
-such as LM Studio, or a cloud provider's endpoint. The capability-free
-guarantee holds for a plain model, one with no built-in search or browsing
-that runs nothing beyond what the request asks. instrukt does not check which
-model is configured: the configuration's description and the setup
-documentation say what to bring, and a model that searches on its own is
-outside the guarantee. Its API key, when it needs one, is a protected instrukt
-secret (`project/instrukt/spec/feature/configuration/owned-files`), never a
-value in a configuration document. Where agent runtimes keep their
+The call is an internal capability, not a standalone prompt-forwarding CLI
+command. Untrusted-text screening
+(`project/instrukt/spec/feature/screening/untrusted-text-screening`) is built
+on it, and other internal callers — such as outside pull-request assessment or
+future internal features — use it the same way.
+
+The endpoint is the operator's choice, configured explicitly per purpose in
+global configuration under the `llm` map — starting with `llm.screening` — so
+an operator can pick a local server such as LM Studio or a cloud provider's
+endpoint for each purpose, and share provider credentials across entries
+through the same secret reference. The capability-free guarantee holds for a
+plain model, one with no built-in search or browsing that runs nothing beyond
+what the request asks. instrukt does not check which model is configured: the
+configuration's description and the setup documentation say what to bring, and
+a model that searches on its own is outside the guarantee. An endpoint's API
+key, when it needs one, is a protected instrukt secret referenced from
+configuration (`project/instrukt/spec/feature/configuration/owned-files`),
+never a value in a configuration document. Where agent runtimes keep their
 model-provider keys belongs to
 `project/instrukt/spec/feature/configuration/agent-selection`.
 
 The call carries no knowledge of where its prompt came from or what its answer
-is for. Untrusted-text screening
-(`project/instrukt/spec/feature/screening/untrusted-text-screening`) is built
-on it, and any other caller uses it the same way.
+is for.
 
 ## Canonical fields
 
@@ -40,36 +47,35 @@ on it, and any other caller uses it the same way.
 | Field | Meaning |
 | --- | --- |
 | Prompt | The complete text the model receives. It is the call's only input. |
-| Answer shape | The fixed shape the caller declares the answer must have. |
-| Answer | One answer of the declared shape, within the call's size bound. |
-| Outcome | `answered` with the answer, or `refused` with its reason. While the endpoint is unavailable the call is `waiting` and returns no outcome yet. |
+| Answer | One bounded text answer returned by the model. |
+| Outcome | `answered` with the bounded text answer, or `refused` with its reason. While the endpoint is unavailable the call is `waiting` and returns no outcome yet. |
 
-The request defines no tools, carries no earlier conversation and no data
-beyond the prompt, and asks only for an answer of the declared shape within its
-size bound.
+The request omits `tools`, carries no earlier conversation and no data beyond
+the prompt, and bounds the answer's size.
 
 Before a call takes its prompt, any missing or unresolvable endpoint
-prerequisite — an unconfigured or incomplete endpoint, or missing, blank,
+prerequisite — an unconfigured or incomplete endpoint entry, or missing, blank,
 unreadable or insufficiently protected referenced API key secret material
 (`project/instrukt/spec/feature/configuration/owned-files`) — is `refused` at
 entry, naming what is missing and the door to supply it
 (`project/instrukt/policy/checks-and-guards`). A call is also `refused`, and
-returns no answer, when the answer does not have the declared shape, when the
-model stopped before finishing its answer because the size bound ran out, or
-when the endpoint rejects the request as one it cannot serve, such as one too
-large for the model. An answer is never repaired, truncated or partly returned.
-A failure that is neither an entry refusal, an unavailable endpoint nor one of
-these post-call refusals, such as a malformed request or a client or protocol
-failure, is a defect (`project/instrukt/policy/checks-and-guards`): the call
-fails and returns no answer.
+returns no answer, when the model stopped before finishing its answer because
+the size bound ran out, or when the endpoint rejects the request as one it
+cannot serve, such as one too large for the model. An answer is never repaired,
+truncated or partly returned. A failure that is neither an entry refusal, an
+unavailable endpoint nor one of these post-call refusals, such as a malformed
+request or a client or protocol failure, is a defect
+(`project/instrukt/policy/checks-and-guards`): the call fails without retrying
+and returns no answer.
 
 ### The endpoint
 
 | Setting | Meaning |
 | --- | --- |
-| Endpoint | The base address of an OpenAI-compatible chat-completions service, local or cloud. |
+| Endpoint | The base address of an OpenAI-compatible chat-completions service, local or cloud, configured per purpose under global `llm` (starting with `llm.screening`). |
 | Model | The model the endpoint serves the call with. |
-| API key | A reference to a protected instrukt secret; absent for an endpoint that needs none. |
+| API key | Optional `${NAME}` reference to a protected instrukt secret; absent for an endpoint that needs none, and shareable across `llm.*` entries. |
+| Timeout | Optional per-request time bound for one try against the endpoint. |
 
 An endpoint that reports or shows that it cannot serve the request now is
 unavailable, not a refusal: it cannot be reached, does not answer in time,
@@ -83,13 +89,13 @@ receives the eventual outcome without asking again.
 
 ## Use cases
 
-### UC-CF1: An agent gets a model's judgment of outside text without lending that text any capability
+### UC-CF1: An internal capability acting for the operator gets a bounded model answer without lending outside text any capability
 
 ```gherkin
 Given an operator has configured an OpenAI-compatible endpoint and model for capability-free calls
 And text written outside the project instructs the model to run a command, read the operator's files and send them to a web address
-When an agent acting for the operator asks for a capability-free call with that text and an answer shape
-Then the agent receives one answer of that shape
+When an internal capability acting for the operator sends a prompt carrying that text through a capability-free call
+Then it receives one bounded text answer
 And the model was offered no tool, file, shell or earlier conversation
 ```
 
@@ -98,7 +104,7 @@ And the model was offered no tool, file, shell or earlier conversation
 ```gherkin
 Given an operator runs an OpenAI-compatible model server on their own computer
 When they configure its address and model for capability-free calls
-Then later calls are answered by that model
+Then later capability-free calls are answered by that model
 And no API key is needed for it
 But a call while the server is down waits, and the operator sees that it waits
 ```

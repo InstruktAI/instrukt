@@ -28,8 +28,8 @@ values there use distinct reference names.
 <!-- change:capability-free-model-call -->
 `<selected INSTRUKT_HOME>/secrets.env` (normally `~/.instrukt/secrets.env`) is the one machine-local file for every secret
 instrukt uses, including webhook signing material, Redis credentials, GitHub
-App private keys and the API key of the endpoint that serves capability-free
-calls (`project/instrukt/spec/feature/screening/capability-free-calls`). App
+App private keys and the API keys of configured capability-free model endpoints
+(`project/instrukt/spec/feature/screening/capability-free-calls`). App
 profiles carry protected references; installation tokens are issued in memory
 under `project/instrukt/spec/feature/work/github-apps`, not saved as
 long-lived secrets.
