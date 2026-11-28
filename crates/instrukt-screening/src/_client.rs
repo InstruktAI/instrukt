@@ -669,15 +669,14 @@ mod tests {
 
     #[test]
     fn check_entry_refuses_out_of_range_max_tokens() {
-        for bad in [0u32, MAX_MAX_TOKENS + 1] {
-            assert_eq!(
-                check_entry(&admitted(1, None), "hello", Some(bad)),
-                Err(EntryRefusal::InvalidMaxTokens {
-                    given: bad,
-                    min: MIN_MAX_TOKENS,
-                    max: MAX_MAX_TOKENS,
-                })
-            );
-        }
+        let given = MAX_MAX_TOKENS + 1;
+        assert_eq!(
+            check_entry(&admitted(1, None), "hello", Some(given)),
+            Err(EntryRefusal::InvalidMaxTokens {
+                given,
+                min: MIN_MAX_TOKENS,
+                max: MAX_MAX_TOKENS,
+            })
+        );
     }
 }

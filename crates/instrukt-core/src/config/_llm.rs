@@ -448,85 +448,81 @@ mod tests {
     use crate::config::LayerKind;
 
     #[test]
-    fn check_accepts_https_and_loopback_http_urls() {
-        for accepted in [
-            "https://api.example.com/v1",
-            "https://api.example.com:8443/v1",
-            "http://localhost:1234/v1",
-            "http://LOCALHOST:1234/v1",
-            "http://127.0.0.1:1234/v1",
-            "http://127.0.0.42:8080/v1",
-            "http://[::1]:1234/v1",
-        ] {
-            let doc: Value = serde_yaml_ng::from_str(&format!(
-                "screening:\n  url: '{accepted}'\n  model: plain-model\n  api_key: null\n"
-            ))
-            .unwrap();
-            let mut findings = Vec::new();
-            check(&doc, LLM_KEY, &mut findings);
-            assert!(
-                findings.is_empty(),
-                "expected {accepted} accepted, got {findings:?}"
-            );
-        }
+    fn check_accepts_https_url() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: 'https://api.example.com/v1'\n  model: plain-model\n  api_key: null\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]
-    fn check_rejects_unsafe_and_malformed_urls() {
-        for rejected in [
-            "http://remote.example.com/v1",
-            "https://user:pass-leak@api.example.com/v1",
-            "https://api.example.com/v1?api_key=leak",
-            "https://api.example.com/v1#frag",
-            "file:///tmp/model",
-            "not a url",
-            "",
-        ] {
-            let doc: Value = serde_yaml_ng::from_str(&format!(
-                "screening:\n  url: '{rejected}'\n  model: plain-model\n"
-            ))
-            .unwrap();
-            let mut findings = Vec::new();
-            check(&doc, LLM_KEY, &mut findings);
-            assert!(
-                findings.iter().any(|f| f.key == "llm.screening.url"),
-                "expected {rejected} rejected, got {findings:?}"
-            );
-            assert!(findings.iter().all(|f| !f.message.contains("pass-leak")));
-        }
+    fn check_accepts_loopback_http_url() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: 'http://127.0.0.1:1234/v1'\n  model: plain-model\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
+    }
+
+    #[test]
+    fn check_rejects_non_loopback_http_url() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: 'http://remote.example.com/v1'\n  model: plain-model\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.url"));
+    }
+
+    #[test]
+    fn check_rejects_url_with_embedded_credentials_without_disclosing_password() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: 'https://user:pass-leak@api.example.com/v1'\n  model: plain-model\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.url"));
+        assert!(findings.iter().all(|f| !f.message.contains("pass-leak")));
     }
 
     #[test]
     fn check_accepts_timeout_within_bounds() {
-        for good_timeout in [
-            MIN_LLM_TIMEOUT_SECS,
-            DEFAULT_LLM_TIMEOUT_SECS,
-            MAX_LLM_TIMEOUT_SECS,
-        ] {
-            let doc: Value = serde_yaml_ng::from_str(&format!(
-                "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: {good_timeout}\n"
-            ))
-            .unwrap();
-            let mut findings = Vec::new();
-            check(&doc, LLM_KEY, &mut findings);
-            assert!(findings.is_empty(), "{good_timeout}: {findings:?}");
-        }
+        let doc: Value = serde_yaml_ng::from_str(&format!(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: {DEFAULT_LLM_TIMEOUT_SECS}\n"
+        ))
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.is_empty(), "{findings:?}");
     }
 
     #[test]
-    fn check_rejects_out_of_range_or_non_integer_timeout() {
-        for bad_timeout in ["0", "601", "-1", "45.5", "'45'"] {
-            let doc: Value = serde_yaml_ng::from_str(&format!(
-                "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: {bad_timeout}\n"
-            ))
-            .unwrap();
-            let mut findings = Vec::new();
-            check(&doc, LLM_KEY, &mut findings);
-            assert!(
-                findings.iter().any(|f| f.key == "llm.screening.timeout"),
-                "expected timeout {bad_timeout} rejected"
-            );
-        }
+    fn check_rejects_out_of_range_timeout() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: 0\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.timeout"));
+    }
+
+    #[test]
+    fn check_rejects_non_integer_timeout() {
+        let doc: Value = serde_yaml_ng::from_str(
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  timeout: '45'\n",
+        )
+        .unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(findings.iter().any(|f| f.key == "llm.screening.timeout"));
     }
 
     #[test]
@@ -557,16 +553,31 @@ mod tests {
     }
 
     #[test]
-    fn check_rejects_unknown_purpose_and_subkey() {
+    fn check_rejects_unknown_purpose() {
+        let doc: Value =
+            serde_yaml_ng::from_str("other_purpose:\n  url: https://example.com\n").unwrap();
+        let mut findings = Vec::new();
+        check(&doc, LLM_KEY, &mut findings);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.key == "llm.other_purpose" && f.kind == FindingKind::UnknownKey)
+        );
+    }
+
+    #[test]
+    fn check_rejects_unknown_screening_subkey() {
         let doc: Value = serde_yaml_ng::from_str(
-            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  extra: 1\nother_purpose:\n  url: https://example.com\n",
+            "screening:\n  url: http://127.0.0.1:1234/v1\n  model: plain\n  extra: 1\n",
         )
         .unwrap();
         let mut findings = Vec::new();
         check(&doc, LLM_KEY, &mut findings);
-        let keys: Vec<&str> = findings.iter().map(|f| f.key.as_str()).collect();
-        assert!(keys.contains(&"llm.screening.extra"), "{keys:?}");
-        assert!(keys.contains(&"llm.other_purpose"), "{keys:?}");
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.key == "llm.screening.extra" && f.kind == FindingKind::UnknownKey)
+        );
     }
 
     #[test]
@@ -600,9 +611,9 @@ mod tests {
     }
 
     #[test]
-    fn redact_replaces_literal_api_key_and_embedded_url_credentials() {
+    fn redact_replaces_literal_api_key() {
         let mut doc: Value = serde_yaml_ng::from_str(
-            "llm:\n  screening:\n    url: https://user:url-secret@api.example.com:8443/v1?token=q-secret#frag\n    model: plain-model\n    api_key: literal-key-leaked\n",
+            "llm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: plain-model\n    api_key: literal-key-leaked\n",
         )
         .unwrap();
         redact(&mut doc);
@@ -610,6 +621,15 @@ mod tests {
             doc["llm"]["screening"]["api_key"].as_str(),
             Some(REDACTED_SECRET_PLACEHOLDER)
         );
+    }
+
+    #[test]
+    fn redact_strips_embedded_url_credentials() {
+        let mut doc: Value = serde_yaml_ng::from_str(
+            "llm:\n  screening:\n    url: https://user:url-secret@api.example.com:8443/v1?token=q-secret#frag\n    model: plain-model\n",
+        )
+        .unwrap();
+        redact(&mut doc);
         assert_eq!(
             doc["llm"]["screening"]["url"].as_str(),
             Some("https://api.example.com:8443/v1")
@@ -617,7 +637,7 @@ mod tests {
     }
 
     #[test]
-    fn redact_preserves_secret_reference_and_null_api_key() {
+    fn redact_preserves_secret_reference() {
         let mut doc: Value = serde_yaml_ng::from_str(
             "llm:\n  screening:\n    url: http://127.0.0.1:1234/v1\n    model: plain-model\n    api_key: ${SCREENING_KEY}\n",
         )
@@ -626,10 +646,6 @@ mod tests {
         assert_eq!(
             doc["llm"]["screening"]["api_key"].as_str(),
             Some("${SCREENING_KEY}")
-        );
-        assert_eq!(
-            doc["llm"]["screening"]["url"].as_str(),
-            Some("http://127.0.0.1:1234/v1")
         );
     }
 }

@@ -339,8 +339,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_verdict_rejects_flagged_without_reason() {
+    fn parse_verdict_rejects_flagged_with_missing_reason() {
         assert_eq!(parse_verdict(r#"{"verdict":"flagged"}"#), None);
+    }
+
+    #[test]
+    fn parse_verdict_rejects_flagged_with_blank_reason() {
         assert_eq!(
             parse_verdict(r#"{"verdict":"flagged","reason":"  \n "}"#),
             None
@@ -348,8 +352,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_verdict_rejects_unknown_or_malformed_verdict() {
+    fn parse_verdict_rejects_unknown_verdict_value() {
         assert_eq!(parse_verdict(r#"{"verdict":"maybe"}"#), None);
+    }
+
+    #[test]
+    fn parse_verdict_rejects_non_json_verdict() {
         assert_eq!(parse_verdict("not json"), None);
     }
 
